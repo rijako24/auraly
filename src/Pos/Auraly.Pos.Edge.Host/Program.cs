@@ -784,6 +784,7 @@ public static class PosEdgeHostApplication
                     : user is null
                         ? "LoginRequired"
                         : "Ready";
+            var workspaceConfiguration = await catalog.WorkspaceConfigurationAsync(ct);
             return Results.Ok(new
             {
                 status,
@@ -792,7 +793,8 @@ public static class PosEdgeHostApplication
                 deviceSeriesCode = workstation.DeviceSeriesCode,
                 businessId = runtime.BusinessId.Value,
                 warehouseId = runtime.WarehouseId.Value,
-                pointOfSaleMode = await catalog.PointOfSaleModeAsync(ct),
+                pointOfSaleMode = workspaceConfiguration.Mode,
+                timeZone = workspaceConfiguration.TimeZone,
                 businessName = workstation.BusinessName,
                 warehouseName = workstation.WarehouseName,
                 warehouseAllowsNegativeStockSales = runtime.WarehouseAllowsNegativeStock,
@@ -968,6 +970,14 @@ public static class PosEdgeHostApplication
             PosCatalogStore catalog,
             CancellationToken ct) =>
             Results.Ok(await catalog.SettlementConfigurationAsync(ct)));
+        edge.MapGet("/payment-methods", async (int? page,int? pageSize,string? search,string? methodCode,
+            PosCatalogStore catalog,CancellationToken ct) =>
+        {
+            try { return Results.Ok(await catalog.PaymentMethodsPageAsync(
+                new Auraly.Contracts.Catalog.PaymentMethodQuery(page??1,pageSize??10,search,Usage:"Sales",MethodCode:methodCode),ct)); }
+            catch(ArgumentException error) { return Results.Problem(error.Message,statusCode:400); }
+            catch(InvalidDataException error) { return Results.Problem(error.Message,statusCode:409); }
+        });
         edge.MapGet("/customers", async (
             string? search,
             int? skip,

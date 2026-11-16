@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
@@ -255,11 +256,18 @@ public sealed class OrderBatchService(
                                     paymentReference,
                                     BankAccountId: request.BankAccountId,
                                     Notes: request.PaymentNotes,
-                                    RoundingAdjustment: PosPaymentRoundingPolicy.Adjustment(payableAmount))
+                                    RoundingAdjustment: PosPaymentRoundingPolicy.Adjustment(payableAmount),
+                                    PaymentMethodId: paidOrder ? null : request.PaymentMethodId,
+                                    PaymentMethodVersion: paidOrder ? null : request.PaymentMethodVersion,
+                                    PaymentMethodCode: paidOrder ? null : request.PaymentFormCode,
+                                    PaymentMethodName: paidOrder ? null : request.PaymentFormName,
+                                    AccountId: paidOrder ? null : request.AccountId)
                             ],
                         Credit: creditSale
                             ? new OnlineSalesCreditTerms(
-                                PosPaymentRoundingPolicy.RoundedTotal(payableAmount))
+                                PosPaymentRoundingPolicy.RoundedTotal(payableAmount),
+                                request.PaymentMethodId, request.PaymentMethodVersion, request.PaymentFormCode,
+                                request.PaymentFormName, request.AccountId)
                             : null,
                         DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
@@ -401,6 +409,9 @@ public sealed class OrderBatchService(
             request.PaymentNotes?.Length > 500)
             throw new OrderValidationException(
                 "Sesión, usuario, pedidos y medio de pago válidos son obligatorios.");
+        if (!PaymentMethodEvidence.IsValidSet([new(request.PaymentMethodId, request.PaymentMethodVersion,
+                request.PaymentFormCode, request.PaymentFormName, request.AccountId)]))
+            throw new OrderValidationException("La identidad de la forma de pago no es válida.");
         if (request.PaymentMethodCode == "Transfer" &&
             string.IsNullOrWhiteSpace(request.PaymentReference))
             throw new OrderValidationException(
@@ -446,6 +457,10 @@ public sealed class OrderBatchService(
                 charge.SupplierId.ToString("D"),
                 charge.ManualAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty))),
             string.Join(",", orderIds.Select(id => id.ToString("D"))));
+        if (request.PaymentMethodId is not null)
+            value += "|" + System.Text.Json.JsonSerializer.Serialize(new {
+                request.PaymentMethodId, request.PaymentMethodVersion, request.PaymentFormCode,
+                request.PaymentFormName, request.AccountId });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 

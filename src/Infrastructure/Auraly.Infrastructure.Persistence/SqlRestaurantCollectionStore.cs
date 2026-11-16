@@ -60,6 +60,10 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
                 }
             }
 
+            await SqlPaymentMethodResolver.ValidateOnlineSaleAsync(connection, transaction, actor.TenantId,
+                request.TipPayment is { } tip ? request.Payments.Append(tip).ToArray() : request.Payments,
+                null, ct);
+
             await using (var guard = new SqlCommand("""
                 SELECT account.Version,
                        (SELECT TOP(1) prior.WorkSessionId
@@ -110,21 +114,28 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
             }
 
             await using (var methodLimit = new SqlCommand("""
-                SELECT COUNT(*)
-                FROM sales.RestaurantAccountCollections collection
-                CROSS APPLY OPENJSON(collection.PaymentsJson) WITH(
-                    MethodCode nvarchar(32) '$.MethodCode') payment
-                WHERE collection.AccountId=@AccountId
-                  AND collection.BusinessId=@BusinessId
-                  AND collection.TenantId=@TenantId
-                  AND collection.Status=N'Captured'
-                  AND payment.MethodCode<>N'Cash';
+                WITH captured AS (
+                  SELECT payment.MethodCode,payment.PaymentMethodId
+                  FROM sales.RestaurantAccountCollections collection
+                  CROSS APPLY OPENJSON(collection.PaymentsJson) WITH(
+                      MethodCode nvarchar(32),PaymentMethodId uniqueidentifier) payment
+                  WHERE collection.AccountId=@AccountId AND collection.BusinessId=@BusinessId
+                    AND collection.TenantId=@TenantId AND collection.Status=N'Captured'
+                  UNION ALL
+                  SELECT MethodCode,PaymentMethodId FROM OPENJSON(@NextPayments) WITH(
+                    MethodCode nvarchar(32),PaymentMethodId uniqueidentifier)
+                )
+                SELECT COUNT(CASE WHEN MethodCode<>N'Cash' THEN 1 END),
+                  COUNT(DISTINCT CASE WHEN MethodCode=N'Cash'
+                    THEN COALESCE(CONVERT(nvarchar(36),PaymentMethodId),N'legacy-cash') END)
+                FROM captured;
                 """, connection, transaction))
             {
                 Scope(methodLimit, actor, accountId);
-                var existingNonCash = (int)(await methodLimit.ExecuteScalarAsync(ct) ?? 0);
-                var nextNonCash = request.Payments.Count(payment => payment.MethodCode != "Cash");
-                if (existingNonCash + nextNonCash > 9)
+                methodLimit.Parameters.Add("@NextPayments", SqlDbType.NVarChar, -1).Value = paymentsJson;
+                await using var reader = await methodLimit.ExecuteReaderAsync(ct);
+                await reader.ReadAsync(ct);
+                if (reader.GetInt32(0) + reader.GetInt32(1) > 10)
                     throw new RestaurantAccountValidationException(
                         "Esta mesa alcanzó el límite de medios de pago de la factura.");
             }

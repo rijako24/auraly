@@ -327,6 +327,20 @@ adicionales por tarjeta ni inventario local. La búsqueda local consume esa mism
 proyección en SQLite; catálogo y familia no tienen un sincronizador independiente.
 El modo viaja por el snapshot/stream de configuración ya existente.
 
+La zona horaria de la sede acompaña ese mismo snapshot y se conserva en
+`PosPricingConfiguration`. La salud local la entrega al workspace de pedidos;
+no depende de la cookie web ni de la zona del computador. La ampliación local
+invalida una sola vez el cursor de configuración para descargar ese campo por
+el sincronizador existente y conserva borradores, ventas y outbox. Reiniciar
+después de descargarlo mantiene el cursor incremental. Las formas de efectivo
+del lote se consultan desde el adaptador activo: API en web y una página SQL
+de la proyección `PosSettlementConfiguration` en Edge, con filtros, orden y
+límite antes de deserializar. Una petición local, un comando y hasta 100 filas;
+sin consultas por forma ni otra descarga de catálogo. La selección conserva el
+ID y versión nativos para el mismo comando de facturación de pedidos. El esquema
+local y el contrato remoto son aditivos; una reversión de binarios puede
+conservar esas columnas, sin modificar los documentos ya emitidos.
+
 El constructor primario de `PosCatalogItem` define el único contrato JSON vigente.
 La descarga debe incluir todos sus campos; un dato opcional puede tener valor
 nulo, pero omitir su campo invalida el mensaje. No se sustituyen campos ausentes

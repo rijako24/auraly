@@ -10,8 +10,8 @@ export type PaymentMethod = {
 };
 export type PaymentMethodCatalogSnapshot = { contractVersion: number; forms: PaymentMethod[] };
 export type PaymentMethodQuery = {
-  page: number; pageSize: number; search?: string; isActive?: boolean;
-  usage?: "Sales" | "Receipts" | "SupplierPayments" | "Payroll" | "VoucherReceipts" | "VoucherPayments"; paymentMethodId?: string;
+  page: number; pageSize: number; search?: string; isActive?: boolean; methodCode?: string;
+  usage?: "Sales" | "ServiceInvoices" | "TipPayments" | "Receipts" | "SupplierPayments" | "Payroll" | "VoucherReceipts" | "VoucherPayments"; paymentMethodId?: string;
 };
 export type PaymentMethodPage = { items: PaymentMethod[]; page: number; pageSize: number; totalCount: number };
 export type SavePaymentMethod = Pick<PaymentMethod, "paymentMethodId" | "code" | "name" | "paymentTypeId" |

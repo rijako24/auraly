@@ -28,6 +28,7 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
             value => value.BusinessId == fixture.BusinessId &&
                      value.WarehouseId == fixture.WarehouseId);
         Assert.Equal("B01", option.WarehouseCode);
+        Assert.Equal("America/Bogota", option.TimeZone);
         using (var scope = fixture.CreateScope())
         {
             var fiscal = await scope.ServiceProvider
@@ -49,6 +50,7 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
         Assert.NotNull(selected);
         Assert.Equal(option.BusinessId, selected.BusinessId);
         Assert.Equal(option.WarehouseId, selected.WarehouseId);
+        Assert.Equal(option.TimeZone, selected.TimeZone);
         Assert.Equal(option.WarehouseAllowsNegativeStockSales,
             selected.WarehouseAllowsNegativeStockSales);
     }

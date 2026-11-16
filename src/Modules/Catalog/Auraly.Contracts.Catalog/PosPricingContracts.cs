@@ -72,7 +72,8 @@ public sealed record PosPricingSnapshot(
     IReadOnlyCollection<PosPromotion>? Promotions = null,
     long? CustomerCursor = null,
     long? ConfigurationCursor = null,
-    string? PointOfSaleMode = null);
+    string? PointOfSaleMode = null,
+    string? TimeZone = null);
 
 public sealed record PosCustomerBootstrapPage(
     long ThroughCursor,

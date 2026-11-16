@@ -1,4 +1,5 @@
 import { expect, test, type Route, type Page } from "@playwright/test";
+import { paymentCatalogFixture } from "./support/payment-catalog";
 
 const baseUrl = process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -19,7 +20,7 @@ test.use({ serviceWorkers: "block" });
 
 async function prepareRestaurant(page: Page, options: {
   firstPrice?: number; firstQuantity?: number; secondPrice?: number;
-  status?: "Sent" | "Direct" | "Pending";
+  status?: "Sent" | "Direct" | "Pending"; secondDebit?: boolean;
 } = {}) {
   await page.addInitScript(() => {
     window.print = () => document.documentElement.setAttribute("data-print-requested", "1");
@@ -169,7 +170,13 @@ async function prepareRestaurant(page: Page, options: {
     if (path.endsWith("/commerce/v1/reference-options/card-franchise"))
       return respond(route, [{ id: "3", code: "Visa", label: "Visa", sortOrder: 1 }]);
     if (path.endsWith("/commerce/v1/pos/settlement-configuration"))
-      return respond(route, { isAccountingEnabled: false, bankAccounts: [] });
+    {
+      const paymentMethods = paymentCatalogFixture();
+      if (options.secondDebit) paymentMethods.forms.push({ ...paymentMethods.forms[1],
+        paymentMethodId: "10000000-0000-0000-0000-000000000005", code: "SECOND-DEBIT",
+        name: "Segundo datáfono", accountId: "account-second-debit" });
+      return respond(route, { isAccountingEnabled: false, bankAccounts: [], paymentMethods });
+    }
     return respond(route, []);
   });
 
@@ -468,4 +475,25 @@ test("el estado de pago mantiene tamaño y fondo al faltar, sobrar o recibir el 
     await payment.screenshot({ path: `../.codex-build/restaurant-status-${viewport.width}.png` });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
+});
+
+
+test("permite elegir el segundo datáfono y conserva su identidad al emitir", async ({ page }) => {
+  const scenario = await prepareRestaurant(page, { secondDebit: true });
+  await page.goto("/pos/restaurant");
+  await page.getByRole("button", { name: /M-01/ }).click();
+  await page.getByRole("button", { name: "Facturar mesa" }).click();
+  const payment = page.getByRole("dialog", { name: "Cobrar mesa" });
+  await payment.getByRole("combobox", { name: "Medio de pago", exact: true }).click();
+  await page.getByRole("option", { name: "Tarjeta débito", exact: true }).click();
+  await payment.getByRole("combobox", { name: "Forma de pago", exact: true }).click();
+  await expect(page.getByRole("option", { name: "Tarjeta débito · FORM-DebitCard" })).toBeVisible();
+  await page.getByRole("option", { name: "Segundo datáfono · SECOND-DEBIT" }).click();
+  await payment.getByRole("combobox", { name: "Franquicia", exact: true }).click();
+  await page.getByRole("option", { name: "Visa", exact: true }).click();
+  await payment.getByRole("textbox", { name: "Número de aprobación", exact: true }).fill("NATIVE-SECOND");
+  await payment.getByRole("button", { name: "Cobrar y emitir documento" }).click();
+  await expect(page.getByRole("heading", { name: "¿A qué mesa atendemos?" })).toBeVisible();
+  expect(scenario.collections[0].payments[0]).toMatchObject({ paymentMethodId: "10000000-0000-0000-0000-000000000005",
+    paymentMethodVersion: 1, paymentMethodCode: "SECOND-DEBIT", accountId: "account-second-debit", approvalNumber: "NATIVE-SECOND" });
 });

@@ -62,6 +62,11 @@ import {
 } from "@/services/pos/pos-order-print-routing";
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
+import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
+import { paymentMethodsApi, type PaymentMethod, type PaymentMethodPage, type PaymentMethodQuery } from "@/services/api/payment-methods";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import { formatDateTime } from "@/lib/utils";
 import { OrderInvoiceChargeDialog } from "./order-invoice-charge-dialog";
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -70,12 +75,10 @@ const money = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
 });
 
-const date = new Intl.DateTimeFormat("es-CO", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
 type OrdersWorkspaceProps = {
+  timeZone?: string;
+  businessId?: string;
+  loadPaymentMethods?: (query: PaymentMethodQuery) => Promise<PaymentMethodPage>;
   compact?: boolean;
   connected?: boolean;
   showHeader?: boolean;
@@ -99,6 +102,7 @@ type OrdersWorkspaceProps = {
     idempotencyKey: string,
     onProgress: (progress: OrderInvoiceSequenceProgress) => void,
     charges?: OrderInvoiceChargeSelection[] | null,
+    paymentForm?: PaymentMethod,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -138,6 +142,9 @@ function isAvailableForThisSession(
 }
 
 export function OrdersWorkspace({
+  timeZone: workspaceTimeZone,
+  businessId: workspaceBusinessId,
+  loadPaymentMethods = paymentMethodsApi.list,
   compact = false,
   connected = true,
   showHeader = true,
@@ -160,6 +167,10 @@ export function OrdersWorkspace({
   activeOrderId,
   recoveryBlockedReason,
 }: OrdersWorkspaceProps) {
+  const contextTimeZone = useBusinessContextStore((state) => state.businesses.find(
+    (item) => item.businessId === state.selectedBusinessId)?.timeZone);
+  const timeZone = workspaceTimeZone ?? contextTimeZone;
+  const today = timeZone ? localOrderDateValue(timeZone) : "";
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
   const [query, setQuery] = useState("");
@@ -167,8 +178,10 @@ export function OrdersWorkspace({
   const [customerId, setCustomerId] = useState("all");
   const [product, setProduct] = useState("");
   const [status, setStatus] = useState(initialStatus);
-  const [createdFrom, setCreatedFrom] = useState(localOrderDateValue);
-  const [createdTo, setCreatedTo] = useState(localOrderDateValue);
+  const [fromSelection, setCreatedFrom] = useState<string>();
+  const [toSelection, setCreatedTo] = useState<string>();
+  const createdFrom = fromSelection ?? today;
+  const createdTo = toSelection ?? today;
   const [routeId, setRouteId] = useState("All");
   const [sellerId, setSellerId] = useState("all");
   const [createdByUserId, setCreatedByUserId] = useState("all");
@@ -187,6 +200,12 @@ export function OrdersWorkspace({
     "SalesInvoice",
   );
   const [paymentMethodCode, setPaymentMethodCode] = useState<"Cash" | "Credit">("Cash");
+  const tenantId = useTenantContextStore((state) => state.selectedTenantId);
+  const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const businessId = workspaceBusinessId ?? selectedBusinessId;
+  const [paymentSelection, setPaymentSelection] = useState<{ tenantId: string | null; form: PaymentMethod }>();
+  const paymentForm = paymentSelection?.tenantId === tenantId ? paymentSelection?.form : undefined;
+  const setPaymentForm = (form: PaymentMethod | undefined) => setPaymentSelection(form ? { tenantId, form } : undefined);
   const invoiceAttemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const [creditValidationIssues, setCreditValidationIssues] = useState<OrderCreditValidationIssue[]>([]);
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
@@ -198,20 +217,20 @@ export function OrdersWorkspace({
     customerId: customerId !== "all" ? customerId : undefined,
     product: product || undefined,
     status: status === "All" ? undefined : status,
-    createdFrom: createdFrom
-      ? orderDayRange(createdFrom).createdFrom
+    createdFrom: createdFrom && timeZone
+      ? orderDayRange(createdFrom, timeZone).createdFrom
       : undefined,
-    createdTo: createdTo
-      ? orderDayRange(createdTo).createdTo
+    createdTo: createdTo && timeZone
+      ? orderDayRange(createdTo, timeZone).createdTo
       : undefined,
     routeId: routeId === "All" ? undefined : routeId,
     sellerId: sellerId !== "all" ? sellerId : undefined,
     createdByUserId: createdByUserId !== "all" ? createdByUserId : undefined,
     source,
-  }), [createdByUserId, createdFrom, createdTo, customerId, product, query, routeId, sellerId, source, status]);
+  }), [createdByUserId, createdFrom, createdTo, customerId, product, query, routeId, sellerId, source, status, timeZone]);
 
   const refresh = useCallback(async (silent = false) => {
-    if (!connected) {
+    if (!connected || !timeZone) {
       setData(null);
       onCountChange?.(0);
       return;
@@ -242,6 +261,7 @@ export function OrdersWorkspace({
     }
   }, [
     connected,
+    timeZone,
     activeOrderId,
     loadPage,
     orderFilters,
@@ -256,7 +276,7 @@ export function OrdersWorkspace({
   }, [product, query, refresh]);
 
   useEffect(() => {
-    if (!connected) return;
+    if (!connected || !timeZone) return;
     const refreshSilently = () => void refresh(true);
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refreshSilently();
@@ -267,7 +287,7 @@ export function OrdersWorkspace({
       window.removeEventListener("focus", refreshSilently);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [connected, refresh]);
+  }, [connected, refresh, timeZone]);
 
   const selectedOrders = useMemo(() => [...selected.values()], [selected]);
   const activeFilterCount = [
@@ -343,6 +363,11 @@ export function OrdersWorkspace({
 
   async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit", charges?: OrderInvoiceChargeSelection[] | null) {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
+    const selectedForm = requestedPaymentMethodCode === "Cash" ? paymentForm : undefined;
+    if (requestedPaymentMethodCode === "Cash" && !selectedForm) {
+      setError("Selecciona la forma de pago en efectivo del lote.");
+      return;
+    }
     if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
       setError(`Puedes facturar máximo ${ORDER_INVOICE_BATCH_LIMIT} pedidos por lote.`);
       return;
@@ -361,6 +386,8 @@ export function OrdersWorkspace({
       documentType,
       paymentMethodCode: requestedPaymentMethodCode,
       printAfterInvoice,
+      paymentForm: selectedForm?.paymentMethodId,
+      paymentFormVersion: selectedForm?.version,
       charges: charges ?? null,
     });
     if (invoiceAttemptRef.current?.fingerprint !== fingerprint) {
@@ -426,6 +453,7 @@ export function OrdersWorkspace({
         idempotencyKey,
         updateProgress,
         charges,
+        selectedForm,
       );
       invoiceAttemptRef.current = null;
       if (result.creditValidationIssues?.length) {
@@ -530,6 +558,8 @@ export function OrdersWorkspace({
     }
   }
 
+  if (connected && !timeZone) return <p role="alert" className="p-5 text-amber-900">Vuelve a cargar el contexto de trabajo para consultar la zona horaria de la sede.</p>;
+
   if (!connected) {
     return (
       <div className="grid min-h-44 place-items-center rounded-xl border border-dashed border-slate-300 p-5 text-center">
@@ -601,7 +631,7 @@ export function OrdersWorkspace({
             <div><h3 className="font-semibold text-slate-950">Filtrar pedidos</h3><p className="text-sm text-slate-500">Combina cliente, vendedor, usuario creador, producto, estado y rango de fechas.</p></div>
             <Button type="button" variant="ghost" size="sm" onClick={() => {
               setCustomerId("all"); setProduct(""); setStatus(initialStatus); setRouteId("All"); setSellerId("all"); setCreatedByUserId("all");
-              setCreatedFrom(localOrderDateValue()); setCreatedTo(localOrderDateValue()); setPage(1);
+              setCreatedFrom(undefined); setCreatedTo(undefined); setPage(1);
             }}>Restablecer</Button>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -611,8 +641,8 @@ export function OrdersWorkspace({
             <FilterField label="Producto"><Input value={product} onChange={(event) => { setProduct(event.target.value); setPage(1); }} placeholder="Nombre, código o referencia" /></FilterField>
             <FilterField label="Estado"><OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /></FilterField>
             {routeOptions.length > 0 && <FilterField label="Ruta"><Select value={routeId} onValueChange={(next) => { setRouteId(next); setPage(1); }}><SelectTrigger><SelectValue placeholder="Todas las rutas" /></SelectTrigger><SelectContent><SelectItem value="All">Todas las rutas</SelectItem>{routeOptions.map((route) => <SelectItem key={route.routeId} value={route.routeId}>{route.name}</SelectItem>)}</SelectContent></Select></FilterField>}
-            <FilterField label="Desde"><DatePicker value={createdFrom} max={createdTo || undefined} onChange={(value) => { setCreatedFrom(value); setPage(1); }} placeholder="Fecha inicial" /></FilterField>
-            <FilterField label="Hasta"><DatePicker value={createdTo} min={createdFrom || undefined} onChange={(value) => { setCreatedTo(value); setPage(1); }} placeholder="Fecha final" /></FilterField>
+            <FilterField label="Desde"><DatePicker today={today} value={createdFrom} max={createdTo || undefined} onChange={(value) => { setCreatedFrom(value); setPage(1); }} placeholder="Fecha inicial" /></FilterField>
+            <FilterField label="Hasta"><DatePicker today={today} value={createdTo} min={createdFrom || undefined} onChange={(value) => { setCreatedTo(value); setPage(1); }} placeholder="Fecha final" /></FilterField>
           </div>
         </section>
       )}
@@ -742,6 +772,20 @@ export function OrdersWorkspace({
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>
+                {onInvoiceSelected && paymentMethodCode === "Cash" && <PagedEntitySelect<PaymentMethod>
+                  queryKey={["payment-method-choices", tenantId, businessId, "Sales", "Cash"]}
+                  value={paymentForm?.paymentMethodId ?? ""}
+                  selectedOption={paymentForm ? { value: paymentForm.paymentMethodId, label: paymentForm.name } : null}
+                  onChange={(_value, _option, item) => setPaymentForm(item)}
+                  loadPage={async (search, page, pageSize) => {
+                    const result = await loadPaymentMethods({ page, pageSize, search, usage: "Sales", methodCode: "Cash" });
+                    return { ...result, totalPages: Math.ceil(result.totalCount / pageSize) };
+                  }}
+                  getOption={(item) => ({ value: item.paymentMethodId, label: item.name, description: item.code })}
+                  ariaLabel="Forma de pago del lote" placeholder="Forma de pago en efectivo"
+                  searchPlaceholder="Buscar forma de pago…" disabled={working || selectingAll || !connected}
+                />}
+
                 <label className="col-span-2 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 sm:col-span-1">
                   <Checkbox
                     checked={printAfterInvoice}
@@ -844,7 +888,7 @@ export function OrdersWorkspace({
                       <p className="mt-1 truncate text-xs text-slate-600" title={`Creado por: ${order.createdByName || "Usuario no registrado"}`}>
                         Creado por: {order.createdByName || "Usuario no registrado"}
                       </p>
-                      <p className="mt-0.5 text-xs text-slate-500">{date.format(new Date(order.createdAt))}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">{formatDateTime(order.createdAt, timeZone)}</p>
                     </button>
                     {!compact && (
                       <div className="col-start-2 min-w-0 xl:col-auto">

@@ -183,7 +183,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user && preparedPrintBranding !== null
-            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) => {
+            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -206,6 +206,7 @@ export default function OrdersPage() {
                   onProgress,
                   false,
                   charges,
+                  paymentForm,
                 );
                 return {
                   completedCount: response.completedCount,

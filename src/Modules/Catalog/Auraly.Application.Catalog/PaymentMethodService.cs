@@ -18,7 +18,7 @@ public sealed class PaymentMethodService(IPaymentMethodStore store)
     {
         var permission = query.Usage switch
         {
-            "Sales" => "sales.create", "Receipts" => "receivables.read",
+            "Sales" => "sales.create", "ServiceInvoices" => "service-invoices.create", "TipPayments" => "cash.close", "Receipts" => "receivables.read",
             "SupplierPayments" => "payables.read", "Payroll" => "payroll.read",
             "VoucherReceipts" or "VoucherPayments" => "accounting.read", _ => CatalogPermissionCodes.Read
         };
@@ -27,7 +27,8 @@ public sealed class PaymentMethodService(IPaymentMethodStore store)
             throw new CatalogForbiddenException("No tiene permiso para consultar formas de pago.");
         if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
             ((long)query.Page - 1) * query.PageSize > int.MaxValue || query.Search?.Length > 160 ||
-            query.Usage is not (null or "Sales" or "Receipts" or "SupplierPayments" or "Payroll" or "VoucherReceipts" or "VoucherPayments"))
+            query.MethodCode?.Length > 32 ||
+            query.Usage is not (null or "Sales" or "ServiceInvoices" or "TipPayments" or "Receipts" or "SupplierPayments" or "Payroll" or "VoucherReceipts" or "VoucherPayments"))
             throw new CatalogValidationException("Los filtros de formas de pago no son válidos.");
         return query with { Search = query.Search?.Trim() };
     }

@@ -8,6 +8,7 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -19,6 +20,63 @@ public sealed class OrderBatchInvoiceTests(
     ServerSliceFixture fixture,
     ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Batch_invoice_keeps_the_new_cash_form_and_replay_does_not_duplicate_the_sale()
+    {
+        var userId = Guid.NewGuid(); var session = Guid.NewGuid(); var orderId = Guid.NewGuid();
+        await SeedAsync(userId, session, orderId, Guid.NewGuid());
+        using var admin = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        var account = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin);
+        var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
+        var save = new SavePaymentMethodRequest(Guid.NewGuid(), $"BATCH-{Guid.NewGuid():N}", "Caja del lote",
+            types.Single(type => type.Code == "Cash").Id, account.AccountId, true, false, false, false, true, 10);
+        using var created = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}", save);
+        Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
+        var form = (await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+        using var client = fixture.CreateUserClient(userId, CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read, OrderPermissionCodes.Recover, OrderPermissionCodes.Invoice);
+        var request = new InvoiceOrdersRequest(session, fixture.WarehouseId, userId, [orderId], "Cash", null,
+            DocumentType: PosSaleDocumentTypes.Receipt, PaymentMethodId: form.PaymentMethodId, PaymentMethodVersion: form.Version,
+            PaymentFormCode: form.Code, PaymentFormName: form.Name, AccountId: form.AccountId);
+        var key = Guid.NewGuid().ToString("N");
+        InvoiceOrdersResponse result;
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            result = await InvoiceAsync(client, request, key);
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally { fixture.ResumeDocumentProcessing(); }
+        Assert.Equal("Completed", result.Status);
+        var invoice = Assert.Single(result.Results);
+        var replay = await InvoiceAsync(client, request, key);
+        Assert.True(replay.IsReplay); Assert.Equal(result.OperationId, replay.OperationId);
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        await using var query = new SqlCommand("""
+            SELECT payment.PaymentMethodId,payment.PaymentMethodCode,
+              (SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Document),
+              (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks WHERE OrderId=@Order),
+              (SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Document),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Document),
+              payment.AccountId,
+              (SELECT COUNT(*) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                WHERE entry.SourceDocumentId=@Document AND entry.DebitTotal=entry.CreditTotal
+                  AND line.AccountId=@Account AND line.Debit=payment.Amount)
+            FROM dbo.SalesPayments payment WHERE DocumentId=@Document;
+            """, connection);
+        query.Parameters.AddWithValue("@Document", invoice.DocumentId); query.Parameters.AddWithValue("@Order", orderId);
+        query.Parameters.AddWithValue("@Account",form.AccountId);
+        await using var reader = await query.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync());
+        Assert.Equal(form.PaymentMethodId, reader.GetGuid(0)); Assert.Equal(form.Code, reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2)); Assert.Equal(1, reader.GetInt32(3));
+        Assert.Equal("Completed", reader.GetString(4)); Assert.Equal(1, reader.GetInt32(5));
+        Assert.Equal(form.AccountId,reader.GetGuid(6)); Assert.Equal(1,reader.GetInt32(7));
+        Assert.False(await reader.ReadAsync());
+    }
+
     [Fact]
     public async Task Quota_failure_leaves_order_unprepared_and_a_new_request_can_invoice_it()
     {

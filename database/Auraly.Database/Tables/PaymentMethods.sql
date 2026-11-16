@@ -16,6 +16,7 @@ CREATE TABLE [reference].[PaymentMethods]
     [Version] int NOT NULL CONSTRAINT [DF_PaymentMethods_Version] DEFAULT 1,
     [CreatedAt] datetimeoffset(7) NOT NULL,
     [UpdatedAt] datetimeoffset(7) NOT NULL,
+    [TypeLockedAt] datetimeoffset(7) NULL,
     [RowVersion] rowversion NOT NULL,
     CONSTRAINT [PK_PaymentMethods] PRIMARY KEY ([TenantId],[PaymentMethodId]),
     CONSTRAINT [UQ_PaymentMethods_Identity] UNIQUE ([PaymentMethodId]),

@@ -73,6 +73,18 @@ internal static class SqlSaleUblPartyReader
             ?? throw new InvalidOperationException(
                 $"El tipo de identificación '{sourceIdentificationType}' no tiene equivalencia DIAN.");
         var identification = reader.GetString(1);
+        var address = new PosSaleUblAddressContract(
+            reader.IsDBNull(10) ? fallback.MunicipalityCode : reader.GetString(10),
+            reader.IsDBNull(11) ? fallback.CityName : reader.GetString(11),
+            reader.IsDBNull(9) ? fallback.DepartmentName : reader.GetString(9),
+            reader.IsDBNull(8) ? fallback.DepartmentCode : reader.GetString(8),
+            reader.IsDBNull(12) ? fallback.AddressLine : reader.GetString(12),
+            reader.IsDBNull(6) ? fallback.CountryCode : reader.GetString(6),
+            reader.IsDBNull(7) ? fallback.CountryName : reader.GetString(7));
+        var email = reader.IsDBNull(13) ? null : reader.GetString(13);
+        var telephone = reader.IsDBNull(14) ? null : reader.GetString(14);
+        if (identification == "222222222222")
+            return FinalConsumer(address) with { Email = email, Telephone = telephone };
         var checkDigit = PosSaleFiscalMappings.DianCheckDigit(
             dianIdentificationType,
             identification,
@@ -89,16 +101,7 @@ internal static class SqlSaleUblPartyReader
             "R-99-PN",
             "01",
             "IVA",
-            new PosSaleUblAddressContract(
-                reader.IsDBNull(10) ? fallback.MunicipalityCode : reader.GetString(10),
-                reader.IsDBNull(11) ? fallback.CityName : reader.GetString(11),
-                reader.IsDBNull(9) ? fallback.DepartmentName : reader.GetString(9),
-                reader.IsDBNull(8) ? fallback.DepartmentCode : reader.GetString(8),
-                reader.IsDBNull(12) ? fallback.AddressLine : reader.GetString(12),
-                reader.IsDBNull(6) ? fallback.CountryCode : reader.GetString(6),
-                reader.IsDBNull(7) ? fallback.CountryName : reader.GetString(7)),
-            reader.IsDBNull(13) ? null : reader.GetString(13),
-            reader.IsDBNull(14) ? null : reader.GetString(14));
+            address, email, telephone);
     }
 
     private static PosSaleUblPartyContract FinalConsumer(

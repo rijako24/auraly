@@ -15,13 +15,15 @@ public sealed record PosPriceLineRequest(
 
 public sealed partial class PosCatalogStore
 {
-    public async Task<string> PointOfSaleModeAsync(CancellationToken ct = default)
+    public async Task<(string Mode, string? TimeZone)> WorkspaceConfigurationAsync(CancellationToken ct = default)
     {
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT PointOfSaleMode FROM PosPricingConfiguration WHERE ConfigurationId=1;";
-        return (string?)await command.ExecuteScalarAsync(ct) ?? throw new InvalidDataException("Falta la configuración de presentación del POS.");
+        command.CommandText = "SELECT PointOfSaleMode,TimeZone FROM PosPricingConfiguration WHERE ConfigurationId=1;";
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) throw new InvalidDataException("Falta la configuración de presentación del POS.");
+        return (reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1));
     }
 
     public async Task<IReadOnlyList<PosCatalogCategory>> CategoriesAsync(CancellationToken ct = default)
@@ -123,17 +125,26 @@ public sealed partial class PosCatalogStore
 
         var promotions = new List<PosPromotion>();
         var allowCombination = false;
+        string? mode = null;
+        string? timeZone = null;
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT AllowPromotionChannelCombination FROM PosPricingConfiguration WHERE ConfigurationId=1;";
-            allowCombination = Convert.ToInt32(await command.ExecuteScalarAsync(ct) ?? 0) == 1;
+            command.CommandText = "SELECT AllowPromotionChannelCombination,PointOfSaleMode,TimeZone FROM PosPricingConfiguration WHERE ConfigurationId=1;";
+            await using (var configuration = await command.ExecuteReaderAsync(ct))
+            {
+                if (!await configuration.ReadAsync(ct)) throw new InvalidDataException("Falta la configuración del POS.");
+                allowCombination = configuration.GetInt32(0) == 1;
+                mode = configuration.GetString(1);
+                timeZone = configuration.IsDBNull(2) ? null : configuration.GetString(2);
+            }
             command.CommandText = "SELECT Payload FROM PosPromotions ORDER BY Priority DESC,CreatedAtUtc,PromotionId;";
             await using var reader = await command.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
                 promotions.Add(JsonSerializer.Deserialize<PosPromotion>(reader.GetString(0))
                     ?? throw new InvalidDataException("The local promotion payload is invalid."));
         }
-        return new(channels, tiers, exclusions, customers, rules, null, allowCombination, promotions);
+        return new(channels, tiers, exclusions, customers, rules, null, allowCombination, promotions,
+            PointOfSaleMode: mode, TimeZone: timeZone);
     }
 
     public async Task<IReadOnlyCollection<PosCustomerPricing>> SearchCustomersAsync(
@@ -359,9 +370,9 @@ public sealed partial class PosCatalogStore
             DELETE FROM PosWithholdingRules;
             DELETE FROM PosPromotions;
             UPDATE PosPricingConfiguration
-            SET AllowPromotionChannelCombination=@AllowCombination,PointOfSaleMode=COALESCE(@Mode,PointOfSaleMode)
+            SET AllowPromotionChannelCombination=@AllowCombination,PointOfSaleMode=COALESCE(@Mode,PointOfSaleMode),TimeZone=@TimeZone
             WHERE ConfigurationId=1;
-            """, [Q("@AllowCombination", snapshot.AllowPromotionChannelCombination ? 1 : 0), Q("@Mode", snapshot.PointOfSaleMode)], ct);
+            """, [Q("@AllowCombination", snapshot.AllowPromotionChannelCombination ? 1 : 0), Q("@Mode", snapshot.PointOfSaleMode), Q("@TimeZone", snapshot.TimeZone)], ct);
         foreach (var channel in snapshot.PriceChannels)
             await ExecutePricingAsync(connection, transaction, """
                 INSERT INTO PosPriceChannels(PriceChannelId,Code,Name,Strategy,Value)
@@ -773,11 +784,24 @@ public sealed partial class PosCatalogStore
         await command.ExecuteNonQueryAsync(ct);
         command.CommandText = "PRAGMA table_info(PosPricingConfiguration);";
         var hasMode = false;
+        var hasTimeZone = false;
         await using (var reader = await command.ExecuteReaderAsync(ct))
-            while (await reader.ReadAsync(ct)) hasMode |= reader.GetString(1) == "PointOfSaleMode";
+            while (await reader.ReadAsync(ct))
+            {
+                hasMode |= reader.GetString(1) == "PointOfSaleMode";
+                hasTimeZone |= reader.GetString(1) == "TimeZone";
+            }
         if (!hasMode)
         {
             command.CommandText = "ALTER TABLE PosPricingConfiguration ADD COLUMN PointOfSaleMode TEXT NOT NULL DEFAULT 'DirectSale';";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        if (!hasTimeZone)
+        {
+            command.CommandText = """
+                ALTER TABLE PosPricingConfiguration ADD COLUMN TimeZone TEXT NULL;
+                UPDATE PosPricingSynchronizationState SET ConfigurationCursor=NULL WHERE StateId=1;
+                """;
             await command.ExecuteNonQueryAsync(ct);
         }
         command.CommandText = "PRAGMA table_info(PosPricingCustomers);";

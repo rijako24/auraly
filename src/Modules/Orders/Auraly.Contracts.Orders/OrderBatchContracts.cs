@@ -14,7 +14,12 @@ public sealed record InvoiceOrdersRequest(
     string DocumentType = "SalesInvoice",
     Guid? BankAccountId = null,
     string? PaymentNotes = null,
-    IReadOnlyList<OrderInvoiceChargeSelection>? Charges = null);
+    IReadOnlyList<OrderInvoiceChargeSelection>? Charges = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentFormCode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentFormName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record OrderInvoiceChargeSelection(
     Guid ChargeId,

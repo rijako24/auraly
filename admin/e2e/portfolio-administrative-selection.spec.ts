@@ -107,8 +107,17 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
   await expect(modal.getByLabel("Abono para FV-1",{exact:true})).toHaveValue("50");
   expect(requests).toHaveLength(5);expect(requests[4].searchParams.get("page")).toBe("1");expect(requests[4].searchParams.get("search")).toBe("FV-1");
   await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+  const paymentDate=modal.getByRole("button",{name:"Fecha del pago",exact:true});
+  await expect(paymentDate).toContainText("9 de noviembre de 2026");
+  await expect(modal.getByText("Cambio a entregar",{exact:true})).toHaveCount(0);
+  await paymentDate.click();
+  await modal.getByRole("button",{name:"10 de noviembre de 2026",exact:true}).click();
   await modal.getByRole("button",{name:"Atrás",exact:true}).click();
+  await expect(paymentDate).toHaveCount(0);
   await expect(modal.getByLabel("Abono para FV-1",{exact:true})).toHaveValue("50");
+  await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+  await expect(paymentDate).toContainText("10 de noviembre de 2026");
+  await modal.getByRole("button",{name:"Atrás",exact:true}).click();
   expect(requests).toHaveLength(5);
   await filter.getByLabel("Documento o referencia",{exact:true}).fill("sin coincidencias");
   await page.clock.runFor(300);
@@ -123,12 +132,13 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
   expect(requests).toHaveLength(8);expect(detailReads).toBe(1);
   await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
   await expect(page.getByText("Ningún abono puede superar el saldo de la factura.",{exact:true})).toBeVisible();
-  for (const label of ["Fecha del pago", "Registro desde", "Registro hasta"]) {
+  await expect(modal.getByRole("button", {name:"Fecha del pago",exact:true})).toHaveCount(0);
+  for (const label of ["Registro desde", "Registro hasta"]) {
     const date = modal.getByRole("button", {name:label,exact:true});
     await date.click();
     await modal.getByRole("button", {name:"Elegir hoy",exact:true}).click();
     await expect(date).toContainText("11 de noviembre de 2026");
-    if(label!=="Fecha del pago")await expect.poll(()=>requests.at(-1)?.searchParams.get(label==="Registro desde"?"from":"to")).toBe("2026-11-11");
+    await expect.poll(()=>requests.at(-1)?.searchParams.get(label==="Registro desde"?"from":"to")).toBe("2026-11-11");
   }
   await expect.poll(()=>requests.length).toBe(10);expect(detailReads).toBe(1);
   await filter.getByRole("checkbox",{name:"Sólo vencidas",exact:true}).check();

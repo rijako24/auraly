@@ -71,6 +71,16 @@ La solicitud HTTP de carga no permanece abierta mientras DIAN procesa. Los worke
 
 Auraly no reconstruye una factura histórica leyendo maestros actuales. El payload congelado contiene emisor, adquirente, autorización/rango, número DIAN, fecha/hora, moneda, líneas, cantidades, unidades, precios, descuentos, impuestos, totales, software y datos mínimos de pago.
 
+La captura nueva de consumidor final usa la misma identidad fiscal al no elegir
+cliente y al seleccionar explícitamente su tercero del maestro. El lector común
+`SqlSaleUblPartyReader` reconoce su identificación fiscal y reutiliza su
+proyección `FinalConsumer`: persona natural, identificación 13, responsabilidad
+R-99-PN y tributo ZZ / No aplica. Conserva la sede y los contactos seleccionados;
+la clasificación administrativa de Party no sustituye esa identidad fiscal.
+No agrega consultas ni modifica terceros o snapshots ya aceptados. Una factura
+histórica rechazada exige su tratamiento explícito y auditado antes del reenvío;
+actualizar el lector no reescribe ni reintenta esos documentos.
+
 Cuando el emisor aplica ajuste al peso, el snapshot comercial y el fiscal congelan
 el mismo valor. El UBL publica `PayableRoundingAmount` y valida que el total a pagar
 sea total con impuestos más dicho ajuste; cero se omite. El motor nunca inventa un

@@ -2,9 +2,9 @@ import { expect, test, type Route } from "@playwright/test";
 import { login } from "./support/auth";
 
 for (const mode of ["browser", "installed-online", "prepared"] as const) {
-  for (const catalogState of ["ready", "credit", "missing", "previous"] as const) {
+  for (const catalogState of ["ready", "credit", "cards", "missing", "previous"] as const) {
   const automaticCredit = catalogState === "credit";
-  test(`${catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
+  test(`${catalogState === "cards" ? "native card capture opens only after selecting a form and preserves approval" : catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
     test.setTimeout(150_000);
     if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
     else await page.context().addCookies([{ name: "auth_token", value: "printing-test", url: baseURL!, httpOnly: true }]);
@@ -50,6 +50,7 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       methodCode, accountId: `account-${index}`, useForSales: true, useForReceipts: true,
       useForSupplierPayments: true, useForPayroll: true, isActive: true,
     }));
+    if (catalogState === "cards") forms.push({ ...forms[1], paymentMethodId: "form-other-debit", code: "OTHER-DEBIT", name: "Otra tarjeta débito" });
     const printed: string[] = [];
     const handle = async (route: Route) => {
       const request = route.request(), url = new URL(request.url()), path = url.pathname;
@@ -77,7 +78,8 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       else if (path.endsWith("/settlement")) body = { grossAmount: 1000, withholdingTotal: 0, netAmount: 1000, lines: [] };
       else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [],
         ...(catalogState === "missing" ? {} : { paymentMethods: { contractVersion: catalogState === "previous" ? 1 : 2, forms } }) };
-      else if (path.endsWith("/reference-options/payment-method")) body = automaticCredit
+      else if (path.endsWith("/reference-options/card-franchise")) body = [{ code: "Visa", label: "Visa" }];
+      else if (path.endsWith("/reference-options/payment-method")) body = automaticCredit || catalogState === "cards"
         ? (["Cash", "DebitCard", "CreditCard", "Transfer", "Credit"] as const).map(code => ({ code,
           label: { Cash: "Efectivo", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Credit: "Crédito cliente" }[code] }))
         : [{ code: "Cash", label: "Efectivo" }, { code: "Transfer", label: "Transferencia" }, { code: "Credit", label: "Crédito cliente" }];
@@ -101,6 +103,40 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
     };
     await page.route("**/api/**", handle);
     await page.route("**/edge/v1/**", handle);
+
+    if (catalogState === "cards") {
+      await page.goto("/pos");
+      await expect(page.locator("#pos-scanner")).toBeEnabled();
+      await page.getByRole("button", { name: /^Cobrar/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Finalizar venta" });
+      await expect(dialog.getByText("Fecha del pago", { exact: true })).toHaveCount(0);
+      const cash = dialog.getByRole("textbox", { name: "Valor recibido en Efectivo" });
+      await cash.fill("1200");
+      await expect(dialog.getByText("Cambio a entregar", { exact: true })).toBeVisible();
+      const details = page.getByRole("dialog", { name: "Datos de la tarjeta", exact: true });
+      const picker = dialog.getByRole("combobox", { name: "Medio de pago" });
+      for (const [shortcut, form] of [["F2", "Otra tarjeta débito"], ["F3", "Forma CreditCard"]] as const) {
+        await page.keyboard.press(shortcut);
+        if (shortcut === "F2") {
+          await expect(details).toHaveCount(0);
+          await picker.click(); await page.getByRole("option", { name: form, exact: true }).click();
+        } else await expect(picker).toContainText(form);
+        await expect(details).toBeVisible();
+        await details.getByPlaceholder("Aprobación del datáfono").fill("APROBACION-VENTA");
+        await details.getByRole("button", { name: "Guardar datos · Enter", exact: true }).click();
+        await picker.click(); await page.getByRole("option", { name: form, exact: true }).click();
+        await expect(details).toHaveCount(0);
+        await dialog.getByRole("button", { name: /Visa · APROBACION-VENTA/ }).click();
+        await expect(details.getByPlaceholder("Aprobación del datáfono")).toHaveValue("APROBACION-VENTA");
+        await details.getByRole("button", { name: "Cerrar datos de tarjeta", exact: true }).click();
+      }
+      await dialog.getByRole("textbox", { name: "Valor recibido en Tarjeta crédito" }).fill("1000");
+      await dialog.getByRole("button", { name: "Sin imprimir", exact: true }).click();
+      await expect.poll(() => completions.length).toBe(1);
+      expect(completions[0].payments).toMatchObject([{ methodCode: "CreditCard", paymentMethodId: "form-2", amount: 1000,
+        approvalNumber: "APROBACION-VENTA", cardFranchiseCode: "Visa" }]);
+      return;
+    }
 
     if (catalogState === "missing" || catalogState === "previous") {
       await page.goto("/pos");

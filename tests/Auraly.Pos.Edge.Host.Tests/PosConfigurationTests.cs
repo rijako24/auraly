@@ -268,11 +268,35 @@ public sealed class PosConfigurationTests
             Assert.Equal(form.AccountId, savedForm.AccountId);
             Assert.Equal(form.RowVersion, savedForm.RowVersion);
 
+            var cashForms = Enumerable.Range(0, 215).Select(index => form with
+            {
+                PaymentMethodId = Guid.NewGuid(), Code = $"CASH-{index:000}", Name = $"Caja {index:000}",
+                MethodCode = "Cash", BankAccountId = null, SortOrder = index,
+                IsActive = index != 214, UseForSales = index != 213
+            }).ToArray();
+            await store.ApplySettlementConfigurationAsync(new(true, [],
+                new Auraly.Contracts.Catalog.PaymentMethodCatalogSnapshot(2, [form, ..cashForms])));
+            var first = await reopened.PaymentMethodsPageAsync(new(1, 100, Usage: "Sales", MethodCode: "Cash"));
+            var second = await reopened.PaymentMethodsPageAsync(new(2, 100, Usage: "Sales", MethodCode: "Cash"));
+            var last = await reopened.PaymentMethodsPageAsync(new(3, 100, Usage: "Sales", MethodCode: "Cash"));
+            Assert.Equal(213, first.TotalCount);
+            Assert.Equal(100, first.Items.Count);
+            Assert.Equal(100, second.Items.Count);
+            Assert.Equal(13, last.Items.Count);
+            Assert.Equal(cashForms.Select(value => value.PaymentMethodId).Take(213),
+                first.Items.Concat(second.Items).Concat(last.Items).Select(value => value.PaymentMethodId));
+            var searched = await reopened.PaymentMethodsPageAsync(new(Search: "Caja 110", Usage: "Sales", MethodCode: "Cash"));
+            Assert.Equal(cashForms[110].PaymentMethodId, Assert.Single(searched.Items).PaymentMethodId);
+            Assert.Empty((await reopened.PaymentMethodsPageAsync(new(Usage: "Sales", MethodCode: "CreditCard"))).Items);
+            await Assert.ThrowsAsync<ArgumentException>(() => reopened.PaymentMethodsPageAsync(new(PageSize: 101, Usage: "Sales")));
+            await Assert.ThrowsAsync<ArgumentException>(() => reopened.PaymentMethodsPageAsync(new(Usage: "Payroll")));
+
             await store.ApplySettlementConfigurationAsync(new(false, []));
             var disabled = await store.SettlementConfigurationAsync();
             Assert.False(disabled.IsAccountingEnabled);
             Assert.Empty(disabled.BankAccounts);
             Assert.Null(disabled.PaymentMethods);
+            await Assert.ThrowsAsync<InvalidDataException>(() => reopened.PaymentMethodsPageAsync(new(Usage: "Sales")));
         }
         finally
         {

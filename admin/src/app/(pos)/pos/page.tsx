@@ -1,5 +1,7 @@
 "use client";
 
+import type { PaymentMethod, PaymentMethodQuery } from "@/services/api/payment-methods";
+
 import {
   AlertTriangle,
   ArrowLeft,
@@ -365,6 +367,7 @@ export default function PosPage() {
     businessId: "",
     warehouseId: "",
     pointOfSaleMode: "DirectSale",
+    timeZone: undefined as string | undefined,
     businessName: "",
     warehouseName: "",
     warehouseAllowsNegativeStockSales: false,
@@ -382,6 +385,9 @@ export default function PosPage() {
     edgePermissions,
     permissions,
   );
+  const contextTimeZone = useBusinessContextStore((state) => state.businesses.find(
+    (item) => item.businessId === workstation.businessId)?.timeZone);
+  const orderTimeZone = workstation.timeZone ?? onlineOptions.find((option) => option.businessId === workstation.businessId)?.timeZone ?? contextTimeZone;
   const canChangeWorkspace = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.workspace.change");
 
@@ -630,6 +636,11 @@ export default function PosPage() {
     [getOrderClient],
   );
 
+  const loadOrderPaymentMethods = useCallback(
+    async (query: PaymentMethodQuery) => (await getOrderClient()).paymentMethods(query),
+    [getOrderClient],
+  );
+
   const recoverOrderOnline = useCallback(async (orderId: string) => {
     if (recoveryBlockedReason) throw new Error(recoveryBlockedReason);
     const { orderClient, recovered } = await runOnlineOrderRequest(async () => {
@@ -679,13 +690,13 @@ export default function PosPage() {
     // The store drawer owns its order page only while open; no hidden counter
     // requests or auxiliary page are needed for its icon-only entry point.
     if (isStore || isRestaurantOrder) return;
-    if (!client) {
+    if (!client || !orderTimeZone) {
       setOrdersCount(0);
       return;
     }
     if (sidePanel === "orders") return;
     let active = true;
-    const range = orderDayRange(localOrderDateValue());
+    const range = orderDayRange(localOrderDateValue(orderTimeZone), orderTimeZone);
     void loadOrders({ ...range, status: "Available", page: 1, pageSize: 1 })
       .then((page) => {
         if (active) setOrdersCount(page.totalCount);
@@ -694,7 +705,7 @@ export default function PosPage() {
         if (active) setOrdersCount(0);
       });
     return () => { active = false; };
-  }, [client, isStore, isRestaurantOrder, loadOrders, ordersRefreshVersion, sidePanel]);
+  }, [client, isStore, isRestaurantOrder, loadOrders, ordersRefreshVersion, sidePanel, orderTimeZone]);
 
   useEffect(() => {
     let active = true;
@@ -762,6 +773,7 @@ export default function PosPage() {
                 businessId: health.businessId,
                 warehouseId: health.warehouseId,
                 pointOfSaleMode: health.pointOfSaleMode ?? "DirectSale",
+                timeZone: health.timeZone ?? undefined,
                 businessName: health.businessName,
                 warehouseName: health.warehouseName,
                 warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
@@ -901,6 +913,7 @@ export default function PosPage() {
         businessId: health.businessId,
         warehouseId: health.warehouseId,
         pointOfSaleMode: health.pointOfSaleMode ?? "DirectSale",
+        timeZone: health.timeZone ?? undefined,
         businessName: health.businessName,
         warehouseName: health.warehouseName,
         warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
@@ -2889,6 +2902,7 @@ export default function PosPage() {
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
     charges?: OrderInvoiceChargeSelection[] | null,
+    paymentForm?: PaymentMethod,
   ) {
     const result = await runOnlineOrderRequest(async () => {
       const orderClient = await getOrderClient();
@@ -2904,6 +2918,7 @@ export default function PosPage() {
         onProgress,
         true,
         charges,
+        paymentForm,
       );
     });
     setMessage(
@@ -2975,6 +2990,7 @@ export default function PosPage() {
         businessId: context.businessId,
         warehouseId: context.warehouseId,
         pointOfSaleMode: context.pointOfSaleMode ?? "DirectSale",
+        timeZone: context.timeZone,
         businessName: context.businessName,
         warehouseName: context.warehouseName,
         warehouseAllowsNegativeStockSales: context.warehouseAllowsNegativeStockSales,
@@ -3387,6 +3403,9 @@ export default function PosPage() {
               </div>
             ) : !ordersExpanded ? (
               <OrdersWorkspace
+                timeZone={orderTimeZone}
+                businessId={workstation.businessId}
+                loadPaymentMethods={loadOrderPaymentMethods}
                 key={isStore || isRestaurantOrder ? "drawer-orders" : `compact-orders-${ordersRefreshVersion}`}
                 compact
                 initialStatus="Available"
@@ -3397,7 +3416,7 @@ export default function PosPage() {
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
@@ -3407,6 +3426,7 @@ export default function PosPage() {
                     onProgress,
                     undefined,
                     charges,
+                    paymentForm,
                   )
                 }
                 onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}
@@ -4022,6 +4042,9 @@ export default function PosPage() {
           </header>
           <main className="min-h-0 flex-1 overflow-auto p-5">
             <OrdersWorkspace
+              timeZone={orderTimeZone}
+              businessId={workstation.businessId}
+              loadPaymentMethods={loadOrderPaymentMethods}
               key={`expanded-orders-${ordersRefreshVersion}`}
               initialStatus="Available"
               activeOrderId={draft?.sourceOrderId}
@@ -4031,7 +4054,7 @@ export default function PosPage() {
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
@@ -4041,6 +4064,7 @@ export default function PosPage() {
                   onProgress,
                   undefined,
                   charges,
+                  paymentForm,
                 )
               }
               onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}

@@ -20,6 +20,53 @@ public sealed record PosAccountingSettlementConfiguration(
 
 public sealed partial class PosCatalogStore
 {
+    public async Task<PaymentMethodPage> PaymentMethodsPageAsync(PaymentMethodQuery query, CancellationToken ct = default)
+    {
+        if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
+            ((long)query.Page - 1) * query.PageSize > int.MaxValue || query.Search?.Length > 160 ||
+            query.MethodCode?.Length > 32 || query.Usage != "Sales")
+            throw new ArgumentException("Los filtros de formas de pago no son válidos.");
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        const string filtered = """
+            FROM PosSettlementConfiguration state,json_each(state.PaymentMethodsJson,'$.Forms') entry
+            WHERE state.ConfigurationId=1 AND json_extract(entry.value,'$.IsActive')=1
+              AND json_extract(entry.value,'$.UseForSales')=1
+              AND ($method IS NULL OR json_extract(entry.value,'$.MethodCode')=$method)
+              AND ($search IS NULL OR json_extract(entry.value,'$.Code') LIKE $search
+                OR json_extract(entry.value,'$.Name') LIKE $search)
+            """;
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT json_extract(PaymentMethodsJson,'$.ContractVersion'),(SELECT COUNT(*) {filtered})
+            FROM PosSettlementConfiguration WHERE ConfigurationId=1;
+            SELECT entry.value {filtered}
+            ORDER BY json_extract(entry.value,'$.SortOrder'),json_extract(entry.value,'$.Code'),json_extract(entry.value,'$.PaymentMethodId')
+            LIMIT $take OFFSET $skip;
+            """;
+        command.Parameters.AddWithValue("$method", (object?)query.MethodCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("$search", string.IsNullOrWhiteSpace(query.Search) ? DBNull.Value : $"%{query.Search.Trim()}%");
+        command.Parameters.AddWithValue("$take", query.PageSize);
+        command.Parameters.AddWithValue("$skip", checked((query.Page - 1) * query.PageSize));
+        var values = new List<PaymentMethodView>();
+        int total;
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (!await reader.ReadAsync(ct) || reader.IsDBNull(0) ||
+                reader.GetInt32(0) != PaymentMethodCatalogSnapshot.CurrentContractVersion)
+                throw new InvalidDataException("Actualiza la preparación del catálogo de formas de pago.");
+            total = reader.GetInt32(1);
+            await reader.NextResultAsync(ct);
+            while (await reader.ReadAsync(ct))
+                values.Add(JsonSerializer.Deserialize<PaymentMethodView>(reader.GetString(0))
+                    ?? throw new InvalidDataException("La forma de pago local no es válida."));
+        }
+        await transaction.CommitAsync(ct);
+        return new(values,query.Page,query.PageSize,total);
+    }
+
     public async Task ApplySettlementConfigurationAsync(
         PosAccountingSettlementConfiguration configuration,
         CancellationToken cancellationToken = default)

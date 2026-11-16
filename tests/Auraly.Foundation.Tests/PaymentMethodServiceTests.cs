@@ -6,6 +6,22 @@ namespace Auraly.Foundation.Tests;
 public sealed class PaymentMethodServiceTests
 {
     [Theory]
+    [InlineData("ServiceInvoices","service-invoices.create")]
+    [InlineData("TipPayments","cash.close")]
+    public async Task Forms_use_the_consuming_module_permission_without_exposing_other_payment_usages(string usage,string permission)
+    {
+        var store = new Store();
+        var service = new PaymentMethodService(store);
+        await service.ListAsync(User(permission), new(Usage: usage));
+        Assert.Equal(1, store.Calls);
+        await Assert.ThrowsAsync<CatalogForbiddenException>(() =>
+            service.ListAsync(User(permission), new(Usage: "SupplierPayments")));
+        await Assert.ThrowsAsync<CatalogForbiddenException>(() =>
+            service.ListAsync(User("sales.create"), new(Usage: usage)));
+        Assert.Equal(1, store.Calls);
+    }
+
+    [Theory]
     [InlineData("VoucherReceipts")]
     [InlineData("VoucherPayments")]
     [InlineData("Receipts")]

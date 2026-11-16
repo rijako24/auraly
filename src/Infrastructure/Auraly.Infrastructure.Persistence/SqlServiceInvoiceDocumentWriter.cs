@@ -76,8 +76,10 @@ internal static class SqlServiceInvoiceDocumentWriter
 
             IF @PaymentAmount>0
               INSERT dbo.SalesPayments
-                (DocumentId,PaymentNumber,MethodCode,Amount,Reference,RegisteredAt)
-              VALUES(@DocumentId,1,@PaymentMethod,@PaymentAmount,@PaymentReference,@PaidAt);
+                (DocumentId,PaymentNumber,MethodCode,Amount,Reference,RegisteredAt,
+                 BankAccountId,PaymentMethodId,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName)
+              VALUES(@DocumentId,1,@PaymentMethod,@PaymentAmount,@PaymentReference,@PaidAt,
+                 @BankAccountId,@PaymentMethodId,@PaymentMethodVersion,@PaymentMethodCode,@PaymentMethodName);
 
             INSERT dbo.FiscalDocuments
               (DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
@@ -130,6 +132,11 @@ internal static class SqlServiceInvoiceDocumentWriter
         Add(command, "@PaymentAmount", snapshot.Payment.Amount);
         Add(command, "@PaymentMethod", write.PaymentMethodCode);
         Add(command, "@PaymentReference", write.PaymentReference);
+        Add(command, "@BankAccountId", snapshot.Payment.BankAccountId);
+        Add(command, "@PaymentMethodId", snapshot.Payment.PaymentMethodId);
+        Add(command, "@PaymentMethodVersion", snapshot.Payment.PaymentMethodVersion);
+        Add(command, "@PaymentMethodCode", snapshot.Payment.PaymentMethodCode);
+        Add(command, "@PaymentMethodName", snapshot.Payment.PaymentMethodName);
         Add(command, "@PaidAt", write.PaymentRegisteredAt);
         Add(command, "@SoldByUserId", snapshot.SoldByUserId);
         Add(command, "@IssuerId", configuration.FiscalIssuerConfigurationId);

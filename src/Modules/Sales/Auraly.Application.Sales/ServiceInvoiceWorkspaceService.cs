@@ -100,6 +100,9 @@ public sealed class ServiceInvoiceWorkspaceService(IServiceInvoiceStore store)
             (request.CreditAmount == 0) != (request.CreditDueDate is null))
             throw new ServiceInvoiceValidationException(
                 "El crédito requiere un valor positivo y una fecha de vencimiento.");
+        if ((request.PaymentMethodId is null) != (request.PaymentMethodVersion is null) ||
+            request.PaymentMethodId == Guid.Empty || request.PaymentMethodVersion is <= 0)
+            throw new ServiceInvoiceValidationException("La identidad de la forma de pago no es válida.");
         return store.IssueAsync(user, request, idempotencyKey.Trim(), cancellationToken);
     }
 

@@ -1,16 +1,15 @@
-export function localOrderDateValue(now = new Date()): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+import { addCalendarDays, businessDateTimeInput, businessDayBoundary } from "../../lib/accounting-document-date";
+
+export function localOrderDateValue(timeZone: string, now = new Date()): string {
+  return businessDateTimeInput(now, timeZone).slice(0, 10);
 }
 
-export function orderDayRange(value: string): {
+export function orderDayRange(value: string, timeZone: string): {
   createdFrom: string;
   createdTo: string;
 } {
-  const start = new Date(`${value}T00:00:00`);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
   return {
-    createdFrom: start.toISOString(),
-    createdTo: end.toISOString(),
+    createdFrom: businessDayBoundary(value, timeZone),
+    createdTo: businessDayBoundary(addCalendarDays(value, 1), timeZone),
   };
 }

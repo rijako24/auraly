@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Commerce.Accounting.Infrastructure;
@@ -14,6 +15,8 @@ public sealed partial class SqlAccountingPostingProcessor
     {
         if (source.DocumentType == AccountingManualDocumentTypes.ManualVoucher)
             return await ResolveManualPaymentMethodsAsync(connection, transaction, source, processedAt, token);
+        if (source.DocumentType is "RestaurantTip" or "RestaurantTipSettlement")
+            return await ResolveRestaurantTipPaymentMethodAsync(connection, transaction, source, processedAt, token);
         var target = source.DocumentType switch
         {
             "SalesInvoice" or "SalesReceipt" or "ServiceInvoice" =>
@@ -89,6 +92,47 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@Expected", configuredCount);
         command.Parameters.AddWithValue("@Now", processedAt);
         return (bool)(await command.ExecuteScalarAsync(token))! ? source : null;
+    }
+
+    private static async Task<SourceEnvelope?> ResolveRestaurantTipPaymentMethodAsync(SqlConnection connection,
+        SqlTransaction transaction, SourceEnvelope source, DateTimeOffset processedAt, CancellationToken token)
+    {
+        var isSettlement = source.DocumentType == "RestaurantTipSettlement";
+        var tip = !isSettlement ? JsonSerializer.Deserialize<RestaurantTipAccountingPayload>(source.PayloadJson) : null;
+        var settlement = isSettlement ? JsonSerializer.Deserialize<RestaurantTipSettlementAccountingPayload>(source.PayloadJson) : null;
+        var formId = isSettlement ? settlement?.PaymentMethodId : tip?.Payment.PaymentMethodId;
+        if (formId is not { } id) return source;
+        var methodCode = isSettlement ? settlement!.PaymentMethodCode : tip!.Payment.MethodCode;
+        await using var command = new SqlCommand("""
+            DECLARE @Resolved table(Version int,FormCode nvarchar(64),FormName nvarchar(160),
+              AccountId uniqueidentifier PRIMARY KEY,AccountCode nvarchar(32),AccountName nvarchar(200),BankAccountId uniqueidentifier);
+            INSERT @Resolved
+            SELECT form.Version,form.Code,form.Name,account.AccountId,account.Code,account.Name,account.BankAccountId
+            FROM reference.PaymentMethods form WITH(HOLDLOCK)
+            JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId
+              AND type.CatalogCode=N'payment-method' AND type.IsActive=1 AND type.Code=@Method
+            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=form.TenantId AND account.AccountId=form.AccountId
+            CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
+            WHERE form.TenantId=@Tenant AND form.PaymentMethodId=@Id AND form.IsActive=1
+              AND ((@Settlement=0 AND form.UseForSales=1 AND ready.SourceType=N'PosPaymentMethod')
+                OR (@Settlement=1 AND form.UseForSupplierPayments=1 AND ready.SourceType=N'SupplierPaymentMethod'));
+            UPDATE account SET ConfigurationLockedAt=@Now FROM dbo.AccountingAccounts account
+            JOIN @Resolved resolved ON resolved.AccountId=account.AccountId
+            WHERE account.TenantId=@Tenant AND account.ConfigurationLockedAt IS NULL;
+            SELECT Version,FormCode,FormName,AccountId,AccountCode,AccountName,BankAccountId FROM @Resolved;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Tenant", source.TenantId);
+        command.Parameters.AddWithValue("@Id", id);
+        command.Parameters.AddWithValue("@Method", methodCode);
+        command.Parameters.AddWithValue("@Settlement", isSettlement);
+        command.Parameters.AddWithValue("@Now", processedAt);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return null;
+        var applied = new VoucherAppliedPaymentMethod(source.DocumentId,id,methodCode,reader.GetInt32(0),
+            reader.GetString(1),reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),
+            methodCode == "Transfer" && !reader.IsDBNull(6) ? reader.GetGuid(6) : null);
+        await reader.NextResultAsync(token);
+        return source with { AppliedPaymentMethods = [applied] };
     }
 
     private static async Task<SourceEnvelope?> ResolveManualPaymentMethodsAsync(SqlConnection connection,

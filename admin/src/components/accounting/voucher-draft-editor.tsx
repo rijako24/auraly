@@ -682,7 +682,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         </div>}
         {!detailLine.value.existingPosition && !detailLine.value.financialConceptId && !readOnly && form.payloadVersion === 4 && !fiscalDocument && <div className="space-y-2 sm:col-span-2"><Label>Forma de pago</Label>
           <PagedEntitySelect<PaymentMethod> value={detailLine.value.paymentEvidence?.paymentMethodId ?? ""}
-            queryKey={["voucher-payment-methods", tenantId, businessId, paymentUsage]} disabled={busy}
+            queryKey={["payment-method-choices", tenantId, businessId, paymentUsage]} disabled={busy}
             ariaLabel="Forma de pago de la partida" placeholder="Selecciona una forma configurada" searchPlaceholder="Buscar código o nombre…"
             emptyMessage="No hay formas habilitadas para esta entrada o salida. Revisa el catálogo de formas de pago."
             selectedOption={detailLine.value.paymentEvidence?.paymentMethodId ? { value: detailLine.value.paymentEvidence.paymentMethodId,

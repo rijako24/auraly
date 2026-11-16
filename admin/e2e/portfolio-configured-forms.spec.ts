@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 for (const bankCount of [0,1,8]) {
-test(`cartera conserva tipos y permite seleccionar ${bankCount} formas bancarias`, async ({page,baseURL}) => {
+for (const methodCode of ["Transfer", "DebitCard", "CreditCard"] as const) {
+test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodCode}`, async ({page,baseURL}) => {
   const id=(value:number)=>`00000000-0000-0000-0000-${String(value).padStart(12,"0")}`;
   const tenantId=id(1),businessId=id(2),customerId=id(3);
   const user={userId:id(4),tenantId,tenantKey:"@forms",username:"forms",firstName:"Prueba",lastName:"Formas",
@@ -12,7 +13,7 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas bancarias
     localStorage.setItem("auth-state",JSON.stringify({state:{isAuthenticated:true,user},version:0}));
   },{user,businessId});
   const forms=[{paymentMethodId:id(10),methodCode:"Cash",name:"Caja principal",bankAccountId:null},
-    ...Array.from({length:bankCount},(_,index)=>({paymentMethodId:id(20+index),methodCode:"Transfer",name:`Banco ${index+1}`,bankAccountId:id(40+index)}))]
+    ...Array.from({length:bankCount},(_,index)=>({paymentMethodId:id(20+index),methodCode,name:`Banco ${index+1}`,bankAccountId:methodCode==="Transfer"?id(40+index):null}))]
     .map((form,index)=>({...form,code:`FORM-${index}`,paymentTypeId:id(60),typeLabel:form.methodCode,
       accountId:id(70+index),accountCode:`1110${index}`,accountName:form.name,useForSales:true,useForReceipts:true,
       useForSupplierPayments:false,useForPayroll:false,isActive:true,sortOrder:index,version:1,rowVersion:"AAAAAAAAAAE="}));
@@ -46,7 +47,7 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas bancarias
       body={items,page:1,pageSize:25,totalCount:items.length,totalPages:items.length};
     }
     else if(path.endsWith("/reference-options/payment-method"))body=["Cash","DebitCard","CreditCard","Transfer","Credit"].map((code,index)=>({id:id(200+index),code,label:{Cash:"Efectivo",DebitCard:"Tarjeta débito",CreditCard:"Tarjeta crédito",Transfer:"Transferencia",Credit:"Crédito cliente"}[code],sortOrder:index}));
-    else if(path.endsWith("/reference-options/card-franchise"))body=[];
+    else if(path.endsWith("/reference-options/card-franchise"))body=[{id:id(250),code:"Visa",label:"Visa",sortOrder:1}];
     else if(path.endsWith("/accounting/settlement-configuration")){configurationReads++;body={isAccountingEnabled:false,bankAccounts:[],paymentMethods:{contractVersion:2,forms}};}
     else if(path.endsWith("/work-sessions/current"))body={workSessionId:id(5)};
     else if(path.endsWith("/receivable-payments/confirm")){
@@ -66,16 +67,69 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas bancarias
   const selection=page.getByRole("dialog",{name:"Abono a cartera"});
   await expect(selection.getByText("Original · COP")).toBeVisible();
   await expect(selection.getByText("35 d")).toHaveCount(2);
+  await expect(selection.getByRole("button", {name:"Fecha del pago",exact:true})).toHaveCount(0);
   await selection.getByLabel("Abono para FV-1").fill("700");
   await selection.getByLabel("Abono para FV-2").fill("700");
   await selection.getByRole("button",{name:"Ir a pagar"}).click();
   const checkout=page.getByRole("dialog",{name:"Abono a cartera"});
   await expect(checkout.getByText("Cambio a entregar",{exact:true})).toHaveCount(0);
-  await page.keyboard.press("F4");
+  const paymentDate = checkout.getByRole("button", {name:"Fecha del pago",exact:true});
+  await expect(paymentDate).toContainText("9 de noviembre de 2026");
+  if (bankCount === 1) {
+    await paymentDate.click();
+    await checkout.getByRole("button", {name:"8 de noviembre de 2026",exact:true}).click();
+    await expect(paymentDate).toContainText("8 de noviembre de 2026");
+  }
+  const shortcut = methodCode === "Transfer" ? "F4" : methodCode === "DebitCard" ? "F2" : "F3";
+  await page.keyboard.press(shortcut);
+  const cardDialog = page.getByRole("dialog", {name:"Datos de la tarjeta",exact:true});
+  if (bankCount !== 1) await expect(cardDialog).toHaveCount(0);
   if(bankCount===0) {
     await expect(checkout.getByText("No hay formas activas para este tipo de pago y operación. Revisa Formas de pago.")).toBeVisible();
     await expect(checkout.getByRole("button",{name:"Sin imprimir",exact:true})).toBeDisabled();
     expect(confirmation).toBeNull();
+    expect(configurationReads).toBe(1);
+    return;
+  }
+  if (methodCode !== "Transfer") {
+    const picker = checkout.getByRole("combobox", {name:"Medio de pago"}).first();
+    if (bankCount === 1) await expect(picker).toContainText("Banco 1");
+    else {
+      await picker.click();
+      await page.getByRole("option", {name:"Banco 7",exact:true}).click();
+    }
+    await expect(cardDialog).toBeVisible();
+    await cardDialog.getByPlaceholder("Aprobación del datáfono").fill("APROBACION-1");
+    await cardDialog.getByRole("button", {name:"Guardar datos · Enter",exact:true}).click();
+    await expect(cardDialog).toHaveCount(0);
+    await picker.click();
+    await page.getByRole("option", {name:bankCount === 1 ? "Banco 1" : "Banco 7",exact:true}).click();
+    await expect(cardDialog).toHaveCount(0);
+    await checkout.getByRole("button", {name:/Visa · APROBACION-1/}).click();
+    await expect(cardDialog.getByPlaceholder("Aprobación del datáfono")).toHaveValue("APROBACION-1");
+    await cardDialog.getByRole("button", {name:"Cerrar datos de tarjeta",exact:true}).click();
+    const amount = checkout.getByRole("textbox", {name:methodCode === "DebitCard" ? "Valor recibido en Tarjeta débito" : "Valor recibido en Tarjeta crédito"}).first();
+    await amount.fill("1600");
+    await expect(checkout.getByText("La diferencia requiere un concepto o corregir los importes.", {exact:true})).toBeVisible();
+    await expect(checkout.getByRole("button", {name:"Sin imprimir",exact:true})).toBeDisabled();
+    await amount.fill("1400");
+    // A covered amount still replaces the active type; cash has no data modal.
+    await page.keyboard.press("F1");
+    await expect(picker).toContainText("Caja principal");
+    await expect(cardDialog).toHaveCount(0);
+    await expect(checkout.getByRole("textbox", {name:"Valor recibido en Efectivo"})).toHaveValue("1.400");
+    await page.keyboard.press(shortcut);
+    if (bankCount !== 1) {
+      await expect(cardDialog).toHaveCount(0);
+      await picker.click(); await page.getByRole("option", {name:"Banco 8",exact:true}).click();
+    }
+    await expect(cardDialog).toBeVisible();
+    await cardDialog.getByPlaceholder("Aprobación del datáfono").fill("APROBACION-2");
+    await cardDialog.getByRole("button", {name:"Guardar datos · Enter",exact:true}).click();
+    await checkout.getByRole("button", {name:"Sin imprimir",exact:true}).click();
+    await expect.poll(()=>confirmation).not.toBeNull();
+    expect(confirmation).toMatchObject({paidOn:bankCount===1?"2026-11-08":"2026-11-09",payments:[{methodCode,paymentMethodId:id(bankCount===1?20:27),
+      amount:1400,cardFranchiseCode:"Visa",approvalNumber:"APROBACION-2"}]});
     expect(configurationReads).toBe(1);
     return;
   }
@@ -85,7 +139,7 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas bancarias
     await page.getByRole("button",{name:"Guardar transferencia",exact:true}).click();
     await checkout.getByRole("button",{name:"Sin imprimir",exact:true}).click();
     await expect.poll(()=>confirmation).not.toBeNull();
-    expect(confirmation).toMatchObject({payments:[{methodCode:"Transfer",paymentMethodId:id(20),bankAccountId:id(40),amount:1400,reference:"REF-1"}]});
+    expect(confirmation).toMatchObject({paidOn:"2026-11-08",payments:[{methodCode:"Transfer",paymentMethodId:id(20),bankAccountId:id(40),amount:1400,reference:"REF-1"}]});
     expect(configurationReads).toBe(1);
     await expect(checkout).not.toBeVisible();
     expect(receiptListReads).toBe(1);
@@ -118,4 +172,5 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas bancarias
   expect(configurationReads).toBe(1);
 });
 
+}
 }

@@ -12,6 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { PaymentMethodCatalogSnapshot } from "@/services/api/payment-methods";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Label } from "@/components/ui/label";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocumentType, type PosPrintTemplateFormat } from "@/services/pos/pos-edge-client";
@@ -60,6 +62,7 @@ export function PosPaymentDialog({
   onCancel,
   onConfirm,
   portfolioDirection,
+  portfolioPaymentDate,
   onBack,
   maxPaymentMethods,
   submissionError,
@@ -83,6 +86,7 @@ export function PosPaymentDialog({
     methodLabels: Readonly<Record<string, string>>,
   ) => Promise<void>;
   portfolioDirection?: "receivable" | "payable";
+  portfolioPaymentDate?: { value: string; today?: string; onChange: (value: string) => void };
   onBack?: () => void;
   maxPaymentMethods?: number;
   submissionError?: { title: string; message: string } | null;
@@ -158,21 +162,22 @@ export function PosPaymentDialog({
       amount: portfolioDirection ? total : paymentTotalForCollection(total), reference: null }]);
   }, [methods, payments.length, total, portfolioDirection]);
 
+  const selectOnlyForm = useCallback((payment: PaymentRow): PaymentRow => {
+    if (payment.paymentMethodId) return payment;
+    const eligible = forms.filter(form => form.methodCode === payment.methodCode);
+    if (eligible.length !== 1) return payment;
+    const form = eligible[0];
+    return { ...payment, paymentMethodId: form.paymentMethodId, paymentMethodVersion: form.version,
+      bankAccountId: payment.methodCode === "Transfer" ? form.bankAccountId : null };
+  }, [forms]);
+
   useEffect(() => {
     if (!catalogReady) return;
-    setPayments(current=>{
-      let changed=false;
-      const next=current.map(payment=>{
-        if(payment.paymentMethodId)return payment;
-        const eligible=forms.filter(form=>form.methodCode===payment.methodCode);
-        if(eligible.length!==1)return payment;
-        changed=true;
-        return {...payment,paymentMethodId:eligible[0].paymentMethodId,paymentMethodVersion:eligible[0].version,
-          bankAccountId:payment.methodCode==="Transfer"?eligible[0].bankAccountId:null};
-      });
-      return changed?next:current;
+    setPayments(current => {
+      const next = current.map(selectOnlyForm);
+      return next.some((payment, index) => payment !== current[index]) ? next : current;
     });
-  },[catalogReady,forms,payments]);
+  }, [catalogReady, selectOnlyForm, payments]);
 
   useEffect(() => {
     if (!client.printerConfigurationForSale) return;
@@ -251,13 +256,15 @@ export function PosPaymentDialog({
   const requiresCardCapture = useCallback((methodCode: string) =>
     methodCode === "Card" || methodCode === "DebitCard" || methodCode === "CreditCard", []);
 
-  const openCardCapture = useCallback((paymentId: string) => {
+  const openCardCapture = useCallback((paymentId: string, payment: PaymentRow) => {
+    if (!payment.paymentMethodId) return;
     const firstFranchise = cardFranchises.data?.[0]?.code ?? "";
-    setCardCapture({ paymentId, franchiseCode: firstFranchise, approvalNumber: "" });
+    setCardCapture({ paymentId, franchiseCode: payment.cardFranchiseCode ?? firstFranchise,
+      approvalNumber: payment.approvalNumber ?? "" });
   }, [cardFranchises.data]);
 
   const addPayment = useCallback((requestedMethod?: string) => {
-    if (busy) return;
+    if (busy || !catalogReady || !settlementConfigurationLoaded) return;
     setCreditError(null);
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
@@ -265,10 +272,12 @@ export function PosPaymentDialog({
     if (requestedMethod && (settlement.missing <= 0 || payments.length >= (effectiveMaximum ?? Number.POSITIVE_INFINITY))) {
       const current = active ?? payments[0];
       if (!current) return;
-      update(current.id, { methodCode: requestedMethod, paymentMethodId:null,paymentMethodVersion:null, reference: null, notes: null,
-        bankAccountId: null, cardFranchiseCode: null, approvalNumber: null });
-      if (requiresCardCapture(requestedMethod)) openCardCapture(current.id);
-      else if (requestedMethod === "Transfer") openTransferCapture(current.id);
+      const updated = selectOnlyForm({ ...current, methodCode: requestedMethod, paymentMethodId: null,
+        paymentMethodVersion: null, reference: null, notes: null, bankAccountId: null,
+        cardFranchiseCode: null, approvalNumber: null });
+      update(current.id, updated);
+      if (updated.paymentMethodId && requiresCardCapture(requestedMethod)) openCardCapture(current.id, updated);
+      else if (updated.paymentMethodId && requestedMethod === "Transfer") openTransferCapture(current.id, updated);
       else focusAmount(current.id);
       return;
     }
@@ -279,22 +288,20 @@ export function PosPaymentDialog({
       methods.find((method) => method.code === chooseAdditionalPaymentMethod(methods.map((method) => method.code), used));
     if (!nextMethod) return;
     const id = crypto.randomUUID();
-    setPayments((current) => [
-      ...current,
-      {
-        id,
-        methodCode: nextMethod.code,
-        amount: settlement.missing,
-        reference: null,
-        notes: null,
-        bankAccountId: null,
-      },
-    ]);
+    const payment = selectOnlyForm({
+      id,
+      methodCode: nextMethod.code,
+      amount: settlement.missing,
+      reference: null,
+      notes: null,
+      bankAccountId: null,
+    });
+    setPayments((current) => [...current, payment]);
     setActivePaymentId(id);
-    if (requiresCardCapture(nextMethod.code)) openCardCapture(id);
-    else if (nextMethod.code === "Transfer") openTransferCapture(id);
+    if (payment.paymentMethodId && requiresCardCapture(nextMethod.code)) openCardCapture(id, payment);
+    else if (payment.paymentMethodId && nextMethod.code === "Transfer") openTransferCapture(id, payment);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, effectiveMaximum, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, settlement.missing]);
+  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -303,6 +310,7 @@ export function PosPaymentDialog({
   }, [focusAmount, pendingFocusId, payments]);
 
   const canSubmit = settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded && catalogReady &&
+    (!portfolioDirection || !portfolioPaymentDate || Boolean(portfolioPaymentDate.value)) &&
     payments.every(payment=>
       (automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null) ||
       forms.some(form=>form.paymentMethodId===payment.paymentMethodId && form.version===payment.paymentMethodVersion && form.methodCode===payment.methodCode)) &&
@@ -500,7 +508,7 @@ export function PosPaymentDialog({
               key={method.code}
               type="button"
               onClick={() => addPayment(method.code)}
-              disabled={busy}
+              disabled={busy || !catalogReady || !settlementConfigurationLoaded}
               className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-slate-300 px-3 py-2 text-left text-sm font-semibold outline-none transition hover:border-teal-500 hover:bg-teal-50 focus:ring-2 focus:ring-teal-600/20 disabled:opacity-45"
             >
               <span className="min-w-0 whitespace-normal leading-tight">{method.label}</span>
@@ -542,9 +550,10 @@ export function PosPaymentDialog({
                       if (selection === "automatic-credit" && automaticCredit && payment.methodCode === "Credit") return;
                       const form=forms.find(value=>value.paymentMethodId===selection);
                       if(!form)return;
+                      if (form.paymentMethodId === payment.paymentMethodId && form.version === payment.paymentMethodVersion) return;
                       const updated={...payment,paymentMethodId:form.paymentMethodId,paymentMethodVersion:form.version,bankAccountId:form.methodCode==="Transfer"?form.bankAccountId:null,reference:null,notes:null,cardFranchiseCode:null,approvalNumber:null};
                       update(payment.id,updated);
-                      if(requiresCardCapture(payment.methodCode))openCardCapture(payment.id);
+                      if(requiresCardCapture(payment.methodCode))openCardCapture(payment.id,updated);
                       else if(payment.methodCode==="Transfer")openTransferCapture(payment.id,updated);
                   }}
                   disabled={busy}
@@ -598,7 +607,7 @@ export function PosPaymentDialog({
                 <span className="pointer-events-none absolute bottom-3 left-3 text-sm font-semibold text-slate-400">$</span>
               </label>
               {requiresCardCapture(payment.methodCode) ? (
-                <div className="text-xs font-medium text-slate-600"><span>Tarjeta</span><button type="button" onClick={() => openCardCapture(payment.id)} className={`mt-1 flex h-11 w-full items-center gap-2 rounded-lg border px-3 text-left text-sm font-semibold ${payment.cardFranchiseCode && payment.approvalNumber ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}><CreditCard className="h-4 w-4 shrink-0"/><span className="truncate">{payment.cardFranchiseCode && payment.approvalNumber ? `${cardFranchises.data?.find(item => item.code === payment.cardFranchiseCode)?.label ?? payment.cardFranchiseCode} · ${payment.approvalNumber}` : "Capturar franquicia y aprobación"}</span></button></div>
+                <div className="text-xs font-medium text-slate-600"><span>Tarjeta</span><button type="button" onClick={() => openCardCapture(payment.id, payment)} disabled={busy || !payment.paymentMethodId} className={`mt-1 flex h-11 w-full items-center gap-2 rounded-lg border px-3 text-left text-sm font-semibold ${payment.cardFranchiseCode && payment.approvalNumber ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}><CreditCard className="h-4 w-4 shrink-0"/><span className="truncate">{payment.cardFranchiseCode && payment.approvalNumber ? `${cardFranchises.data?.find(item => item.code === payment.cardFranchiseCode)?.label ?? payment.cardFranchiseCode} · ${payment.approvalNumber}` : "Capturar franquicia y aprobación"}</span></button></div>
               ) : payment.methodCode === "Cash" ? (
                 <div className="text-xs font-medium text-slate-600"><span>Efectivo</span><div className="mt-1 flex h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-700 text-white">$</span><span>{portfolioDirection ? "Importe registrado" : "Cambio automático"}</span></div></div>
               ) : payment.methodCode === "Credit" ? (
@@ -622,10 +631,16 @@ export function PosPaymentDialog({
           ))}
         </div>
 
-        <div className={`mt-4 grid grid-cols-1 gap-3 ${withholdingTotal > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+        <div className={`mt-4 grid grid-cols-1 gap-3 ${withholdingTotal > 0 ? "sm:grid-cols-4" : portfolioDirection && !portfolioPaymentDate ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
           <PaymentMetric label={withholdingTotal > 0 ? "Total venta" : "Total a pagar"} value={withholdingTotal > 0 ? grossTotal : settlement.paymentTotal} />
           {withholdingTotal > 0 && <PaymentMetric label="Retenciones" value={-withholdingTotal} />}
           <PaymentMetric label={portfolioDirection==="payable"?"Valor pagado":"Valor recibido"} value={settlement.received} />
+          {portfolioDirection && portfolioPaymentDate && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <Label htmlFor="portfolio-payment-date" className="text-xs font-medium uppercase tracking-wide text-slate-500">Fecha del pago</Label>
+            <DatePicker id="portfolio-payment-date" today={portfolioPaymentDate.today}
+              value={portfolioPaymentDate.value} onChange={portfolioPaymentDate.onChange}
+              disabled={busy} className="mt-1 border-slate-200 bg-white" />
+          </div>}
           {!portfolioDirection && <PaymentMetric
             label="Cambio a entregar"
             value={settlement.change}

@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Catalog;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Infrastructure;
@@ -13,13 +14,14 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class RestaurantTipTests(ServerSliceFixture fixture)
 {
     [Theory]
-    [InlineData(PosSaleDocumentTypes.Receipt, 373284)]
-    [InlineData(PosSaleDocumentTypes.Invoice, 373284)]
-    [InlineData(PosSaleDocumentTypes.Receipt, 7540)]
-    [InlineData(PosSaleDocumentTypes.Invoice, 7540)]
-    [InlineData(PosSaleDocumentTypes.Receipt, 7550)]
-    [InlineData(PosSaleDocumentTypes.Invoice, 7550)]
-    public async Task Suggested_prebill_and_received_tip_leave_the_sales_document_at_consumption_value(string documentType, int unitPrice)
+    [InlineData(PosSaleDocumentTypes.Receipt, 373284, false)]
+    [InlineData(PosSaleDocumentTypes.Invoice, 373284, false)]
+    [InlineData(PosSaleDocumentTypes.Receipt, 7540, false)]
+    [InlineData(PosSaleDocumentTypes.Invoice, 7540, false)]
+    [InlineData(PosSaleDocumentTypes.Receipt, 7550, false)]
+    [InlineData(PosSaleDocumentTypes.Invoice, 7550, false)]
+    [InlineData(PosSaleDocumentTypes.Receipt, 373284, true)]
+    public async Task Suggested_prebill_and_received_tip_leave_the_sales_document_at_consumption_value(string documentType, int unitPrice, bool nativeForms)
     {
         var waiterId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
@@ -92,6 +94,27 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             setup.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
             await setup.ExecuteNonQueryAsync();
         }
+        PaymentMethodView? nativeForm = null;
+        if (nativeForms)
+        {
+            using var admin = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+                AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+            var cashAccount = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin);
+            var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
+            var save = new SavePaymentMethodRequest(Guid.NewGuid(), $"TIP-{Guid.NewGuid():N}", "Caja de propinas",
+                types.Single(type => type.Code == "Cash").Id, cashAccount.AccountId, true, false, true, false, true, 10);
+            using var created = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}", save);
+            Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
+            nativeForm = (await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+            using var tipReader = fixture.CreateAdminClient("cash.close");
+            var tipChoices = (await tipReader.GetFromJsonAsync<PaymentMethodPage>(
+                $"/api/commerce/v1/payment-methods/?usage=TipPayments&methodCode=Cash&search={save.Code}&pageSize=1"))!;
+            Assert.Equal(nativeForm.PaymentMethodId,Assert.Single(tipChoices.Items).PaymentMethodId);
+            Assert.Equal(1,tipChoices.TotalCount);
+        }
+        OnlineSalesPayment Native(OnlineSalesPayment payment) => nativeForm is null ? payment : payment with {
+            PaymentMethodId = nativeForm.PaymentMethodId, PaymentMethodVersion = nativeForm.Version,
+            PaymentMethodCode = nativeForm.Code, PaymentMethodName = nativeForm.Name, AccountId = nativeForm.AccountId };
         try
         {
             using (var response = await cashier.PostAsJsonAsync(
@@ -162,10 +185,10 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     productCollectionId, workSessionId, initial.AccountVersion,
                     [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                    [new OnlineSalesPayment("Cash", half, null,
-                        TenderedAmount: half + 5_000m, RoundingAdjustment: partialAdjustment)],
-                    new OnlineSalesPayment("Cash", 1_000m, null,
-                        TenderedAmount: 1_000m)));
+                    [Native(new OnlineSalesPayment("Cash", half, null,
+                        TenderedAmount: half + 5_000m, RoundingAdjustment: partialAdjustment))],
+                    Native(new OnlineSalesPayment("Cash", 1_000m, null,
+                        TenderedAmount: 1_000m))));
                 request.Headers.Add("Idempotency-Key", productCollectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
                 response.EnsureSuccessStatusCode();
@@ -186,7 +209,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                     new CaptureRestaurantCollectionRequest(Guid.NewGuid(),
                         workSessionId, partial.AccountVersion,
                         [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                        [new OnlineSalesPayment("Cash", half, null)]));
+                        [Native(new OnlineSalesPayment("Cash", half, null))]));
                 missingAdjustment.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
                 using var rejected = await cashier.SendAsync(missingAdjustment);
                 Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
@@ -198,10 +221,10 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     secondCollectionId, workSessionId, partial.AccountVersion,
                     [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                    [new OnlineSalesPayment("Cash", half, null,
+                    [Native(new OnlineSalesPayment("Cash", half, null,
                         TenderedAmount: half + partialAdjustment,
-                        RoundingAdjustment: partialAdjustment)],
-                    new OnlineSalesPayment("Cash", 2_000m, null)));
+                        RoundingAdjustment: partialAdjustment))],
+                    Native(new OnlineSalesPayment("Cash", 2_000m, null))));
                 request.Headers.Add("Idempotency-Key", secondCollectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
                 response.EnsureSuccessStatusCode();
@@ -218,8 +241,8 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             {
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     collectionId, workSessionId, paid.AccountVersion,
-                    [], [], new OnlineSalesPayment("Cash", tipAmount, null,
-                        TenderedAmount: tipAmount + 5_000m)));
+                    [], [], Native(new OnlineSalesPayment("Cash", tipAmount, null,
+                        TenderedAmount: tipAmount + 5_000m))));
                 request.Headers.Add("Idempotency-Key", collectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
                 response.EnsureSuccessStatusCode();
@@ -236,9 +259,9 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                     Content = JsonContent.Create(new CompleteRestaurantAccountRequest(
                         workSessionId, new CompleteOnlineSalesDraftRequest(
                             captured.AccountVersion,
-                            [new OnlineSalesPayment("Cash", initial.Total, null,
+                            [Native(new OnlineSalesPayment("Cash", initial.Total, null,
                                 TenderedAmount: initial.Total + 5_000m + partialAdjustment,
-                                RoundingAdjustment: adjustment)],
+                                RoundingAdjustment: adjustment))],
                             DocumentType: documentType)))
                 };
                 complete.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
@@ -309,7 +332,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 [productCollectionId, secondCollectionId],
                 [new RestaurantTipRecipientRequest(partyId, 0),
                  new RestaurantTipRecipientRequest(secondPartyId, 0)],
-                "EqualByLaw", null, "Cash", null, null);
+                "EqualByLaw", null, "Cash", null, null, nativeForm?.PaymentMethodId, nativeForm?.Version);
             using (var settled = await supervisor.PostAsJsonAsync(
                 "/api/commerce/v1/restaurant/tips/settlements", settlementRequest))
             {
@@ -375,6 +398,22 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 Assert.True(await reader.ReadAsync());
                 Assert.Equal(2, reader.GetInt32(0));
                 Assert.Equal(1, reader.GetInt32(1));
+            }
+            if (nativeForm is not null)
+            {
+                using var postingScope = fixture.CreateScope();
+                var processor = postingScope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
+                await processor.ProcessAsync(settlementId, "RestaurantTipSettlement", fixture.BusinessId, default);
+                await processor.ProcessAsync(settlementId, "RestaurantTipSettlement", fixture.BusinessId, default);
+                await using var verifyNative = new SqlCommand("""
+                    SELECT COUNT(*) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                    WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'RestaurantTipSettlement'
+                      AND entry.TenantId=@Tenant AND line.AccountId=@Account AND line.Credit=3000;
+                    """, connection);
+                verifyNative.Parameters.AddWithValue("@Id", settlementId);
+                verifyNative.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+                verifyNative.Parameters.AddWithValue("@Account", nativeForm.AccountId);
+                Assert.Equal(1, (int)(await verifyNative.ExecuteScalarAsync())!);
             }
             decimal? posted = null;
             for (var attempt = 0; attempt < 100 && posted is null; attempt++)

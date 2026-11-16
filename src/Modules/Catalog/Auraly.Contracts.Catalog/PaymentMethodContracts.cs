@@ -1,7 +1,8 @@
 namespace Auraly.Contracts.Catalog;
 
 public sealed record PaymentMethodQuery(int Page = 1, int PageSize = 50,
-    string? Search = null, bool? IsActive = null, string? Usage = null, Guid? PaymentMethodId = null);
+    string? Search = null, bool? IsActive = null, string? Usage = null, Guid? PaymentMethodId = null,
+    string? MethodCode = null);
 
 public sealed record PaymentMethodView(Guid PaymentMethodId, string Code, string Name,
     Guid PaymentTypeId, string MethodCode, string TypeLabel, Guid AccountId,

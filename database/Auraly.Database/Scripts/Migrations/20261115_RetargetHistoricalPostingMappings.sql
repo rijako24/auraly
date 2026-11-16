@@ -1,5 +1,5 @@
--- Reviewed DEV configuration only. Other environments are not assumed to have
--- these identities. The final coverage check requires their own reviewed plan
+-- Independently reviewed configuration per deployment environment. No tenant
+-- is assumed to share another environment's identities. Coverage requires a reviewed plan
 -- if a Ready business still has incompatible required accounts.
 -- The existing effective range is retained so NEW backdated purchases remain
 -- supported. Posted journals and identities already pinned in jobs do not change.
@@ -33,4 +33,20 @@ DECLARE @PostingMappingUpgradePlanJson nvarchar(max)=N'[
   }
 ]';
 IF N'$(DeploymentEnvironment)'<>N'dev' SET @PostingMappingUpgradePlanJson=N'[]';
+-- Independently inspected and approved Megafruver identities. Preserve the
+-- used Asset auxiliary and its journal; only future posting uses this mapping.
+IF N'$(DeploymentEnvironment)'=N'prod' SET @PostingMappingUpgradePlanJson=N'[
+  {
+    "category":"InputVat",
+    "tenantId":"01a06318-d4bf-7f57-9776-4695b7833f7a",
+    "mappingId":"7a23e29c-cbe3-4c45-89a6-63b73069957d",
+    "sourceAccountId":"953b5664-986b-40e9-8517-50a180d7540d",
+    "sourceCode":"240810", "sourceName":"IVA descontable", "sourceType":"Asset",
+    "sourceFunction":null, "sourceSide":null, "sourceBankAccountId":null,
+    "effectiveFrom":"2026-01-01", "effectiveTo":null,
+    "targetAccountId":"a3bfed17-f9f8-48ab-aeb6-264fd49f9481",
+    "targetCode":"240811", "targetName":"IVA descontable en compras",
+    "targetType":"Liability", "targetFunction":"General", "targetSide":"Debit"
+  }
+]';
 :r .\20261115_ApplyReviewedPostingMappingUpgrade.sql

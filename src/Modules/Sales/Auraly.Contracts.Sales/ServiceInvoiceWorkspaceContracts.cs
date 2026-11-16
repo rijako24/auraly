@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Auraly.Contracts.Sales;
 
 public static class ServiceInvoicePermissionCodes
@@ -65,7 +67,9 @@ public sealed record IssueServiceInvoiceRequest(
     string? PaymentReference = null,
     decimal CreditAmount = 0,
     DateTimeOffset? CreditDueDate = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null);
 
 public sealed record IssuedServiceInvoice(
     Guid DocumentId,

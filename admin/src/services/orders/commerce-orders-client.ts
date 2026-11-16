@@ -246,6 +246,11 @@ export function invoiceCommerceOrders(request: {
   orderIds: string[];
   paymentMethodCode: string;
   paymentReference: string | null;
+  paymentMethodId?: string;
+  paymentMethodVersion?: number;
+  paymentFormCode?: string;
+  paymentFormName?: string;
+  accountId?: string;
   bankAccountId?: string | null;
   paymentNotes?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
@@ -269,6 +274,11 @@ export function validateCommerceOrderCredit(request: {
   orderIds: string[];
   paymentMethodCode: string;
   paymentReference: string | null;
+  paymentMethodId?: string;
+  paymentMethodVersion?: number;
+  paymentFormCode?: string;
+  paymentFormName?: string;
+  accountId?: string;
   bankAccountId?: string | null;
   paymentNotes?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";

@@ -209,25 +209,26 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     void printPortfolioPayment(receipt,businessId,printClient,printContext.printChoice??"Receipt").catch(error=>
       toast.error(`El pago quedó registrado, pero no se pudo imprimir: ${error instanceof Error?error.message:"revisa la impresora."}`));
   }});
-  const validateStepOne=()=>{if(!printOnPos&&!paymentDate){toast.error("Selecciona la fecha del pago.");return false;}if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(requiresSupplierSite&&!partySiteId){toast.error("Selecciona la sede del proveedor.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
+  const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(requiresSupplierSite&&!partySiteId){toast.error("Selecciona la sede del proveedor.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
   if(open&&step===2)return <PosPaymentDialog
     client={paymentClient} total={total} grossTotal={total} withholdingTotal={0}
     busy={mutation.isPending} documentType="SalesReceipt" documentTypeLocked
     documentTypeReady customer={null} focusRequest={1}
     onChangeDocumentType={()=>{}} onCancel={()=>changeOpen(false)}
     onBack={()=>setStep(1)} portfolioDirection={direction}
+    portfolioPaymentDate={printOnPos?undefined:{value:paymentDate,today:localToday,onChange:setPaymentDate}}
     submissionError={mutation.error?paymentSubmissionError(mutation.error):null}
     maxPaymentMethods={allocations.length>1?1:undefined}
     onConfirm={async (payments,_,printChoice,methodLabels)=>{if(allocations.length>1&&payments.length>1&&!payments.every(payment=>payment.paymentMethodId)){toast.error("Para varias facturas se usa un solo medio de pago.");return;}mutation.mutate({tenders:payments,printChoice,methodLabels});}}
   />;
   return <Dialog open={open} onOpenChange={next=>{if(!next&&mutation.isPending)return;changeOpen(next)}}><DialogContent className={`flex max-h-[92dvh] w-[96vw] ${printOnPos?"max-w-4xl":"max-w-7xl"} flex-col overflow-hidden p-0`}>
     <DialogHeader className={`border-b border-slate-200 text-left ${printOnPos?"px-6 py-5":"px-4 py-3"}`}><DialogTitle className="flex items-center gap-2 text-xl"><CreditCard className="h-5 w-5 text-teal-700"/>{direction==="receivable"?"Abono a cartera":"Pago a proveedores"}</DialogTitle><DialogDescription>Selecciona las facturas y el valor de cada una.</DialogDescription></DialogHeader>
-    <div className={`min-h-0 overflow-y-auto ${printOnPos?"p-6":"p-4"}`}><div className={printOnPos?"space-y-5":"space-y-3"}><div className={printOnPos?"":"grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_16rem]"}><div className="space-y-2"><Label>{requiresSupplierSite?"Proveedor · sede":role==="Customer"?"Cliente":"Proveedor"}</Label>{requiresSupplierSite
+    <div className={`min-h-0 overflow-y-auto ${printOnPos?"p-6":"p-4"}`}><div className={printOnPos?"space-y-5":"space-y-3"}><div className={printOnPos?"":"min-w-0"}><div className="space-y-2"><Label>{requiresSupplierSite?"Proveedor · sede":role==="Customer"?"Cliente":"Proveedor"}</Label>{requiresSupplierSite
       ? <SupplierSiteSelect value={partySiteId??""} preload={open}
           selectedOption={partySiteId&&partySiteName&&party?{value:partySiteId,label:`${party.displayName} · ${partySiteName}`,description:party.identification}:null}
           sourceKey="payment-supplier-sites" onChange={(siteId,supplier)=>{setParty(supplier??null);setPartySiteId(siteId||undefined);setPartySiteName(supplier?.siteName);resetInvoiceSelection();}}/>
           : <PartyRoleSelect role={role} value={partyId??""} sourceKey={edgeClient?"edge-portfolio":printOnPos?"web-pos-portfolio":"web-portfolio"} preload={open} loadPage={(search,page,pageSize)=>edgeClient?edgeClient.portfolioParties(role,search,page,pageSize):printOnPos?partiesApi.posPortfolioRoleOptions({role,search,page,pageSize}):partiesApi.portfolioRoleOptions({role,search,page,pageSize})} selectedOption={party?{value:partyId!,label:party.displayName,description:party.identification}:null} placeholder={`Buscar por nombre o identificación`} onChange={(_,value)=>{setParty(value??null);setPartySiteId(undefined);setPartySiteName(undefined);resetInvoiceSelection();}}/>}</div>
-      {!printOnPos && <div className="max-w-xs space-y-2"><Label htmlFor="portfolio-payment-date">Fecha del pago</Label><DatePicker today={localToday} id="portfolio-payment-date" value={paymentDate} onChange={setPaymentDate} /></div>}</div>
+      </div>
       {!printOnPos && <div role="group" aria-label="Filtros de facturas para pago" className="grid gap-3 rounded-xl border p-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1"><Label htmlFor="portfolio-invoice-search">Documento o referencia</Label><Input id="portfolio-invoice-search" maxLength={120} value={filterDraft.search} onChange={event=>changeFilters({...filterDraft,search:event.target.value},true)}/></div>
         <div className="space-y-1"><Label htmlFor="portfolio-invoice-from">Registro desde</Label><DatePicker today={localToday} id="portfolio-invoice-from" value={filterDraft.from} onChange={from=>changeFilters({...filterDraft,from})}/></div>

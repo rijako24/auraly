@@ -26,6 +26,13 @@ Las propinas cobradas se registran aparte como efectivo/banco contra `Restaurant
 
 ### Vocabulario único
 
+El corte al catálogo nativo ejecuta primero
+`20261116_PreflightRestaurantNativePayments.sql`. Las mesas abiertas con cobros
+capturados sin identidad de forma deben terminarse o revertirse mediante los
+comandos normales de la versión anterior antes de actualizar. El preflight sólo
+consulta y bloquea; no asigna formas por inferencia, convierte cobros ni modifica
+mesas facturadas. Las capturas nativas y los históricos cerrados no bloquean.
+
 | Concepto | Significado |
 | --- | --- |
 | Salón | Área física: interior, terraza, piso. |
@@ -827,9 +834,25 @@ cantidades pendientes. El pago en captura tiene un solo indicador: falta, exceso
 electrónico, pago exacto o cambio en efectivo.
 
 Al preparar la emisión, la UI conserva el orden de cobros guardado si hay cero o
-un efectivo. Solo consolida efectivos cuando existen varios, según el contrato
-vigente; conserva el orden relativo y los datos de los otros medios y excluye la
-propina del consumo.
+un efectivo. Cuando existen varios, consolida por identidad de forma de pago,
+conservando auxiliar/evidencia, importe, efectivo entregado y ajuste acumulado.
+Dos cajas distintas no se fusionan. Conserva el orden relativo y los datos de los
+otros medios (incluidas aprobaciones diferentes del mismo datáfono en cobros
+parciales) y excluye la propina del consumo. UI y checkout verifican la misma
+proyección por campos; la identidad no se descarta al emitir.
+
+El selector conserva los tipos técnicos y muestra debajo las formas habilitadas
+para ventas del catálogo del tenant. Con una forma elegible se usa esa identidad;
+con varias se elige explícitamente. La cuenta bancaria proviene de la forma,
+sin una segunda selección independiente. La captura valida en lote el catálogo
+en la misma transacción y su recibo idempotente devuelve antes de esa validación.
+La entrega de propinas consulta ese catálogo paginado con el uso `TipPayments`;
+no crea otra salida de dinero ni cambia el cálculo del reparto. El processor
+existente resuelve el auxiliar vigente al contabilizar ingreso o entrega, guarda
+su evidencia aplicada y revierte una propina contra sus partidas originales.
+La pantalla reutiliza el resultado de entrega para retirar los pendientes
+seleccionados y agregar el historial, sin dos GET posteriores; la carga de la
+siguiente ventana de pendientes se inicia mediante Actualizar pendientes.
 
 La comparación interna de medios al emitir usa igualdad de campos de
 `OnlineSalesPayment` en su orden canónico. Los decimales se comparan por valor:

@@ -69,10 +69,12 @@ public sealed partial class SqlCatalogStore
                 reader.GetBoolean(15)));
         bool? warehouseAllowsNegativeStock = null;
         string? pointOfSaleMode = null;
+        string? timeZone = null;
         if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
         {
             warehouseAllowsNegativeStock = reader.GetBoolean(0);
             pointOfSaleMode = reader.GetString(1);
+            timeZone = reader.GetString(2);
         }
         var allowPromotionChannelCombination = false;
         if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
@@ -95,6 +97,6 @@ public sealed partial class SqlCatalogStore
         await transaction.CommitAsync(ct);
         return new PosPricingSnapshot(
             channels, tiers, exclusions, customers, rules, warehouseAllowsNegativeStock,
-            allowPromotionChannelCombination, promotions, null, configurationCursor, pointOfSaleMode);
+            allowPromotionChannelCombination, promotions, null, configurationCursor, pointOfSaleMode, timeZone);
     }
 }

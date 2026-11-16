@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -147,6 +148,16 @@ public sealed partial class SqlRestaurantCollectionStore
                 total = reader.GetDecimal(1);
             }
 
+            try
+            {
+                var payment = (await SqlPaymentMethodResolver.ResolveAsync(connection, transaction,
+                    actor.TenantId, actor.BusinessId, "SupplierPayments",
+                    [new PaymentTender(request.PaymentMethodCode, total, BankAccountId: request.BankAccountId,
+                        PaymentMethodId: request.PaymentMethodId, PaymentMethodVersion: request.PaymentMethodVersion)], ct))[0];
+                request = request with { BankAccountId = payment.BankAccountId };
+            }
+            catch (ArgumentException error)
+            { throw new RestaurantAccountValidationException(error.Message); }
             var shares = request.DistributionBasis == "EqualByLaw"
                 ? EqualTipShares(total, request.Recipients)
                 : request.Recipients;
@@ -227,7 +238,7 @@ public sealed partial class SqlRestaurantCollectionStore
             }
             var payload = JsonSerializer.Serialize(new RestaurantTipSettlementAccountingPayload(
                 request.SettlementId, actor.TenantId, actor.BusinessId,
-                request.PaymentMethodCode, request.BankAccountId, total));
+                request.PaymentMethodCode, request.BankAccountId, total, request.PaymentMethodId, request.PaymentMethodVersion));
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
             await using (var accounting = new SqlCommand("""
                 DECLARE @Sources nvarchar(max)=(SELECT @SettlementId DocumentId,N'RestaurantTipSettlement' DocumentType,

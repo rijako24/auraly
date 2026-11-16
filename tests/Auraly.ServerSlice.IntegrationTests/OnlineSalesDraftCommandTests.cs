@@ -88,6 +88,8 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             }
 
             var downloaded = await local.ReadPricingSnapshotAsync();
+            Assert.Equal("America/Bogota", downloaded.TimeZone);
+            Assert.Equal("America/Bogota", (await local.WorkspaceConfigurationAsync()).TimeZone);
             Assert.Contains(
                 downloaded.Promotions ?? [], item => item.PromotionId == promotionId);
 

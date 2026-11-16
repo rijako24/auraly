@@ -4,6 +4,7 @@ using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Returns;
+using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -163,9 +164,11 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Two_partial_collections_create_one_invoice_only_after_full_payment(bool mixedPayments)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Two_partial_collections_create_one_invoice_only_after_full_payment(bool mixedPayments, bool nativeForms)
     {
         var waiterId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
@@ -237,6 +240,31 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 ? [new("Cash", BrowserNumber(unitAmount - 0.99m), null),
                    new("DebitCard", 0.99m, null, CardFranchiseCode: "Visa", ApprovalNumber: "SECOND")]
                 : [new("Cash", unitAmount, null)];
+            var forms = new Dictionary<string, PaymentMethodView>();
+            if (nativeForms)
+            {
+                using var admin = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+                    AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+                var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
+                foreach (var method in mixedPayments ? new[] { "Cash", "DebitCard" } : new[] { "Cash" })
+                {
+                    var accountView = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, admin,
+                        method == "Cash" ? "1109" : "1380", "Asset", method == "Cash" ? "Cash" : "CardClearing", "Debit");
+                    var create = new SavePaymentMethodRequest(Guid.NewGuid(), $"REST-{Guid.NewGuid():N}", "Forma restaurante",
+                        types.Single(type => type.Code == method).Id, accountView.AccountId, true, false, false, false, true, 10);
+                    using var saved = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{create.PaymentMethodId}", create);
+                    Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
+                    forms[method] = (await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+                }
+                OnlineSalesPayment Native(OnlineSalesPayment payment)
+                {
+                    var form = forms[payment.MethodCode];
+                    return payment with { PaymentMethodId = form.PaymentMethodId, PaymentMethodVersion = form.Version,
+                        PaymentMethodCode = form.Code, PaymentMethodName = form.Name, AccountId = form.AccountId };
+                }
+                firstPayments = firstPayments.Select(Native).ToArray();
+                secondPayments = secondPayments.Select(Native).ToArray();
+            }
             var firstId = Guid.NewGuid();
             var firstRequest = new CaptureRestaurantCollectionRequest(firstId,
                 workSessionId, initial.AccountVersion,
@@ -253,6 +281,22 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             }
             Assert.Equal(unitAmount, first.Collected);
             Assert.Equal(unitAmount, first.Remaining);
+            if (nativeForms)
+            {
+                using var catalog = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update);
+                var savedForms = (await catalog.GetFromJsonAsync<PaymentMethodPage>(
+                    $"/api/commerce/v1/payment-methods/?paymentMethodId={forms["Cash"].PaymentMethodId}"))!;
+                var used = Assert.Single(savedForms.Items);
+                var types = (await catalog.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
+                using var changedType = await catalog.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{used.PaymentMethodId}",
+                    new SavePaymentMethodRequest(used.PaymentMethodId,used.Code,used.Name,
+                        types.Single(type => type.Code == "DebitCard").Id,used.AccountId,
+                        used.UseForSales,used.UseForReceipts,used.UseForSupplierPayments,used.UseForPayroll,
+                        used.IsActive,used.SortOrder,used.RowVersion,used.UseForVouchers));
+                Assert.Equal(HttpStatusCode.Conflict, changedType.StatusCode);
+                Assert.Contains("conserva su tipo de pago", await changedType.Content.ReadAsStringAsync());
+            }
+            await AssertPaymentCutoverAsync(account.AccountId, blocked: !nativeForms);
             using (var replay = await CaptureAsync(cashier, account.AccountId,
                 firstRequest, firstKey))
             {
@@ -287,6 +331,10 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 ? [new("Cash", BrowserNumber(initial.Total - 1m), null, TenderedAmount: BrowserNumber(initial.Total - 1m)),
                    firstPayments[1], secondPayments[1]]
                 : [new("Cash", initial.Total, null, TenderedAmount: initial.Total)];
+            if (nativeForms)
+                finalPayments[0] = finalPayments[0] with { PaymentMethodId = forms["Cash"].PaymentMethodId,
+                    PaymentMethodVersion = forms["Cash"].Version, PaymentMethodCode = forms["Cash"].Code,
+                    PaymentMethodName = forms["Cash"].Name, AccountId = forms["Cash"].AccountId };
             var checkout = new CompleteRestaurantAccountRequest(workSessionId,
                 new CompleteOnlineSalesDraftRequest(second.AccountVersion,
                     finalPayments,
@@ -318,6 +366,23 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@DocumentId", invoice.Receipt.DocumentId);
             command.Parameters.AddWithValue("@TableId", tableId);
             Assert.Equal(1, (int)(await command.ExecuteScalarAsync())!);
+            await AssertPaymentCutoverAsync(account.AccountId, blocked: false);
+            if (nativeForms)
+            {
+                await WaitForProcessedAsync(invoice.Receipt.DocumentId);
+                command.CommandText = "SELECT PaymentMethodId,ApprovalNumber FROM dbo.SalesPayments WHERE DocumentId=@DocumentId ORDER BY PaymentNumber";
+                await using var reader = await command.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(forms["Cash"].PaymentMethodId, reader.GetGuid(0));
+                if (mixedPayments)
+                {
+                    Assert.True(await reader.ReadAsync()); Assert.Equal(forms["DebitCard"].PaymentMethodId, reader.GetGuid(0));
+                    Assert.Equal("FIRST", reader.GetString(1));
+                    Assert.True(await reader.ReadAsync()); Assert.Equal(forms["DebitCard"].PaymentMethodId, reader.GetGuid(0));
+                    Assert.Equal("SECOND", reader.GetString(1));
+                }
+                Assert.False(await reader.ReadAsync());
+            }
         }
         finally { await RestoreModeAsync(); }
     }
@@ -949,7 +1014,14 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 throw new InvalidOperationException("La venta con receta fue rechazada al procesar.");
             await Task.Delay(100);
         }
-        throw new TimeoutException("La venta con receta no terminó de procesar.");
+        await using var diagnostic = new SqlConnection(fixture.ConnectionString);
+        await diagnostic.OpenAsync();
+        await using var issue = new SqlCommand("""
+            SELECT TOP(1) CONCAT(DocumentType,N' / ',Status,N' / ',COALESCE(LastError,N'sin error'))
+            FROM dbo.DocumentProcessingJobs WHERE Status<>N'Completed' ORDER BY ProcessingSequence;
+            """, diagnostic);
+        throw new TimeoutException("La venta con receta no terminó de procesar. Primera operación pendiente: " +
+            await issue.ExecuteScalarAsync());
     }
 
     private async Task WaitForReturnProcessedAsync(Guid returnId)
@@ -1034,6 +1106,34 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
         command.Parameters.AddWithValue("@ManageStock", manageStock);
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task AssertPaymentCutoverAsync(Guid accountId, bool blocked)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        try
+        {
+            // Other scenarios deliberately leave open legacy tables in this
+            // shared fixture. Isolate this global preflight without changing
+            // their durable evidence: this setup is always rolled back.
+            await using (var isolate = new SqlCommand(
+                "UPDATE sales.RestaurantAccountCollections SET PaymentsJson=N'[]' WHERE AccountId<>@Account;",connection,transaction))
+            {
+                isolate.Parameters.AddWithValue("@Account",accountId);
+                await isolate.ExecuteNonQueryAsync();
+            }
+            if (blocked)
+            {
+                var error = await Assert.ThrowsAsync<SqlException>(() => fixture.ApplyMigrationAsync(
+                    "20261116_PreflightRestaurantNativePayments.sql",connection,transaction));
+                Assert.Equal(51982,error.Number);
+            }
+            else await fixture.ApplyMigrationAsync("20261116_PreflightRestaurantNativePayments.sql",connection,transaction);
+        }
+        finally { await transaction.RollbackAsync(); }
     }
 
     private async Task RestoreModeAsync()

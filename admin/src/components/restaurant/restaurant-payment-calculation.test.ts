@@ -25,6 +25,24 @@ test("varios efectivos se consolidan una vez sin alterar el orden de los otros m
     tenderedAmount: 4_000, roundingAdjustment: 30 }, debit, transfer]);
 });
 
+test("los cobros parciales conservan cada caja y las aprobaciones de una misma tarjeta", () => {
+  const first = { methodCode: "Cash", amount: 100, reference: null,
+    paymentMethodId: "cash-a", paymentMethodVersion: 1, paymentMethodCode: "A", paymentMethodName: "Caja A", accountId: "account-a" };
+  const other = { ...first, amount: 200, paymentMethodId: "cash-b", paymentMethodCode: "B", accountId: "account-b" };
+  const card = { methodCode: "DebitCard", amount: 300, reference: null, paymentMethodId: "card-a", approvalNumber: "ONE" };
+  const nextCard = { ...card, amount: 400, approvalNumber: "TWO" };
+  assert.deepEqual(finalRestaurantPayments([
+    { payments: [first, card] }, { payments: [other, { ...first, amount: 50 }, nextCard] },
+  ]), [{ ...first, amount: 150, tenderedAmount: 150 }, { ...other, tenderedAmount: 200 }, card, nextCard]);
+});
+
+test("los ajustes de signo contrario no conservan el ajuste de la primera cuota", () => {
+  assert.deepEqual(finalRestaurantPayments([
+    { payments: [{ methodCode: "Cash", amount: 90, reference: null, roundingAdjustment: 10 }] },
+    { payments: [{ methodCode: "Cash", amount: 110, reference: null, roundingAdjustment: -10 }] },
+  ]), [{ methodCode: "Cash", amount: 200, reference: null, tenderedAmount: 200 }]);
+});
+
 test("al emitir la factura tras pagos parciales la propina no entra en los medios de venta", () => {
   const salePayments = finalRestaurantPayments([
     { payments: [{ methodCode: "Cash", amount: 80_000, reference: null, tenderedAmount: 90_000 }] },

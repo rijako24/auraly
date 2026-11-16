@@ -2082,6 +2082,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                 ? FinancialFactsResult.Ready(FinancialFacts.Manual(description, reversed))
                 : FinancialFactsResult.Pending("OriginalTipJournalMissing",
                     "La propina no se anuló contablemente: falta el asiento original completo. Contabiliza o concilia el original y vuelve a procesar.");
+        if (source.AppliedPaymentMethods is { Count: 1 } configuredTip)
+            return FinancialFactsResult.Ready(FinancialFacts.RestaurantTip(description, null,
+                value.Payment.Amount, false, configuredTip[0].AccountId));
         var settlement = (await ResolvePaymentSettlementsAsync(
             connection, transaction, source.TenantId, "PosPaymentMethod",
             [(value.Payment.MethodCode, value.Payment.Amount,
@@ -2129,6 +2132,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                 throw new InvalidOperationException(
                     "The restaurant-tip settlement changed.");
         }
+        if (source.AppliedPaymentMethods is { Count: 1 } configuredPayment)
+            return FinancialFacts.RestaurantTip($"Entrega de propinas {value.SettlementId:D}",
+                null, value.Amount, true, configuredPayment[0].AccountId);
         var payment = (await ResolvePaymentSettlementsAsync(
             connection, transaction, source.TenantId, "PosPaymentMethod",
             [(value.PaymentMethodCode, value.Amount, value.BankAccountId)],
@@ -3030,15 +3036,20 @@ public sealed partial class SqlAccountingPostingProcessor(
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,
                 amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn);
         public static FinancialFacts RestaurantTip(
-            string description, string paymentCategory, decimal amount, bool reverse) =>
+            string description, string? paymentCategory, decimal amount, bool reverse, Guid? paymentAccountId = null) =>
             new(description, null, 0, 0, 0, 0, [], false, false, false, false,
-                DirectCategoryLines: reverse
+                DirectCategoryLines: paymentAccountId is not null
+                    ? [new CategoryLineSpec(AccountingCategories.RestaurantTipsPayable,
+                        reverse ? amount : 0, reverse ? 0 : amount, null, description)]
+                    : reverse
                     ? [new CategoryLineSpec(AccountingCategories.RestaurantTipsPayable,
                         amount, 0, null, description),
-                       new CategoryLineSpec(paymentCategory, 0, amount, null, description)]
-                    : [new CategoryLineSpec(paymentCategory, amount, 0, null, description),
+                       new CategoryLineSpec(paymentCategory!, 0, amount, null, description)]
+                    : [new CategoryLineSpec(paymentCategory!, amount, 0, null, description),
                        new CategoryLineSpec(AccountingCategories.RestaurantTipsPayable,
-                        0, amount, null, description)]);
+                        0, amount, null, description)],
+                AdditionalDirectLines: paymentAccountId is { } account
+                    ? [new ManualLineSpec(account, reverse ? 0 : amount, reverse ? amount : 0, null, null, description)] : null);
         public static FinancialFacts CashDifference(
             string description,
             bool surplus,

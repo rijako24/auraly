@@ -37,6 +37,21 @@ Xion sirve como referencia para separar IVA de compra y venta y para la experien
 
 Auraly conserva ese comportamiento, pero no las cuatro escalas rígidas, los formularios WinForms ni la arquitectura legacy.
 
+## Retiro del resolvedor SQL anterior
+
+`CommercePriceResolver` conserva la resolución comercial única. La función
+`dbo.CustomerProductPriceResolve`, retirada del modelo en `d122f0a1`, no debe
+permanecer como una segunda implementación en bases actualizadas. El publicador
+ejecuta `20261116_RetireObsoleteCustomerPriceResolver.sql` antes del plan DACPAC:
+sólo retira la definición interna revisada mediante SHA-256 y sin dependientes
+SQL. Una definición diferente o un consumidor existente detiene la actualización
+con un error explícito. No borra ni recalcula precios, canales, documentos o
+históricos. Repetir la migración es inocuo cuando la función ya no existe.
+
+El rollback conserva el motor actual y los datos; no reinstala esa función
+obsoleta, que referencia objetos retirados. Un regreso a una versión anterior
+a la unificación exige restauración coordinada de su esquema y aplicación.
+
 ## 2. Los cuatro conceptos canónicos
 
 | Concepto | Propietario | Uso |

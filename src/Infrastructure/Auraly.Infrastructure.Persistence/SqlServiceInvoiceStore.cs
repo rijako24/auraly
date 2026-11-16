@@ -6,6 +6,7 @@ using System.Text.Json;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
@@ -344,6 +345,19 @@ public sealed class SqlServiceInvoiceStore(
                     "El vencimiento del crédito debe ser posterior a la emisión.");
             var paidAmount = Money(payable - request.CreditAmount);
             var paymentMethod = NormalizePaymentMethod(request.PaymentMethodCode, paidAmount);
+            if (paidAmount == 0 && request.PaymentMethodId is not null)
+                throw new ServiceInvoiceValidationException("Una factura totalmente a crédito no recibe dinero.");
+            PaymentTender payment;
+            try
+            {
+                payment = (await SqlPaymentMethodResolver.ResolveAsync(connection, transaction,
+                    user.TenantId, request.BusinessId, "Sales",
+                    [new PaymentTender(paymentMethod, paidAmount, Reference: request.PaymentReference?.Trim(),
+                        PaymentMethodId: request.PaymentMethodId, PaymentMethodVersion: request.PaymentMethodVersion)],
+                    cancellationToken))[0];
+            }
+            catch (ArgumentException error)
+            { throw new ServiceInvoiceValidationException(error.Message); }
             var documentId = ids.NewId();
             if (!await SqlDianDocumentQuota.TryReserveAsync(
                     connection, transaction, request.BusinessId, documentId,
@@ -405,7 +419,9 @@ public sealed class SqlServiceInvoiceStore(
                     request.PaymentReference?.Trim()),
                 lines,
                 new PosSalePaymentContract(1, paymentMethod, paidAmount,
-                    request.PaymentReference?.Trim()),
+                    payment.Reference, BankAccountId: payment.BankAccountId,
+                    PaymentMethodId: payment.PaymentMethodId, PaymentMethodVersion: payment.PaymentMethodVersion,
+                    PaymentMethodCode: payment.PaymentMethodCode, PaymentMethodName: payment.PaymentMethodName),
                 customerPartySiteId,
                 request.CreditAmount > 0
                     ? new PosSaleCreditContract(request.CustomerId,

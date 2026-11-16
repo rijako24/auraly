@@ -16,6 +16,38 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
     [Theory]
+    [InlineData("Header",false,false)]
+    [InlineData("Header",false,true)]
+    [InlineData("Header",true,false)]
+    [InlineData("Header",true,true)]
+    [InlineData("Payment",false,false)]
+    [InlineData("Payment",false,true)]
+    [InlineData("Payment",true,false)]
+    [InlineData("Payment",true,true)]
+    [InlineData("Payments",false,false)]
+    [InlineData("Payments",false,true)]
+    [InlineData("Payments",true,false)]
+    [InlineData("Payments",true,true)]
+    public async Task Native_forms_do_not_pin_the_captured_bank_in_any_supported_payload_shape(
+        string shape,bool webCase,bool native)
+    {
+        var bank = Guid.NewGuid();
+        var payment = new Dictionary<string,object> { [webCase ? "bankAccountId" : "BankAccountId"] = bank };
+        if (native) payment[webCase ? "paymentMethodId" : "PaymentMethodId"] = Guid.NewGuid();
+        object payload = shape == "Header" ? payment : new Dictionary<string,object> {
+            [webCase ? char.ToLowerInvariant(shape[0]) + shape[1..] : shape] =
+                shape == "Payment" ? payment : new[] { payment } };
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT BankAccountId FROM accounting.AccountingBankReferences(@Payload);",connection);
+        command.Parameters.Add("@Payload",SqlDbType.NVarChar,-1).Value = JsonSerializer.Serialize(payload);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!native) { Assert.True(await reader.ReadAsync()); Assert.Equal(bank,reader.GetGuid(0)); }
+        Assert.False(await reader.ReadAsync());
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]

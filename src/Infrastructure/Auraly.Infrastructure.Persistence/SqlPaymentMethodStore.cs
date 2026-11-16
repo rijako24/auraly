@@ -37,9 +37,12 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         const string filter = """
             TenantId=@Tenant AND (@Id IS NULL OR PaymentMethodId=@Id)
             AND (@Active IS NULL OR IsActive=@Active)
+            AND (@Method IS NULL OR MethodCode=@Method)
             AND (@Search IS NULL OR Code LIKE @Search OR Name LIKE @Search)
             AND (@Usage IS NULL OR IsActive=1 AND IsReady=1 AND
               ((@Usage=N'Sales' AND UseForSales=1) OR (@Usage=N'Receipts' AND UseForReceipts=1)
+               OR (@Usage=N'ServiceInvoices' AND UseForSales=1 AND MethodCode IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard'))
+               OR (@Usage=N'TipPayments' AND UseForSupplierPayments=1 AND MethodCode IN(N'Cash',N'Transfer'))
                OR (@Usage=N'SupplierPayments' AND UseForSupplierPayments=1) OR (@Usage=N'Payroll' AND UseForPayroll=1)
                OR (@Usage IN(N'VoucherReceipts',N'VoucherPayments') AND UseForVouchers=1 AND EXISTS(
                  SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@Tenant,MethodCode,AccountId) readiness
@@ -57,6 +60,7 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         command.Parameters.AddWithValue("@Tenant", user.TenantId);
         command.Parameters.AddWithValue("@Id", (object?)query.PaymentMethodId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Active", (object?)query.IsActive ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Method", (object?)query.MethodCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", string.IsNullOrEmpty(query.Search) ? DBNull.Value : $"%{query.Search}%");
         command.Parameters.AddWithValue("@Usage", (object?)query.Usage ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", checked((query.Page - 1) * query.PageSize));
@@ -76,13 +80,14 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
         await using var command = new SqlCommand($"""
-            DECLARE @Type nvarchar(64),@ExistingType uniqueidentifier,@VoucherUsage bit;
+            DECLARE @Type nvarchar(64),@ExistingType uniqueidentifier,@VoucherUsage bit,@TypeLockedAt datetimeoffset(7);
             -- Serialize semantic edits with acceptance, whose catalog read holds
             -- the same head until the source and its references are committed.
-            SELECT @ExistingType=PaymentTypeId,@VoucherUsage=COALESCE(@Vouchers,UseForVouchers) FROM reference.PaymentMethods WITH(UPDLOCK,HOLDLOCK)
+            SELECT @ExistingType=PaymentTypeId,@VoucherUsage=COALESCE(@Vouchers,UseForVouchers),@TypeLockedAt=TypeLockedAt FROM reference.PaymentMethods WITH(UPDLOCK,HOLDLOCK)
               WHERE TenantId=@Tenant AND PaymentMethodId=@Id;
             SET @VoucherUsage=COALESCE(@VoucherUsage,@Vouchers,0);
             IF @ExistingType<>@TypeId AND (
+              @TypeLockedAt IS NOT NULL OR
               EXISTS(SELECT 1 FROM dbo.SalesPayments WHERE PaymentMethodId=@Id)
               OR EXISTS(SELECT 1 FROM dbo.SalesDocuments WHERE CreditPaymentMethodId=@Id)
               OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentTenders WHERE PaymentMethodId=@Id)

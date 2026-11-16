@@ -68,7 +68,9 @@ public sealed class RestaurantCollectionService(
             request.PaymentMethodCode == "Transfer" &&
               (request.BankAccountId is null ||
                string.IsNullOrWhiteSpace(request.PaymentReference)) ||
-            request.PaymentReference?.Length > 160)
+            request.PaymentReference?.Length > 160 ||
+            (request.PaymentMethodId is null) != (request.PaymentMethodVersion is null) ||
+            request.PaymentMethodId == Guid.Empty || request.PaymentMethodVersion is <= 0)
             throw new RestaurantAccountValidationException(
                 "Selecciona propinas pendientes, personal, regla de reparto y medio de entrega válidos.");
         return store.SettleTipsAsync(actor, request,
@@ -99,7 +101,10 @@ public sealed class RestaurantCollectionService(
         DemandCashier(actor, accountId);
         if (!PaymentMethodEvidence.IsValidSet(request.Payments.Select(payment => new PaymentMethodEvidence(
                 payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
-                payment.PaymentMethodName, payment.AccountId))))
+                payment.PaymentMethodName, payment.AccountId))) ||
+            request.TipPayment is { } tipEvidence && !PaymentMethodEvidence.IsValidSet([
+                new(tipEvidence.PaymentMethodId, tipEvidence.PaymentMethodVersion, tipEvidence.PaymentMethodCode,
+                    tipEvidence.PaymentMethodName, tipEvidence.AccountId)]))
             throw new OnlineSalesDraftValidationException("La identidad de las formas de pago no es válida.");
         if (request.CollectionId == Guid.Empty || request.WorkSessionId == Guid.Empty ||
             request.ExpectedAccountVersion < 1 ||

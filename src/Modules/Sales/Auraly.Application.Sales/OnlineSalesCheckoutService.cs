@@ -461,12 +461,12 @@ public sealed class OnlineSalesCheckoutService(
                 if (cash.Length > 1)
                 {
                     storedPayments.RemoveAll(item => item.MethodCode == "Cash");
-                    storedPayments.Insert(0, new OnlineSalesPayment("Cash",
-                        cash.Sum(item => item.Amount), null,
-                        TenderedAmount: cash.Sum(item =>
-                            item.TenderedAmount ?? item.CollectedAmount),
-                        RoundingAdjustment: cash.Sum(item =>
-                            item.RoundingAdjustment)));
+                    storedPayments.InsertRange(0, cash.GroupBy(item => item.PaymentMethodId).Select(group =>
+                        group.First() with {
+                            Amount = group.Sum(item => item.Amount),
+                            TenderedAmount = group.Sum(item => item.TenderedAmount ?? item.CollectedAmount),
+                            RoundingAdjustment = group.Sum(item => item.RoundingAdjustment)
+                        }));
                 }
                 if (storedPayments.Count > 10 ||
                     !request.Payments.SequenceEqual(storedPayments))

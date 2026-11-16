@@ -109,6 +109,7 @@ export type RestaurantTipSettlementRequest = {
   paymentMethodCode: "Cash" | "Transfer";
   bankAccountId: string | null;
   paymentReference: string | null;
+  paymentMethodId?: string; paymentMethodVersion?: number;
 };
 export type RestaurantTipSettlement = {
   settlementId: string; businessId: string; totalAmount: number;

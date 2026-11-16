@@ -127,9 +127,11 @@ export const serviceInvoicesApi = {
     paymentMethodCode: string,
     paymentReference: string | undefined,
     idempotencyKey: string,
+    paymentMethodId?: string,
+    paymentMethodVersion?: number,
   ) => apiClient.postIdempotent<IssuedServiceInvoice>(
     "/commerce/v1/service-invoices/issue",
-    { businessId, customerId, partySiteId, lines, paymentMethodCode, paymentReference },
+    { businessId, customerId, partySiteId, lines, paymentMethodCode, paymentReference, paymentMethodId, paymentMethodVersion },
     idempotencyKey,
   ),
   history: (

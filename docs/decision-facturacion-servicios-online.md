@@ -92,6 +92,18 @@ El procesador y rebuild del único motor de reporting agregan el tipo fuente `Se
 
 La ruta `Facturación > Servicios` es web y requiere permisos propios `service-invoices.read` y `service-invoices.create`. No es una copia completa del POS. Reutiliza sus patrones maduros de búsqueda, edición de línea, desglose de totales, autorización de acciones sensibles, confirmación e impresión, pero elimina toda acción física o de caja.
 
+La forma de contado se selecciona desde el catálogo paginado del tenant (uso
+`ServiceInvoices`), con nombre y código propios; no se mantiene una lista local
+de cuatro destinos contables. La emisión conserva su identidad en snapshot y
+`SalesPayments` mediante el mismo writer usado por suscripciones. Contabilidad
+resuelve el auxiliar vigente al procesar, según la política común; las facturas
+ya contabilizadas no se reescriben. Reintentar la misma confirmación conserva su
+clave de idempotencia y devuelve la factura original sin consumir otro número.
+Esto no agrega sesión de caja, inventario ni otro flujo de pagos a servicios.
+La pantalla y el historial muestran los instantes en la zona horaria de la sede,
+obtenida del contexto autorizado existente. Buscar servicios y buscar clientes
+tienen cargas independientes; escribir en uno no vuelve a consultar el otro.
+
 ### Flujo de captura
 
 1. La pantalla abre un borrador vacío con fecha, tipo de documento y serie online elegible.

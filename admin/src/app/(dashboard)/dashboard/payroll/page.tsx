@@ -474,7 +474,7 @@ function PaymentForm({ options, runs, selectedRun, loading, error, onRunChange, 
     return <div className="grid gap-4">
       <Field label="Liquidación"><Select value={runId} disabled={busy} onValueChange={id=>{setRunId(id);onRunChange(id);}}><SelectTrigger aria-label="Liquidación"><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{runs.filter(run=>run.status==="Approved").map(run=><SelectItem key={run.payrollRunId} value={run.payrollRunId}>{run.periodStart} — {run.periodEnd} · Neto liquidado {money.format(run.netPayable)}</SelectItem>)}</SelectContent></Select></Field>
       <Field label="Forma de pago"><PagedEntitySelect<PaymentMethod> ariaLabel="Forma de pago" value={form?.paymentMethodId??""}
-        queryKey={["payroll-payment-methods",tenantId,businessId]} disabled={busy}
+        queryKey={["payment-method-choices",tenantId,businessId,"Payroll"]} disabled={busy}
         selectedOption={form?{value:form.paymentMethodId,label:form.name,description:`${form.accountCode} · ${form.accountName}`}:null}
         searchPlaceholder="Buscar forma de pago…" emptyMessage="No hay formas habilitadas para nómina."
         loadPage={async(search,page,pageSize)=>{const result=await paymentMethodsApi.list({usage:"Payroll",search,page,pageSize});

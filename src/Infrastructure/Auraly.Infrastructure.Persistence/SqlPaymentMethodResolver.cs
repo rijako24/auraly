@@ -48,7 +48,7 @@ internal static class SqlPaymentMethodResolver
             IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
                 PaymentMethodId uniqueidentifier,MethodCode nvarchar(32)) payment
               WHERE payment.PaymentMethodId IS NULL OR NOT EXISTS(
-                SELECT 1 FROM reference.PaymentMethods form WITH(HOLDLOCK)
+                SELECT 1 FROM reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK)
                 JOIN reference.Options type ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
                 WHERE form.TenantId=@Tenant AND form.PaymentMethodId=payment.PaymentMethodId
                   AND type.Code=payment.MethodCode
@@ -57,6 +57,10 @@ internal static class SqlPaymentMethodResolver
                       SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
                       WHERE ready.SourceType=N'PosPaymentMethod'))))
               THROW 51220,N'La forma de pago de la venta no coincide con la configuración autorizada.',1;
+            UPDATE form SET TypeLockedAt=SYSUTCDATETIME()
+            FROM reference.PaymentMethods form JOIN OPENJSON(@Payments) WITH(PaymentMethodId uniqueidentifier) input
+              ON input.PaymentMethodId=form.PaymentMethodId
+            WHERE form.TenantId=@Tenant AND form.TypeLockedAt IS NULL;
             """,connection,transaction);
         command.Parameters.AddWithValue("@Tenant",tenantId);
         command.Parameters.AddWithValue("@Current",requireCurrent);
@@ -73,7 +77,7 @@ internal static class SqlPaymentMethodResolver
         await using var command = new SqlCommand("""
             SELECT form.PaymentMethodId,form.Code,form.Name,type.Code,form.Version,account.BankAccountId
             FROM OPENJSON(@Ids) WITH(Id uniqueidentifier '$') input
-            JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.PaymentMethodId=input.Id AND form.TenantId=@Tenant
+            JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.PaymentMethodId=input.Id AND form.TenantId=@Tenant
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method' AND type.IsActive=1
             JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=form.TenantId
               AND account.AccountId=form.AccountId AND account.IsActive=1 AND account.AllowsPosting=1
@@ -83,15 +87,22 @@ internal static class SqlPaymentMethodResolver
               OR (@Usage=N'Sales' AND form.UseForSales=1) OR (@Usage=N'Payroll' AND form.UseForPayroll=1))
               AND readiness.SourceType=CASE @Usage WHEN N'SupplierPayments' THEN N'SupplierPaymentMethod'
                 WHEN N'Sales' THEN N'PosPaymentMethod' ELSE N'CustomerPaymentMethod' END;
+            UPDATE form SET TypeLockedAt=SYSUTCDATETIME()
+            FROM reference.PaymentMethods form JOIN OPENJSON(@Ids) WITH(Id uniqueidentifier '$') input
+              ON input.Id=form.PaymentMethodId
+            WHERE form.TenantId=@Tenant AND form.TypeLockedAt IS NULL;
             """, connection, transaction);
         command.Parameters.AddWithValue("@Tenant", tenantId);
         command.Parameters.AddWithValue("@Usage", usage);
         command.Parameters.AddWithValue("@Ids", JsonSerializer.Serialize(tenders.Select(tender => tender.PaymentMethodId).Distinct()));
         var forms = new Dictionary<Guid, (string Code,string Name,string Type,int Version,Guid? Bank)>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
             while (await reader.ReadAsync(cancellationToken))
                 forms.Add(reader.GetGuid(0),(reader.GetString(1),reader.GetString(2),reader.GetString(3),
                     reader.GetInt32(4),reader.IsDBNull(5)?null:reader.GetGuid(5)));
+            await reader.NextResultAsync(cancellationToken);
+        }
         return tenders.Select(tender =>
         {
             if (tender.PaymentMethodId is not { } id || !forms.TryGetValue(id, out var form) ||

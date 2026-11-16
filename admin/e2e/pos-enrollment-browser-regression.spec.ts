@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { paymentCatalogFixture } from "./support/payment-catalog";
+
+test.use({ timezoneId: "Asia/Tokyo" });
 
 test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica", async ({ page, baseURL }) => {
+  const now = new Date("2026-11-17T01:30:00Z");
+  await page.clock.setFixedTime(now);
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
   const warehouseId = "33333333-3333-3333-3333-333333333333";
@@ -57,6 +62,10 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   let cookieReturnCalls = 0;
   let authorizationCalls = 0;
   let cloudLoginCalls = 0;
+  let localOrderReads = 0;
+  let localPaymentReads = 0;
+  let cloudPaymentReads = 0;
+  const cashForm = paymentCatalogFixture().forms[0];
 
   await page.addInitScript(() => window.localStorage.setItem("auraly:last-tenant-key", "TEST"));
 
@@ -143,13 +152,14 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
           businessId: redeemed ? businessId : "",
           warehouseId: redeemed ? warehouseId : "",
           businessName: redeemed ? "Sede prueba" : "",
+          timeZone: "America/Bogota",
           warehouseName: redeemed ? "Principal" : "",
           warehouseAllowsNegativeStockSales: false,
           userDisplayName: completed && !loggedOut ? "Admin Prueba" : "",
           userId: completed && !loggedOut ? userId : null,
           workSessionId: workSessionOpened && !loggedOut ? workSessionId : null,
           deviceId: redeemed ? "77777777-7777-7777-7777-777777777777" : null,
-          permissions: completed && !loggedOut ? [...user.permissions, "catalog.read"] : [],
+          permissions: completed && !loggedOut ? [...user.permissions, "catalog.read", "orders.read", "orders.invoice"] : [],
           fiscalReady: false,
           fiscalWarnings: [],
           dianQuotaAvailable: null,
@@ -195,6 +205,20 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
       return;
     }
+    if (path === "/edge/v1/orders") {
+      localOrderReads++;
+      const parameters = new URL(route.request().url()).searchParams;
+      expect(parameters.get("createdFrom")).toBe("2026-11-16T05:00:00.000Z");
+      expect(parameters.get("createdTo")).toBe("2026-11-17T05:00:00.000Z");
+      await route.fulfill({ json: { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 } });
+      return;
+    }
+    if (path === "/edge/v1/payment-methods") {
+      localPaymentReads++;
+      expect(new URL(route.request().url()).searchParams.get("methodCode")).toBe("Cash");
+      await route.fulfill({ json: { items: [cashForm], page: 1, pageSize: 10, totalCount: 1 } });
+      return;
+    }
     if (path === "/edge/v1/sales/next-number") {
       await route.fulfill({ status: 200, contentType: "application/json", body: "null" });
       return;
@@ -233,6 +257,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
 
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path.includes("/payment-methods")) cloudPaymentReads++;
     let body: unknown = {};
     if (path === "/api/auth/login") {
       cloudLoginCalls += 1;
@@ -256,7 +281,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       body = {
         enrollmentSessionId: "88888888-8888-8888-8888-888888888888",
         redemptionCode: "123456",
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
         workspace,
       };
     } else if (path === "/api/commerce/v1/sales-returns/sales") cookieReturnCalls += 1;
@@ -319,6 +344,15 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await page.goto("/pos");
   await expect(page.locator("#pos-scanner")).toBeEnabled({ timeout: 15_000 });
   expect(cloudLoginCalls).toBe(1);
+  await page.getByRole("tab", { name: /^Pedidos/ }).click();
+  await expect.poll(() => localOrderReads).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "Expandir", exact: true }).click();
+  await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
+  await expect(page.getByRole("option", { name: /Efectivo/ })).toBeVisible();
+  await page.getByRole("option", { name: /Efectivo/ }).click();
+  expect(localPaymentReads).toBe(1);
+  expect(cloudPaymentReads).toBe(0);
+  await page.getByRole("button", { name: "Cerrar pedidos", exact: true }).click();
   const returns = page.getByRole("button", { name: /Devoluciones/ });
   await expect(returns).toBeEnabled();
   await returns.click();
@@ -335,12 +369,14 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
       displayName: "Admin Prueba",
       permissions: [
         "sales.create",
+        "orders.read",
+        "orders.invoice",
         "sales.returns.read",
         "sales.returns.create",
         "sales.returns.confirm",
         "catalog.read",
       ],
-      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      expiresAt: new Date(now.getTime() + 86_400_000).toISOString(),
       token: "local-user-session",
     };
   }

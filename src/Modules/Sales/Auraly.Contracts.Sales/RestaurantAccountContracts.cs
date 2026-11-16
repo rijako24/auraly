@@ -64,7 +64,9 @@ public sealed record SettleRestaurantTipsRequest(
     IReadOnlyList<RestaurantTipRecipientRequest> Recipients,
     string DistributionBasis, string? AgreementReference,
     string PaymentMethodCode, Guid? BankAccountId,
-    string? PaymentReference);
+    string? PaymentReference,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null);
 public sealed record RestaurantTipSettlement(
     Guid SettlementId, Guid BusinessId, decimal TotalAmount,
     string DistributionBasis, string? AgreementReference,
@@ -73,7 +75,9 @@ public sealed record RestaurantTipSettlement(
     IReadOnlyList<RestaurantTipRecipientRequest> Recipients);
 public sealed record RestaurantTipSettlementAccountingPayload(
     Guid SettlementId, Guid TenantId, Guid BusinessId,
-    string PaymentMethodCode, Guid? BankAccountId, decimal Amount);
+    string PaymentMethodCode, Guid? BankAccountId, decimal Amount,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null);
 
 public sealed record PrintRestaurantPrebillRequest(long ExpectedVersion);
 

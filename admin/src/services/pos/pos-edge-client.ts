@@ -1,4 +1,4 @@
-import type { PaymentMethodCatalogSnapshot } from "@/services/api/payment-methods";
+import type { PaymentMethod, PaymentMethodCatalogSnapshot, PaymentMethodPage, PaymentMethodQuery } from "@/services/api/payment-methods";
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import type { TenantBranding } from "@/services/api/tenants";
 import type { PortfolioPaymentReceipt } from "./pos-portfolio-payment-print";
@@ -687,6 +687,7 @@ export interface PosClient {
     deviceId?: string | null;
     fiscalReady: boolean;
     pointOfSaleMode?: string;
+    timeZone?: string | null;
     fiscalWarnings: string[];
     dianQuotaAvailable: boolean | null;
     identityReady: boolean;
@@ -718,6 +719,7 @@ export interface PosClient {
   synchronizationEvents(take?: number): Promise<PosSynchronizationEvent[]>;
   referenceOptions(catalogCode: string): Promise<PosReferenceOption[]>;
   settlementConfiguration(): Promise<PosSettlementConfiguration>;
+  paymentMethods(query: PaymentMethodQuery): Promise<PaymentMethodPage>;
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null, publicPriceOnly?: boolean): Promise<PosCatalogSearchPage>;
@@ -748,7 +750,7 @@ export interface PosClient {
     documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
     bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice?: boolean,
     idempotencyKey?: string, onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    includeCreditAcknowledgement?: boolean, charges?: OrderInvoiceChargeSelection[] | null,
+    includeCreditAcknowledgement?: boolean, charges?: OrderInvoiceChargeSelection[] | null, paymentForm?: PaymentMethod,
   ): Promise<InvoiceOrdersResponse>;
   saveCharge(draftId: string, input: AddInvoiceCharge): Promise<PosDraft>;
   removeCharge(draftId: string, appliedChargeId: string): Promise<PosDraft>;
@@ -1004,6 +1006,7 @@ export class PosEdgeClient implements PosClient {
       permissions: string[];
       fiscalReady: boolean;
       pointOfSaleMode?: string;
+      timeZone?: string | null;
       fiscalWarnings: string[];
       dianQuotaAvailable: boolean | null;
       identityReady: boolean;
@@ -1255,6 +1258,13 @@ export class PosEdgeClient implements PosClient {
   }
   settlementConfiguration() {
     return this.request<PosSettlementConfiguration>("/edge/v1/settlement-configuration");
+  }
+
+  paymentMethods(query: PaymentMethodQuery) {
+    const parameters = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
+    if (query.search) parameters.set("search", query.search);
+    if (query.methodCode) parameters.set("methodCode", query.methodCode);
+    return this.request<PaymentMethodPage>(`/edge/v1/payment-methods?${parameters}`);
   }
 
   previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization) {
@@ -1570,12 +1580,14 @@ export class PosEdgeClient implements PosClient {
     documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
     bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice = true,
     idempotencyKey = crypto.randomUUID(), onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    includeCreditAcknowledgement = false, charges?: OrderInvoiceChargeSelection[] | null,
+    includeCreditAcknowledgement = false, charges?: OrderInvoiceChargeSelection[] | null, paymentForm?: PaymentMethod,
   ): Promise<InvoiceOrdersResponse> {
     const scope = this.requiredOrderScope();
     const invoiceRequest = (requestedOrderIds: string[]) => ({
       workSessionId: scope.workSessionId, warehouseId: scope.warehouseId,
       userId: scope.userId, orderIds: requestedOrderIds, paymentMethodCode,
+      paymentMethodId: paymentForm?.paymentMethodId, paymentMethodVersion: paymentForm?.version,
+      paymentFormCode: paymentForm?.code, paymentFormName: paymentForm?.name, accountId: paymentForm?.accountId,
       paymentReference: paymentReference ?? null, bankAccountId: bankAccountId ?? null,
       paymentNotes: paymentNotes ?? null, documentType, charges: charges ?? null,
     });

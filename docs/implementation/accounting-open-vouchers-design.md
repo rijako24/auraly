@@ -581,8 +581,10 @@ en cuentas sin movimientos; una cuenta propia del cliente se conserva.
 Un mapping ya cambiado por el usuario se conserva. Un plan repetido no escribe
 otra cuenta ni actualiza otra vez el mapping. Una incompatibilidad no revisada
 detiene la actualización en vez de inventar cuentas o modificar al cliente.
-Producción no se inspeccionó ni se presume igual a DEV: sus identidades no se
-incluyen por inferencia. Esta preparación no autoriza ejecutar un despliegue.
+La inspección inicial no incluyó producción. La revisión independiente del
+2026-11-16 confirmó sus identidades y dio lugar al tratamiento aprobado de
+Megafruver descrito abajo; no se infieren desde DEV. Esta preparación no autoriza
+ejecutar un despliegue a producción.
 
 El 2026-11-15 se autorizó continuar con el tratamiento explícito de caja en DEV:
 conservar 110505 «Caja general», Asset/Bank/Debit y su vínculo bancario, junto
@@ -600,11 +602,44 @@ amplía a las dos categorías mediante expectativas explícitas de origen y
 destino, sin un segundo proceso ni excepciones en runtime. La política canónica
 decide elegibilidad; un origen ya válido o un mapping sustituido por el cliente
 no se sobrescribe. El plan de identidades de DEV sólo se habilita con
-DeploymentEnvironment=dev; otros ambientes validan cobertura sin inferirlo.
+DeploymentEnvironment=dev; el plan de producción tiene identidades revisadas
+independientemente y los demás ambientes validan cobertura sin inferirlas.
 La cuenta bancaria anterior sigue disponible para su uso bancario conforme al
 catálogo. La lectura previa de DEV confirmó que PaymentMethods aún no existía;
 su seed posterior crea el efectivo con el auxiliar nuevo, sin reasignar formas
 propias ya existentes en otras instalaciones.
+
+**Tratamiento aprobado para Megafruver (2026-11-16).** La migración de InputVat
+conserva 240810/Asset y sus partidas; crea 240811/Liability/General/Debit mediante
+el mismo aplicador revisado, con el rango 2026-01-01/sin fin. Sólo cambia el mapping
+identificado para nuevas contabilizaciones. No reintenta recepciones pendientes.
+
+`20261116_CompleteReviewedMegafruverPaymentCatalog.sql` completa exclusivamente
+la función y naturaleza antes inexistentes de 110505 (Cash/Debit) y 13809501/02
+(CardClearing/Debit), verificando sus IDs, códigos, nombres, tipo y demás
+propiedades. Una configuración explícita diferente bloquea, nunca se sustituye.
+Conserva AccountType, códigos, identidades, partidas, pagos e importes; por tanto
+no cambia su agrupación histórica en balance/estados ni traslada saldos. Es una
+compleción de metadata expresamente aprobada, no una excepción en el processor
+ni una autorización genérica para reclasificar auxiliares usados.
+
+El corte bancario existente conserva 111005 como origen histórico compartido
+y prepara auxiliares independientes para los dos bancos reales. El mapping
+Bank general revisado pasa al auxiliar de Davivienda, ya marcado principal;
+otro mapping válido elegido por el cliente se conserva. Los libros bancarios
+usan la atribución histórica probada y no inventan saldos de apertura.
+
+Antes del bootstrap común se crean únicamente los tipos ausentes del catálogo:
+efectivo, débito, crédito y las dos transferencias de esos bancos, con usos del
+perfil y la política canónica de readiness. Las formas propias no se editan ni
+reactivan. El cambio publica un solo aviso de configuración por sede; repetirlo
+no duplica cuentas, formas, avisos ni efectos financieros. El resto de tenants
+conserva su configuración. El corte usa DeploymentEnvironment=prod sólo cuando
+existen esas identidades revisadas; su ensayo se ejecuta contra una copia local.
+
+Rollback: antes de nuevos movimientos, restauración coherente de la copia y
+binarios previos. Después de operar se conserva la historia y se corrige hacia
+adelante; no se borran pagos ni se reinstala una excepción InputVat/Asset.
 
 Rollback detiene primero nuevos comandos. Antes de usar los destinos se puede
 restaurar el mapping revisado, pero eso reintroduce la incompatibilidad y no
@@ -3490,6 +3525,19 @@ sea necesario para esa consistencia, sin crear un catálogo o política POS apar
 Los nombres/opciones reflejan las formas configuradas y habilitadas para cada
 uso; conservar la presentación no congela los medios técnicos actuales.
 
+Precisión del 2026-11-16: al elegir tarjeta débito/crédito o transferencia,
+una única forma habilitada se selecciona antes de abrir los datos. Con varias
+formas, primero se elige una y entonces se abre el modal una sola vez. Volver
+a elegir la misma forma conserva los datos, y su edición explícita precarga
+franquicia/aprobación o referencia. Efectivo no abre otro modal. Se conservan
+el reemplazo del tipo cuando el importe ya está cubierto, los pagos parciales,
+el cambio del POS y la exigencia de un concepto explícito para diferencias
+administrativas; no cambia el motor ni la confirmación del pago.
+La fecha del pago administrativo se edita en ese segundo paso, junto a los
+importes total y recibido/pagado, y se conserva al volver a seleccionar facturas.
+No aparece en la selección de obligaciones ni en el diálogo de una venta;
+el mismo estado del wizard sigue siendo la fuente de `PaidOn` e idempotencia.
+
 - Administración de CxC recauda mediante Recibo de caja de cliente, accesible
   desde su módulo. CxP conserva el módulo de pago actual y la captura mediante
   comprobante; al desembolsar produce su comprobante de egreso. No se obliga a
@@ -3568,6 +3616,52 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   importes, comprobantes e idempotencia conservan sus invariantes existentes.
 
 ### 14.1 Maestro único de formas de pago del tenant
+
+La selección nativa también recorre servicios, facturación de pedidos por lote y
+cobros/entregas de propinas. Servicios conserva su emisión online sin sesión de
+caja ni inventario y usa `SqlServiceInvoiceDocumentWriter`; la identidad elegida
+se persiste en `SalesPayments` y el snapshot. Pedidos transmite la misma forma
+al checkout canónico; un pedido cuyo dinero ya fue confirmado conserva ese
+origen y no recibe otra forma de cobro. El hash del lote incorpora la evidencia
+nueva cuando está presente y conserva la identidad de solicitudes anteriores.
+
+`ServiceInvoices` y `TipPayments` son filtros de uso y autorización del mismo
+catálogo, no flags ni tablas nuevas: el primero proyecta formas habilitadas para
+ventas de contado con permiso de crear servicios; el segundo, formas de efectivo
+o transferencia habilitadas para desembolsos con permiso de cierre de caja.
+`MethodCode`, búsqueda, uso, orden y límite se aplican en SQL antes de paginar;
+página y conteo viajan en un comando. Los selectores cargan páginas de diez y no
+mantienen vistas ocultas ni polling. Las capturas de restaurante reutilizan su
+única configuración de caja ya cargada (máximo 1.000 formas activas).
+
+Las fechas visibles de servicios y entregas de propinas usan la zona de la sede
+del contexto autorizado, sin otra carga. En pedidos, el día inicial, los filtros
+y la fecha visible usan esa misma zona; los límites UTC se calculan con
+`businessDayBoundary`, incluso en días de 23/25 horas. El contexto de ventas
+proyecta `Businesses.TimeZone` en las consultas existentes de opciones/selección
+y en su caché actual. Sin zona disponible no se consulta una página con los días
+del computador. No cambia la captura de pagos ni la operación sin conexión del POS.
+
+La primera aceptación nativa registra `PaymentMethods.TypeLockedAt` dentro de la
+transacción existente. Es evidencia de uso para proteger el tipo técnico aun si
+el cobro parcial todavía no produjo factura; no crea un estado financiero ni un
+procesador. El bloqueo no cambia cuenta, versión semántica, nombre o usos. Las
+formas sin uso siguen pudiendo corregirse y las utilizadas pueden cambiar sus
+cuentas para operaciones futuras conforme a la política vigente al contabilizar.
+Los guardas históricos siguen protegiendo formas usadas antes de esta columna.
+La migración es aditiva/null, no interpreta movimientos antiguos ni reescribe
+partidas. Repetir un comando terminado retorna antes de marcar uso o resolver
+cuentas; las lecturas/marcas se hacen por conjunto, en el mismo viaje SQL.
+
+Presupuesto del camino extendido: hasta diez medios de una venta/cobro y una
+propina; una validación de catálogo por captura, sin lecturas por medio. Servicios
+resuelve una forma antes de consumir numeración; cada factura del lote sigue
+siendo una transacción independiente bajo el límite existente de 50 pedidos.
+Los recibos de propina y su entrega usan el mismo resolvedor contable y guardan
+la cuenta aplicada en el resultado del trabajo. Su reversión conserva las
+partidas originales. El rollback conserva la columna y los resultados ya
+aceptados y usa binarios compatibles; nunca borra cobros para volver atrás.
+
 
 - Precisión del usuario del 2026-11-15: un tenant nuevo recibe exactamente cuatro
   formas iniciales: Efectivo, Tarjeta débito, Tarjeta crédito y Transferencia.

@@ -10,13 +10,22 @@ export function finalRestaurantPayments(collections: ReadonlyArray<{
   const cash = captured.filter((payment) => payment.methodCode === "Cash");
   const other = captured.filter((payment) => payment.methodCode !== "Cash");
   if (cash.length <= 1) return captured;
-  const roundingAdjustment = round(cash.reduce((sum, item) =>
-    sum + (item.roundingAdjustment ?? 0), 0));
-  return [{ methodCode: "Cash", amount: round(cash.reduce((sum, item) =>
-    sum + item.amount, 0)), reference: null,
-    tenderedAmount: round(cash.reduce((sum, item) =>
-      sum + (item.tenderedAmount ?? item.amount + (item.roundingAdjustment ?? 0)), 0)),
-    ...(roundingAdjustment !== 0 ? { roundingAdjustment } : {}) }, ...other];
+  const groups = new Map<string | null, PosPaymentInput[]>();
+  for (const payment of cash) {
+    const key = payment.paymentMethodId ?? null;
+    const group = groups.get(key);
+    if (group) group.push(payment);
+    else groups.set(key, [payment]);
+  }
+  return [...groups.values()].map<PosPaymentInput>((group) => {
+    const roundingAdjustment = round(group.reduce((sum, item) => sum + (item.roundingAdjustment ?? 0), 0));
+    const first = { ...group[0] };
+    delete first.roundingAdjustment;
+    return { ...first, amount: round(group.reduce((sum, item) => sum + item.amount, 0)),
+      tenderedAmount: round(group.reduce((sum, item) =>
+        sum + (item.tenderedAmount ?? item.amount + (item.roundingAdjustment ?? 0)), 0)),
+      ...(roundingAdjustment !== 0 ? { roundingAdjustment } : {}) };
+  }).concat(other);
 }
 
 export function settleRestaurantPayment(total: number, rows: ReadonlyArray<{

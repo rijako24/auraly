@@ -32,7 +32,8 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
       if (input.tenant !== activeTenant.current) throw new Error("El tenant cambió. Abre nuevamente la forma de pago.");
       return paymentMethodsApi.save(input.value, input.filters);
     },
-    onSuccess: (result, input) => { cache.setQueryData(input.queryKey, result.page); if(input.tenant===activeTenant.current) {setDraft(null);toast.success("Forma de pago guardada.");} } });
+    onSuccess: (result, input) => { cache.setQueryData(input.queryKey, result.page);
+      void cache.invalidateQueries({ queryKey: ["payment-method-choices", input.tenant], refetchType: "none" }); if(input.tenant===activeTenant.current) {setDraft(null);toast.success("Forma de pago guardada.");} } });
   function edit(value?: PaymentMethod) {
     save.reset();
     setEditingTenant(tenantId);

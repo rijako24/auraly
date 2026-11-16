@@ -19,6 +19,55 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Selected_final_consumer_uses_the_same_fiscal_identity_as_an_anonymous_sale()
+    {
+        var userId = await CreateUserAsync("selected-final-consumer");
+        var (customerId, partySiteId) = await CreateNaturalPersonCustomerAsync(userId, "222222222222");
+        await ExecuteAsync("""
+            UPDATE party SET PartyType=N'Organization',DisplayName=N'Consumidor final',LegalName=N'Consumidor final'
+            FROM dbo.Parties party JOIN dbo.Customers customer ON customer.PartyId=party.PartyId
+            WHERE customer.CustomerId=@Id;
+            """, new SqlParameter("@Id", customerId));
+        using var client = fixture.CreateUserClient(userId, CommercePermissionCodes.SalesCreate);
+        var draft = await OpenAsync(client);
+        using (var select = new HttpRequestMessage(HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
+        {
+            Content = JsonContent.Create(new SelectOnlineSalesDraftCustomerRequest(customerId,draft.Version,partySiteId))
+        })
+        {
+            select.Headers.Add("Idempotency-Key",Guid.NewGuid().ToString("N"));
+            using var response = await client.SendAsync(select);
+            response.EnsureSuccessStatusCode();
+            draft = (await response.Content.ReadFromJsonAsync<OnlineSalesCustomerSelection>())!.Draft;
+        }
+        var captured = await CaptureAsync(client,draft);
+        var request = new CompleteOnlineSalesDraftRequest(captured.Version,
+            [new OnlineSalesPayment("Cash",captured.PayableAmount,null)],DocumentType:PosSaleDocumentTypes.Invoice);
+        var key = Guid.NewGuid().ToString("N");
+        var completed = await CompleteAsync(client,captured.DraftId,request,key);
+        var replay = await CompleteAsync(client,captured.DraftId,request,key);
+        Assert.Equal(completed.Receipt.DocumentId,replay.Receipt.DocumentId);
+        Assert.Equal("222222222222",completed.Receipt.CustomerIdentification);
+        Assert.Equal("Dirección principal",completed.Receipt.CustomerAddress);
+        Assert.Equal("3001234567",completed.Receipt.CustomerPhone);
+        using var scope = fixture.CreateScope();
+        Assert.True(await scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>().ProcessAsync(
+            fixture.BusinessId,completed.Receipt.DocumentId,"selected-final-consumer"));
+        var unsigned = await ReadFiscalArtifactAsync(completed.Receipt.DocumentId,FiscalArtifactTypeCodes.UnsignedXml);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(unsigned));
+        var customer = xml.Descendants(DianUblNamespaces.Cac+"AccountingCustomerParty").Single();
+        Assert.Equal("2",customer.Element(DianUblNamespaces.Cbc+"AdditionalAccountID")!.Value);
+        var party = customer.Element(DianUblNamespaces.Cac+"Party")!;
+        Assert.Equal("222222222222",party.Element(DianUblNamespaces.Cac+"PartyIdentification")!
+            .Element(DianUblNamespaces.Cbc+"ID")!.Value);
+        Assert.Equal("ZZ",party.Element(DianUblNamespaces.Cac+"PartyTaxScheme")!
+            .Element(DianUblNamespaces.Cac+"TaxScheme")!.Element(DianUblNamespaces.Cbc+"ID")!.Value);
+        var validation = new DianSchemaValidator().Validate(unsigned);
+        Assert.True(validation.IsValid,string.Join(" | ",validation.Errors));
+    }
+
+    [Fact]
     public async Task Sales_checkout_rejects_the_retired_habilitation_property()
     {
         var userId = await CreateUserAsync("retired-habilitation-property");

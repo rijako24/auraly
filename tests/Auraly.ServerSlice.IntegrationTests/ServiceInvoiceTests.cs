@@ -9,6 +9,7 @@ using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Catalog;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Identity.Services;
@@ -26,6 +27,69 @@ public sealed class ServiceInvoiceReportingCollection : ICollectionFixture<Serve
 [Collection(ServiceInvoiceReportingCollection.Name)]
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Service_invoice_preserves_the_selected_new_form_and_replays_without_resolving_changed_configuration()
+    {
+        var context = await SeedAsync();
+        using var admin = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        var account = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin);
+        var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
+        var save = new SavePaymentMethodRequest(Guid.NewGuid(), $"SVC-{Guid.NewGuid():N}", "Caja de servicios",
+            types.Single(type => type.Code == "Cash").Id, account.AccountId, true, false, false, false, true, 10);
+        using var created = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}", save);
+        Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
+        var form = (await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+        using var client = fixture.CreateAdminClient(ServiceInvoicePermissionCodes.Create, ServiceInvoicePermissionCodes.Issue);
+        var page = (await client.GetFromJsonAsync<PaymentMethodPage>(
+            $"/api/commerce/v1/payment-methods/?usage=ServiceInvoices&search={save.Code}&pageSize=1"))!;
+        Assert.Equal(form.PaymentMethodId, Assert.Single(page.Items).PaymentMethodId);
+        Assert.Equal(1, page.TotalCount);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", context.IdempotencyKey);
+        var request = new IssueServiceInvoiceRequest(fixture.BusinessId, context.CustomerId,
+            [new(context.ServiceId, 1)], "Cash", PartySiteId: context.CustomerSiteId,
+            PaymentMethodId: form.PaymentMethodId, PaymentMethodVersion: form.Version);
+        using var issuedResponse = await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue", request);
+        Assert.True(issuedResponse.IsSuccessStatusCode, await issuedResponse.Content.ReadAsStringAsync());
+        var issued = (await issuedResponse.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!;
+        var currentForm = Assert.Single((await admin.GetFromJsonAsync<PaymentMethodPage>(
+            $"/api/commerce/v1/payment-methods/?paymentMethodId={form.PaymentMethodId}"))!.Items);
+        using var disabled = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}",
+            save with { IsActive = false, RowVersion = currentForm.RowVersion });
+        Assert.True(disabled.IsSuccessStatusCode, await disabled.Content.ReadAsStringAsync());
+        using var replayResponse = await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue", request);
+        Assert.True(replayResponse.IsSuccessStatusCode, await replayResponse.Content.ReadAsStringAsync());
+        var replay = (await replayResponse.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!;
+        Assert.Equal(issued.DocumentId, replay.DocumentId);
+        Assert.True(replay.IsReplay);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var query = new SqlCommand("""
+            SELECT payment.PaymentMethodId,payment.PaymentMethodCode,payment.PaymentMethodVersion,payment.Amount,
+              (SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Document),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Document),
+              (SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Document),
+              (SELECT JSON_VALUE(SnapshotJson,'$.payment.paymentMethodId') FROM sales.SalesDocumentServiceFiscalSnapshots WHERE DocumentId=@Document),
+              payment.AccountId,
+              (SELECT COUNT(*) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                WHERE entry.SourceDocumentId=@Document AND entry.DebitTotal=entry.CreditTotal
+                  AND line.AccountId=@Account AND line.Debit=payment.Amount)
+            FROM dbo.SalesPayments payment WHERE DocumentId=@Document;
+            """, connection);
+        query.Parameters.AddWithValue("@Document", issued.DocumentId);
+        query.Parameters.AddWithValue("@Account", form.AccountId);
+        await using var reader = await query.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(form.PaymentMethodId, reader.GetGuid(0));
+        Assert.Equal(form.Code, reader.GetString(1));
+        Assert.Equal(form.Version, reader.GetInt32(2));
+        Assert.Equal(119000m, reader.GetDecimal(3));
+        Assert.Equal(1, reader.GetInt32(4)); Assert.Equal(0, reader.GetInt32(5)); Assert.Equal(1, reader.GetInt32(6));
+        Assert.Equal(form.PaymentMethodId, Guid.Parse(reader.GetString(7)));
+        Assert.Equal(form.AccountId,reader.GetGuid(8)); Assert.Equal(1,reader.GetInt32(9));
+        Assert.False(await reader.ReadAsync());
+    }
+
     [Fact]
     public async Task Explicit_reporting_rebuild_accepts_legacy_service_sources_and_preserves_operational_effects()
     {

@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { login } from "./support/auth";
 
+test.use({ timezoneId: "Asia/Tokyo" });
+
 test("factura, imprime y avanza el contador pedido por pedido en una instalación", async ({ page, baseURL }) => {
   test.setTimeout(120_000);
+  await page.clock.setFixedTime(new Date("2026-11-17T01:30:00Z"));
   if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
@@ -41,6 +44,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   const workspace = {
     businessId,
     businessName: "Sede prueba",
+    timeZone: "America/Bogota",
     warehouseId,
     warehouseCode: "B01",
     warehouseName: "Principal",
@@ -98,7 +102,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path === "/api/execution-context/tenants") body = [{ tenantId, name: "Tenant prueba" }];
-    else if (path === "/api/execution-context/businesses") body = [{ businessId, tenantId, name: "Sede prueba" }];
+    else if (path === "/api/execution-context/businesses") body = [{ businessId, tenantId, name: "Sede prueba", timeZone: "America/Bogota" }];
     else if (path === "/api/execution-context/access") body = {
       tenantId,
       businessId,
@@ -158,7 +162,14 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
           }],
         }));
     }
+    else if (path.endsWith("/payment-methods/")) {
+      body = { items: [{ paymentMethodId: "form-cash-native", code: "CASH-BATCH", name: "Caja del lote", methodCode: "Cash",
+        version: 1, accountId: "account-cash-native", isActive: true, useForSales: true }], page: 1, pageSize: 10, totalCount: 1 };
+    }
     else if (path.endsWith("/orders") && route.request().method() === "GET") {
+      const filters = new URL(route.request().url()).searchParams;
+      expect(filters.get("createdFrom")).toBe("2026-11-16T05:00:00.000Z");
+      expect(filters.get("createdTo")).toBe("2026-11-17T05:00:00.000Z");
       const items = orders.filter((order) => !completed.has(order.orderId));
       body = { items, page: 1, pageSize: 20, totalCount: items.length, hasMore: false };
     } else if (path.endsWith("/orders/invoice") && route.request().method() === "POST") {
@@ -219,6 +230,8 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   ]);
   sequence.length = 0;
   await expect(page.getByRole("button", { name: "Facturar en efectivo (3)" })).toBeEnabled();
+  await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
+  await page.getByRole("option", { name: /Caja del lote/ }).click();
   await page.getByRole("button", { name: "Facturar en efectivo (3)" }).click();
 
   await expect(page.getByText("1/3", { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -240,6 +253,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     "drawer",
   ]);
   expect(invoiceRequests).toHaveLength(3);
+  expect(invoiceRequests).toEqual(expect.arrayContaining([expect.objectContaining({ paymentMethodId: "form-cash-native", paymentFormCode: "CASH-BATCH" })]));
   expect(brandingReads).toBe(1);
   expect(invoiceRequests.every((request) => request.charges == null)).toBe(true);
 
@@ -256,6 +270,8 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   await page.reload();
   await expect(page.getByText("PED-004")).toBeVisible();
   await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
+  await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
+  await page.getByRole("option", { name: /Caja del lote/ }).click();
   const chargeButton = page.getByRole("button", { name: "Facturar 2 pedidos con cargo" });
   await expect(chargeButton).toBeVisible();
   const chargeButtonBox = await chargeButton.boundingBox();

@@ -105,6 +105,38 @@ public sealed partial class PosCatalogStoreTests
     }
 
     [Fact]
+    public async Task Time_zone_upgrade_refreshes_only_existing_configuration_and_preserves_it_on_restart()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-zone-upgrade-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new PosCatalogStore($"Data Source={path};Pooling=False");
+            await store.InitializeAsync();
+            await store.ApplyPricingSnapshotAsync(new([], [], [], [], ConfigurationCursor: 12, PointOfSaleMode: "Store"));
+            await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = "ALTER TABLE PosPricingConfiguration DROP COLUMN TimeZone;";
+                await command.ExecuteNonQueryAsync();
+            }
+            await store.InitializeAsync();
+            Assert.Null(await store.ConfigurationCursorAsync());
+            Assert.Equal("Store", (await store.WorkspaceConfigurationAsync()).Mode);
+            await store.ApplyPricingSnapshotAsync(new([], [], [], [], ConfigurationCursor: 12,
+                PointOfSaleMode: "Store", TimeZone: "America/Bogota"));
+            await store.InitializeAsync();
+            Assert.Equal(12, await store.ConfigurationCursorAsync());
+            Assert.Equal("America/Bogota", (await store.WorkspaceConfigurationAsync()).TimeZone);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Store_presentation_and_family_pages_survive_restart_without_changing_inventory_identity()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-store-{Guid.NewGuid():N}.db");
@@ -125,10 +157,12 @@ public sealed partial class PosCatalogStoreTests
             await store.BeginBootstrapAsync(session);
             await store.ApplyBootstrapPageAsync(Page(session, items, false, null));
             await store.PromoteBootstrapAsync();
-            await store.ApplyPricingSnapshotAsync(new([], [], [], [], PointOfSaleMode: "Store"));
+            await store.ApplyPricingSnapshotAsync(new([], [], [], [], PointOfSaleMode: "Store", TimeZone: "America/Bogota"));
             var reopened = new PosCatalogStore($"Data Source={path}");
             await reopened.InitializeAsync();
-            Assert.Equal("Store", await reopened.PointOfSaleModeAsync());
+            Assert.Equal("Store", (await reopened.WorkspaceConfigurationAsync()).Mode);
+            Assert.Equal("America/Bogota", (await reopened.WorkspaceConfigurationAsync()).TimeZone);
+            Assert.Equal("America/Bogota", (await reopened.ReadPricingSnapshotAsync()).TimeZone);
             Assert.Equal(categoryId, Assert.Single(await reopened.CategoriesAsync()).CategoryId);
             var first = await reopened.SearchAsync("", 0, 50, familyProductId: items[1].ProductId);
             var next = await reopened.SearchAsync("", 50, 50, familyProductId: items[1].ProductId);

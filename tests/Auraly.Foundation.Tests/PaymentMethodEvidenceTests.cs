@@ -17,6 +17,15 @@ public sealed class PaymentMethodEvidenceTests
     }
 
     [Fact]
+    public void Partial_sale_collections_keep_repeated_form_evidence_without_relaxing_administrative_rows()
+    {
+        var form = new PaymentMethodEvidence(Guid.NewGuid(), 1, "DEBIT", "Datáfono", Guid.NewGuid());
+        Assert.True(PaymentMethodEvidence.IsValidSale([form, form with { Version = 2 }], null));
+        Assert.False(PaymentMethodEvidence.IsValidSet([form, form]));
+        Assert.False(PaymentMethodEvidence.IsValidSale([form, form with { AccountId = null }], null));
+    }
+
+    [Fact]
     public void Legacy_payments_do_not_require_catalog_metadata()
         => Assert.True(PaymentMethodEvidence.IsValidSet([new(null, null, null, null, null)]));
 

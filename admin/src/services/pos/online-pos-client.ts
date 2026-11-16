@@ -1,3 +1,4 @@
+import { paymentMethodsApi, type PaymentMethod, type PaymentMethodQuery } from "@/services/api/payment-methods";
 import { createPosStateInvalidationNotifier } from "./pos-state-invalidation";
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import {
@@ -119,6 +120,7 @@ export type SalesWorkspaceOption = {
   fiscalWarningMessages?: string[];
   pointOfSaleMode?: "DirectSale" | "Store" | "RestaurantBar";
   restaurantRequireWaiterCredential?: boolean;
+  timeZone?: string;
 };
 
 export type SalesWorkspaceContext = Omit<
@@ -627,6 +629,7 @@ export class OnlinePosClient implements PosClient {
       businessId: this.context.businessId,
       warehouseId: this.context.warehouseId,
       pointOfSaleMode: this.context.pointOfSaleMode ?? "DirectSale",
+      timeZone: this.context.timeZone,
       businessName: this.context.businessName,
       warehouseName: this.context.warehouseName,
       warehouseAllowsNegativeStockSales: this.context.warehouseAllowsNegativeStockSales,
@@ -664,6 +667,8 @@ export class OnlinePosClient implements PosClient {
   settlementConfiguration() {
     return request<PosSettlementConfiguration>("/api/commerce/v1/pos/settlement-configuration");
   }
+
+  paymentMethods(query: PaymentMethodQuery) { return paymentMethodsApi.list(query); }
   openCashDrawer() {
     return this.localEdge().openCashDrawer();
   }
@@ -1426,6 +1431,7 @@ export class OnlinePosClient implements PosClient {
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
     includeCreditAcknowledgement = false,
     charges?: OrderInvoiceChargeSelection[] | null,
+    paymentForm?: PaymentMethod,
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1442,6 +1448,8 @@ export class OnlinePosClient implements PosClient {
       userId: this.userId,
       orderIds: requestedOrderIds,
       paymentMethodCode,
+      paymentMethodId: paymentForm?.paymentMethodId, paymentMethodVersion: paymentForm?.version,
+      paymentFormCode: paymentForm?.code, paymentFormName: paymentForm?.name, accountId: paymentForm?.accountId,
       paymentReference: paymentReference ?? null,
       bankAccountId: bankAccountId ?? null,
       paymentNotes: paymentNotes ?? null,
