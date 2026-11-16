@@ -424,10 +424,12 @@ public sealed partial class SqlAccountingStore
 
     private static string TraceabilityDocumentsSql(string? search, Guid? partyId, bool filterStatus, int dateRangeVersion, Guid? financialConceptId) =>
             TraceabilityDocumentKeysSql(search, partyId, dateRangeVersion, includeEntry: false, reuseAcceptedPartyMetadata: !filterStatus, financialConceptId: financialConceptId) + TraceabilityVoucherFilterSql + "\n" + """
+            -- The same filtered query can switch from five to 50,005 keys.
+            -- Size this page sort for its current set, not a prior party's grant.
             SELECT job.SourceDocumentId,job.SourceDocumentType,job.OccurredAt,job.Status INTO #DocumentPageKeys
             FROM #DocumentKeys job
             ORDER BY job.OccurredAt DESC,job.SourceDocumentId,job.SourceDocumentType
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY OPTION(RECOMPILE);
             SELECT page.*,entry.EntryId INTO #DocumentPage FROM #DocumentPageKeys page
             LEFT JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=page.SourceDocumentId
               AND entry.SourceDocumentType=page.SourceDocumentType AND entry.TenantId=@TenantId AND entry.BusinessId=@BusinessId;

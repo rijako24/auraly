@@ -471,7 +471,8 @@ its own connection factory and does not reference another module's infrastructur
 
 `TenantId` owns accounts, periods and vouchers because Tenant is the legal entity.
 `BusinessId` identifies the establishment that originated the entry. Cost centers
-belong to a Business and classify entry lines. The current processor resolves an
+belong to the tenant and are shared across its establishments, like the PUC;
+they classify entry lines without a warehouse restriction. The current processor resolves an
 active center automatically for every posting. The bounded correction design
 (editable and replaceable default, existing rules, stable retries and returns)
 is owned by section 8 of `../decision-contabilidad-minima-colombia-y-cumplimiento.md`;

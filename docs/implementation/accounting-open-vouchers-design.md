@@ -296,6 +296,14 @@ Objetivos propuestos para validar al implementar; no son mediciones del sistema 
 | Posting | <= 2 s local para caso habitual; medir 500 aparte | mismo motor y transacción; cargas/escrituras por lote, sin I/O por partida |
 | Documento PDF/XLSX | <= 3 s para 50 líneas en entorno acordado | reutiliza snapshot; 0 lecturas por línea y 0 reenvíos de fuente |
 
+La paginación de documentos dimensiona su ordenamiento para el conjunto filtrado
+actual mediante `OPTION(RECOMPILE)` en esa única selección de página. Un mismo
+filtro de tercero puede pasar de cinco a 50.005 documentos; reutilizar el grant
+del primero provocó 519 páginas de spill en el plan original. No cambia filtros,
+conteo, orden, volumen ni viajes SQL. La regresión conserva los 100.000 documentos,
+el límite de 800 ms y la evidencia del plan original antes de generar otro plan
+de diagnóstico; también comprueba que ese ordenamiento no vuelva a derramar.
+
 La bandeja tiene un solo propietario de carga. Editor/detalle comparte recurso; contadores no vuelven a pedir listas. El visor sustituye a la vista activa o usa datos ya cargados; no mantiene consultas invisibles. Push coalescido y reconexión con backoff compartido finito; cero polling. Indicadores distintos: Guardando, Enviando, Procesando, Preparando PDF/Excel.
 
 ## 11. Aceptación y secuencia de implementación futura
@@ -3821,6 +3829,12 @@ uso; conservar la presentación no congela los medios técnicos actuales.
 
 ### 14.4 Migración, controles y paridad
 
+- Las pruebas de actualización construyen expresamente los metadatos de la
+  plantilla histórica, incluida la ausencia de función/naturaleza financiera;
+  no deducen ese estado de los defaults actuales. Los asientos generales usan
+  contrapartidas generales. Caja, banco y cartera conservan la validación de
+  captura y efectos vinculados; no se relaja esa política para conservar un
+  fixture anterior. La restauración del fixture conserva su configuración previa.
 - Precisión del usuario del 2026-11-15: DEV es un ambiente de pruebas; la
   validación se centra en AURALY y se conservan los tenants de los bots. No se
   elimina un tenant como requisito para migrar el catálogo. Megafruver conserva
@@ -3876,8 +3890,10 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   Las ventas web factura/comprobante y el envío preparado comprueban efectivo
   del catálogo más financiación automática, una CxC, un asiento balanceado,
   un movimiento de inventario y replay sin efectos repetidos. La validación de
-  formas de esa venta sigue usando un solo comando por conjunto; el replay no
-  vuelve a validarlas ni aplicar efectos. Esto verifica los puntos de extensión
+  formas usa un comando por conjunto en cada frontera: elegibilidad vigente en
+  la preparación online e identidad en la recepción del documento. La emisión
+  online tiene dos verificaciones; la recepción preparada tiene una. El replay
+  no vuelve a validarlas ni aplicar efectos. Esto verifica los puntos de extensión
   actuales y no certifica la migración productiva ni el corte nativo pendiente.
   La descarga de configuración conserva el lector local por lote para los
   nombres de productos de los precios por cantidad que cambiaron: cero lecturas

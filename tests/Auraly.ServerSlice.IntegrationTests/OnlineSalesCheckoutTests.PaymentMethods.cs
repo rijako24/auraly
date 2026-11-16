@@ -109,13 +109,19 @@ public sealed partial class OnlineSalesCheckoutTests
                 PaymentMethodCode:form.Code,PaymentMethodName:form.Name,AccountId:form.AccountId)],
             new(financed),documentType);
         var key=$"automatic-financing-{Guid.NewGuid():N}";
+        var validationModes = new System.Collections.Concurrent.ConcurrentQueue<bool>();
         using var validationReads = new InventoryBalanceProcessingTests.CommandCounter(
             new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
             commandFilter: command => command.CommandText.Contains(
-                "La forma de pago de la venta no coincide", StringComparison.Ordinal));
+                "La forma de pago de la venta no coincide", StringComparison.Ordinal),
+            beforeExecute: command => validationModes.Enqueue(Convert.ToBoolean(command.Parameters["@Current"].Value)));
         var completed=await CompleteAsync(client,captured.DraftId,request,key);
+        // Preparation checks current eligibility before assigning a number;
+        // reception checks the identity of that accepted fact in its own transaction.
+        Assert.Equal(new[] { true, false }, validationModes.ToArray());
         var replay=await CompleteAsync(client,captured.DraftId,request,key);
-        Assert.Equal(1, validationReads.Count);
+        Assert.Equal(2, validationReads.Count);
+        Assert.Equal(new[] { true, false }, validationModes.ToArray());
         Assert.Equal(completed.Receipt.DocumentId,replay.Receipt.DocumentId);
         var credit=Assert.Single(completed.Receipt.Payments.Where(payment=>payment.MethodCode=="Credit"));
         Assert.Equal(financed,credit.Amount); Assert.Null(credit.PaymentMethodId);

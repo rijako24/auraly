@@ -30,7 +30,7 @@ public sealed partial class AccountingConfigurationReadinessTests
         Guid? cashSession=null;
         string? cashDraftVersion=null;
         PostingMapping? vatOriginal=null;
-        string? vatOriginalType=null;
+        AccountingAccountView? vatOriginalAccount=null;
         var bank=Guid.NewGuid();
         var types=(await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/bank-account-type"))!;
         using(var saved=await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bank}",
@@ -40,17 +40,27 @@ public sealed partial class AccountingConfigurationReadinessTests
         var counterpart=await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,
             "4198","Revenue","General","Credit");
         var historical=Guid.NewGuid();
-        await PostAsync(historical,source.AccountId);
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         Assert.StartsWith("AuralyServerSlice_",connection.Database);
-        await using var command=new SqlCommand("""
-            UPDATE dbo.AccountingAccounts SET FinancialFunction=N'Bank',BalanceSide=N'Debit',BankAccountId=@Bank
-            WHERE TenantId=@Tenant AND AccountId=@Account;
-            """,connection);
+        await using var command=new SqlCommand("",connection);
         command.Parameters.AddWithValue("@Tenant",fixture.TenantId); command.Parameters.AddWithValue("@Account",source.AccountId);
-        command.Parameters.AddWithValue("@Bank",bank); Assert.Equal(1,await command.ExecuteNonQueryAsync());
+        command.Parameters.AddWithValue("@Bank",bank);
         try
         {
+            // The used historical auxiliary existed before financial semantics were
+            // introduced. Keep that fixture distinct from today's typed defaults.
+            await using (var legacy=new SqlCommand("UPDATE dbo.AccountingAccounts SET FinancialFunction=NULL,BalanceSide=NULL WHERE TenantId=@Tenant AND AccountId=@Account",connection))
+            {
+                legacy.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+                legacy.Parameters.AddWithValue("@Account",source.AccountId);
+                Assert.Equal(1,await legacy.ExecuteNonQueryAsync());
+            }
+            await PostAsync(historical,source.AccountId);
+            command.CommandText="""
+                UPDATE dbo.AccountingAccounts SET FinancialFunction=N'Bank',BalanceSide=N'Debit',BankAccountId=@Bank
+                WHERE TenantId=@Tenant AND AccountId=@Account;
+                """;
+            Assert.Equal(1,await command.ExecuteNonQueryAsync());
             var before=await ReadAccountEvidenceAsync(source.AccountId);
             var history=await JournalAsync(historical);
             if(scenario=="collision")
@@ -82,8 +92,8 @@ public sealed partial class AccountingConfigurationReadinessTests
                 // Both incompatibilities must be resolved in the same batch
                 // before its shared Ready coverage check, as in DEV.
                 vatOriginal=await ReadPostingMappingAsync();
-                vatOriginalType=Assert.Single(await store.ListAccountsAsync(User,default),
-                    account=>account.AccountId==vatOriginal.AccountId).AccountType;
+                vatOriginalAccount=Assert.Single(await store.ListAccountsAsync(User,default),
+                    account=>account.AccountId==vatOriginal.AccountId);
                 await SetInputVatTypeAsync("Asset",vatOriginal.AccountId);
                 var vatBefore=await ReadAccountEvidenceAsync(vatOriginal.AccountId);
                 var vatTarget=Guid.NewGuid();
@@ -146,7 +156,7 @@ public sealed partial class AccountingConfigurationReadinessTests
             command.Parameters.AddWithValue("@Side",(object?)source.Semantics?.BalanceSide??DBNull.Value);
             command.Parameters.AddWithValue("@OriginalBank",(object?)source.Semantics?.BankAccountId??DBNull.Value);
             await command.ExecuteNonQueryAsync();
-            if(vatOriginal is not null) await RestoreInputVatAsync(vatOriginal,vatOriginalType!);
+            if(vatOriginal is not null) await RestoreInputVatAsync(vatOriginal,vatOriginalAccount!);
             // Remove only the unreferenced synthetic collision, so other theory
             // cases can reuse its code. Posted auxiliaries remain immutable.
             if(scenario=="collision")

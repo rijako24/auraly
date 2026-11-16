@@ -222,7 +222,7 @@ public sealed partial class AccountingConfigurationReadinessTests
             }
             Assert.Equal(pendingBefore,await ReceiptEvidenceAsync(pending.DocumentId));
         }
-        finally { await RestoreInputVatAsync(original,source.AccountType); }
+        finally { await RestoreInputVatAsync(original,source); }
 
         async Task ConfirmAsync(ConfirmGoodsReceiptRequest receipt, string? traceParent = null)
         {
@@ -304,7 +304,7 @@ public sealed partial class AccountingConfigurationReadinessTests
                 await using var remove=new SqlCommand("DELETE dbo.AccountingAccountMappings WHERE MappingId=@Id AND TenantId=@Tenant",connection);
                 remove.Parameters.AddWithValue("@Id",id); remove.Parameters.AddWithValue("@Tenant",fixture.TenantId); await remove.ExecuteNonQueryAsync();
             }
-            await RestoreInputVatAsync(original,source.AccountType);
+            await RestoreInputVatAsync(original,source);
         }
     }
 
@@ -409,18 +409,22 @@ public sealed partial class AccountingConfigurationReadinessTests
             reader.IsDBNull(3) ? null : DateOnly.FromDateTime(reader.GetDateTime(3)),Convert.ToBase64String(reader.GetFieldValue<byte[]>(4)));
     }
 
-    private async Task SetInputVatTypeAsync(string type,Guid accountId)
+    private async Task SetInputVatTypeAsync(string type,Guid accountId,string? function=null,string? side=null)
     {
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         Assert.StartsWith("AuralyServerSlice_",connection.Database);
-        await using var command=new SqlCommand("UPDATE dbo.AccountingAccounts SET AccountType=@Type WHERE AccountId=@Id AND TenantId=@Tenant",connection);
+        // Reproduce the old template explicitly. Fresh defaults now carry
+        // financial semantics; this historical fixture predates those fields.
+        await using var command=new SqlCommand("UPDATE dbo.AccountingAccounts SET AccountType=@Type,FinancialFunction=@Function,BalanceSide=@Side WHERE AccountId=@Id AND TenantId=@Tenant",connection);
         command.Parameters.AddWithValue("@Type",type); command.Parameters.AddWithValue("@Id",accountId);
+        command.Parameters.AddWithValue("@Function",(object?)function??DBNull.Value);
+        command.Parameters.AddWithValue("@Side",(object?)side??DBNull.Value);
         command.Parameters.AddWithValue("@Tenant",fixture.TenantId); Assert.Equal(1,await command.ExecuteNonQueryAsync());
     }
 
-    private async Task RestoreInputVatAsync(PostingMapping original,string type)
+    private async Task RestoreInputVatAsync(PostingMapping original,AccountingAccountView source)
     {
-        await SetInputVatTypeAsync(type,original.AccountId);
+        await SetInputVatTypeAsync(source.AccountType,original.AccountId,source.Semantics?.FinancialFunction,source.Semantics?.BalanceSide);
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         // The canonical editor replaces the mapping identity on a user edit.
         // Restore only the fixture's unique natural key after that scenario.

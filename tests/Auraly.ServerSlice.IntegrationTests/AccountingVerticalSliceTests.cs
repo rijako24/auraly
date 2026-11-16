@@ -914,7 +914,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             create.EnsureSuccessStatusCode();
         }
         var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
-        var account = accounts.First(row => row.IsActive && row.AllowsPosting && !row.RequiresParty);
+        var account = accounts.Single(row => row.Code == "311505");
         var originalDefault = (await client.GetFromJsonAsync<AccountingCostCenterPage>("/api/commerce/v1/accounting/cost-centers?isDefault=true&isActive=true&pageSize=1"))!.Items.Single();
         var voucher = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId,
             new DateTimeOffset(2026,8,20,12,0,0,TimeSpan.FromHours(-5)), "AJUSTE", "Reclasificar centro",
@@ -1951,7 +1951,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
             "/api/commerce/v1/accounting/accounts") ?? [];
         var expenseAccountId = Assert.Single(accounts, item => item.Code == "519595").AccountId;
-        var bankAccountId = Assert.Single(accounts, item => item.Code == "111005").AccountId;
+        var counterpartAccountId = Assert.Single(accounts, item => item.Code == "311505").AccountId;
         var adjustmentId = Guid.NewGuid();
         var adjustment = new ConfirmAccountAdjustmentRequest(
             adjustmentId, fixture.BusinessId, AccountingSubledgerKinds.Payable,
@@ -2014,7 +2014,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             [
                 new ManualVoucherLineRequest(expenseAccountId, null, null,
                     "Debito del ajuste", 750m, 0m),
-                new ManualVoucherLineRequest(bankAccountId, null, null,
+                new ManualVoucherLineRequest(counterpartAccountId, null, null,
                     "Credito del ajuste", 0m, 750m)
             ]);
         using (var response = await accounting.PostAsJsonAsync(
@@ -2026,7 +2026,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(1, await CountAsync(
             "AccountingSourceDocuments", "SourceDocumentId", voucherId));
         Assert.Equal(750m, await AccountAmountAsync(voucherId, "519595", debit: true));
-        Assert.Equal(750m, await AccountAmountAsync(voucherId, "111005", debit: false));
+        Assert.Equal(750m, await AccountAmountAsync(voucherId, "311505", debit: false));
 
         using (var invalid = await accounting.PostAsJsonAsync(
                    "/api/commerce/v1/accounting/manual/vouchers",
@@ -2037,7 +2037,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                        [
                            new ManualVoucherLineRequest(expenseAccountId, null, null,
                                "Debito", 100m, 0m),
-                           new ManualVoucherLineRequest(bankAccountId, null, null,
+                           new ManualVoucherLineRequest(counterpartAccountId, null, null,
                                "Credito no balanceado", 0m, 99m)
                        ]
                    }))
@@ -2142,10 +2142,22 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                })
         {
             expenseMessage.Headers.Add("Idempotency-Key", $"expense-{expenseId:N}");
+            using var activity = new System.Diagnostics.Activity("accounting-expense-acceptance-budget")
+                .SetIdFormat(System.Diagnostics.ActivityIdFormat.W3C).Start();
+            expenseMessage.Headers.Add("traceparent", activity.Id);
+            var sqlElapsed = new System.Collections.Concurrent.ConcurrentDictionary<string, double>();
+            using var counter = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog, activity.TraceId,
+                afterExecute: (command, milliseconds) => sqlElapsed.AddOrUpdate(
+                    command.CommandText, milliseconds, (_, elapsed) => elapsed + milliseconds));
             var saveWatch = System.Diagnostics.Stopwatch.StartNew();
             using var expenseResponse = await expenseUser.SendAsync(expenseMessage);
             saveWatch.Stop();
             Assert.Equal(HttpStatusCode.Accepted, expenseResponse.StatusCode);
+            output.WriteLine($"Expense acceptance: {saveWatch.Elapsed.TotalMilliseconds:F1} ms, {counter.Count} SQL.");
+            if (saveWatch.ElapsedMilliseconds >= 1_000)
+                foreach (var sample in sqlElapsed.OrderByDescending(item => item.Value).Take(5))
+                    output.WriteLine($"SQL {sample.Value:F1} ms: {new string(sample.Key.ReplaceLineEndings(" ").Take(180).ToArray())}");
             Assert.True(saveWatch.ElapsedMilliseconds < 1_000,
                 $"Expense acceptance took {saveWatch.ElapsedMilliseconds} ms.");
         }
@@ -2581,11 +2593,24 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                     "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
                 var reasonOptionId = Guid.Parse("74000000-0000-0000-0000-000000000004");
                 var cancellation = new CancelExpenseRequest(Guid.NewGuid(), ReasonOptionId: reasonOptionId);
+                using var activity = new System.Diagnostics.Activity("accounting-expense-cancellation-budget")
+                    .SetIdFormat(System.Diagnostics.ActivityIdFormat.W3C).Start();
+                using var cancellationMessage = new HttpRequestMessage(HttpMethod.Post,
+                    $"/api/commerce/v1/expenses/{expenseId:D}/cancel") { Content = JsonContent.Create(cancellation) };
+                cancellationMessage.Headers.Add("traceparent", activity.Id);
+                var sqlElapsed = new System.Collections.Concurrent.ConcurrentDictionary<string, double>();
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(
+                    new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog, activity.TraceId,
+                    afterExecute: (command, milliseconds) => sqlElapsed.AddOrUpdate(
+                        command.CommandText, milliseconds, (_, elapsed) => elapsed + milliseconds));
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                using var response = await cancellationUser.PostAsJsonAsync(
-                    $"/api/commerce/v1/expenses/{expenseId:D}/cancel", cancellation);
+                using var response = await cancellationUser.SendAsync(cancellationMessage);
                 watch.Stop();
                 Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                output.WriteLine($"Expense cancellation: {watch.Elapsed.TotalMilliseconds:F1} ms, {counter.Count} SQL.");
+                if (watch.ElapsedMilliseconds >= 1_000)
+                    foreach (var sample in sqlElapsed.OrderByDescending(item => item.Value).Take(5))
+                        output.WriteLine($"SQL {sample.Value:F1} ms: {new string(sample.Key.ReplaceLineEndings(" ").Take(180).ToArray())}");
                 Assert.True(watch.ElapsedMilliseconds < 1_000,
                     $"Expense cancellation acceptance took {watch.ElapsedMilliseconds} ms.");
                 var accepted = await response.Content.ReadFromJsonAsync<ExpenseCancellationAcceptance>();

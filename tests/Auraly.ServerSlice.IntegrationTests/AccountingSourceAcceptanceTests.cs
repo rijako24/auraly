@@ -255,7 +255,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
             new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Validación atómica", [
                 new(invalidDimension == "Account" ? Guid.NewGuid() : accounts.First(account => account.Code == "519595").AccountId,
                     invalidDimension == "LineParty" ? Guid.NewGuid() : fixture.SupplierPartyId, null, "Gasto", 100, 0),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 100)],
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 100)],
             invalidDimension == "HeaderParty" ? Guid.NewGuid() : fixture.SupplierPartyId);
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
         using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers", request);
@@ -289,7 +289,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
         var request = new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId, at,
             "MANUAL_VOUCHER", "Comprobante anterior al tercero principal", [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 100)]);
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 100)]);
         var legacyJson = System.Text.Json.JsonSerializer.Serialize(new {
             request.VoucherId, request.BusinessId, request.OccurredAt, request.ConceptCode, request.Description, request.Lines });
         Assert.DoesNotContain("MainPartyId", legacyJson, StringComparison.Ordinal);
@@ -363,7 +363,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
         var request = new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId, at,
             "OPENING_BALANCE", "Apertura pendiente", [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Apertura", 100, 0),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Contrapartida", 0, 100)]);
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida", 0, 100)]);
         var manual = request with { VoucherId = Guid.NewGuid(), ConceptCode = "MANUAL_VOUCHER", MainPartyId = fixture.SupplierPartyId };
         var date = DateOnly.FromDateTime(at.UtcDateTime);
         var payload = documentType == "AccountingOpeningBalance" ? System.Text.Json.JsonSerializer.Serialize(request)
@@ -465,7 +465,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
         await service.ConfirmManualVoucherAsync(actor, new(id, fixture.BusinessId, at,
             "MANUAL_VOUCHER", "Búsqueda por identificador",
             [new(accounts.First(account => account.Code == "519595").AccountId, null, null, "Gasto", 1, 0),
-             new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 1)]));
+             new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 1)]));
         var draft = await service.SaveVoucherDraftAsync(actor, new(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
             at, "MANUAL_VOUCHER", "Búsqueda por referencia", "BENCH-NO-MATCH", [], null, null));
         string[] searches = [id.ToString(), "01234567", "0123_567-89ab-cdef", "[0-9]1234567-89ab-cdef",
@@ -593,7 +593,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
                 new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId,
                     new(2026, 10, 18, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Lectura concurrente de comprobantes",
                     [new(accounts.First(account => account.Code == "519595").AccountId, partyId, null, "Gasto", 7, 0),
-                     new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Contrapartida", 0, 7)], partyId));
+                     new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida", 0, 7)], partyId));
             Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
             return id;
         }
@@ -614,7 +614,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
         var request = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId, at,
             "MANUAL_VOUCHER", "Índice de terceros", [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0),
-                new(accounts.First(account => account.Code == "111005").AccountId, linePartyId, null, "Banco", 0, 100)], fixture.SupplierPartyId);
+                new(accounts.First(account => account.Code == "311505").AccountId, linePartyId, null, "Contrapartida patrimonial", 0, 100)], fixture.SupplierPartyId);
         var source = Source(request);
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -713,7 +713,7 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
         var request = new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId, at,
             "MANUAL_VOUCHER", "Recuperación histórica explícita", [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 100)]);
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 100)]);
         var payload = JsonSerializer.Serialize(request);
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

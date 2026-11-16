@@ -96,11 +96,17 @@ public sealed partial class AccountingVerticalSliceTests
                 Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"Reconciled opening took {watch.Elapsed}.");
                 captured = captured with { RowVersion = persisted.RowVersion };
             }
+            // An unclassified historical account is test data, not an
+            // assumption about the current default profile's liabilities.
+            var unclassifiedId = Guid.NewGuid();
+            using (var unclassified = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
+                new CreateAccountingAccountRequest(unclassifiedId, fixture.TenantId,
+                    (receivable ? "1" : "2") + BitConverter.ToUInt64(unclassifiedId.ToByteArray()).ToString("D20"),
+                    "Auxiliar histórico sin función", receivable ? "Asset" : "Liability", true, true)))
+                Assert.True(unclassified.StatusCode == HttpStatusCode.Created, await unclassified.Content.ReadAsStringAsync());
             var invalidCaptures = new[]
             {
-                captured with { Lines = [captured.Lines[0] with { AccountId = accounts.First(account =>
-                    account.AccountType == (receivable ? "Asset" : "Liability") && account.AllowsPosting &&
-                    account.RequiresParty && account.Semantics is null).AccountId }, captured.Lines[1]] },
+                captured with { Lines = [captured.Lines[0] with { AccountId = unclassifiedId }, captured.Lines[1]] },
                 captured with { Lines = [captured.Lines[0] with { Debit = receivable ? 1501m : 0m, Credit = receivable ? 0m : 1501m }, captured.Lines[1] with { Debit = receivable ? 0m : 1501m, Credit = receivable ? 1501m : 0m }] },
                 captured with { Lines = [captured.Lines[0] with { AccountId = equity.AccountId }, captured.Lines[1]] },
                 captured with { Lines = [captured.Lines[0] with { ExistingPosition = new(receivable ? "Payable" : "Receivable", payableId) }, captured.Lines[1]] },

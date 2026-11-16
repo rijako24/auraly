@@ -67,13 +67,13 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var expenseCode = "519595" + BitConverter.ToUInt64(Guid.NewGuid().ToByteArray()).ToString("D20");
         var expense = await service.CreateAccountAsync(user,
             new(Guid.NewGuid(), fixture.TenantId, expenseCode, "Referencia del comprobante", "Expense", true, true));
-        var bank = accounts.Single(account => account.Code == "111005");
+        var counterpart = accounts.Single(account => account.Code == "311505");
         var reference = "REF-" + Guid.NewGuid().ToString("N");
         var at = new DateTimeOffset(2026, 10, 22, 12, 0, 0, TimeSpan.Zero);
         var capture = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
             at, "MANUAL_VOUCHER", "Referencia del encabezado", reference, [
                 new(expense.AccountId, fixture.SupplierPartyId, null, "Débito", 100, 0, LineId: Guid.NewGuid()),
-                new(bank.AccountId, null, null, "Crédito", 0, 100, LineId: Guid.NewGuid())],
+                new(counterpart.AccountId, null, null, "Crédito", 0, 100, LineId: Guid.NewGuid())],
             null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 2);
         var saved = await service.SaveVoucherDraftAsync(user, capture);
         var command = new ConfirmManualAccountingVoucherRequest(saved.DocumentId, fixture.BusinessId, at,
@@ -165,7 +165,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var code = "519595" + BitConverter.ToUInt64(Guid.NewGuid().ToByteArray()).ToString("D20");
         var expense = await service.CreateAccountAsync(user,
             new(Guid.NewGuid(), fixture.TenantId, code, "Base registrada por partida", "Expense", true, true));
-        var bank = (await service.ListAccountsAsync(user)).Single(account => account.Code == "111005");
+        var counterpart = (await service.ListAccountsAsync(user)).Single(account => account.Code == "311505");
         var id = Guid.NewGuid();
         var at = new DateTimeOffset(2026, 10, 22, 12, 0, 0, TimeSpan.Zero);
         var path = $"/api/commerce/v1/accounting/manual/drafts/{id}";
@@ -181,7 +181,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
                     Debit = 100m, Credit = 0m, LineId = Guid.NewGuid(), BaseAmount = (decimal?)0m },
                 new { AccountId = expense.AccountId, PartyId = (Guid?)fixture.SupplierPartyId, Description = "Base con signo registrado",
                     Debit = 100m, Credit = 0m, LineId = Guid.NewGuid(), BaseAmount = (decimal?)-23.4567m },
-                new { AccountId = bank.AccountId, PartyId = (Guid?)null, Description = "Contrapartida sin base",
+                new { AccountId = counterpart.AccountId, PartyId = (Guid?)null, Description = "Contrapartida sin base",
                     Debit = 0m, Credit = 300m, LineId = Guid.NewGuid(), BaseAmount = (decimal?)null } }
         });
         Assert.Equal(HttpStatusCode.OK, save.StatusCode);
@@ -218,7 +218,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var legacy = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId, at,
             "MANUAL_VOUCHER", "Sin evidencia de base", [
                 new(expense.AccountId, fixture.SupplierPartyId, null, "Histórico sin base", 10m, 0m),
-                new(bank.AccountId, null, null, "Contrapartida", 0m, 10m)]);
+                new(counterpart.AccountId, null, null, "Contrapartida", 0m, 10m)]);
         Assert.DoesNotContain("BaseAmount", JsonSerializer.Serialize(legacy));
         await service.ConfirmManualVoucherAsync(user, legacy);
         var mixed = await service.GetAccountMovementsPageAsync(user, new(new(2026, 10, 22), new(2026, 10, 22),
@@ -244,7 +244,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
             new(2026, 10, 22, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Base explícita por API", [
                 new(accounts.Single(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null,
                     "Base firmada", 100m, 0m, BaseAmount: -123.4567m),
-                new(accounts.Single(account => account.Code == "111005").AccountId, null, null,
+                new(accounts.Single(account => account.Code == "311505").AccountId, null, null,
                     "Contrapartida", 0m, 100m)]);
         await service.ConfirmManualVoucherAsync(user, request);
         Assert.Null(await service.GetVoucherDraftAsync(user, request.VoucherId));
@@ -279,7 +279,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         await service.ActivateAsync(user, new(new(2026, 1, 1), "COP", "ZeroDeclared"));
         var accounts = await service.ListAccountsAsync(user);
         var debitAccount = accounts.Single(account => account.Code == "519595").AccountId;
-        var creditAccount = accounts.Single(account => account.Code == "111005").AccountId;
+        var creditAccount = accounts.Single(account => account.Code == "311505").AccountId;
         var lines = new List<ManualVoucherLineRequest>
         {
             new(debitAccount, fixture.SupplierPartyId, null, "Primera partida", Parse(firstDebit), 0)
@@ -333,7 +333,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var command = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId,
             new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Comprobante directo", [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Servicio", 100, 0),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 100)]);
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 100)]);
         await service.ConfirmManualVoucherAsync(user, command);
         var entry = await service.GetEntryAsync(user, command.VoucherId);
         Assert.NotNull(entry);
@@ -368,7 +368,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         {
             new(accounts.Single(account => account.Code == "519595").AccountId,
                 fixture.SupplierPartyId, null, lineDescription, 100m, 0m),
-            new(accounts.Single(account => account.Code == "111005").AccountId,
+            new(accounts.Single(account => account.Code == "311505").AccountId,
                 null, null, "Contrapartida", 0m, 100m)
         };
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read,
@@ -417,7 +417,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var saved = await service.SaveVoucherDraftAsync(user, new(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
             new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Aceptación para probar integridad", null, [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Servicio", 100, 0, LineId: Guid.NewGuid()),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 100, LineId: Guid.NewGuid())],
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 100, LineId: Guid.NewGuid())],
             null, null, PayloadVersion: 2));
         var command = new ConfirmManualAccountingVoucherRequest(saved.DocumentId, fixture.BusinessId, saved.OccurredAt,
             saved.ConceptCode, saved.Description, saved.Lines.Select(line => new ManualVoucherLineRequest(line.Value.AccountId!.Value,
@@ -483,7 +483,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var request = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
             new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Identidades de partidas", null, [
                 new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Servicio", 100, 0, LineId: Guid.NewGuid()),
-                new(accounts.First(account => account.Code == "111005").AccountId, null, null, "Banco", 0, 100, LineId: Guid.NewGuid())],
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0, 100, LineId: Guid.NewGuid())],
             null, null, PayloadVersion: 2);
         var saved = await service.SaveVoucherDraftAsync(user, request);
         var reversed = request with { RowVersion = saved.RowVersion, Lines = request.Lines.Reverse().ToArray() };
@@ -520,11 +520,11 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         await service.ActivateAsync(user, new(new(2026, 1, 1), "COP", "ZeroDeclared"));
         var accounts = await service.ListAccountsAsync(user);
         var expense = accounts.First(account => account.Code == "519595");
-        var bank = accounts.First(account => account.Code == "111005");
+        var counterpart = accounts.First(account => account.Code == "311505");
         var original = await service.SaveVoucherDraftAsync(user, new(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
             new(2026, 10, 1, 12, 0, 0, TimeSpan.FromHours(-5)), "MANUAL_VOUCHER", "Servicios del mes", "FACTURA-ANTERIOR",
             [new(expense.AccountId, fixture.SupplierPartyId, null, "Servicio", 900, 0, "FACTURA-ANTERIOR"),
-             new(bank.AccountId, fixture.SupplierPartyId, null, "Contrapartida", 0, 900, "REFERENCIA-BANCARIA-ANTERIOR")], null, null, fixture.SupplierPartyId));
+             new(counterpart.AccountId, fixture.SupplierPartyId, null, "Contrapartida", 0, 900, "REFERENCIA-BANCARIA-ANTERIOR")], null, null, fixture.SupplierPartyId));
         var command = new CloneVoucherDraftRequest(Guid.NewGuid(), new(2026, 10, 20, 12, 0, 0, TimeSpan.FromHours(-5)));
         var copies = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => service.CloneVoucherDraftAsync(user, original.DocumentId, command)));
         var copy = copies[0];
@@ -836,7 +836,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate", new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();
         var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
         var expense = accounts.First(account => account.AccountType == "Expense" && account.AllowsPosting && !account.RequiresParty);
-        var bank = accounts.First(account => account.Code == "111005");
+        var counterpart = accounts.First(account => account.Code == "311505");
         var request = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
             new(2026, 9, 30, 12, 0, 0, TimeSpan.FromHours(-5)), "MANUAL_VOUCHER", "Prueba de comprobante abierto",
             "BOR-" + Guid.NewGuid().ToString("N"), [new(null, null, null, "Por completar", 0, 0)], null, null);
@@ -871,7 +871,7 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         await AssertEffectCounts(0);
         request = request with { RowVersion = saved.RowVersion, Lines = [
             new(expense.AccountId, fixture.SupplierPartyId, null, "Débito", 1200, 0),
-            new(bank.AccountId, null, null, "Crédito", 0, 1200)] };
+            new(counterpart.AccountId, null, null, "Crédito", 0, 1200)] };
         saved = await Save(request);
         using (var stale = await client.PutAsJsonAsync(path, request with { Description = "No sobrescribir" }))
             Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);

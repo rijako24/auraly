@@ -137,13 +137,13 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
             account => account.AccountId == cost.AccountId);
         var date = new DateOnly(2026, 10, 21);
         var balanceBefore = await service.GetBalanceSheetAsync(user, date);
-        var cash = (await service.ListAccountsAsync(user)).Single(account => account.Code == "110505");
+        var counterpart = (await service.ListAccountsAsync(user)).Single(account => account.Code == "311505");
         var id = Guid.NewGuid();
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
         using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers",
             new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId,
                 new(2026, 10, 21, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Costo clasificado", [
-                    new(cost.AccountId, null, null, "Costo", 100, 0), new(cash.AccountId, null, null, "Pago", 0, 100)]));
+                    new(cost.AccountId, null, null, "Costo", 100, 0), new(counterpart.AccountId, null, null, "Contrapartida patrimonial", 0, 100)]));
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Contains(await service.GetIncomeStatementAsync(user, date, date), row =>
             row.Section == "Cost" && row.AccountCode == cost.Code && row.Amount == 100);
@@ -602,10 +602,10 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
         var account = await service.CreateAccountAsync(user,
             new(Guid.NewGuid(), fixture.TenantId, "5195980300001", "Gasto libre", "Expense", true, false,
                 new(parent.AccountId, "General", "Debit", null, null, null)));
-        var bank = (await service.ListAccountsAsync(user)).First(a => a.Code == "111005");
+        var counterpart = (await service.ListAccountsAsync(user)).Single(a => a.Code == "311505");
         var command = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId,
             new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Congelar al aceptar", [
-                new(account.AccountId, null, null, "Gasto", 100, 0), new(bank.AccountId, null, null, "Banco", 0, 100)]);
+                new(account.AccountId, null, null, "Gasto", 100, 0), new(counterpart.AccountId, null, null, "Contrapartida patrimonial", 0, 100)]);
         await store.ConfirmManualVoucherAsync(user, command, default);
         var used = Assert.Single((await service.AccountOptionsAsync(user, new(1, 1, AccountId: account.AccountId, Search: null))).Items);
         Assert.True(used.ConfigurationLocked);

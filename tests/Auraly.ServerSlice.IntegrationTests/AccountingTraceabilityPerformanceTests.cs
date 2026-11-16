@@ -221,6 +221,32 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
         if ((slowest ?? grantScenario) is { } failure)
         {
             await connection.OpenAsync();
+            // Keep the original batch's grant/spill evidence before STATISTICS
+            // XML creates a separately compiled diagnostic batch.
+            await using (var cached = new SqlCommand("""
+                SELECT LEFT(SUBSTRING(text.text,stats.statement_start_offset/2+1,
+                  (CASE WHEN stats.statement_end_offset=-1 THEN DATALENGTH(text.text)
+                    ELSE stats.statement_end_offset END-stats.statement_start_offset)/2+1),400),
+                  stats.execution_count,stats.last_elapsed_time,stats.last_worker_time,
+                  stats.last_grant_kb,stats.last_used_grant_kb,stats.last_spills
+                FROM sys.dm_exec_query_stats stats
+                CROSS APPLY sys.dm_exec_sql_text(stats.sql_handle) text
+                WHERE RIGHT(text.text,LEN(@Batch))=@Batch AND EXISTS(
+                  SELECT 1 FROM sys.dm_exec_plan_attributes(stats.plan_handle) attribute
+                  WHERE attribute.attribute=N'dbid' AND CONVERT(int,attribute.value)=DB_ID())
+                ORDER BY stats.last_elapsed_time DESC;
+                """, connection))
+            {
+                cached.Parameters.Add("@Batch",System.Data.SqlDbType.NVarChar,-1).Value=failure.Sql;
+                await using var cachedReader=await cached.ExecuteReaderAsync();
+                while(await cachedReader.ReadAsync())
+                {
+                    output.WriteLine($"Cached statement: {cachedReader.GetString(0).ReplaceLineEndings(" ")}; executions {cachedReader.GetInt64(1)}, elapsed {cachedReader.GetInt64(2)} us, CPU {cachedReader.GetInt64(3)} us, grant {cachedReader.GetInt64(4)} KB, used {cachedReader.GetInt64(5)} KB, spills {cachedReader.GetInt64(6)} pages.");
+                    if(cachedReader.GetString(0).Contains("INTO #DocumentPageKeys",StringComparison.Ordinal)
+                        && cachedReader.GetInt64(6)>0)
+                        exceededBudgets.Add($"The original page sort spilled {cachedReader.GetInt64(6)} pages after switching party cardinality.");
+                }
+            }
             await using var diagnostic = new SqlCommand("SET STATISTICS XML ON;\n" + failure.Sql + "\nSET STATISTICS XML OFF;", connection);
             diagnostic.Parameters.AddWithValue("@TenantId", user.TenantId);
             diagnostic.Parameters.AddWithValue("@BusinessId", user.BusinessId);

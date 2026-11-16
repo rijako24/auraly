@@ -30,7 +30,7 @@ public sealed class AccountingInitialCutTests(ServerSliceFixture fixture)
         var journal = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId, date,
             "MANUAL_VOUCHER", "Saldo del libro antes del corte", [
                 new(accounts.Single(account => account.Code == "519595").AccountId, null, null, "Gasto", 100m, 0m),
-                new(accounts.Single(account => account.Code == "111005").AccountId, null, null, "Banco", 0m, 100m)]);
+                new(accounts.Single(account => account.Code == "311505").AccountId, null, null, "Contrapartida patrimonial", 0m, 100m)]);
         using (var posted = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers", journal))
             Assert.True(posted.StatusCode == HttpStatusCode.Accepted, await posted.Content.ReadAsStringAsync());
         using (var replay = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
