@@ -7,6 +7,43 @@ public sealed partial class AccountingVerticalSliceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Retiring_the_tenant_payment_switch_is_idempotent_and_preserves_tenant_identity(bool historicalSwitch)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        try
+        {
+            byte[] original;
+            await using (var snapshot = new SqlCommand(
+                "SELECT HASHBYTES('SHA2_256',(SELECT * FROM dbo.Tenants ORDER BY TenantId FOR JSON PATH));", connection, transaction))
+                original = (byte[])(await snapshot.ExecuteScalarAsync())!;
+            await using (var before = new SqlCommand("""
+                IF @Historical=1 EXEC(N'ALTER TABLE dbo.Tenants ADD PaymentMethodContractVersion tinyint NOT NULL
+                  CONSTRAINT DF_Tenants_PaymentMethodContractVersion DEFAULT (1),
+                  CONSTRAINT CK_Tenants_PaymentMethodContractVersion CHECK (PaymentMethodContractVersion IN(1,2));');
+                """, connection, transaction))
+            {
+                before.Parameters.AddWithValue("@Historical", historicalSwitch);
+                await before.ExecuteNonQueryAsync();
+            }
+            for (var attempt = 0; attempt < 2; attempt++)
+                await fixture.ApplyMigrationAsync("20261116_RetireTenantPaymentContractSwitch.sql", connection, transaction);
+            await using var verify = new SqlCommand("""
+                SELECT COL_LENGTH(N'dbo.Tenants',N'PaymentMethodContractVersion'),
+                  HASHBYTES('SHA2_256',(SELECT * FROM dbo.Tenants ORDER BY TenantId FOR JSON PATH));
+                """, connection, transaction);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync()); Assert.True(reader.IsDBNull(0));
+            Assert.Equal(original, (byte[])reader[1]);
+        }
+        finally { await transaction.RollbackAsync(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Tenant_payment_defaults_are_four_shared_forms_and_reprovisioning_preserves_configuration(bool historicalCash)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);

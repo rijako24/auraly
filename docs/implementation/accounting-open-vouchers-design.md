@@ -3813,6 +3813,18 @@ uso; conservar la presentación no congela los medios técnicos actuales.
 
 ### 14.4 Migración, controles y paridad
 
+- Precisión del usuario del 2026-11-15: DEV es un ambiente de pruebas; la
+  validación se centra en AURALY y se conservan los tenants de los bots. No se
+  elimina un tenant como requisito para migrar el catálogo. Megafruver conserva
+  sus ventas, compras, inventario, CxC/CxP, pagos, saldos y asientos. Que no se
+  utilicen las pantallas contables no permite suponer que no exista contabilidad
+  automática: la inspección de solo lectura encontró AccountingStatus=Ready,
+  vigencia 2026-01-01 y 6.601 asientos. No se deshabilita ese modo, se reabre un
+  saldo inicial ni se genera un asiento de apertura adicional. Los trabajos ya
+  aceptados conservan su modo y la decisión temporal de 14.12. Las compras
+  históricas pendientes de configuración quedan fuera de este cambio; preparar
+  cuentas para nuevas operaciones no autoriza reintentarlas o repararlas.
+  La inspección no modificó datos ni autoriza publicar o migrar producción.
 - Condición expresa del usuario del 2026-11-15: la actualización de Megafruver,
   único tenant productivo indicado, debe conservar los pagos que ya utiliza.
   Antes de una promoción futura se debe leer la configuración real de ese
@@ -3875,6 +3887,27 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   egreso histórico o nativo a COP por adaptarlo al editor manual. Grupos y
   anticipos cruzan sólo la misma moneda; no se incorpora conversión cambiaria
   ni se suma dinero de monedas distintas en la migración.
+- La captura común POS/cartera consume directamente el catálogo del tenant.
+  Se retira `Tenants.PaymentMethodContractVersion`; el número 2 permanece
+  únicamente como versión del contrato de sincronización. Un catálogo ausente
+  o de protocolo anterior bloquea la captura nueva y conserva los importes,
+  con reintento explícito o actualización de la preparación. No muestra ni
+  confirma una alternativa de tipos globales sin identidad de forma. Retirar
+  la columna mediante `20261116_RetireTenantPaymentContractSwitch.sql` es
+  idempotente y precede al plan DACPAC, con consumidores antiguos detenidos.
+  No modifica tenants, cuentas, fuentes, pagos, inventario ni journal. Revertir
+  exige binarios compatibles o una reversión coordinada del esquema; no se
+  recrea el selector como fallback. Su retirada no acredita por sí sola los
+  restantes gates de migración y consumidores de esta sección.
+  La correspondencia técnica `PosPaymentMethod/Transfer` usa `Bank`, igual que
+  recaudos y egresos. La forma seleccionada identifica el auxiliar bancario
+  real. `TransferClearing/General` era incompatible con esa función y bloqueaba
+  su alta para ventas; no se amplía la elegibilidad para aceptar esa contradicción.
+  Se conserva la correspondencia propia de conciliación de cierres y no se
+  reclasifican cuentas o asientos históricos. La regresión SQL/API cubre venta
+  factura/comprobante por transferencia, un asiento balanceado, un movimiento
+  de inventario, replay sin duplicados, rechazo del banco sin respaldo y el
+  cierre de venta mixta efectivo/transferencia.
 - No trasladar a código una semántica no demostrada de Mantis. En Auraly se hacen
   explícitos la base de cargos y el contexto de mapping; Nota pendiente corresponde
   a importe no aplicado identificado, sin declarar pagada una factura. El icono
@@ -4295,9 +4328,9 @@ conceptos financieros en el recibo/egreso y la entrada Pagar de cartera adaptada
 a esa captura común, los restantes consumidores y corte
 del catálogo (incluidos cargos/configuración ampliada, nómina y la certificación del corte de ventas), la migración del PUC compartido,
 los saldos a favor/neto y restantes ampliaciones de reportes, y el ciclo de nómina de su documento
-propietario. El valor predeterminado `PaymentMethodContractVersion=1` preserva
-los clientes anteriores hasta completar esos gates. No es una autorización para
-activar la versión 2 sin migrar esos consumidores.
+propietario. El selector transitorio `PaymentMethodContractVersion=1` fue la
+preparación de los clientes anteriores; su retirada coordinada se describe en
+14.4. No sustituye la comprobación de esos consumidores ni certifica producción.
 
 ### 14.8 Conceptos financieros por partida — catálogo y captura local
 

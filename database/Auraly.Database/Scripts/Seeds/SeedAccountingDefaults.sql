@@ -131,7 +131,7 @@ USING (VALUES
   (N'PosPaymentMethod',N'Cash',N'Cash'),
   (N'PosPaymentMethod',N'DebitCard',N'DebitCardClearing'),
   (N'PosPaymentMethod',N'CreditCard',N'CreditCardClearing'),
-  (N'PosPaymentMethod',N'Transfer',N'TransferClearing'),
+  (N'PosPaymentMethod',N'Transfer',N'Bank'),
   (N'PosPaymentMethod',N'Credit',N'AccountsReceivable'),
   (N'ClosurePaymentMethod',N'Cash',N'Cash'),
   (N'ClosurePaymentMethod',N'Card',N'CardClearing'),

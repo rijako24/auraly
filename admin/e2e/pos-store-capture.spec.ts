@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
@@ -66,7 +67,7 @@ test("Tiendas reutiliza el borrador, la captura, las cantidades y el cobro de ve
       expect(request).toMatchObject({ quantity: 2, expectedVersion: version });
       version++; lines[0] = { ...lines[0], quantity: 2, total: 99_800 }; body = draft();
     } else if (path.endsWith("/inventory-validation")) body = { isValid: true, wasValidated: true, issues: [] };
-    else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+    else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture() };
     else if (path.endsWith("/settlement")) body = { grossAmount: 99_800, withholdingTotal: 0, netAmount: 99_800, lines: [] };
     else if (path.endsWith("/reference-options/payment-method")) body = [{ id: "cash", code: "Cash", label: "Efectivo", isActive: true, sortOrder: 1 }];
     else if (path.includes("/orders")) body = { items: [], totalCount: 0, totalPages: 0, page: 1, pageSize: 25 };

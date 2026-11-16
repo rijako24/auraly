@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test } from "@playwright/test";
 
 for (const acceptedStatus of ["Accepted", "Processed"] as const) {
@@ -73,7 +74,7 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
         await route.fulfill({ status: 503, json: { status: 503, detail: "Configuración temporalmente no disponible." } });
         return;
       }
-      body = { isAccountingEnabled: false, bankAccounts: [] };
+      body = { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture({ DebitCard: "Tarjeta configurada" }) };
     }
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
@@ -142,15 +143,17 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
   const previousPaymentId = "99999999-9999-9999-9999-999999999999";
   if (restorePreviousVersion) {
     // Simulate an uncertain command left by the version without editable PaidOn.
-    await page.evaluate(({ businessId, customerId, receivableId, userId, paymentId }) => {
+    await page.evaluate(({ businessId, customerId, receivableId, userId, paymentId, form }) => {
       const fingerprint = JSON.stringify({ direction: "receivable", businessId, partyId: customerId,
         allocations: [{ id: receivableId, amount: 10450.45 }], discountDecisions: {},
-        tenders: [{ methodCode: "DebitCard", amount: 10450.45, reference: null,
+        tenders: [{ methodCode: "DebitCard", paymentMethodId: form.paymentMethodId, paymentMethodVersion: form.version,
+          paymentMethodCode: form.code, paymentMethodName: form.name, accountId: form.accountId,
+          amount: 10450.45, reference: null,
           cardFranchiseCode: "Visa", approvalNumber: "AP-001", bankAccountId: null, notes: null, tenderedAmount: null }] });
       sessionStorage.setItem(`portfolio-payment:receivable:${businessId}:${userId}`, JSON.stringify({
         fingerprint, paymentId, paidAt: "2026-09-23T12:00:00-05:00", sessionId: "77777777-7777-7777-7777-777777777777",
       }));
-    }, { businessId, customerId, receivableId, userId: user.userId, paymentId: previousPaymentId });
+    }, { businessId, customerId, receivableId, userId: user.userId, paymentId: previousPaymentId, form: paymentCatalogFixture({ DebitCard: "Tarjeta configurada" }).forms.find(form => form.methodCode === "DebitCard")! });
   }
   await checkout.getByRole("button", { name: "Media carta", exact: true }).click();
   if (failureStatus) {
@@ -249,7 +252,7 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
       { id: "credit", code: "CreditCard", label: "Tarjeta crédito", sortOrder: 4 },
     ];
     else if (path.endsWith("/reference-options/card-franchise")) body = [{ id: "visa", code: "Visa", label: "Visa", sortOrder: 1 }];
-    else if (path.endsWith("/accounting/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+    else if (path.endsWith("/accounting/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture({ DebitCard: "Tarjeta configurada" }, true) };
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
     else if (path.endsWith("/parties/site-options")) body = { items: [{ partyId: supplierId, roleId: supplierId, partySiteId, displayName: "Proveedor prueba", identification: "1001", siteName: "Sede principal", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }], page: 1, totalPages: 1, totalCount: 1 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };

@@ -55,7 +55,16 @@ public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.
         }
         Assert.Equal(sites.Order(), signals.Scopes.Select(value => value.Business).Order());
         Assert.All(signals.Scopes, value => Assert.Equal(tenant, value.Tenant));
+        using (var commands = new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+        {
+            var snapshot = await store.GetSnapshotAsync(tenant, CancellationToken.None);
+            Assert.Equal(PaymentMethodCatalogSnapshot.CurrentContractVersion, snapshot.ContractVersion);
+            Assert.Equal(saved.PaymentMethodId, Assert.Single(snapshot.Forms).PaymentMethodId);
+            Assert.Equal(1, commands.Count);
+        }
+        Assert.Empty((await store.GetSnapshotAsync(foreign, CancellationToken.None)).Forms);
         await store.SaveAsync(user, request with { IsActive = false, RowVersion = saved.RowVersion }, CancellationToken.None);
+        Assert.Empty((await store.GetSnapshotAsync(tenant, CancellationToken.None)).Forms);
         await Assert.ThrowsAsync<Auraly.Application.Catalog.CatalogConflictException>(() =>
             store.SaveAsync(user, request with { RowVersion = saved.RowVersion }, CancellationToken.None));
         Assert.Equal(siteCount * 2, signals.Scopes.Count);

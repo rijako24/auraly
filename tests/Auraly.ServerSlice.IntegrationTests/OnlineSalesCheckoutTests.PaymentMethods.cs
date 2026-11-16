@@ -15,6 +15,63 @@ public sealed partial class OnlineSalesCheckoutTests
     [Theory]
     [InlineData(PosSaleDocumentTypes.Invoice)]
     [InlineData(PosSaleDocumentTypes.Receipt)]
+    public async Task A_configured_transfer_uses_its_real_bank_for_sales_and_replay_preserves_one_balanced_journal(string documentType)
+    {
+        var userId = await CreateUserAsync("native-transfer");
+        using var client = fixture.CreateUserClient(userId, CommercePermissionCodes.SalesCreate,
+            CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        var bankType = (await client.GetFromJsonAsync<ReferenceOption[]>(
+            "/api/commerce/v1/reference-options/bank-account-type"))!.Single(value => value.Code == "Checking");
+        var bankId = Guid.NewGuid();
+        using (var bank = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId}",
+            new SaveBankAccountRequest(bankId, null, bankType.Id, "Banco de transferencia configurada",
+                bankId.ToString("N"), "Transferencia de prueba", false, true, null)))
+            Assert.True(bank.IsSuccessStatusCode, await bank.Content.ReadAsStringAsync());
+        var account = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(
+            fixture, client, "1110", "Asset", "Bank", "Debit", bankId);
+        var type = (await client.GetFromJsonAsync<ReferenceOption[]>(
+            "/api/commerce/v1/reference-options/payment-method"))!.Single(value => value.Code == "Transfer");
+        var configured = new SavePaymentMethodRequest(Guid.NewGuid(), $"BANK-{Guid.NewGuid():N}",
+            "Transferencia compartida", type.Id, account.AccountId, true, true, true, true, true, 40,
+            UseForVouchers: true);
+        using var saved = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/payment-methods/{configured.PaymentMethodId}", configured);
+        Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
+        var form = (await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+        var captured = await CaptureAsync(client, await OpenAsync(client));
+        var adjustment = PosPaymentRoundingPolicy.Adjustment(captured.PayableAmount);
+        var request = new CompleteOnlineSalesDraftRequest(captured.Version,
+            [new("Transfer", captured.PayableAmount, "NATIVE-BANK", BankAccountId: bankId,
+                RoundingAdjustment: adjustment, PaymentMethodId: form.PaymentMethodId,
+                PaymentMethodVersion: form.Version, PaymentMethodCode: form.Code,
+                PaymentMethodName: form.Name, AccountId: form.AccountId)], DocumentType: documentType);
+        var key = $"native-bank-{Guid.NewGuid():N}";
+        var completed = await CompleteAsync(client, captured.DraftId, request, key);
+        var replay = await CompleteAsync(client, captured.DraftId, request, key);
+        Assert.Equal(completed.Receipt.DocumentId, replay.Receipt.DocumentId);
+        Assert.Equal(form.PaymentMethodId, Assert.Single(completed.Receipt.Payments).PaymentMethodId);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var verify = new SqlCommand("""
+            SELECT COUNT(DISTINCT entry.EntryId),SUM(line.Debit-line.Credit),
+              SUM(CASE WHEN line.AccountId=@Account THEN line.Debit ELSE 0 END),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Document),
+              (SELECT COUNT(*) FROM dbo.Receivables WHERE SourceDocumentId=@Document)
+            FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+            WHERE entry.SourceDocumentId=@Document;
+            """, connection);
+        verify.Parameters.AddWithValue("@Document", completed.Receipt.DocumentId);
+        verify.Parameters.AddWithValue("@Account", account.AccountId);
+        await using var result = await verify.ExecuteReaderAsync();
+        Assert.True(await result.ReadAsync()); Assert.Equal(1, result.GetInt32(0));
+        Assert.Equal(0m, result.GetDecimal(1)); Assert.Equal(captured.PayableAmount + adjustment, result.GetDecimal(2));
+        Assert.Equal(1, result.GetInt32(3)); Assert.Equal(0, result.GetInt32(4));
+    }
+
+    [Theory]
+    [InlineData(PosSaleDocumentTypes.Invoice)]
+    [InlineData(PosSaleDocumentTypes.Receipt)]
     public async Task Configured_money_and_automatic_financing_create_one_receivable_without_an_extra_credit_form(string documentType)
     {
         var userId=await CreateUserAsync("automatic-financing");

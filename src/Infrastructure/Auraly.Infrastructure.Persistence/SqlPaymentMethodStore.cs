@@ -16,21 +16,19 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand($"""
-            SELECT PaymentMethodContractVersion FROM dbo.Tenants WHERE TenantId=@Tenant;
+            SELECT TenantId FROM dbo.Tenants WHERE TenantId=@Tenant;
             SELECT TOP(1001) {Columns} FROM reference.PaymentMethodDetails
             WHERE TenantId=@Tenant AND IsActive=1 AND IsReady=1
-              AND EXISTS(SELECT 1 FROM dbo.Tenants WHERE TenantId=@Tenant AND PaymentMethodContractVersion=2)
             ORDER BY SortOrder,Code,PaymentMethodId;
             """, connection);
         command.Parameters.AddWithValue("@Tenant", tenantId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new CatalogForbiddenException("El tenant no está disponible.");
-        var version = reader.GetInt32(0);
         await reader.NextResultAsync(cancellationToken);
         var forms = new List<PaymentMethodView>();
         while (await reader.ReadAsync(cancellationToken)) forms.Add(Read(reader));
         if (forms.Count > 1000) throw new CatalogValidationException("La configuración de caja admite hasta 1.000 formas activas.");
-        return new(version, forms);
+        return new(PaymentMethodCatalogSnapshot.CurrentContractVersion, forms);
     }
 
     public async Task<PaymentMethodPage> ListAsync(CatalogUserIdentity user, PaymentMethodQuery query,

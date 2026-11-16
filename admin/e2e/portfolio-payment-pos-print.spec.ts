@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test } from "@playwright/test";
 
 for (const scenario of [
@@ -95,7 +96,7 @@ for (const scenario of [
         totalOutstanding: 125000, totalOverdue: 0,
         currencyTotals: [{ currencyCode: "COP", outstandingAmount: 125000, overdueAmount: 0 }] };
       else if (path.endsWith("/reference-options/payment-method")) body = [{ id: "cash", code: "Cash", label: "Efectivo", sortOrder: 1 }];
-      else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+      else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture({}, scenario.direction === "payable") };
       else if (path.endsWith(scenario.confirmationPath)) { confirmCount++; body = { paymentId, documentNumber: scenario.documentNumber,
         accountingJobId: "99999999-9999-9999-9999-999999999999", status: "Accepted",
         idempotentReplay: false }; }

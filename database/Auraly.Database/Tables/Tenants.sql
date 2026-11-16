@@ -9,8 +9,6 @@ CREATE TABLE [dbo].[Tenants] (
     [MaximumEnrolledDevices] INT NOT NULL CONSTRAINT [DF_Tenants_MaximumEnrolledDevices] DEFAULT (1),
     [InventoryCostBasis] NVARCHAR(32) NOT NULL CONSTRAINT [DF_Tenants_InventoryCostBasis] DEFAULT N'LatestReceiptCost',
     [AllowPromotionChannelCombination] BIT NOT NULL CONSTRAINT [DF_Tenants_AllowPromotionChannelCombination] DEFAULT (0),
-    [PaymentMethodContractVersion] INT NOT NULL CONSTRAINT [DF_Tenants_PaymentMethodContractVersion] DEFAULT (1),
-    CONSTRAINT [CK_Tenants_PaymentMethodContractVersion] CHECK ([PaymentMethodContractVersion] IN (1,2)),
     CONSTRAINT [CK_Tenants_MaximumUsers] CHECK ([MaximumUsers] >= 1),
     CONSTRAINT [CK_Tenants_MaximumEnrolledDevices] CHECK ([MaximumEnrolledDevices] >= 0),
     CONSTRAINT [CK_Tenants_InventoryCostBasis] CHECK ([InventoryCostBasis] IN (N'LatestReceiptCost',N'WeightedAverageCost')),

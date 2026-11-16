@@ -14,7 +14,10 @@ public sealed record PaymentMethodPage(IReadOnlyList<PaymentMethodView> Items,
 
 public sealed record PaymentMethodSaveResult(PaymentMethodView Method, PaymentMethodPage Page);
 
-public sealed record PaymentMethodCatalogSnapshot(int ContractVersion, IReadOnlyList<PaymentMethodView> Forms);
+public sealed record PaymentMethodCatalogSnapshot(int ContractVersion, IReadOnlyList<PaymentMethodView> Forms)
+{
+    public const int CurrentContractVersion = 2;
+}
 
 public sealed record SavePaymentMethodRequest(Guid PaymentMethodId, string Code, string Name,
     Guid PaymentTypeId, Guid AccountId, bool UseForSales, bool UseForReceipts,

@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { login as sharedLogin } from "./support/auth";
 
@@ -326,7 +327,7 @@ test("la devolución ofrece destinos independientes y enlaza la reversión de ta
     confirmedReturn = route.request().postDataJSON();
     return json(route, { returnId: confirmedReturn?.returnId, documentNumber: "DEV-900" });
   });
-  await page.route("**/api/commerce/v1/pos/settlement-configuration**", route => json(route, { isAccountingEnabled: false, bankAccounts: [] }));
+  await page.route("**/api/commerce/v1/pos/settlement-configuration**", route => json(route, { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture() }));
   await page.route("**/api/commerce/v1/sales-returns/sales?**", route => json(route, { items: [{ documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, hasAvailableQuantity: true, fiscalStatus: "Accepted" }], page: 1, pageSize: 25, totalCount: 1, totalPages: 1 }));
   await page.route(`**/api/commerce/v1/sales-returns/sales/${saleId}**`, route => json(route, {
     documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, originalUnrounded: 119000, originalRounding: 0, unroundedOutstanding: 119000, remainingRounding: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "CreditCard", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000, cardFranchiseCode: "Visa", approvalNumber: "APP-900" }], charges: [

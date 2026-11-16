@@ -22,7 +22,6 @@
     "test:pos-printer-configuration": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-printer-configuration.test.js\"",
     "test:pos-order-print-routing": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-order-print-routing.test.js\" \".pos-test-dist/services/pos/pos-order-print-document.test.js\"",
     "test:pos-operational-context": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-operational-context.test.js\"",
-    "test:pos-transfer-settlement": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-transfer-settlement.test.js\"",
     "prebuild": "npm run check:encoding",
     "dev": "next dev",
     "dev:pos": "next dev --hostname 127.0.0.1 --port 47830",

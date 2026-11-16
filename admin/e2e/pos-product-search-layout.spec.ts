@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test } from "@playwright/test";
 
 test("buscador abre para agregar, alinea promociones y mantiene accesibles las existencias", async ({ page, baseURL }) => {
@@ -31,7 +32,7 @@ test("buscador abre para agregar, alinea promociones y mantiene accesibles las e
       availabilityRequests++;
       if(availabilityMode==="error")return route.fulfill({status:500,contentType:"application/json",body:JSON.stringify({message:"Error de prueba"})});
       body=availabilityMode==="empty"?[]:Array.from({length:12},(_,i)=>({...workspace,warehouseId:`warehouse-${i}`,warehouseName:`Bodega ${i+1}`,quantityOnHand:10+i,isCurrentBusiness:true}));
-    } else if(path.endsWith("/settlement-configuration"))body={isAccountingEnabled:false,bankAccounts:[]};
+    } else if(path.endsWith("/settlement-configuration"))body={isAccountingEnabled:false,bankAccounts:[],paymentMethods:paymentCatalogFixture()};
     else if(path.endsWith("/items")){writes.push(path);captureQuantities.push((route.request().postDataJSON() as {quantity:number}).quantity);body={...draft,lines:[]};}
     else if(path.includes("/orders"))body={items:[],totalCount:0,totalPages:0,page:1,pageSize:25};
     await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(body)});

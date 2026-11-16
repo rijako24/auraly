@@ -31,13 +31,11 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             {
                 await connection.OpenAsync();
                 await using var setup = new SqlCommand("""
-                    UPDATE dbo.Tenants SET PaymentMethodContractVersion=2 WHERE TenantId=@TenantId;
                     INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                     SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
                     FROM dbo.Permissions WHERE Resource=@Permission;
                     IF @@ROWCOUNT<>1 THROW 51999,'Expected one existing financial permission.',1;
                     """, connection);
-                setup.Parameters.AddWithValue("@TenantId", tenantId);
                 setup.Parameters.AddWithValue("@RoleId", roleId);
                 setup.Parameters.AddWithValue("@Permission", permission);
                 await setup.ExecuteNonQueryAsync();
@@ -47,7 +45,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             using (var reads = new InventoryBalanceProcessingTests.CommandCounter(
                 new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
                 commandFilter: command => command.CommandText.Contains(
-                    "SELECT PaymentMethodContractVersion FROM dbo.Tenants", StringComparison.Ordinal)))
+                    "SELECT TenantId FROM dbo.Tenants", StringComparison.Ordinal)))
             using (var response = await client.GetAsync("/api/commerce/v1/accounting/settlement-configuration"))
             {
                 Assert.Equal(allowed ? HttpStatusCode.OK : HttpStatusCode.Forbidden, response.StatusCode);

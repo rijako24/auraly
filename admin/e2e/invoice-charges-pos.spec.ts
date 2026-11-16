@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test } from "@playwright/test";
 import type { AddInvoiceCharge, AppliedInvoiceCharge } from "../src/services/api/invoice-charges";
 
@@ -34,7 +35,7 @@ test("cargos POS: proveedor único, valor manual, total autoritativo y eliminaci
       draft.charges = [{ ...charge, appliedChargeId: input.appliedChargeId, invoiceBase: 80000, amount: 6500, invoicedAmount: 0, expenseAmount: 6500, invoicedUntaxedAmount: 0, invoicedTaxAmount: 0, supplier, manualAmount: 6500 }]; body = draft;
     } else if (path.includes("/charges/") && path.endsWith("/remove")) { expect(route.request().postDataJSON().expectedVersion).toBe(2); draft.version++; draft.charges = []; body = draft; }
     else if (path.endsWith("/settlement")) body = { grossAmount: draft.payableAmount, withholdingTotal: 0, netAmount: draft.payableAmount };
-    else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+    else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture() };
     else if (path.includes("/orders")) body = { items: [], totalCount: 0, totalPages: 0, page: 1, pageSize: 25 };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });

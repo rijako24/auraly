@@ -20,8 +20,6 @@
     "src/app/(pos)/pos/pos-money-input.test.ts",
     "src/app/(pos)/pos/pos-cash-movement-keyboard.ts",
     "src/app/(pos)/pos/pos-cash-movement-keyboard.test.ts",
-    "src/app/(pos)/pos/pos-transfer-settlement.ts",
-    "src/app/(pos)/pos/pos-transfer-settlement.test.ts",
     "src/app/(pos)/pos/pos-payment-settlement.ts",
     "src/app/(pos)/pos/pos-payment-settlement.test.ts",
     "src/app/(pos)/pos/pos-payment-keyboard.ts",

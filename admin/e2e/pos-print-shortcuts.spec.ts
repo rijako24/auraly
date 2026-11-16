@@ -2,8 +2,9 @@ import { expect, test, type Route } from "@playwright/test";
 import { login } from "./support/auth";
 
 for (const mode of ["browser", "installed-online", "prepared"] as const) {
-  for (const automaticCredit of [false, true]) {
-  test(`${automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
+  for (const catalogState of ["ready", "credit", "missing", "previous"] as const) {
+  const automaticCredit = catalogState === "credit";
+  test(`${catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
     test.setTimeout(150_000);
     if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
     else await page.context().addCookies([{ name: "auth_token", value: "printing-test", url: baseURL!, httpOnly: true }]);
@@ -75,11 +76,11 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       else if (path.endsWith("/inventory-validation")) body = { isValid: true, wasValidated: true, issues: [] };
       else if (path.endsWith("/settlement")) body = { grossAmount: 1000, withholdingTotal: 0, netAmount: 1000, lines: [] };
       else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [],
-        ...(automaticCredit ? { paymentMethods: { contractVersion: 2, forms } } : {}) };
+        ...(catalogState === "missing" ? {} : { paymentMethods: { contractVersion: catalogState === "previous" ? 1 : 2, forms } }) };
       else if (path.endsWith("/reference-options/payment-method")) body = automaticCredit
         ? (["Cash", "DebitCard", "CreditCard", "Transfer", "Credit"] as const).map(code => ({ code,
           label: { Cash: "Efectivo", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Credit: "Crédito cliente" }[code] }))
-        : [{ code: "Cash", label: "Efectivo" }, { code: "Transfer", label: "Transferencia" }, { code: "Voucher", label: "Bono" }];
+        : [{ code: "Cash", label: "Efectivo" }, { code: "Transfer", label: "Transferencia" }, { code: "Credit", label: "Crédito cliente" }];
       else if (path.endsWith("/configuration/printers")) body = { configuration };
       else if (path.endsWith("/complete")) {
         completions.push(request.postDataJSON());
@@ -101,6 +102,18 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
     await page.route("**/api/**", handle);
     await page.route("**/edge/v1/**", handle);
 
+    if (catalogState === "missing" || catalogState === "previous") {
+      await page.goto("/pos");
+      await expect(page.locator("#pos-scanner")).toBeEnabled();
+      await page.getByRole("button", { name: /^Cobrar/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Finalizar venta" });
+      await expect(dialog.getByRole("alert")).toContainText("catálogo vigente");
+      await expect(dialog.getByRole("button", { name: "Sin imprimir", exact: true })).toBeDisabled();
+      await dialog.getByRole("textbox", { name: "Valor recibido en Efectivo" }).press("Enter");
+      expect(completions).toHaveLength(0);
+      expect(printed).toHaveLength(0);
+      return;
+    }
     if (automaticCredit) {
       await page.goto("/pos");
       await expect(page.locator("#pos-scanner")).toBeEnabled();
@@ -149,7 +162,7 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
         // Printing shortcuts must preserve the existing payment-row shortcut.
         await cash.fill("500");
         await cash.press("F3");
-        const voucher = dialog.getByRole("textbox", { name: "Valor recibido en Bono" });
+        const voucher = dialog.getByRole("textbox", { name: "Valor recibido en Crédito cliente" });
         await expect(voucher).toBeVisible();
         await voucher.press("e");
         await expect(voucher).toHaveCount(0);

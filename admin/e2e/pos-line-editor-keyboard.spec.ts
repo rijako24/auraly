@@ -1,3 +1,4 @@
+import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test } from "@playwright/test";
 
 test("recorre columnas y líneas del editor con flechas y desplaza su contenido", async ({ page, baseURL }) => {
@@ -115,7 +116,7 @@ test("recorre columnas y líneas del editor con flechas y desplaza su contenido"
         }),
       };
     }
-    else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+    else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [], paymentMethods: paymentCatalogFixture() };
     else if (path.includes("/orders")) body = { items: [], totalCount: 0, totalPages: 0, page: 1, pageSize: 25 };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
