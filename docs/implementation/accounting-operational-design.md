@@ -185,6 +185,33 @@ historical account. The SQL project builds with no diagnostics. This evidence
 does not certify commercial-only reconciliation or authorize a production
 deployment.
 
+The 2026-11-16 migration rehearsal also identified an unchanged supplier credit
+from an already posted expense cancellation with no opening metadata/history.
+`20261116_LinkHistoricalSupplierCredits.sql` completes only that historical
+shape: a posted accounting-required cancellation, its immutable source and
+journal must agree on tenant, business, identity, hash, date, party, currency and
+amount. The cancelled expense proves the original net amount and the split
+between payable reduction and supplier credit. `ObligationOpeningAccount`
+remains the only policy for its unique original debit line. Missing, ambiguous,
+partially applied or conflicting evidence aborts the transaction; commercial-only
+and pending cancellations are outside this migration.
+The script fills currency/nature/opening references and the canonical Opening
+history, retaining the original occurrence and registration dates. It never
+changes an account, journal, balance, application or accepted source, and never
+replays a cancellation. Existing native openings and a completed second run are
+strict no-ops. This is a deployment metadata backfill, not a runtime fallback or
+another financial writer. Seven targeted SQL/API cases passed: native opening
+and replay preservation, valid historical evidence, rejection of hash, balance,
+party, currency or nature conflicts, and exclusion of pending jobs. The isolated
+physical-copy rehearsal linked the proven COP 6,000 credit in one SQL command
+(872 ms); financial journals, balances and immutable-source hashes were identical
+before, after and on replay. A transactional DEV preflight rolled back without
+persisted changes. These checks do not resolve the separate commercial-only
+receivable without an opening, certify fiscal pending cases, or authorize PROD.
+Rollback keeps proven links/history with the compatible schema; deleting that
+evidence after applications is unsafe. Any later correction uses the existing
+explicit accounting reconciliation, not a replay of the expense.
+
 The release pipeline now requires API and Function in the same production
 database release, checks lease-signing configuration before downtime, stops both
 old hosts and verifies their stopped state before any database migration. Only
