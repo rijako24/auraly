@@ -193,8 +193,11 @@ GO
 :r .\Migrations\20261115_LinkHistoricalCustomerCredits.sql
 -- The additive preparation is superseded by the common profile bootstrap.
 -- Existing forms and their chosen accounts/flags remain untouched.
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
 DECLARE @PaymentDefaultsNow datetimeoffset(7)=SYSDATETIMEOFFSET();
 EXEC dbo.PaymentMethodDefaultsProvision @Now=@PaymentDefaultsNow;
+COMMIT TRANSACTION;
 :r .\Migrations\20261113_RetireAcceptedAccountConfiguration.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
 GO

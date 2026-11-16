@@ -51,7 +51,7 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.StartsWith("AuralyServerSlice_", connection.Database);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
         var tenant = Guid.NewGuid(); var business = Guid.NewGuid(); var secondBusiness = Guid.NewGuid();
-        var foreignTenant = Guid.NewGuid();
+        var foreignTenant = Guid.NewGuid(); var foreignBusiness = Guid.NewGuid();
         await using (var buffers=new SqlCommand("""
             SELECT TOP(0) AccountId,CONVERT(binary(8),RowVersion) RowVersion INTO #OriginalCash FROM dbo.AccountingAccounts;
             SELECT TOP(0) PaymentMethodId,Name,UseForSales,IsActive,Version,CONVERT(binary(8),RowVersion) RowVersion INTO #RetainedForms FROM reference.PaymentMethods;
@@ -62,7 +62,8 @@ public sealed partial class AccountingVerticalSliceTests
                 INSERT dbo.Tenants(TenantId,Name,Email) VALUES(@Tenant,N'Formas iniciales',CONCAT(@Tenant,N'@example.test')),
                   (@Foreign,N'Otro tenant',CONCAT(@Foreign,N'@example.test'));
                 INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
-                  VALUES(@Business,@Tenant,N'Primera',N'',N'',N'',N'',N''),(@Second,@Tenant,N'Segunda',N'',N'',N'',N'',N'');
+                  VALUES(@Business,@Tenant,N'Primera',N'',N'',N'',N'',N''),(@Second,@Tenant,N'Segunda',N'',N'',N'',N'',N''),
+                    (@ForeignBusiness,@Foreign,N'Sede ajena',N'',N'',N'',N'',N'');
                 IF @Historical=1 INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,AllowsPosting,
                   RequiresParty,IsActive,CreatedAt,ConfigurationLockedAt)
                 SELECT NEWID(),@Tenant,AccountCode,AccountName,AccountType,AllowsPosting,RequiresParty,1,@Now,@Now
@@ -71,6 +72,7 @@ public sealed partial class AccountingVerticalSliceTests
                 """, connection, transaction))
             {
                 setup.Parameters.AddWithValue("@Tenant",tenant); setup.Parameters.AddWithValue("@Foreign",foreignTenant);
+                setup.Parameters.AddWithValue("@ForeignBusiness",foreignBusiness);
                 setup.Parameters.AddWithValue("@Business",business); setup.Parameters.AddWithValue("@Second",secondBusiness);
                 setup.Parameters.AddWithValue("@Historical",historicalCash); setup.Parameters.AddWithValue("@Now",DateTimeOffset.UtcNow);
                 await setup.ExecuteNonQueryAsync();
@@ -121,12 +123,19 @@ public sealed partial class AccountingVerticalSliceTests
                     ON currentForm.PaymentMethodId=original.PaymentMethodId AND currentForm.TenantId=@Tenant
                     AND currentForm.RowVersion=original.RowVersion),
                   (SELECT COUNT(*) FROM #OriginalCash original JOIN dbo.AccountingAccounts account ON account.AccountId=original.AccountId
-                    AND account.RowVersion=original.RowVersion AND account.FinancialFunction IS NULL);
+                    AND account.RowVersion=original.RowVersion AND account.FinancialFunction IS NULL),
+                  (SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
+                    WHERE BusinessId IN(@Business,@Second) AND Stream=N'Configuration'),
+                  (SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages notice
+                    JOIN dbo.Businesses business ON business.BusinessId=notice.BusinessId
+                    WHERE business.TenantId=@Foreign AND notice.Stream=N'Configuration');
                 """,connection,transaction);
             verify.Parameters.AddWithValue("@Tenant",tenant); verify.Parameters.AddWithValue("@Foreign",foreignTenant);
+            verify.Parameters.AddWithValue("@Business",business); verify.Parameters.AddWithValue("@Second",secondBusiness);
             await using var result = await verify.ExecuteReaderAsync(); Assert.True(await result.ReadAsync());
             Assert.Equal(4,result.GetInt32(0)); Assert.Equal(0,result.GetInt32(1)); Assert.Equal(4,result.GetInt32(2));
             Assert.Equal(historicalCash?1:0,result.GetInt32(3));
+            Assert.Equal(2,result.GetInt32(4)); Assert.Equal(0,result.GetInt32(5));
         }
         finally { await transaction.RollbackAsync(); }
     }

@@ -3586,6 +3586,14 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   20261109; no recrea formas al agregar una sede ni descubre bancos para crear
   formas automáticamente. Si ya existe cualquier forma del tipo, la conserva,
   incluso desactivada, con su cuenta, usos, nombre y versión.
+  Si crea formas para un tenant existente, el mismo comando registra un aviso
+  `Configuration` por sede en el outbox de sincronización actual. Las cajas
+  preparadas descargan el nuevo catálogo por su flujo habitual; repetir el
+  aprovisionamiento sin altas no avanza cursores ni crea avisos. El aviso y las
+  formas comparten transacción y aislamiento por tenant, sin consultas por sede.
+  Los comandos de alta/configuración y los scripts de despliegue conservan la
+  propiedad de esa transacción; el procedimiento no abre, confirma ni revierte
+  otra por su cuenta.
   Las cuentas nuevas copian función y naturaleza del perfil persistido mediante
   `DefaultAccountDefinitions`; ninguno de esos caminos cambia cuentas existentes.
   El seed del perfil obtiene la función desde `PostingCategoryControlFunction`,

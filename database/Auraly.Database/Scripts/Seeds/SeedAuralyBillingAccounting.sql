@@ -1,4 +1,5 @@
 SET NOCOUNT ON;
+SET XACT_ABORT ON;
 
 DECLARE @AuralyBillingAccountingTenantId UNIQUEIDENTIFIER='A0A10000-0000-0000-0000-000000000000';
 DECLARE @AuralyBillingAccountingBusinessId UNIQUEIDENTIFIER='A0A10000-0000-0000-0000-000000000001';
@@ -11,9 +12,11 @@ IF EXISTS(
       AND tenantValue.TenantId=@AuralyBillingAccountingTenantId AND tenantValue.TenantKey=N'@auraly'
       AND businessValue.IsActive=1)
 BEGIN
+    BEGIN TRANSACTION;
     EXEC dbo.AccountingDefaultsProvision
         @TenantId=@AuralyBillingAccountingTenantId,
         @BusinessId=@AuralyBillingAccountingBusinessId,@Now=@AuralyBillingAccountingNow;
+    COMMIT TRANSACTION;
     PRINT N'SeedAuralyBillingAccounting: contabilidad de la empresa facturadora preparada.';
 END;
 GO
