@@ -84,7 +84,8 @@ public sealed partial class SqlPayablesStore(
               SELECT p.SupplierId,p.PartySiteId,site.Name PartySiteName,
                 s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
                 p.CurrencyCode,
-                COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
+                SUM(CASE WHEN p.OutstandingAmount>0 THEN 1 ELSE 0 END) InvoiceCount,
+                SUM(p.OriginalAmount) OriginalAmount,
                 SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId

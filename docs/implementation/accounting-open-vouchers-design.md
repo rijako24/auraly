@@ -3615,6 +3615,14 @@ el mismo estado del wizard sigue siendo la fuente de `PaidOn` e idempotencia.
   por tenant, ámbitos de uso y formas desactivadas en históricos. Sesión,
   importes, comprobantes e idempotencia conservan sus invariantes existentes.
 
+En las pestañas Clientes/Proveedores, `InvoiceCount` y su total cuentan sólo
+obligaciones con saldo pendiente mayor que cero, después de los filtros activos.
+Pagadas o canceladas sin saldo no incrementan ese contador. Valor original,
+pagado, saldo y vencido conservan sus agregados existentes; no se descarta una
+factura de esas sumas para corregir el conteo. El mismo agregado SQL gobierna
+columna, total y orden por cantidad antes de paginar, sin otra consulta. Los
+reportes y la pestaña Facturas conservan sus conteos según el informe/filtro.
+
 ### 14.1 Maestro único de formas de pago del tenant
 
 La selección nativa también recorre servicios, facturación de pedidos por lote y

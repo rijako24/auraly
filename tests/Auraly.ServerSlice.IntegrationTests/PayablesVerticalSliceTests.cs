@@ -118,6 +118,30 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
             var otherConcept = await client.GetFromJsonAsync<PayablesReportPage>(
                 $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&supplierId={fixture.SupplierId:D}&conceptId={Guid.NewGuid():D}");
             Assert.Equal(0, otherConcept!.TotalCount);
+
+            // The directory keeps financial totals, but its invoice counter
+            // contains only obligations that still have a positive balance.
+            foreach (var amount in new[] { 3_000m, 7_000m })
+            {
+                var singleSitePayment = mixedSitePayment with
+                {
+                    PaymentId = Guid.NewGuid(),
+                    Allocations = [new SupplierPaymentAllocationRequest(payableIds[1], amount)],
+                    Payments = [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash, amount, amount)]
+                };
+                using var paid = await SendAsync(client, "/api/commerce/v1/payable-payments/confirm",
+                    singleSitePayment, $"count-site-payment-{singleSitePayment.PaymentId:N}");
+                Assert.Equal(HttpStatusCode.Accepted, paid.StatusCode);
+                var remaining = amount == 3_000m ? 7_000m : 0m;
+                var current = await client.GetFromJsonAsync<SupplierPortfolioPage>(
+                    $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&partySiteId={alternateSiteId:D}&page=1&pageSize=1&sortBy=invoiceCount&sortDirection=desc");
+                var row = Assert.Single(current!.Items);
+                Assert.Equal(remaining > 0 ? 1 : 0, row.InvoiceCount);
+                Assert.Equal(row.InvoiceCount, current.TotalInvoiceCount);
+                Assert.Equal(10_000m, row.OriginalAmount);
+                Assert.Equal(10_000m - remaining, row.PaidAmount);
+                Assert.Equal(remaining, row.OutstandingAmount);
+            }
         }
         finally
         {

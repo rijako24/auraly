@@ -424,6 +424,8 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&customerId={customerId:D}");
         var siteRows = bySite!.Items.Where(item => item.CustomerId == customerId).ToArray();
         Assert.Equal(2, siteRows.Length);
+        Assert.All(siteRows, item => Assert.Equal(1, item.InvoiceCount));
+        Assert.Equal(2, bySite.TotalInvoiceCount);
         Assert.Equal(new[] { "Sede Centro", "Sede Norte" }, siteRows.Select(item => item.PartySiteName).ToArray());
         Assert.Contains(siteRows, item => item.PartySiteId == northSiteId);
         Assert.Contains(siteRows, item => item.PartySiteId == centerSiteId);
@@ -1198,7 +1200,8 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
         var customerFilter=$"customerId={customerId:D}&status=Paid&from={createdDate}&to={createdDate}";
         var customers=await client.GetFromJsonAsync<CustomerPortfolioPage>(
             $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&{customerFilter}&sortBy=paidAmount&sortDirection=desc");
-        Assert.Contains(customers!.Items,item=>item.CustomerId==customerId&&item.InvoiceCount>0);
+        Assert.Equal(0, Assert.Single(customers!.Items, item => item.CustomerId == customerId).InvoiceCount);
+        Assert.Equal(0, customers.TotalInvoiceCount);
         var invoices=await client.GetFromJsonAsync<ReceivablePage>(
             $"/api/commerce/v1/receivables?page=1&pageSize=20&{customerFilter}");
         Assert.Contains(invoices!.Items,item=>item.ReceivableId==receivable.ReceivableId);

@@ -47,7 +47,8 @@ public sealed partial class SqlReceivablesStore(
             Portfolio AS(
               SELECT r.CustomerId,r.PartySiteId,site.Name PartySiteName,
                 COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
-                COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
+                COALESCE(p.Identification,N'') Identification,
+                SUM(CASE WHEN r.OutstandingAmount>0 THEN 1 ELSE 0 END) InvoiceCount,
                 SUM(r.OriginalAmount) OriginalAmount,SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,
                 SUM(r.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END) OverdueAmount
