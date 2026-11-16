@@ -132,6 +132,7 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
   const router = useRouter();
   const userId = useAuthStore((state) => state.user?.userId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
+  const canPayVoucher = permissions.has("accounting.read") && permissions.has("accounting.manual.create");
   const canCreate = permissions.has("purchasing.goods-receipts.create");
   const canConfirm = permissions.has("purchasing.goods-receipts.confirm");
   const canAssociateProducts = permissions.has("catalog.costs.manage");
@@ -197,7 +198,8 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
     }
   };
 
-  const columns = useMemo<ColumnDef<GoodsReceiptListItem>[]>(() => [
+  const columns = useMemo<ColumnDef<GoodsReceiptListItem>[]>(() => {
+    const definitions: ColumnDef<GoodsReceiptListItem>[] = [
     {
       accessorKey: "documentNumber", header: "Documento",
       cell: ({ row }) => <div>
@@ -231,7 +233,18 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
       accessorKey: "updatedAt", header: "Actualizada",
       cell: ({ row }) => formatDateTime(row.original.updatedAt),
     },
-  ], [formatDateTime]);
+    ];
+    if (canPayVoucher) definitions.push({
+      id: "payment", header: "Pago",
+      cell: ({ row }) => row.original.status === "Processed" && row.original.payableId &&
+        row.original.payableStatus !== "Cancelled" && (row.original.outstandingAmount ?? 0) > 0 ?
+        <Button type="button" size="sm" variant="outline" disabled={row.original.currencyCode !== "COP"}
+          aria-label={`Pagar compra ${row.original.documentNumber}`}
+          onKeyDown={event => event.stopPropagation()}
+          onClick={event => { event.stopPropagation(); router.push(`/dashboard/financial-traceability?new=1&payable=${row.original.payableId}`); }}>Pagar</Button> : null,
+    });
+    return definitions;
+  }, [formatDateTime, canPayVoucher, router]);
 
   const newEntry = async () => {
     if (!businessId || !localDraftKey) return;

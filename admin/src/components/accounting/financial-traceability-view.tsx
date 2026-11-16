@@ -4,7 +4,8 @@ import { Suspense, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileSearch, FilePlus2, RefreshCw, Eye, Send, Loader2 } from "lucide-react";
 import { PartySelect } from "@/components/parties/party-role-select";
-import { accountingApi, type VoucherDraft } from "@/services/api/accounting";
+import { accountingApi, type VoucherDraft, type VoucherDraftPreparation } from "@/services/api/accounting";
+import { createVoucherPositionLine } from "@/components/accounting/voucher-pending-documents";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
@@ -49,6 +50,7 @@ function FinancialTraceabilityWorkspace({ scope, businessId }: { scope?: Traceab
   const permissions = useAuthStore(state => state.user?.permissions ?? noPermissions);
   const draftId = params.get("document");
   const creating = params.get("new") === "1";
+  const payableId = !scope && creating && !draftId ? params.get("payable") : null;
   const editing = creating || !!draftId;
   const statuses = useReferenceOptions("accounting-document-status",!editing);
   const tenantId = useTenantContextStore(state => state.selectedTenantId);
@@ -71,6 +73,27 @@ function FinancialTraceabilityWorkspace({ scope, businessId }: { scope?: Traceab
   const voucherTypes=useReferenceOptions("accounting-voucher-type",!editing && Boolean(tenantId && businessId));
   const draftKey = ["voucher-draft", tenantId, businessId, draftId];
   const draft = useQuery({ queryKey: draftKey, queryFn: () => accountingApi.voucherDraft(draftId!), enabled: !!draftId && !!tenantId && !!businessId, staleTime: Infinity, retry: false });
+  const canPreparePayment = permissions.includes("accounting.read") && permissions.includes("accounting.manual.create");
+  const paymentPreparation = useQuery<VoucherDraftPreparation>({
+    queryKey: ["voucher-payable-preparation", tenantId, businessId, payableId, localToday],
+    enabled: !!payableId && canPreparePayment,
+    retry: false, staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false,
+    queryFn: async () => {
+      const page = await accountingApi.openPositions({ subledgerKind: "Payable", subledgerId: payableId!,
+        page: 1, pageSize: 1, effectiveOn: localToday, voucherTypeCode: "Disbursement" });
+      const position = page.items[0];
+      if (page.totalCount !== 1 || !position || position.subledgerId !== payableId)
+        throw new Error("La cuenta por pagar ya no está disponible para este egreso.");
+      if (position.openingLinkIssue || !position.accountId)
+        throw new Error(position.openingLinkIssue || "La cuenta por pagar requiere conciliación de su apertura antes de pagar.");
+      if (position.currencyCode !== "COP" || position.availableAmount <= 0)
+        throw new Error("La obligación no tiene saldo disponible en COP. Revisa sus pagos pendientes.");
+      return { description: `Pago ${position.documentNumber}`, reference: position.documentNumber,
+        mainPartyId: position.partyId, mainPartyName: position.partyName,
+        mainPartyIdentification: position.partyIdentification,
+        lines: [createVoucherPositionLine(position, position.availableAmount, null)] };
+    },
+  });
   const contextKey = `${tenantId ?? "none"}:${businessId ?? "none"}`;
   const filters = { from, to, dateRangeVersion:2, voucherTypeCode:voucherTypeCode==="all"?undefined:voucherTypeCode, documentType: documentType === "all" ? undefined : documentType, status: status === "all" ? undefined : status, search: search.trim() || undefined, partyId: partyId || undefined,financialConceptId:conceptFilter?.financialConceptId };
   const listKey = ["financial-traceability", contextKey, from, to, documentType, voucherTypeCode, status, search, partyId, conceptFilter?.financialConceptId, page, timeZone];
@@ -120,9 +143,12 @@ function FinancialTraceabilityWorkspace({ scope, businessId }: { scope?: Traceab
     }
   }
   if (editing) {
+    if (payableId && !canPreparePayment) return <div role="alert">No tienes permiso para preparar este egreso.<Button variant="outline" onClick={() => router.replace(basePath)}>Volver</Button></div>;
+    if (payableId && paymentPreparation.isError) return <div role="alert">{paymentPreparation.error.message}<Button onClick={() => void paymentPreparation.refetch()}>Reintentar</Button><Button variant="outline" onClick={() => router.replace(basePath)}>Volver</Button></div>;
+    if (payableId && !paymentPreparation.data) return <p>Cargando obligación para el egreso…</p>;
     if (draft.isError) return <div role="alert">No se pudo abrir el comprobante. <Button onClick={() => void draft.refetch()}>Reintentar</Button><Button variant="outline" onClick={() => router.replace(basePath)}>Volver</Button></div>;
     if (draftId && !draft.data) return <p>Cargando comprobante…</p>;
-    return <VoucherDraftEditor key={[tenantId, businessId, draftId ?? "new"].join(":")} businessId={businessId} initial={draft.data} voucherTypeScope={scope} closeLabel={scope ? "Volver a recibos de caja" : "Volver a trazabilidad"} onSaved={savedDraft} onDiscarded={discardedDraft} onCloned={value => savedDraft(value, true)} onClose={() => router.replace(basePath)} />;
+    return <VoucherDraftEditor key={[tenantId, businessId, draftId ?? payableId ?? "new"].join(":")} businessId={businessId} initial={draft.data} preparation={payableId ? paymentPreparation.data : undefined} voucherTypeScope={payableId ? "Disbursement" : scope} closeLabel={scope ? "Volver a recibos de caja" : "Volver a trazabilidad"} onSaved={savedDraft} onDiscarded={discardedDraft} onCloned={value => savedDraft(value, true)} onClose={() => router.replace(basePath)} />;
   }
 
   return <div className="space-y-6">

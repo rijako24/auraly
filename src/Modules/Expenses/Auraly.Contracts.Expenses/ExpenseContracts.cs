@@ -100,7 +100,7 @@ public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, stri
     DateTimeOffset DueDate, decimal GrossAmount, decimal WithholdingAmount, decimal NetPayable,
     string CurrencyCode, string Status, string? EvidenceUrl,
     string PurchaseEvidenceType = "SupplierElectronicInvoice", string? PayableStatus = null,
-    decimal? OutstandingAmount = null, bool ChargeReturned = false);
+    decimal? OutstandingAmount = null, bool ChargeReturned = false, Guid? PayableId = null);
 public sealed record ExpensePayableView(Guid PayableId, string Status, decimal OriginalAmount,
     decimal OutstandingAmount, Guid? PartySiteId = null, string? PartySiteName = null);
 public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,

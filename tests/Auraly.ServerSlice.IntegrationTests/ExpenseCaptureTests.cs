@@ -196,7 +196,10 @@ public sealed partial class ExpenseCaptureTests(ServerSliceFixture fixture, ITes
             Assert.Equal(3_000m, detail.Withholding!.WithholdingTotal);
             Assert.Equal("Processed", detail.Status);
             var page = (await client.GetFromJsonAsync<ExpensePage>($"/api/commerce/v1/expenses?search={request.SupplierDocumentNumber}&page=1&pageSize=1"))!;
-            Assert.Equal(request.ExpenseId, Assert.Single(page.Items).ExpenseId);
+            var listedExpense = Assert.Single(page.Items);
+            Assert.Equal(request.ExpenseId, listedExpense.ExpenseId);
+            Assert.Equal(detail.Payable.PayableId, listedExpense.PayableId);
+            Assert.Equal(detail.Payable.OutstandingAmount, listedExpense.OutstandingAmount);
             await using (var connection = new SqlConnection(fixture.ConnectionString))
             {
                 await connection.OpenAsync();

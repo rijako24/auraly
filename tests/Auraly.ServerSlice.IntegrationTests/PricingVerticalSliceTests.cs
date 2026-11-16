@@ -12,6 +12,75 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData("2000000", "10000", "-19900")]
+    [InlineData("20000000", "0.0001", "-19999999999900")]
+    public async Task A_large_negative_current_margin_does_not_block_purchase_stock_payable_or_price_review(
+        string costText, string priceText, string marginText)
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var cost = decimal.Parse(costText, culture);
+        var price = decimal.Parse(priceText, culture);
+        var margin = decimal.Parse(marginText, culture);
+        var productId = Guid.NewGuid();
+        await SeedProductAsync(productId, $"MARGIN-{productId:N}", price, 20m);
+        var at = new DateTimeOffset(2026, 9, 23, 10, 0, 0, TimeSpan.FromHours(-5));
+        var receipt = new ConfirmGoodsReceiptRequest(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"NEGATIVE-{Guid.NewGuid():N}", at, at, true, at.AddDays(30), "COP", null,
+            [new(1, productId, "Compra con margen actual negativo", 1, cost, 0, "00", 0, PurchasingTaxTreatments.NotApplicable)]);
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts, PurchasingPermissionCodes.ReadGoodsReceipts,
+            PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis, PricingPermissionCodes.ReviewProposals,
+            PricingPermissionCodes.PublishPrices, PricingPermissionCodes.BulkPublish);
+        async Task Confirm()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+            { Content = JsonContent.Create(receipt) };
+            request.Headers.Add("Idempotency-Key", receipt.DocumentId.ToString("N"));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        await Confirm();
+        Assert.Equal("Completed", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Product AND DocumentType=N'GoodsReceipt'", receipt.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Product", receipt.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.Payables WHERE SourceDocumentId=@Product AND OpeningEntryId IS NOT NULL", receipt.DocumentId));
+        Assert.Equal(cost, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Product", receipt.DocumentId));
+        Assert.Equal(0m, await ScalarAsync<decimal>("""
+            SELECT SUM(line.Debit-line.Credit) FROM dbo.AccountingEntries entry
+            JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId WHERE entry.SourceDocumentId=@Product
+            """, receipt.DocumentId));
+        Assert.Equal(price, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", productId));
+        var page = (await client.GetFromJsonAsync<PriceRevisionPage>(
+            $"/api/commerce/v1/pricing/proposals?page=1&pageSize=1&sourceDocumentId={receipt.DocumentId}"))!;
+        var proposal = Assert.Single(page.Items);
+        Assert.Equal(margin, proposal.CurrentMarginPercent);
+        Assert.Equal(cost, proposal.ObservedUnitCost);
+        Assert.Equal(cost / .8m, proposal.SuggestedSalePrice);
+        var listed = (await client.GetFromJsonAsync<GoodsReceiptPage>(
+            $"/api/commerce/v1/goods-receipts?page=1&pageSize=1&search={receipt.SupplierInvoiceNumber}"))!;
+        var purchase = Assert.Single(listed.Items);
+        Assert.NotNull(purchase.PayableId);
+        Assert.Equal(cost, purchase.OutstandingAmount);
+        Assert.Equal("COP", purchase.CurrencyCode);
+        Assert.Equal("Open", purchase.PayableStatus);
+        await Confirm();
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Product", receipt.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.Payables WHERE SourceDocumentId=@Product", receipt.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Product", receipt.DocumentId));
+        using (var review = await client.PutAsJsonAsync($"/api/commerce/v1/pricing/proposals/{proposal.ProposalId}",
+            new ReviewPriceProposalRequest(PriceInputModes.Margin, 20, null, 1, PricingRoundingModes.Nearest, proposal.ConcurrencyToken)))
+        {
+            Assert.True(review.IsSuccessStatusCode, await review.Content.ReadAsStringAsync());
+            Assert.Equal(cost / .8m, (await review.Content.ReadFromJsonAsync<ReviewedPricePreparation>())!.PreparedAmount);
+        }
+        Assert.Equal(price, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", productId));
+        using var published = await client.PostAsJsonAsync("/api/commerce/v1/pricing/publish", new PublishPricesRequest([productId]));
+        Assert.True(published.IsSuccessStatusCode, await published.Content.ReadAsStringAsync());
+        Assert.Equal(cost / .8m, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", productId));
+        Assert.Equal(margin, await ScalarAsync<decimal>("SELECT CurrentMarginPercent FROM dbo.PriceRevisionProposals WHERE ProductId=@Product", productId));
+    }
+
     [Fact]
     public async Task Goods_receipt_proposal_is_reviewed_published_pushed_and_applied_once()
     {

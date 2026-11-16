@@ -420,16 +420,25 @@ public sealed partial class SqlGoodsReceiptWorkspaceStore(
               INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
               WHERE r.BusinessId=@BusinessId
             )
-            SELECT DocumentId,DocumentNumber,Status,WarehouseId,WarehouseName,SupplierId,SupplierName,
-                   SupplierInvoiceNumber,ReceivedAt,GrandTotal,UpdatedAt,PurchaseEvidenceType
-            FROM Entries
-            WHERE (@Status IS NULL OR Status=@Status)
-              AND (@Search IS NULL OR DocumentNumber LIKE N'%'+@Search+N'%'
-                   OR SupplierName LIKE N'%'+@Search+N'%'
-                   OR SupplierInvoiceNumber LIKE N'%'+@Search+N'%'
-                   OR WarehouseName LIKE N'%'+@Search+N'%')
-            ORDER BY UpdatedAt DESC,DocumentId
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            , PageEntries AS (
+              SELECT * FROM Entries
+              WHERE (@Status IS NULL OR Status=@Status)
+                AND (@Search IS NULL OR DocumentNumber LIKE N'%'+@Search+N'%'
+                     OR SupplierName LIKE N'%'+@Search+N'%'
+                     OR SupplierInvoiceNumber LIKE N'%'+@Search+N'%'
+                     OR WarehouseName LIKE N'%'+@Search+N'%')
+              ORDER BY UpdatedAt DESC,DocumentId
+              OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
+            SELECT entry.DocumentId,entry.DocumentNumber,entry.Status,entry.WarehouseId,entry.WarehouseName,
+                   entry.SupplierId,entry.SupplierName,entry.SupplierInvoiceNumber,entry.ReceivedAt,
+                   entry.GrandTotal,entry.UpdatedAt,entry.PurchaseEvidenceType,
+                   payable.PayableId,payable.OutstandingAmount,payable.CurrencyCode,payable.Status
+            FROM PageEntries entry
+            LEFT JOIN dbo.Payables payable ON payable.BusinessId=@BusinessId
+              AND payable.SourceDocumentId=entry.DocumentId AND payable.SourceDocumentType=N'GoodsReceipt'
+              AND payable.SourceLineId IS NULL AND entry.Status<>N'Draft'
+            ORDER BY entry.UpdatedAt DESC,entry.DocumentId;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -449,7 +458,9 @@ public sealed partial class SqlGoodsReceiptWorkspaceStore(
                 reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetDateTimeOffset(8),
                 reader.GetDecimal(9), reader.GetDateTimeOffset(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11)));
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetGuid(12),reader.IsDBNull(13) ? null : reader.GetDecimal(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14),reader.IsDBNull(15) ? null : reader.GetString(15)));
         return new(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
     }
 

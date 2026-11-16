@@ -259,11 +259,11 @@ public sealed partial class SqlGoodsReceiptDocumentHandler(
             FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId;
             DECLARE @Lines TABLE(ObservationId uniqueidentifier,LineNumber int PRIMARY KEY,ProductId uniqueidentifier,
               SupplierCost decimal(19,6),PreviousCost decimal(19,6),HasProposal bit,ObservedCost decimal(19,6),
-              CurrentMargin decimal(9,6),TargetMargin decimal(9,6),RawPrice decimal(19,4),RoundedPrice decimal(19,4),
+              CurrentMargin decimal(28,6),TargetMargin decimal(9,6),RawPrice decimal(19,4),RoundedPrice decimal(19,4),
               EffectiveMargin decimal(9,6),CostBasisType nvarchar(32),RoundingIncrement decimal(19,4),RoundingMode nvarchar(16));
             INSERT @Lines SELECT * FROM OPENJSON(@LinesJson) WITH(ObservationId uniqueidentifier,LineNumber int,
               ProductId uniqueidentifier,SupplierCost decimal(19,6),PreviousCost decimal(19,6),HasProposal bit,
-              ObservedCost decimal(19,6),CurrentMargin decimal(9,6),TargetMargin decimal(9,6),RawPrice decimal(19,4),
+              ObservedCost decimal(19,6),CurrentMargin decimal(28,6),TargetMargin decimal(9,6),RawPrice decimal(19,4),
               RoundedPrice decimal(19,4),EffectiveMargin decimal(9,6),CostBasisType nvarchar(32),
               RoundingIncrement decimal(19,4),RoundingMode nvarchar(16));
             DECLARE @Latest TABLE(ProductId uniqueidentifier PRIMARY KEY,LineNumber int);

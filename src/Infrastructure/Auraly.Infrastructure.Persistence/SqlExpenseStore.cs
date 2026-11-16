@@ -146,7 +146,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId WHERE {filter};
             SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name,e.ExpenseConceptId,COALESCE(c.Name,e.Description),
               e.IssuedAt,e.DueDate,e.GrossAmount,e.WithholdingAmount,e.NetPayable,e.CurrencyCode,e.Status,e.EvidenceUrl,e.PurchaseEvidenceType,
-              p.Status,p.OutstandingAmount,CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit)
+              p.Status,p.OutstandingAmount,CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),p.PayableId
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId LEFT JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId
               LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense' AND p.BusinessId=e.BusinessId
               LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId
@@ -163,7 +163,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         await using var reader = await command.ExecuteReaderAsync(ct); await reader.ReadAsync(ct);
         var count = reader.GetInt32(0); var gross = reader.GetDecimal(1); var held = reader.GetDecimal(2); var net = reader.GetDecimal(3);
         await reader.NextResultAsync(ct); var items = new List<ExpenseListItem>();
-        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15), reader.IsDBNull(16) ? null : reader.GetString(16), reader.IsDBNull(17) ? null : reader.GetDecimal(17), reader.GetBoolean(18)));
+        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15), reader.IsDBNull(16) ? null : reader.GetString(16), reader.IsDBNull(17) ? null : reader.GetDecimal(17), reader.GetBoolean(18),reader.IsDBNull(19)?null:reader.GetGuid(19)));
         return new(items, page, pageSize, count, gross, held, net);
     }
 

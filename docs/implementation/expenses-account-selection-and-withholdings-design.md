@@ -1,5 +1,16 @@
 # Gastos asistidos por conceptos y retenciones visibles
 
+## Pagar desde el listado
+
+El listado expone **Pagar** para gastos procesados, no devueltos, con CxP y saldo
+positivo en COP, bajo permisos de lectura contable y creación manual. Su lectura
+existente devuelve también `PayableId`; no consulta una obligación por cada fila.
+El botón abre el mismo egreso manual y prepara exclusivamente esa obligación,
+por ID, mediante la consulta paginada de posiciones. Se conserva la cuenta de
+apertura y se usa el disponible neto de reservas. Una apertura sin conciliar
+muestra su diagnóstico y no se sustituye por un mapping actual. No genera un
+gasto nuevo ni modifica el formulario del egreso o el pago asistido del detalle.
+
 ## Decisión prevalente: Gastos asistido — 2026-10-20
 
 El usuario autorizó iniciar la implementación y cambió la captura: Gastos se mantiene para personas no contables. Cada línea selecciona un concepto configurado, descripción, importe, impuestos y centro de costo; no permite elegir una cuenta. El preview y la confirmación resuelven el concepto por conjunto y conservan la captura inmutable. Por decisión del 2026-11-13 (comprobantes, 14.12), el mismo motor financiero vuelve a resolver la cuenta automática del concepto al contabilizar; una cuenta explícita conserva su identidad. El maestro de conceptos conserva su parametrización bajo `expenses.configure`; la selección de cuentas libres pertenece al comprobante manual. No se crea otro flujo de gastos ni otra fuente financiera.

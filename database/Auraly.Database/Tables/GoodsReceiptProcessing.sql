@@ -412,7 +412,7 @@ CREATE TABLE [dbo].[PriceRevisionProposals]
     [PreviousObservedUnitCost] DECIMAL(19,6) NULL,
     [ObservedUnitCost] DECIMAL(19,6) NOT NULL,
     [CurrentSalePrice] DECIMAL(19,4) NOT NULL,
-    [CurrentMarginPercent] DECIMAL(9,6) NULL,
+    [CurrentMarginPercent] DECIMAL(28,6) NULL,
     [TargetMarginPercent] DECIMAL(9,6) NULL,
     [SuggestedSalePrice] DECIMAL(19,4) NOT NULL,
     [RoundedSuggestedSalePrice] DECIMAL(19,4) NULL,

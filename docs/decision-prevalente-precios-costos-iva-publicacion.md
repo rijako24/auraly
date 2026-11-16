@@ -65,6 +65,21 @@ El producto pertenece al tenant: existe un solo `ProductId` y un solo código pa
 
 ## 3. IVA de compra e IVA de venta
 
+El margen actual de comparación de una revisión de compra puede ser negativo
+sin un límite equivalente al del margen objetivo. Por ejemplo, costo unitario
+de 2.000.000 y precio público de 10.000 producen -19.900 %. La propuesta conserva
+ese resultado en `PriceRevisionProposals.CurrentMarginPercent DECIMAL(28,6)`;
+la tabla de lote y el parser JSON del handler usan la misma precisión. No se
+limita ni reemplaza el resultado para hacer caber una compra válida.
+`PriceMargin` sigue siendo el único propietario de la fórmula, el objetivo
+conserva su restricción y recibir mercancía no publica precios. La ampliación
+de precisión se despliega mediante el esquema versionado, sin cambiar importes
+previos ni agregar consultas. Una reversión a DECIMAL(9,6) no es admisible si ya
+hay valores fuera de su rango: requiere corrección hacia adelante o restauración
+coordinada, nunca truncar la evidencia. Las regresiones SQL/API incluyen costos
+de 2.000.000/20.000.000 y precios públicos de 10.000/0,0001, con inventario,
+CxP y asiento únicos, replay y revisión/publicación explícita.
+
 ### Ampliación: costo comercial de ingredientes y combos (2026-11-04)
 
 El usuario requiere que los productos con lista Ingredientes y los productos con

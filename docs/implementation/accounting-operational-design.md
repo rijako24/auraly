@@ -167,8 +167,12 @@ historical validator used one command, and replay preserved the old payment,
 one opening journal and one effect per new payment. This evidence does not
 certify execution of the DEV data plan or PROD. A separate purchase case with a
 COP 2,000,000 unit cost and COP 10,000 sale price exposed a negative-margin
-numeric overflow before financial opening; that pricing issue remains pending
-an explicit scope decision and is not covered by the passed reconciliation case.
+numeric overflow before financial opening. The user subsequently authorized the
+pricing correction: widen only the observed current-margin comparison to
+DECIMAL(28,6), retaining the canonical formula and target/publication policy.
+The separate two-case SQL/API regression verifies purchase stock, one payable,
+a balanced journal, replay and explicit price review/publication for large
+negative margins. It does not authorize execution of the DEV reconciliation.
 
 The production cutover must quiesce old API and worker writers before publishing
 the DACPAC, verify that every posted position is linked, and start only the new

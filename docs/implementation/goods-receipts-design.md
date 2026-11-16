@@ -1,5 +1,18 @@
 # Órdenes y recepciones de compra
 
+## Pagar desde el listado
+
+Una compra procesada con CxP pendiente en COP ofrece **Pagar** a quien tenga
+lectura contable y creación de comprobantes. Navega al editor existente de
+egreso con el ID de la obligación, sin volver a consultar el detalle de la compra
+ni crear otra compra. El listado pagina antes de enriquecer sus filas con la
+CxP; la unión 0..1 está respaldada por su clave fuente/tipo/partida nula y no
+agrega viajes por fila. El editor consulta una sola página de una obligación,
+prepara tercero, referencia, auxiliar original e importe disponible descontando
+reservas, y expone las aperturas sin conciliar antes de capturar un pago.
+Guardar y contabilizar reutilizan los comandos y el motor actuales. Este acceso
+no altera el formulario del egreso ni el pago asistido del detalle de compra.
+
 > **Decisión vigente del usuario (2026-10-30):** una recepción confirmada
 > conserva su identidad y cantidades. «Editar costos» guarda un borrador
 > vinculado a esa recepción; al confirmarlo, una revisión inmutable procesa

@@ -96,7 +96,8 @@ for (const supplier of [false, true]) for (const kind of ["advance", "general", 
     await expect(page.getByRole("button", { name: "Eliminar partida 1", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Detalles de la partida 3", exact: true }).click();
     await expect(page.getByRole("combobox", { name: "Documento ajustado", exact: true })).toContainText("FACT-1");
-    await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toBeDisabled();
+    if (supplier) await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toBeDisabled();
+    else await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Cerrar detalles", exact: true }).click();
   }
   await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();

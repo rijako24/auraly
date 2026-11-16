@@ -3509,6 +3509,40 @@ ni se activa contabilidad por la ausencia de asientos previos.
 
 ## 14. Formas de pago, recibos y anticipos: cierre del 2026-11-09
 
+### Captura del recibo de caja: decisión del 2026-11-16
+
+El recibo v4 presenta las formas de pago en un panel, sin abrir Detalles de
+partida. Se elige una forma del catálogo paginado del tenant, se captura su
+importe y se pulsa **Agregar forma de pago**. Abrir/cerrar el selector o elegir
+una opción no crea una partida ni modifica el borrador. Efectivo no exige
+referencia ni aprobación; tarjetas débito/crédito muestran aprobación y
+franquicia; transferencia/consignación muestra referencia, sin franquicia.
+Cambiar de tipo limpia la evidencia que deja de corresponder, conservando el
+importe. No se transforma una diferencia en anticipo automáticamente.
+
+Cada forma agregada prepara una partida de tesorería dentro de `lines`, la
+misma captura canónica del comprobante. No se persiste un segundo listado de
+pagos: el panel proyecta esas partidas y guardar/enviar conserva los comandos,
+validación financiera, processor, writer y respuesta autoritativa existentes.
+La cuenta aplicada de la forma sigue resolviéndose al contabilizar. El panel
+consulta franquicias únicamente si se está capturando una tarjeta; el selector
+de formas consulta por página al abrirse y comparte la caché con alcance.
+
+El recibo normal no pide grupos ni crea una identidad adicional para agrupar
+sus formas: utiliza el ID del documento en el vínculo financiero existente.
+Las facturas, conceptos que ajustan una factura y aplicaciones de anticipos
+conservan sus referencias explícitas; cuadrar débitos/créditos no sustituye
+esos vínculos. Los cruces independientes y comprobantes ya aceptados conservan
+su identidad y evidencia; no se reescriben fuentes históricas ni se elimina un
+vínculo que impide aplicar el mismo dinero a dos deudas. Las restricciones de
+`PaymentTenderBreakdown` descritas en este diseño permanecen vigentes.
+
+Por instrucción posterior del usuario, este cambio de captura aplica sólo al
+**recibo de caja**. No extiende el panel al egreso ni modifica su formulario o
+el pago asistido/POS. La verificación puntual incluye el egreso anterior para
+demostrar esa separación. Rollback del cliente conserva las mismas partidas,
+IDs y APIs; no necesita migrar pagos ni reproducir efectos financieros.
+
 Decisión objetivo pendiente de implementación/migración. Se basa en la solicitud
 Mantis y sus aclaraciones, no atribuye a DIAN reglas de interfaz ni afirma conocer
 efectos ocultos de botones. Reutiliza Catalog, Receivables/Payables, aceptación,

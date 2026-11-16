@@ -240,6 +240,10 @@ export interface GoodsReceiptListItem {
   grandTotal: number;
   updatedAt: string;
   purchaseEvidenceType: PurchaseEvidenceType | null;
+  payableId?: string | null;
+  outstandingAmount?: number | null;
+  currencyCode?: string | null;
+  payableStatus?: string | null;
 }
 
 export interface GoodsReceiptPage {
