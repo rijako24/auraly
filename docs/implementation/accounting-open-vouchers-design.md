@@ -3874,6 +3874,10 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   proyecciones preparadas, ventas, cartera, comprobantes, nómina y reportes.
   El catálogo sincronizado es una proyección del mismo maestro por tenant,
   sin edición o reglas alternas en Edge. Se preserva la presentación del POS.
+  La publicación del instalador espera el backend y su verificación de salud
+  antes de anunciar el cliente nuevo. Una publicación exclusiva del instalador
+  sigue permitida cuando el backend no forma parte del release; un fallo de su
+  actualización impide anunciar ese instalador.
   Retirar el selector histórico también avanza una sola vez el cursor
   `Configuration` de cada sede en el outbox existente, aunque ya tuviera las
   cuatro formas y el bootstrap no inserte filas. Así una caja preparada recibe

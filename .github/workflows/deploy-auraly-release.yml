@@ -325,8 +325,10 @@ jobs:
 
   pos_installer:
     name: Publish POS installer
-    needs: release
-    if: contains(needs.release.outputs.components, 'pos-installer') && (inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev)
+    needs:
+      - release
+      - cloud
+    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && contains(needs.release.outputs.components, 'pos-installer') && (inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev)
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:

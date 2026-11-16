@@ -224,6 +224,23 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Pos_installer_feed_waits_for_a_successful_backend_cutover_and_allows_installer_only_releases()
+    {
+        var workflow = File.ReadAllText(Path.Combine(FindRepositoryRoot(), ".github", "workflows",
+            "deploy-auraly-release.yml")).ReplaceLineEndings("\n");
+        var installerStart = workflow.IndexOf("\n  pos_installer:\n", StringComparison.Ordinal);
+        Assert.True(installerStart >= 0);
+        var installerEnd = workflow.IndexOf("\n  admin:\n", installerStart, StringComparison.Ordinal);
+        Assert.True(installerEnd > installerStart);
+        var installer = workflow[installerStart..installerEnd];
+        Assert.Contains("needs:\n      - release\n      - cloud\n", installer, StringComparison.Ordinal);
+        Assert.Contains("if: always() && needs.release.result == 'success'", installer, StringComparison.Ordinal);
+        Assert.Contains("(needs.cloud.result == 'success' || needs.cloud.result == 'skipped')", installer, StringComparison.Ordinal);
+        Assert.Contains("contains(needs.release.outputs.components, 'pos-installer')", installer, StringComparison.Ordinal);
+        Assert.Contains("inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev", installer, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_installer_retries_only_the_known_transient_WiX_pipe_failure()
     {
         var script = File.ReadAllText(Path.Combine(

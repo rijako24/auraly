@@ -99,10 +99,11 @@ La exigencia de Admin se comprueba sobre `manifest.deploymentComponents`: el
 workflow lo publica en su propio job y no lo pasa como componente al adaptador
 de nube. API y Function sí deben estar en el subconjunto que ese adaptador va a
 publicar. La regresión ejecuta el guard con esta misma separación.
-En ese corte, el job paralelo del instalador no espera la API detenida: el job
-de nube y la verificación final comprueban su salud después de publicar los
-binarios compatibles. Una publicación independiente del instalador conserva
-su comprobación de API.
+El job del instalador espera que el job de nube termine correctamente, incluida
+la comprobación de salud de los binarios compatibles, antes de anunciar el cliente
+nuevo. Si el release solo incluye el instalador, el job de nube se omite y la
+publicación conserva su comprobación de API. Un fallo del backend bloquea la
+publicación del instalador y de Admin.
 Si falla el corte, no se reinician automáticamente los binarios anteriores contra
 el esquema nuevo. Para el PUC compartido se conserva la dimensión histórica en
 `LegacyBusinessId`; el retorno a binarios anteriores exige una reversión
