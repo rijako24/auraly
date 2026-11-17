@@ -133,7 +133,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   }
   const productName = await createRealProduct(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(page.getByRole("heading", { name: "Recepción de compra" })).toBeVisible();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await field(dialog, "Proveedor · sede").getByRole("combobox").click();

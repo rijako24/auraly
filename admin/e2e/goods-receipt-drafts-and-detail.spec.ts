@@ -24,7 +24,7 @@ test.describe("borradores y detalle de recepciones de compra", () => {
       name: marker, allowNegativeStockSales: false, priceFormationCostBasis: "LatestReceiptCost", useForSales: true, isActive: true,
     });
     await page.goto("/dashboard/purchasing/goods-receipts");
-    await page.getByRole("button", { name: "Nueva entrada" }).click();
+    await page.getByRole("button", { name: "Nueva compra" }).click();
     const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
     await selectFirst(page, dialog, "Proveedor · sede");
     await field(dialog, "Bodega").getByRole("combobox").click();

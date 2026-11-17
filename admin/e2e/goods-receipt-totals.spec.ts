@@ -75,7 +75,7 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const editor = page.getByRole("dialog", { name: "Recepción de compra" });
   await editor.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).first().click();
   await page.getByRole("option", { name: /Proveedor de prueba/ }).click();

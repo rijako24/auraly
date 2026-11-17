@@ -142,7 +142,7 @@ test("recepción conserva la última edición al cerrar por la X sin enviar un b
       writes.push(request.url());
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   const notes = dialog.getByPlaceholder("Observaciones de recepción");
   await notes.fill("Primera versión");
@@ -151,12 +151,12 @@ test("recepción conserva la última edición al cerrar por la X sin enviar un b
   await dialog.getByRole("button", { name: "Close" }).click();
   await expect(dialog).toBeHidden();
   expect(Date.now() - started).toBeLessThan(1_000);
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(dialog.getByPlaceholder("Observaciones de recepción"))
     .toHaveValue("Última versión antes de cerrar");
   await dialog.getByRole("button", { name: "Close" }).click();
   await page.reload();
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(dialog.getByPlaceholder("Observaciones de recepción"))
     .toHaveValue("Última versión antes de cerrar");
   expect(writes).toEqual([]);
@@ -211,13 +211,13 @@ test("orden de compra conserva la última edición local al cerrar por la X", as
 test("descartar una recepción elimina la captura que se recuperaría al reabrir", async ({ page }) => {
   await prepare(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await dialog.getByPlaceholder("Observaciones de recepción").fill("Debe eliminarse");
   await dialog.getByRole("button", { name: "Descartar borrador" }).click();
   await expect(dialog).toBeHidden();
   await page.reload();
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(dialog.getByPlaceholder("Observaciones de recepción")).toHaveValue("");
 });
 
@@ -312,7 +312,7 @@ test("confirmar una recepción conserva la captura ante fallo y la borra al acep
       : json(route, { documentId: id, movementId: crypto.randomUUID(), documentNumber: "REC-1",
         status: "Accepted", processingSequence: 1, idempotentReplay: false });
   });
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await expect(dialog.getByPlaceholder("Observaciones de recepción")).toHaveValue("Recepción de prueba");
   await dialog.getByRole("button", { name: "Confirmar entrada" }).click();

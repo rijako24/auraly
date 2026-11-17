@@ -385,7 +385,7 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await mockApi(page);
   await authenticate(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
   await expect(dialog.getByRole("button", { name: "Agregar retención" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Agregar retención" })).toBeDisabled();
@@ -417,7 +417,7 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
     return Boolean(stored);
   })).toBe(true);
   await page.reload();
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" })).toContainText("Proveedor Andino · Principal");
   await expect(field(dialog, "Bodega").getByRole("combobox")).toContainText("Principal");
   await expect(dialog.getByRole("combobox", { name: "Tipo de soporte" })).toContainText("Comprobante interno");
@@ -441,7 +441,7 @@ test("recepción permite aplicar una retención puntual y descartar en móvil si
     const bar = await page.getByRole("navigation", { name: "Navegación principal" }).boundingBox();
     return bar ? Math.round(bar.y + bar.height) : 0;
   }).toBe(844);
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const receipt = page.getByRole("dialog", { name: "Recepción de compra" });
   await receipt.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
   await page.getByRole("option", { name: /Proveedor Andino.*Principal/ }).click();
@@ -478,7 +478,7 @@ test("guardar recepción conserva la captura ante un conflicto y no sobrescribe 
   const mock = await mockApi(page, { conflictOnFirstReceiptSave: true });
   await authenticate(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
 
   await dialog.getByPlaceholder("Observaciones de recepción").fill("Conservar ante conflicto");
@@ -496,7 +496,7 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   await mockApi(page);
   await authenticate(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
 
   const supplier = dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" });

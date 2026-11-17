@@ -96,7 +96,7 @@ test("emisión y vencimiento se pueden seleccionar y conservan el vencimiento pr
     return json(route, { ...savedRequest, updatedAt: new Date().toISOString(), concurrencyToken: "AQ==" });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
@@ -151,7 +151,7 @@ test(`recuperar un cargo antiguo de contado conserva sus valores (${withProducts
     return json(route, { ...saved, updatedAt: new Date().toISOString(), concurrencyToken: "AQ==" });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await expect(dialog.locator("textarea")).toHaveValue("Captura anterior");
   if (!withProducts) {
@@ -189,7 +189,7 @@ test("el descuento comercial porcentual recalcula al cambiar la cantidad y se gu
     return json(route, { ...savedRequest, concurrencyToken: "AQ==", updatedAt: new Date().toISOString() });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
@@ -219,7 +219,7 @@ test("un conflicto al guardar conserva la captura y no sobrescribe otra versión
       body: JSON.stringify({ status: 409, detail: "El borrador cambió en otra sesión." }) });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await dialog.locator("textarea").fill("Conservar mi captura sin sobrescribir otra sesión");
   await dialog.getByRole("button", { name: "Guardar borrador", exact: true }).click();
@@ -246,9 +246,9 @@ test("sin cupo DIAN conserva la recepción y permite volver al comprobante", asy
     page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
   }));
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await expect(page.getByRole("button", { name: "Nueva entrada" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Nueva compra" })).toBeVisible();
   expect(quotaReads).toBe(0);
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const editor = page.getByRole("dialog", { name: /Recepción de compra/ });
   await editor.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
@@ -326,7 +326,7 @@ for (const distribute of [false, true]) {
     }, { businessId, supplierId, supplierSiteId });
     await page.goto("/dashboard/purchasing/goods-receipts");
     expect(voucherReads).toBe(0);
-    await page.getByRole("button", { name: "Nueva entrada" }).click();
+    await page.getByRole("button", { name: "Nueva compra" }).click();
     const editor = page.getByRole("dialog", { name: /Recepción de compra/ });
     await expect(editor.locator("textarea")).toHaveValue("Mercancía con cargo existente");
     await editor.getByRole("button", { name: /Facturas y otros costos/ }).click();
@@ -439,7 +439,7 @@ for (const count of [2, 100]) test(`las facturas adicionales comparten consultas
       exchangeRate: 1, exchangeRateDate: "2026-10-01", exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: costs }));
   }, { businessId, documentId, supplierId, supplierSiteId, costs });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
   await dialog.getByRole("button", { name: /Facturas y otros costos/ }).click();
   await expect(dialog.getByRole("cell", { name: `Transportador ${count}`, exact: true })).toBeVisible();

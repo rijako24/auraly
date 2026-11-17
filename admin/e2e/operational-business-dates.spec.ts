@@ -80,7 +80,7 @@ test("recepción: fecha del proveedor y plazo usan la sede; la recepción conser
     await route.fallback();
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button",{name:"Nueva entrada",exact:true}).click();
+  await page.getByRole("button",{name:"Nueva compra",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"Recepción de compra",exact:true});
   await expect(dialog.getByText("Fecha de emisión",{exact:true}).locator("..").getByRole("button").first()).toContainText("8 de marzo de 2026");
   await expect(dialog.getByText("Fecha de vencimiento",{exact:true}).locator("..").getByRole("button").first()).toContainText("7 de abril de 2026");

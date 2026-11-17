@@ -310,7 +310,7 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
           costo promedio, cuenta por pagar y propuesta de precio en el orden del negocio.
         </p>
       </div>
-      {canCreate && <Button onClick={() => void newEntry()}><Plus className="mr-2 h-4 w-4" /> Nueva entrada</Button>}
+      {canCreate && <Button onClick={() => void newEntry()}><Plus className="mr-2 h-4 w-4" /> Nueva compra</Button>}
     </header>
 
     <section className="grid gap-3 md:grid-cols-3">

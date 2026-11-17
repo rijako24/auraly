@@ -19,7 +19,7 @@ test("el soporte de cada factura adicional sigue la configuración de su proveed
     }) });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
-  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  await page.getByRole("button", { name: "Nueva compra" }).click();
   await page.getByRole("button", { name: /Facturas y otros costos/ }).click();
   await page.getByRole("button", { name: "Agregar factura", exact: true }).click();
 
