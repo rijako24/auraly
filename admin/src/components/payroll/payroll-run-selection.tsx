@@ -70,10 +70,11 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
         aria-label={`Ordenar por ${label}`} onClick={() => { setPage(1); setSorting(current => ({ by, direction: current.by === by && current.direction === "asc" ? "desc" : "asc" })); }}>
         {label}{sorting.by === by ? sorting.direction === "asc" ? " ↑" : " ↓" : ""}</Button>;
     const sortAria = (by: string) => sorting.by === by ? sorting.direction === "asc" ? "ascending" as const : "descending" as const : undefined;
-    return <section aria-label="Trabajadores de la liquidación" className="space-y-3 rounded-2xl border p-4" aria-busy={busy}>
+    return <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-3 rounded-2xl border p-4" aria-busy={busy}>
         <h3 className="font-semibold">Seleccionar trabajadores</h3>
         <form className="flex gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim()); }}>
             <Input aria-label="Buscar trabajador de la liquidación" placeholder="Nombre, identificación o contrato" value={draftSearch}
+                className="min-w-0 flex-1"
                 maxLength={160} disabled={locked} onChange={event => setDraftSearch(event.target.value)}/>
             <Button type="submit" variant="outline" disabled={locked || query.isFetching}>Buscar</Button>
         </form>
@@ -92,7 +93,7 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
             {stale && <p role="alert" className="text-sm text-destructive">{data.rowVersion !== run.rowVersion
                 ? "La liquidación cambió. Usa Actualizar nómina antes de continuar."
                 : "La liquidación cambió. Descarta la selección anterior antes de continuar."}</p>}
-            <div className="max-h-[32rem] overflow-auto rounded-xl border"><table className="w-full min-w-[800px] whitespace-nowrap text-sm">
+            <div className="max-h-[32rem] max-w-full overflow-auto rounded-xl border"><table className="w-full min-w-[800px] whitespace-nowrap text-sm">
                 <thead className="sticky top-0 z-10 bg-card"><tr className="text-left"><th>Incluir</th>
                     <th aria-sort={sortAria("employeeName")}>{sortHeader("employeeName", "Trabajador")}</th>
                     <th aria-sort={sortAria("identification")}>{sortHeader("identification", "Identificación")}</th>
@@ -118,7 +119,7 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
             {data.items.length === 0 && <p className="text-sm">{data.eligibleCount === 0
                 ? "No hay contratos activos y vigentes que coincidan con la periodicidad de esta liquidación. Revisa la periodicidad y las fechas de los contratos."
                 : "No hay trabajadores que coincidan con la búsqueda."}</p>}
-            <div className="flex items-center justify-between gap-2 text-sm"><span>Página {page} · {data.totalCount} resultados</span><div className="flex gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>Página {page} · {data.totalCount} resultados</span><div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" disabled={locked || query.isFetching || page === 1} onClick={() => setPage(value => value - 1)}>Anterior trabajadores</Button>
                 <Button size="sm" variant="outline" disabled={locked || query.isFetching || page * data.pageSize >= data.totalCount} onClick={() => setPage(value => value + 1)}>Siguiente trabajadores</Button>
             </div></div>

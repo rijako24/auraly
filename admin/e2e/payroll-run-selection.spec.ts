@@ -3,7 +3,9 @@ import { financialVoucherScenario, installFinancialVoucherContext } from "./supp
 
 const id = (value:number) => `bcbcbcbc-1111-4222-8333-${String(value).padStart(12,"0")}`;
 
-test("selección paginada: teclado, búsqueda, reintento y cálculo sin refetch", async ({page,baseURL},testInfo) => {
+for(const viewport of [{width:1440,height:1000},{width:390,height:844}])
+test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch (${viewport.width}px)`, async ({page,baseURL},testInfo) => {
+    await page.setViewportSize(viewport);
     const scenario = financialVoucherScenario();
     scenario.user.permissions.push("payroll.read","payroll.calculate","payroll.approve");
     await installFinancialVoucherContext(page,baseURL!,scenario);
@@ -59,6 +61,16 @@ test("selección paginada: teclado, búsqueda, reintento y cálculo sin refetch"
     failPage=false;await page.getByRole("button",{name:"Reintentar trabajadores",exact:true}).click();
     const selection=page.getByRole("region",{name:"Trabajadores de la liquidación",exact:true});
     await expect(selection.getByRole("checkbox")).toHaveCount(50);
+    const bounds=await selection.evaluate(element=>element.getBoundingClientRect().toJSON());
+    expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(viewport.width);
+    for(const name of ["Buscar","Todos","Ninguno","Siguiente trabajadores"]){
+        const control=await selection.getByRole("button",{name,exact:true}).evaluate(element=>element.getBoundingClientRect().toJSON());
+        expect(control.left).toBeGreaterThanOrEqual(0);expect(control.right).toBeLessThanOrEqual(viewport.width);
+    }
+    if(viewport.width===390){
+        const table=await selection.getByRole("table").evaluate(element=>({viewport:element.parentElement!.clientWidth,content:element.parentElement!.scrollWidth}));
+        expect(table.content).toBeGreaterThan(table.viewport);
+    }
     await selection.getByRole("button",{name:"Ninguno",exact:true}).click();
     await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeDisabled();
     const first=selection.getByRole("checkbox",{name:"Incluir Trabajador 00, contrato C-0",exact:true});

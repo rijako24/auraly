@@ -1201,6 +1201,17 @@ cálculo, sobre el mismo comando y sin volver a guardar la novedad. El error
 de presentación se conserva por liquidación/trabajador y se retira al recibir
 su resultado correcto; no crea estado durable ni otro proceso. El recálculo
 general permanece en Liquidaciones.
+La grilla de Liquidaciones usa un mínimo de columna cero también antes del
+breakpoint de escritorio. En móvil sus tarjetas y la selección se contienen
+en el viewport; sólo la tabla conserva desplazamiento horizontal. Búsqueda,
+Todos/Ninguno, paginación y cálculo deben permanecer accesibles a 390 px,
+sin cambiar el propietario de consultas ni el comportamiento del comando.
+La regresión puntual `payroll-mobile-selection-e2e.log` aprobó cuatro casos:
+el mismo recorrido paginado a 1440/390 px, lectura y falta de elegibles. Conserva
+los conteos de consultas y el cálculo sin refetch. La revisión real a 390 px
+redujo la selección de 850,6 a 301,6 px; verificó Ninguno/Todos, cálculo y
+transporte 24→25 sin alterar salario 30. Build y lint aprobados. No añade I/O
+ni cambia una ruta de servidor que necesite otro benchmark.
 
 Editar días finales usa PayrollCalculator.WithConceptWorkedDays: actualiza
 solo la base del concepto indicado, sumando las ausencias identificadas.
