@@ -162,7 +162,7 @@ for (const scenario of [
     if (response.request().method() === "POST" && response.url().endsWith("/orders/invoice/credit-validation")) creditValidations.push(response);
   });
   if (scenario.method === "Credit") await page.getByRole("button", { name: "Crédito", exact: true }).click();
-  await page.getByRole("button", { name: `Emitir ${scenario.method === "Credit" ? "a crédito" : "en efectivo"} (${scenario.count})`, exact: true }).click();
+  await page.getByRole("button", { name: `Emitir ${scenario.method === "Credit" ? "a crédito" : "de contado"} (${scenario.count})`, exact: true }).click();
   await expect(page.getByText(`${scenario.count} pedidos emitidos correctamente.`, { exact: true })).toBeVisible({ timeout: 90_000 });
   const emissions = await Promise.all(invoiceResponses.map(async response => {
     expect(response.ok(), await response.text()).toBe(true);

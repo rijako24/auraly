@@ -58,6 +58,8 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   const completed = new Set<string>();
   const sequence: string[] = [];
   let brandingReads = 0;
+  let orderReads = 0;
+  const longPaymentName = "Caja del lote · Recepción de pedidos y ventas del mostrador principal";
   const invoiceRequests: Array<{
     orderIds: string[];
     charges?: Array<{
@@ -163,10 +165,11 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
         }));
     }
     else if (path.endsWith("/payment-methods/")) {
-      body = { items: [{ paymentMethodId: "form-cash-native", code: "CASH-BATCH", name: "Caja del lote", methodCode: "Cash",
+      body = { items: [{ paymentMethodId: "form-cash-native", code: "CASH-BATCH", name: longPaymentName, methodCode: "Cash",
         version: 1, accountId: "account-cash-native", isActive: true, useForSales: true }], page: 1, pageSize: 10, totalCount: 1 };
     }
     else if (path.endsWith("/orders") && route.request().method() === "GET") {
+      orderReads += 1;
       const filters = new URL(route.request().url()).searchParams;
       expect(filters.get("createdFrom")).toBe("2026-11-16T05:00:00.000Z");
       expect(filters.get("createdTo")).toBe("2026-11-17T05:00:00.000Z");
@@ -218,6 +221,17 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
 
   await page.goto("/dashboard/orders#edgeToken=edge-test-token");
   await expect(page.getByText("PED-001")).toBeVisible();
+  const refreshButton = page.getByRole("button", { name: "Actualizar pedidos", exact: true });
+  await expect(refreshButton).toBeEnabled();
+  const readsBeforeRefresh = orderReads;
+  await refreshButton.click();
+  await expect(refreshButton).toBeEnabled();
+  expect(orderReads).toBe(readsBeforeRefresh + 1);
+  await expect(page.getByRole("button", { name: "Efectivo", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Crédito", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toHaveCount(0);
+  await page.getByRole("button", { name: "De contado", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toBeVisible();
   await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
   await page.getByRole("button", { name: "Imprimir (3)" }).click();
   await expect.poll(() => sequence).toEqual([
@@ -229,10 +243,31 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     "print:end:PED-003",
   ]);
   sequence.length = 0;
-  await expect(page.getByRole("button", { name: "Facturar en efectivo (3)" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Facturar de contado (3)" })).toBeEnabled();
   await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
-  await page.getByRole("option", { name: /Caja del lote/ }).click();
-  await page.getByRole("button", { name: "Facturar en efectivo (3)" }).click();
+  const longPaymentOption = page.getByRole("option", { name: /Caja del lote/ });
+  await expect(longPaymentOption.getByText(longPaymentName, { exact: true })).toBeVisible();
+  const labelLayout = await longPaymentOption.getByText(longPaymentName, { exact: true }).evaluate((element) => ({
+    fits: element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight,
+    whiteSpace: getComputedStyle(element).whiteSpace,
+    textOverflow: getComputedStyle(element).textOverflow,
+  }));
+  expect(labelLayout).toMatchObject({ fits: true, whiteSpace: "normal" });
+  expect(labelLayout.textOverflow).not.toBe("ellipsis");
+  for (const width of [390, 820, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(longPaymentOption).toBeVisible();
+    await expect.poll(async () => {
+      const bounds = await longPaymentOption.boundingBox();
+      return Boolean(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width);
+    }).toBe(true);
+    const fits = await longPaymentOption.getByText(longPaymentName, { exact: true }).evaluate((element) =>
+      element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight);
+    expect(fits).toBe(true);
+  }
+  await page.screenshot({ path: "../work/orders-toolbar-review/payment-options.png", fullPage: true });
+  await longPaymentOption.click();
+  await page.getByRole("button", { name: "Facturar de contado (3)" }).click();
 
   await expect(page.getByText("1/3", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("2/3", { exact: true })).toBeVisible({ timeout: 10_000 });

@@ -38,6 +38,8 @@ export function PagedEntitySelect<T>({
   openOnTyping = false,
   pageSize = 10,
   className,
+  contentClassName,
+  wrapLabels = false,
   onClear,
   values,
   selectedOptions = [],
@@ -59,6 +61,8 @@ export function PagedEntitySelect<T>({
   openOnTyping?: boolean;
   pageSize?: number;
   className?: string;
+  contentClassName?: string;
+  wrapLabels?: boolean;
   onClear?: () => void;
   values?: string[];
   selectedOptions?: PagedEntityOption[];
@@ -116,14 +120,14 @@ export function PagedEntitySelect<T>({
           setSearch(event.key);
           setOpen(true);
         }}
-        className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", className)}>
-        <span className="min-w-0 truncate text-left">{values ? (values.length ? `${values.length} seleccionados` : placeholder) : selected?.label ?? placeholder}</span>
+        className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", wrapLabels && "h-auto min-h-9 whitespace-normal", className)}>
+        <span className={cn("min-w-0 text-left", wrapLabels ? "flex-1 whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{values ? (values.length ? `${values.length} seleccionados` : placeholder) : selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50"/>
       </Button>
     </PopoverTrigger>
     {onClear && !disabled && <button type="button" aria-label={`Quitar selección de ${ariaLabel ?? "tercero"}`} className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={()=>{setOpen(false);onClear()}}><X className="h-4 w-4"/></button>}
     </div>
-    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start" portalContainer={triggerRef.current?.closest<HTMLElement>("[role='dialog']") ?? undefined}>
+    <PopoverContent className={cn("w-[var(--radix-popover-trigger-width)] p-0", contentClassName)} align="start" portalContainer={triggerRef.current?.closest<HTMLElement>("[role='dialog']") ?? undefined}>
       <Command shouldFilter={false}>
         <CommandInput
           value={search}
@@ -141,7 +145,7 @@ export function PagedEntitySelect<T>({
             if(item||option.value!==value)onChange(option.value, option, item); setOpen(false);
           }} aria-selected={values?.includes(option.value)} className="items-start">
             <Check className={cn("mr-2 mt-0.5 h-4 w-4 shrink-0", (values ? values.includes(option.value) : value === option.value) ? "opacity-100" : "opacity-0")}/>
-            <span className="min-w-0"><span className="block truncate">{option.label}</span>{option.description && <small className="block truncate text-muted-foreground">{option.description}</small>}</span>
+            <span className={cn("min-w-0", wrapLabels && "flex-1")}><span className={cn("block", wrapLabels ? "whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{option.label}</span>{option.description && <small className={cn("block text-muted-foreground", wrapLabels ? "whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{option.description}</small>}</span>
           </CommandItem>)}
           {query.hasNextPage && !(openOnTyping && (loading || query.isError)) && <Button type="button" variant="ghost" className="w-full" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Cargar {pageSize} más</Button>}
         </CommandList>

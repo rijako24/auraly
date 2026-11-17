@@ -365,7 +365,7 @@ export function OrdersWorkspace({
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
     const selectedForm = requestedPaymentMethodCode === "Cash" ? paymentForm : undefined;
     if (requestedPaymentMethodCode === "Cash" && !selectedForm) {
-      setError("Selecciona la forma de pago en efectivo del lote.");
+      setError("Selecciona la forma de pago del lote.");
       return;
     }
     if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
@@ -405,7 +405,7 @@ export function OrdersWorkspace({
       failed: 0,
       current: requestedPaymentMethodCode === "Credit"
         ? "Preparando lote a crédito"
-        : "Preparando lote en efectivo",
+        : "Preparando lote de contado",
       events: [],
     });
     try {
@@ -615,13 +615,20 @@ export function OrdersWorkspace({
             placeholder="Número de pedido"
           />
         </label>
-        {compact ? <OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /> : (
-          <Button type="button" variant="outline" onClick={() => setFiltersExpanded((value) => !value)} aria-expanded={filtersExpanded}>
-            <SlidersHorizontal className="mr-2 h-4 w-4" />Filtros
-            {activeFilterCount > 0 && <span className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-bold text-teal-800">{activeFilterCount}</span>}
-            {filtersExpanded ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" />}
+        <div className="flex items-center gap-2">
+          {compact ? <OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /> : (
+            <Button type="button" variant="outline" onClick={() => setFiltersExpanded((value) => !value)} aria-expanded={filtersExpanded}>
+              <SlidersHorizontal className="mr-2 h-4 w-4" />Filtros
+              {activeFilterCount > 0 && <span className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-bold text-teal-800">{activeFilterCount}</span>}
+              {filtersExpanded ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" />}
+            </Button>
+          )}
+          <Button type="button" variant="outline" disabled={loading || working || selectingAll}
+            onClick={() => void refresh()} aria-label="Actualizar pedidos" title="Actualizar pedidos">
+            <RotateCcw className={`${compact ? "" : "mr-2 "}h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <span className={compact ? "sr-only" : undefined}>Actualizar</span>
           </Button>
-        )}
+        </div>
       </div>
       {onRecover && recoveryBlockedReason && <p role="status" className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">{recoveryBlockedReason}</p>}
 
@@ -717,7 +724,7 @@ export function OrdersWorkspace({
                 Imprimir ({selectedOrders.length})
               </Button>
             </div>
-            <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+            <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-center xl:justify-end">
               <div className="w-full min-w-0 sm:w-[22rem] xl:w-[20rem]">
                 <div
                   className="grid w-full min-w-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:grid-cols-2"
@@ -749,7 +756,7 @@ export function OrdersWorkspace({
                   </button>
                 </div>
               </div>
-              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:items-center xl:justify-end">
+              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center xl:justify-end">
                 {onConfigurePrinting && (
                   <Button type="button" variant="outline" size="icon"
                     title="Configurar plantillas e impresoras"
@@ -763,7 +770,7 @@ export function OrdersWorkspace({
                     disabled={working || selectingAll}
                     onClick={() => setPaymentMethodCode("Cash")}
                     className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Cash" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
-                    <Banknote className="h-3.5 w-3.5" />Efectivo
+                    <Banknote className="h-3.5 w-3.5" />De contado
                   </button>
                   <button type="button" aria-pressed={paymentMethodCode === "Credit"}
                     disabled={working || selectingAll}
@@ -782,7 +789,9 @@ export function OrdersWorkspace({
                     return { ...result, totalPages: Math.ceil(result.totalCount / pageSize) };
                   }}
                   getOption={(item) => ({ value: item.paymentMethodId, label: item.name, description: item.code })}
-                  ariaLabel="Forma de pago del lote" placeholder="Forma de pago en efectivo"
+                  ariaLabel="Forma de pago del lote" placeholder="Forma de pago"
+                  className="w-full sm:w-64" wrapLabels
+                  contentClassName="w-[min(28rem,calc(100vw-2rem))]"
                   searchPlaceholder="Buscar forma de pago…" disabled={working || selectingAll || !connected}
                 />}
 
@@ -811,10 +820,10 @@ export function OrdersWorkspace({
                   {documentType === "SalesInvoice"
                     ? paymentMethodCode === "Credit"
                       ? "Facturar a crédito"
-                      : "Facturar en efectivo"
+                      : "Facturar de contado"
                     : paymentMethodCode === "Credit"
                       ? "Emitir a crédito"
-                      : "Emitir en efectivo"} ({selectedOrders.length})
+                      : "Emitir de contado"} ({selectedOrders.length})
                 </Button>
                 <Button
                   type="button"
@@ -1158,7 +1167,7 @@ export function OrdersWorkspace({
             <header className="flex items-start justify-between gap-4 border-b border-amber-100 bg-amber-50 p-5">
               <div className="flex gap-3">
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-500 text-amber-950"><CreditCard className="h-5 w-5" /></span>
-                <div><p className="text-xs font-black uppercase tracking-[0.16em] text-amber-800">Validación de crédito</p><h3 className="mt-1 text-xl font-black text-slate-950">No se puede facturar esta selección a crédito</h3><p className="mt-1 text-sm text-slate-600">Ningún pedido fue modificado. Revisa estos clientes o factura la selección en efectivo.</p></div>
+                <div><p className="text-xs font-black uppercase tracking-[0.16em] text-amber-800">Validación de crédito</p><h3 className="mt-1 text-xl font-black text-slate-950">No se puede facturar esta selección a crédito</h3><p className="mt-1 text-sm text-slate-600">Ningún pedido fue modificado. Revisa estos clientes o factura la selección de contado.</p></div>
               </div>
               <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={() => setCreditValidationIssues([])}><X className="h-5 w-5" /></Button>
             </header>
