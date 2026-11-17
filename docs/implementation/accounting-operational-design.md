@@ -174,6 +174,74 @@ The separate two-case SQL/API regression verifies purchase stock, one payable,
 a balanced journal, replay and explicit price review/publication for large
 negative margins. It does not authorize execution of the DEV reconciliation.
 
+### Reviewed Megafruver supplemental opening
+
+The user delegated the counterpart selection for the COP 2,000 commercial-only
+receivable from `CVI00-00000001`. The versioned data plan is
+`infrastructure/azure/data-plans/megafruver-historical-receivable-opening.json`;
+`Invoke-ReviewedMegafruverOpening.ps1` accepts only that specific opening through
+the existing `OpeningPositionsValidate` and `AccountingSourcesAccept` owners.
+It does not write journals, portfolio balances, payments or inventory.
+
+The plan debits the existing 130505 control account and credits the explicitly
+identified 36990101 `Saldos iniciales por conciliar`, with a reconciliation cut
+of 2026-09-15. This is a disclosed opening difference awaiting the complete
+opening reconciliation, not evidence of owner contributions or current income.
+Its Equity classification exposes that difference; it does not certify a complete
+opening balance or its final economic classification. This specific account is
+deployment data, not a runtime code rule or a default for other customers.
+[Siigo's opening guidance](https://siigopyme2.portaldeclientes.siigo.com/generar-interfaces-desde-excel-saldos-iniciales-de-cuentas-por-cobrar/)
+likewise identifies an opening bridge as temporary and expects it to clear when
+the full opening balance is entered; that example does not prescribe this plan's
+account code or classification.
+
+The used 130505 account lacks the financial-function and balance-side fields
+introduced after its original entries. The plan completes only absent fields
+as Receivable/Debit, after proving the exact active Asset account, party requirement,
+existing AccountsReceivable mapping and linked posted debit entries. An explicit
+conflicting classification or a pending manual voucher stops the operation.
+The account identity, Asset type, journal and previous amounts stay intact.
+Historical type-based reports therefore retain their classification; current
+function filters gain the account's explicit receivable designation.
+
+`-Preview` renders the plan and deterministic source hash without Azure access
+or database work; it cannot be combined with `-Apply`. The reviewed ISO offset
+stays a JSON string and cannot change with the operator machine's time zone.
+Without that switch, the operator script defaults to a transaction it rolls back in the fixed isolated
+DEV copy. `-Apply` accepts one version-3 historical opening; processing uses the
+existing authorized posting-retry action for its BatchId. Repeating preparation
+returns the same source only when its immutable hash agrees. Nested JSON objects
+have an explicit serialization order, including the linked position; the hash
+cannot depend on PowerShell hashtable iteration order between processes.
+The original sale stays CommercialEffectsApplied without an accounting entry.
+The ordinary native collection later cancels the original receivable once.
+
+Production is not authorized by this plan. Even a rolled-back preparation touches
+the target database, so production mode requires explicit execution confirmation,
+a clean main checkout whose commit belongs to origin/main, and the active
+application actor explicitly supplied by the operator. Before running it, stop
+old writers, publish/verify the compatible schema and binaries, and verify that
+the original COP 2,000 position still matches the plan. A changed balance,
+reservation, account identity or source aborts the transaction. Do not generalize
+this operation to other positions or reopen the global ZeroDeclared activation.
+Keep writers stopped until the opening is Posted and its original position is linked.
+
+The isolated-copy rehearsal produced one balanced opening for COP 2,000, retained
+the original receivable, collected it through ReceivablesService and the canonical
+processor using the migrated cash form, and reached zero outstanding. Repeating
+both commands preserved one journal and one applied collection. Original cash
+COP 700, source hash, commercial-only mode and absence of a sale journal remained
+unchanged; inventory count and fiscal attempts also stayed unchanged. The final
+operator script additionally passed replay in separate PowerShell processes and
+rejected production mode before access when confirmation was absent.
+This is isolated-copy evidence, not a production execution.
+
+Before any new effects, rollback uses the coherent database and binary backup.
+After posting or collection, retain those documents and use reviewed corrective
+entries through the existing accounting flow; do not delete the opening,
+receivable, payment or used account to undo the cutover. The disclosed bridge
+remains a real pending reconciliation until the complete opening is supported.
+
 The production cutover must quiesce old API and worker writers before publishing
 the DACPAC, verify that every posted position is linked, and start only the new
 workers/API afterward. Releasing the schema while an old writer continues to

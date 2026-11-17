@@ -6,6 +6,51 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public async Task Reviewed_opening_preview_is_read_only_and_has_the_same_source_hash_in_fresh_processes()
+    {
+        var script = Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Invoke-ReviewedMegafruverOpening.ps1");
+        var evidence = Path.Combine(Path.GetTempPath(), $"auraly-opening-preview-{Guid.NewGuid():N}.json");
+        string? hash = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var preview = JsonDocument.Parse(await RunPowerShellAsync("""
+                param([string]$Entry,[string]$Evidence)
+                function az { throw 'Preview attempted Azure access.' }
+                & $Entry -ActorUserId ([guid]::Empty) -Preview -EvidencePath $Evidence
+                """, script, evidence));
+            var root = preview.RootElement;
+            Assert.False(root.GetProperty("DatabaseTouched").GetBoolean());
+            Assert.Equal("auraly-release-closure-20261116", root.GetProperty("TargetDatabase").GetString());
+            var actualHash = root.GetProperty("PayloadHash").GetString();
+            Assert.Equal(64, actualHash!.Length);
+            Assert.Equal("E725DB7AC6579B75E3A6A2ACF501F17305E724A81FEA9F0641C83B136963FA50", actualHash);
+            Assert.Equal("2026-09-15T00:00:00-05:00", root.GetProperty("Plan").GetProperty("OccurredAt").GetString());
+            hash ??= actualHash;
+            Assert.Equal(hash, actualHash);
+            Assert.False(File.Exists(evidence));
+        }
+    }
+
+    [Fact]
+    public async Task Reviewed_opening_rejects_unconfirmed_production_before_any_access()
+    {
+        var script = Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Invoke-ReviewedMegafruverOpening.ps1");
+        var result = await RunPowerShellAsync("""
+            param([string]$Entry)
+            $ErrorActionPreference='Stop'
+            function az { throw 'Unauthorized Azure access.' }
+            try {
+              & $Entry -ActorUserId ([guid]::Empty) -Environment prod -Apply -EvidencePath 'unused.json'
+              throw 'Production was not blocked.'
+            } catch {
+              if($_.Exception.Message -notlike 'Producción exige*'){throw}
+              'BlockedBeforeAccess'
+            }
+            """, script);
+        Assert.Equal("BlockedBeforeAccess", result.Trim());
+    }
+
+    [Fact]
     public async Task Retired_account_freezers_are_removed_before_dacpac_planning()
     {
         var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
