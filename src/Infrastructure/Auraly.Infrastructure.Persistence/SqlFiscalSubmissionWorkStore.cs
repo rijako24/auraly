@@ -42,7 +42,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
                   AND
                   (
                     p.Status=@PendingSubmission OR
-                    (p.Status=@PendingResult AND p.TrackId IS NOT NULL) OR
+                    (p.Status=@PendingResult AND p.TrackId IS NOT NULL AND p.NextAttemptAt IS NOT NULL) OR
                     p.Status=@RetryScheduled
                   )
                   AND (p.NextAttemptAt IS NULL OR p.NextAttemptAt<=@AcquiredAt)
@@ -149,7 +149,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
             status == FiscalDocumentStatusCodes.PendingSubmission ||
             status == FiscalDocumentStatusCodes.RetryScheduled ||
             (status == FiscalDocumentStatusCodes.PendingDianResult && hasTrackId);
-        if (!remainsEligible) return null;
+        if (!remainsEligible ||
+            (status == FiscalDocumentStatusCodes.PendingDianResult && reader.IsDBNull(2))) return null;
 
         var resumeAt = checkedAt.AddSeconds(1);
         if (!reader.IsDBNull(2))

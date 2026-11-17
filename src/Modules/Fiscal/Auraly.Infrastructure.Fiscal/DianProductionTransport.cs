@@ -18,6 +18,15 @@ public sealed class DianProductionTransport(
             var configuration = await configurations.ResolveAsync(request.BusinessId, cancellationToken);
             await using var client = await clients.CreateAsync(configuration, cancellationToken);
             var response = await client.GetStatusAsync(request.TrackId, cancellationToken);
+            // A lookup miss is not a rejection of the submitted document. Keep the
+            // original inquiry key and require a reviewed retry, never another send.
+            if (response.StatusCode is "66" or "90")
+                return Result(response) with
+                {
+                    Disposition = DianSubmissionDisposition.Pending,
+                    TrackId = request.TrackId,
+                    RequiresExplicitRetry = true
+                };
             return Result(response);
         }
         catch (TimeoutException exception) { return Failure(exception, mayHaveReachedDian: true); }

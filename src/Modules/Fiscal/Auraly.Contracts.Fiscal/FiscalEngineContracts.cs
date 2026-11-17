@@ -119,7 +119,10 @@ public sealed record DianSubmissionResult(
     string? StatusDescription,
     byte[]? ApplicationResponse,
     byte[] SanitizedResponse,
-    bool MayHaveReachedDian);
+    bool MayHaveReachedDian)
+{
+    public bool RequiresExplicitRetry { get; init; }
+}
 
 public interface IDianHabilitationTransport
 {

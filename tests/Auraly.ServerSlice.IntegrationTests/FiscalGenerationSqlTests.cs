@@ -24,6 +24,46 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Historical_final_consumer_metadata_generates_valid_xml_without_mutating_the_accepted_snapshot()
+    {
+        var request = WithUblSnapshot(fixture.CreateValidRequest(9171));
+        var fiscal = request.FiscalSnapshot!;
+        var identity = PosSaleFiscalMappings.FinalConsumerIdentification;
+        var cufe = CufeCalculator.Calculate(new CufeInput(fiscal.FiscalNumber, fiscal.IssuedAt,
+            fiscal.UntaxedAmount, fiscal.PayableAmount, fiscal.SupplierTaxId, identity,
+            new FiscalTechnicalKey(ServerSliceFixture.TechnicalKeyValue, ServerSliceFixture.TechnicalKeyVersion),
+            FiscalEnvironment.Test, [new FiscalTaxAmount("01", fiscal.TaxAmount)]), ServerSliceFixture.QrValidationUrl);
+        request = request with
+        {
+            CommercialSnapshot = request.CommercialSnapshot with { CustomerIdentification = identity },
+            FiscalSnapshot = fiscal with { CustomerIdentification = identity, Cufe = cufe.Cufe, QrPayload = cufe.QrPayload },
+            UblSnapshot = request.UblSnapshot! with
+            {
+                Customer = request.UblSnapshot.Customer with
+                {
+                    Identification = identity, OrganizationTypeCode = "1", RegistrationName = "Consumidor final",
+                    TradeName = "Consumidor final", TaxSchemeId = "01", TaxSchemeName = "IVA"
+                }
+            }
+        };
+        using var client = fixture.CreateClient();
+        using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var before = await ScalarStringAsync("SELECT SnapshotJson FROM dbo.FiscalSnapshots WHERE DocumentId=@DocumentId", request.DocumentId);
+        var worker = CreateWorker(new SqlFiscalGenerationWorkStore(
+            new SqlServerConnectionFactory(new AuralySqlConnectionSource(fixture.ConnectionString)), new TestIds()),
+            new FixedTimeProvider(DateTimeOffset.UtcNow.AddMinutes(5)));
+        Assert.True(await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "final-consumer-generator"),
+            await FiscalProcessStateAsync(request.DocumentId));
+        Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, await ScalarStringAsync(
+            "SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId", request.DocumentId));
+        Assert.Equal(before, await ScalarStringAsync("SELECT SnapshotJson FROM dbo.FiscalSnapshots WHERE DocumentId=@DocumentId", request.DocumentId));
+        Assert.False(await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "final-consumer-replay"));
+        Assert.Equal(1, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedXml'", request.DocumentId));
+        Assert.Equal(0, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId", request.DocumentId));
+    }
+
+    [Fact]
     public async Task Invoice_does_not_enter_DIAN_generation_before_operational_processing_completes()
     {
         var request = WithUblSnapshot(fixture.CreateValidRequest(8901));
@@ -143,7 +183,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 UPDATE dbo.SalesDocuments SET ProcessingStatus=N'Blocked'
                 WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
                 UPDATE dbo.FiscalDocumentProcesses
-                SET Status=N'PendingDianResult',TrackId=N'prior-send-track'
+                SET Status=N'PendingDianResult',TrackId=N'prior-send-track',NextAttemptAt=SYSUTCDATETIME()
                 WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
                 """, connection);
             command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
@@ -154,6 +194,108 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var submission = new SqlFiscalSubmissionWorkStore(connections, ids);
         Assert.NotNull(await submission.AcquireAsync(fixture.BusinessId, request.DocumentId,
             "status-query", now.AddSeconds(1), TimeSpan.FromMinutes(2), default));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Explicit_retry_of_an_unknown_production_send_queries_its_frozen_key_without_resubmitting(bool accepted)
+    {
+        var request = WithUblSnapshot(fixture.CreateValidRequest(accepted ? 8904 : 8905));
+        using var client = fixture.CreateClient();
+        using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var connections = new SqlServerConnectionFactory(new AuralySqlConnectionSource(fixture.ConnectionString));
+        var ids = new TestIds();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+        Assert.True(await CreateWorker(new SqlFiscalGenerationWorkStore(connections, ids),
+            new FixedTimeProvider(now)).ProcessAsync(fixture.BusinessId, request.DocumentId, "unknown-generator"));
+        var xml = await ArtifactAsync(request.DocumentId, FiscalArtifactTypeCodes.SignedXml);
+        var submission = new SqlFiscalSubmissionWorkStore(connections, ids);
+        // Persist the same interrupted production attempt boundary: ZIP and attempt exist,
+        // the remote result did not reach the caller, and no DIAN tracking key was returned.
+        var work = await submission.AcquireAsync(fixture.BusinessId, request.DocumentId,
+            "interrupted-send", now, TimeSpan.FromMinutes(2), default);
+        Assert.NotNull(work);
+        var packages = new FiscalSubmissionPackageBuilder();
+        var zip = packages.Build(work.FiscalNumber, work.SignedXml);
+        await submission.StartAttemptAsync(work, DianOperationCodes.SendBillSync, zip,
+            packages.BuildSanitizedRequest(work, DianOperationCodes.SendBillSync, "interrupted", "invoice.zip", zip), now, default);
+        await submission.MarkSubmissionOutcomeUnknownAsync(work, now, default);
+        Assert.Null(await submission.AcquireAsync(fixture.BusinessId, request.DocumentId,
+            "not-an-explicit-retry", now, TimeSpan.FromMinutes(2), default));
+        using var scope = fixture.CreateScope();
+        var documents = scope.ServiceProvider.GetRequiredService<IFiscalDocumentStore>();
+        // A habilitation ZIP key cannot be replaced with a document CUFE.
+        var testRetry = await documents.RetryAsync(fixture.BusinessId, request.DocumentId, now, default);
+        Assert.NotNull(testRetry);
+        Assert.Null(testRetry.TrackId);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        async Task SetEnvironmentAsync(int environment)
+        {
+            await using var command = new SqlCommand("""
+                UPDATE issuer SET Environment=@Environment
+                FROM dbo.FiscalIssuerConfigurations issuer
+                JOIN dbo.FiscalDocumentProcesses process ON process.FiscalIssuerConfigurationId=issuer.FiscalIssuerConfigurationId
+                WHERE process.DocumentId=@DocumentId;
+                UPDATE dbo.FiscalDocumentProcesses SET TestSetId=NULL WHERE DocumentId=@DocumentId;
+                """, connection);
+            command.Parameters.AddWithValue("@Environment", environment);
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            await command.ExecuteNonQueryAsync();
+        }
+        await SetEnvironmentAsync(1);
+        try
+        {
+            Assert.Null(await documents.RetryAsync(Guid.NewGuid(), request.DocumentId, now, default));
+            FiscalDocumentView? retried;
+            using (var activity = new System.Diagnostics.Activity("fiscal-explicit-inquiry-test").Start())
+            using (var commands = new InventoryBalanceProcessingTests.CommandCounter(connection.Database, activity.TraceId))
+            {
+                var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                retried = await documents.RetryAsync(fixture.BusinessId, request.DocumentId, now, default);
+                Assert.Equal(2, commands.Count);
+                Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2), $"Explicit retry exceeded its two-second local budget: {elapsed.Elapsed}.");
+            }
+            Assert.NotNull(retried);
+            Assert.Equal(FiscalDocumentStatusCodes.PendingDianResult, retried.Status);
+            Assert.Equal(request.FiscalSnapshot!.Cufe, retried.TrackId);
+            var duplicateRetry = await documents.RetryAsync(fixture.BusinessId, request.DocumentId, now.AddSeconds(30), default);
+            Assert.Equal(retried, duplicateRetry);
+            var result = new DianSubmissionResult(accepted ? DianSubmissionDisposition.Accepted : DianSubmissionDisposition.Pending,
+                retried.TrackId, accepted ? "00" : "66", accepted ? "Accepted" : "Not found",
+                accepted ? Encoding.UTF8.GetBytes("<ApplicationResponse />") : null, Encoding.UTF8.GetBytes("inquiry"), true)
+                { RequiresExplicitRetry = !accepted };
+            var transport = new SequenceTransport(result);
+            var worker = new FiscalSubmissionWorker(submission, transport, transport, packages, new FixedTimeProvider(now));
+            Assert.True((await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "explicit-inquiry")).WorkFound);
+            Assert.False((await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "duplicate-signal")).WorkFound);
+            Assert.Null(await submission.GetResumeAtAsync(fixture.BusinessId, request.DocumentId, now, TimeSpan.FromMinutes(2), default));
+            Assert.Equal(0, transport.SendCalls);
+            Assert.Equal(1, transport.QueryCalls);
+            Assert.Equal(xml, await ArtifactAsync(request.DocumentId, FiscalArtifactTypeCodes.SignedXml));
+            Assert.Equal(1, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedXml'", request.DocumentId));
+            Assert.Equal(2, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId", request.DocumentId));
+            Assert.Equal(1, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId AND Operation=N'SendBillSync'", request.DocumentId));
+            if (!accepted)
+            {
+                var resumed = await documents.RetryAsync(fixture.BusinessId, request.DocumentId, now, default);
+                Assert.Equal(retried.TrackId, resumed!.TrackId);
+                var acceptance = new SequenceTransport(result with
+                {
+                    Disposition = DianSubmissionDisposition.Accepted, RequiresExplicitRetry = false,
+                    StatusCode = "00", ApplicationResponse = Encoding.UTF8.GetBytes("<ApplicationResponse />")
+                });
+                var resumedWorker = new FiscalSubmissionWorker(submission, acceptance, acceptance, packages, new FixedTimeProvider(now));
+                Assert.True((await resumedWorker.ProcessAsync(fixture.BusinessId, request.DocumentId, "reviewed-inquiry")).WorkFound);
+                Assert.False((await resumedWorker.ProcessAsync(fixture.BusinessId, request.DocumentId, "reviewed-replay")).WorkFound);
+                Assert.Equal(0, acceptance.SendCalls);
+                Assert.Equal(1, acceptance.QueryCalls);
+            }
+        }
+        finally { await SetEnvironmentAsync(2); }
     }
 
     [Fact]

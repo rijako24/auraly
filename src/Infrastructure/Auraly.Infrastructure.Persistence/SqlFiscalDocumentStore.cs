@@ -71,6 +71,7 @@ public sealed partial class SqlFiscalDocumentStore(SqlServerConnectionFactory co
         const string sql = """
             UPDATE p WITH (UPDLOCK, ROWLOCK)
             SET Status = CASE
+                  WHEN p.Status=@PendingResult THEN @PendingResult
                   WHEN p.Status=@DianRejected AND p.LastStatusCode=N'98' AND p.TrackId IS NOT NULL
                     THEN @PendingResult
                   WHEN p.Status=@DianRejected THEN @PendingGeneration
@@ -79,7 +80,8 @@ public sealed partial class SqlFiscalDocumentStore(SqlServerConnectionFactory co
                 NextAttemptAt = @RequestedAt,
                 LockedAt = NULL,
                 LockedBy = NULL,
-                TrackId = CASE WHEN p.Status=@DianRejected AND ISNULL(p.LastStatusCode,N'')<>N'98'
+                TrackId = CASE WHEN p.Status=@PendingResult THEN COALESCE(NULLIF(p.TrackId,N''),fd.UniqueCode)
+                  WHEN p.Status=@DianRejected AND ISNULL(p.LastStatusCode,N'')<>N'98'
                   THEN NULL ELSE p.TrackId END,
                 CorrelationId = CASE WHEN p.Status=@DianRejected AND ISNULL(p.LastStatusCode,N'')<>N'98'
                   THEN NULL ELSE p.CorrelationId END,
@@ -89,11 +91,22 @@ public sealed partial class SqlFiscalDocumentStore(SqlServerConnectionFactory co
                 UpdatedAt = @RequestedAt
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId = p.DocumentId
+            INNER JOIN dbo.FiscalIssuerConfigurations issuer
+              ON issuer.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
             WHERE p.DocumentId = @DocumentId
               AND p.BusinessId = @BusinessId
               AND fd.BusinessId = @BusinessId
-              AND p.Status IN (@SchemaFailed, @SignatureFailed, @RetryScheduled,
-                               @PermanentFailure, @DianRejected);
+              AND (p.Status IN (@SchemaFailed, @SignatureFailed, @RetryScheduled,
+                               @PermanentFailure, @DianRejected)
+                OR (p.Status=@PendingResult AND p.NextAttemptAt IS NULL
+                    AND (p.LockedAt IS NULL OR p.LockedAt<=@LeaseExpiredAt)
+                    AND (issuer.Environment<>1 OR fd.FiscalDocumentType<>N'ElectronicPayroll')
+                    AND (NULLIF(p.TrackId,N'') IS NOT NULL
+                      OR (issuer.Environment=1 AND p.TestSetId IS NULL
+                          AND fd.FiscalDocumentType<>N'ElectronicPayroll'
+                          AND LEN(fd.UniqueCode)=96))
+                    AND EXISTS(SELECT 1 FROM dbo.FiscalArtifacts artifact
+                        WHERE artifact.DocumentId=p.DocumentId AND artifact.ArtifactType=N'SignedXml')));
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -103,6 +116,7 @@ public sealed partial class SqlFiscalDocumentStore(SqlServerConnectionFactory co
             command.Parameters.AddWithValue("@DocumentId", documentId);
             command.Parameters.AddWithValue("@BusinessId", businessId);
             command.Parameters.AddWithValue("@RequestedAt", requestedAt);
+            command.Parameters.AddWithValue("@LeaseExpiredAt", requestedAt.AddMinutes(-2));
             command.Parameters.AddWithValue("@PendingGeneration", FiscalDocumentStatusCodes.PendingGeneration);
             command.Parameters.AddWithValue("@PendingResult", FiscalDocumentStatusCodes.PendingDianResult);
             command.Parameters.AddWithValue("@SchemaFailed", FiscalDocumentStatusCodes.SchemaValidationFailed);

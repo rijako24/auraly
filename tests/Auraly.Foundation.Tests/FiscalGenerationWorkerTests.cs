@@ -291,6 +291,48 @@ public sealed class FiscalGenerationWorkerTests
         Assert.Equal(inclusion == "Always", lines.Any(line => line.ToString().Contains("Domicilio", StringComparison.Ordinal)));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Final_consumer_generation_uses_its_fiscal_identity_without_rewriting_the_source(bool legacyMetadata)
+    {
+        var work = CreateWork();
+        var sale = work.Sale!;
+        var customer = sale.UblSnapshot!.Customer with
+        {
+            Identification = "222222222222",
+            OrganizationTypeCode = legacyMetadata ? "1" : "2",
+            RegistrationName = "Consumidor final",
+            TradeName = "Consumidor final",
+            TaxSchemeId = legacyMetadata ? "01" : "ZZ",
+            TaxSchemeName = legacyMetadata ? "IVA" : "No aplica"
+        };
+        sale = sale with
+        {
+            CommercialSnapshot = sale.CommercialSnapshot with { CustomerIdentification = customer.Identification },
+            FiscalSnapshot = sale.FiscalSnapshot! with { CustomerIdentification = customer.Identification },
+            UblSnapshot = sale.UblSnapshot with { Customer = customer }
+        };
+        var sourceHash = PosSaleContractSerializer.HashHex(sale);
+        work = work with { Sale = sale };
+        var store = new TestStore(work);
+        var worker = CreateWorker(store);
+
+        Assert.True(await worker.ProcessAsync(work.BusinessId, work.DocumentId, "worker-consumer"), store.ErrorMessage);
+        var artifacts = Assert.IsType<FiscalGeneratedArtifacts>(store.Completed);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(artifacts.UnsignedXml));
+        var buyer = xml.Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+        Assert.Equal("2", buyer.Element(DianUblNamespaces.Cbc + "AdditionalAccountID")!.Value);
+        Assert.Equal(customer.Identification, buyer.Descendants(DianUblNamespaces.Cac + "PartyIdentification").Single()
+            .Element(DianUblNamespaces.Cbc + "ID")!.Value);
+        Assert.Equal("ZZ", buyer.Descendants(DianUblNamespaces.Cac + "TaxScheme").Single()
+            .Element(DianUblNamespaces.Cbc + "ID")!.Value);
+        Assert.Equal(sale.FiscalSnapshot!.Cufe, artifacts.UniqueCode);
+        Assert.Equal(sale.FiscalSnapshot.FiscalNumber, xml.Root!.Element(DianUblNamespaces.Cbc + "ID")!.Value);
+        Assert.Equal(sourceHash, PosSaleContractSerializer.HashHex(work.Sale!));
+        Assert.False(await worker.ProcessAsync(work.BusinessId, work.DocumentId, "worker-consumer-replay"));
+    }
+
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(
         store, new TestPinProvider(), new DianInvoiceUblBuilder(),
         new DianSupportDocumentUblBuilder(), new DianCreditNoteUblBuilder(),

@@ -4,6 +4,18 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosSaleFiscalMappingsTests
 {
+    [Fact]
+    public void Final_consumer_projection_preserves_contact_and_does_not_infer_identity_from_a_name()
+    {
+        var address = new PosSaleUblAddressContract("11001", "Bogotá", "Bogotá D.C.", "11", "CL 1");
+        var consumer = PosSaleFiscalMappings.FinalConsumer(address, "qa@example.test", "3000000000");
+        var identifiedCustomer = consumer with { Identification = "1000000001", TaxSchemeId = "01", TaxSchemeName = "IVA" };
+        Assert.Same(identifiedCustomer, PosSaleFiscalMappings.DianCustomer(identifiedCustomer));
+        var projected = PosSaleFiscalMappings.DianCustomer(consumer with { OrganizationTypeCode = "1", TaxSchemeId = "01" });
+        Assert.Equal(consumer, projected);
+        Assert.Same(address, projected.Address);
+    }
+
     [Theory]
     [InlineData("CC", "13")]
     [InlineData("CE", "22")]

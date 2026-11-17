@@ -272,6 +272,18 @@ public sealed record PosCreditValidationResult(
 
 public static class PosSaleFiscalMappings
 {
+    public const string FinalConsumerIdentification = "222222222222";
+
+    public static PosSaleUblPartyContract FinalConsumer(
+        PosSaleUblAddressContract address, string? email = null, string? telephone = null) =>
+        new(FinalConsumerIdentification, "0", "13", "2", "Consumidor final", "Consumidor final",
+            "R-99-PN", "ZZ", "No aplica", address, email, telephone);
+
+    public static PosSaleUblPartyContract DianCustomer(PosSaleUblPartyContract customer) =>
+        customer.Identification == FinalConsumerIdentification
+            ? FinalConsumer(customer.Address, customer.Email, customer.Telephone)
+            : customer;
+
     public static string? DianIdentificationTypeCode(string identificationTypeCode) =>
         identificationTypeCode.Trim().ToUpperInvariant() switch
         {

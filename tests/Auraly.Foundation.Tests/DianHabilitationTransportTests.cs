@@ -368,6 +368,26 @@ public sealed class DianHabilitationTransportTests
             (await transport.GetStatusAsync(request)).Disposition);
     }
 
+    [Theory]
+    [InlineData("66")]
+    [InlineData("90")]
+    public async Task Production_query_not_found_is_not_a_document_rejection(string statusCode)
+    {
+        var client = new DeterministicClient
+        {
+            Bill = new DianDocumentResponse { IsValid = false, StatusCode = statusCode }
+        };
+        var transport = new DianProductionTransport(
+            new FixedProductionConfigurationProvider(), new FixedClientFactory(client));
+
+        var result = await transport.GetStatusAsync(Request("original-document-key") with { TestSetId = null });
+
+        Assert.Equal(DianSubmissionDisposition.Pending, result.Disposition);
+        Assert.Equal("original-document-key", result.TrackId);
+        Assert.True(result.RequiresExplicitRetry);
+        Assert.Equal(0, client.BillCalls + client.PayrollCalls);
+    }
+
     [Fact]
     public async Task Production_payroll_transport_uses_SendNominaSync_and_maps_acceptance()
     {

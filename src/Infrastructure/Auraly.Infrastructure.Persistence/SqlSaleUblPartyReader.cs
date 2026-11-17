@@ -19,7 +19,7 @@ internal static class SqlSaleUblPartyReader
             if (partySiteId is not null)
                 throw new InvalidOperationException(
                     "A customer site cannot be used without a customer.");
-            return FinalConsumer(fallback);
+            return PosSaleFiscalMappings.FinalConsumer(fallback);
         }
         if (partySiteId is null)
             throw new InvalidOperationException(
@@ -83,13 +83,11 @@ internal static class SqlSaleUblPartyReader
             reader.IsDBNull(7) ? fallback.CountryName : reader.GetString(7));
         var email = reader.IsDBNull(13) ? null : reader.GetString(13);
         var telephone = reader.IsDBNull(14) ? null : reader.GetString(14);
-        if (identification == "222222222222")
-            return FinalConsumer(address) with { Email = email, Telephone = telephone };
         var checkDigit = PosSaleFiscalMappings.DianCheckDigit(
             dianIdentificationType,
             identification,
             reader.IsDBNull(2) ? null : reader.GetString(2));
-        return new PosSaleUblPartyContract(
+        return PosSaleFiscalMappings.DianCustomer(new PosSaleUblPartyContract(
             identification,
             checkDigit,
             dianIdentificationType,
@@ -101,22 +99,9 @@ internal static class SqlSaleUblPartyReader
             "R-99-PN",
             "01",
             "IVA",
-            address, email, telephone);
+            address, email, telephone));
     }
 
-    private static PosSaleUblPartyContract FinalConsumer(
-        PosSaleUblAddressContract fallback) =>
-        new(
-            "222222222222",
-            "0",
-            "13",
-            "2",
-            "Consumidor final",
-            "Consumidor final",
-            "R-99-PN",
-            "ZZ",
-            "No aplica",
-            fallback);
 }
 
 public sealed class SqlPosCreditFiscalMaterialReader(SqlServerConnectionFactory connections)

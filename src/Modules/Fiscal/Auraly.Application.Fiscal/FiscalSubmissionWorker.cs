@@ -225,7 +225,7 @@ public sealed class FiscalSubmissionWorker(
         DianSubmissionResult result,
         DateTimeOffset now,
         int attemptNumber) =>
-        attemptNumber >= 20 ? null :
+        result.RequiresExplicitRetry || attemptNumber >= 20 ? null :
         result.Disposition switch
         {
             DianSubmissionDisposition.Received or DianSubmissionDisposition.Pending =>

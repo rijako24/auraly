@@ -67,19 +67,69 @@ El perfil XAdES-EPES interoperable con la DIAN es único para todos los proveedo
 
 La solicitud HTTP de carga no permanece abierta mientras DIAN procesa. Los workers pueden extraerse después a Azure Functions, WebJob, servicio Windows o contenedor sin cambiar los contratos de aplicación.
 
+### Consulta explícita después de un resultado de envío desconocido
+
+El reintento existente de un `PendingDianResult` detenido (`NextAttemptAt=NULL`)
+reactiva exclusivamente una consulta. Conserva su clave de seguimiento; si una
+transmisión de producción no devolvió clave, usa el CUFE/CUDE/CUDS inmutable
+de la raíz que ya tiene XML firmado. No regenera XML ni cambia consecutivos,
+fuentes o efectos económicos. La consulta de nómina de producción conserva su
+restricción explícita: no se habilita por esta regla. Habilitación necesita su
+ZipKey y no lo sustituye por el identificador del documento. Un lease vigente
+o una consulta ya programada no se reinician al repetir la solicitud.
+
+En `GetStatus`, los códigos `66` (NSU no encontrado) y `90` (TrackId no
+encontrado) no prueban un rechazo del documento. El adapter devuelve resultado
+pendiente, conserva la clave consultada y exige reintento explícito. El worker
+no programa otra consulta, y el almacén no adquiere pendientes sin fecha de
+reintento; señales duplicadas tampoco los reactivan. Los rechazos reales y
+las respuestas de envío conservan su tratamiento existente. Esta interpretación
+se apoya en el protocolo de respuesta de GetStatus del
+[anexo técnico DIAN 1.9](https://www.dian.gov.co/impuestos/factura-electronica/Documents/Anexo-Tecnico-Factura-Electronica-de-Venta-vr-1-9.pdf).
+
+La extensión reutiliza servicio/autorización, transacción de reintento,
+`FiscalSubmissionWorker`, intentos y artefactos canónicos. No añade tablas,
+colas, estados ni consultas SQL al camino: el reintento mantiene una actualización
+acotada por documento y la lectura autoritativa existente; adquisición y consulta
+mantienen sus comandos. El rollback de código no cambia snapshots o XML, pero
+debe detener primero las consultas pendientes: una versión anterior interpreta
+incorrectamente los códigos de búsqueda ausente. Ningún despliegue modifica
+resultados productivos o reenvía documentos automáticamente.
+
+La regresión local de este incremento aprobó 67 casos de aplicación/contrato
+y 13 SQL/API. Los dos casos de resultado desconocido se reforzaron y repitieron:
+aceptación y búsqueda ausente, aislamiento por sede, habilitación sin ZipKey,
+solicitud repetida sin reprogramar, señal duplicada detenida, reactivación
+explícita y conservación de XML e intento original. El reintento del almacén
+retuvo dos comandos SQL y el límite local de dos segundos en ambos casos.
+Las pruebas de consumidor final y búsqueda ausente reprodujeron primero sus
+fallos con la lógica anterior. Esta evidencia no certifica resolución de los
+documentos productivos ni sustituye el ensayo del resto de la migración.
+
 ## Snapshot e inmutabilidad
 
 Auraly no reconstruye una factura histórica leyendo maestros actuales. El payload congelado contiene emisor, adquirente, autorización/rango, número DIAN, fecha/hora, moneda, líneas, cantidades, unidades, precios, descuentos, impuestos, totales, software y datos mínimos de pago.
 
 La captura nueva de consumidor final usa la misma identidad fiscal al no elegir
 cliente y al seleccionar explícitamente su tercero del maestro. El lector común
-`SqlSaleUblPartyReader` reconoce su identificación fiscal y reutiliza su
-proyección `FinalConsumer`: persona natural, identificación 13, responsabilidad
+`SqlSaleUblPartyReader` reconoce su identificación fiscal y reutiliza la
+proyección común `FinalConsumer`: persona natural, identificación 13, responsabilidad
 R-99-PN y tributo ZZ / No aplica. Conserva la sede y los contactos seleccionados;
 la clasificación administrativa de Party no sustituye esa identidad fiscal.
 No agrega consultas ni modifica terceros o snapshots ya aceptados. Una factura
 histórica rechazada exige su tratamiento explícito y auditado antes del reenvío;
 actualizar el lector no reescribe ni reintenta esos documentos.
+
+La proyección de consumidor final pertenece a `PosSaleFiscalMappings`, compartida
+por la captura y la generación XML de factura, servicios y notas. Su identificación
+oficial determina esa proyección; no se infiere por el nombre del tercero. El
+generador aplica los mismos metadatos DIAN al documento inmutable, conservando
+identificación, dirección/contactos, números, CUFE, líneas e importes. Así, un
+reintento explícito puede generar un XML válido cuando la captura conservaba
+la identificación de consumidor final con metadatos fiscales incompatibles;
+no se cambia el snapshot ni se crean efectos comerciales o contables. No modifica
+los artefactos aceptados ni dispara reenvíos automáticamente. La regresión cubre
+el snapshot original intacto, consumidor vigente/anterior y replay sin regeneración.
 
 Cuando el emisor aplica ajuste al peso, el snapshot comercial y el fiscal congelan
 el mismo valor. El UBL publica `PayableRoundingAmount` y valida que el total a pagar
