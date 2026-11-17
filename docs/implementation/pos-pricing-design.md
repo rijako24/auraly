@@ -121,3 +121,44 @@ Los insumos de costo estrictamente necesarios para resolver una estrategia
 forman parte del catálogo local protegido y no se presentan al cajero. La
 aplicación de un delta y el avance del cursor son una única transacción.
 
+
+## Selección colectiva de sincronización de precios por cantidad (2026-11-17)
+
+La vista presenta «Sincronizar precio · marcar todos» y una casilla por fila para excluir tramos individuales.
+Es una selección colectiva de `PriceChannelItems.AutoUpdatePrice`, no otra regla
+ni una propiedad persistida del canal. El estado mixto conserva configuraciones
+existentes hasta que el usuario marque o desmarque todos y guarde. Puede cambiar después filas concretas; las excepciones prevalecen sobre marcar todos dentro del mismo guardado. Los productos
+agregados desde esa vista heredan la selección colectiva guardada; un canal vacío
+no tiene una política de sincronización independiente de sus productos.
+
+El comando de configuración existente aplica el cambio por conjunto sobre los
+tramos activos de ese canal y tenant. Requiere el mismo permiso en todas sus
+sedes y rechaza habilitar tramos sin margen. No modifica importes, márgenes,
+tramos históricos ni el esquema; omitir la selección conserva los flags existentes.
+La respuesta confirma la selección aplicada y la UI actualiza su único cache,
+sin un GET posterior por producto ni un comando por fila. Las excepciones
+individuales se acotan a 500 por guardado; marcar todos se aplica directamente
+al conjunto del canal sin ese límite. Ambas selecciones se validan antes de
+escribir. Agregar/retirar una
+condición conserva su contrato de acknowledgement: una sola invalidación por
+sede recarga una vez el detalle normalizado por servidor y su conteo del canal.
+Las consultas de detalle se activan solo para el canal abierto o su editor y su
+clave incluye sede, que determina el costo mostrado.
+
+`SqlPricingStore.RefreshAutomaticChannelPricesAsync` sigue siendo el propietario
+existente del recálculo dentro de la publicación. Preparar costos o recibir una
+compra no modifica el precio vendible. Publicar carga por lote únicamente los
+productos publicados y sus tramos activos habilitados; conserva el margen de
+cada tramo y usa el costo publicado más impuestos mediante `PriceMargin`.
+Persistencia, auditoría y señal de configuración a todas las sedes permanecen en
+la transacción existente; un fallo revierte el lote completo. Los tramos no
+habilitados conservan su importe y las ventas ya confirmadas no se recalculan.
+
+Presupuesto: marcar todos en el editor no hace I/O; guardar hace una petición
+al endpoint existente y un UPDATE por conjunto dentro de su comando SQL, sin
+viajes por tramo ni nuevo refetch. La publicación mantiene sus dos viajes de
+carga/escritura de canales, independientes del número de productos del lote.
+La regresión dirigida cubre mezcla inicial, marcar/desmarcar, margen/precio
+conservados al preparar, recálculo al publicar, otro canal fijo, excepciones por tramo, destinos ajenos rechazados, permisos y replay.
+Rollback: revertir la vista y el parámetro opcional no requiere migrar datos;
+los flags conservan el formato y significado anteriores. No despliega producción.

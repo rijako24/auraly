@@ -7,7 +7,7 @@ async function login(page: Page) {
   await page.addInitScript(({ tenantId: tenant, businessId: business }) => {
     localStorage.setItem("selected_tenant_id", tenant);
     localStorage.setItem("selected_business_id", business);
-    localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user: { userId: "33333333-3333-3333-3333-333333333333", tenantId: tenant, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.segments.read", "pricing.segments.manage"] } }, version: 0 }));
+    localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user: { userId: "33333333-3333-3333-3333-333333333333", tenantId: tenant, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.cost-basis.read", "pricing.segments.read", "pricing.segments.manage"] } }, version: 0 }));
   }, { tenantId, businessId });
 }
 
@@ -20,14 +20,20 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
     { id: "88888888-8888-7888-8888-888888888888", code: "WEB", name: "Tienda web", strategy: "PercentageOverBasePrice", value: -5, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 0 },
   ];
   let savedItem: Record<string, unknown> | null = null;
+  let settingsWrites = 0;
+  let itemReads = 0;
   let savedExclusion: Record<string, unknown> | null = null;
   let createdRequest: Record<string, unknown> | null = null;
 
-  await page.route("**/api/auth/me", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ userId: "33333333-3333-3333-3333-333333333333", tenantId: "11111111-1111-1111-1111-111111111111", tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.segments.read", "pricing.segments.manage"] }) }));
+  await page.route("**/api/auth/me", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ userId: "33333333-3333-3333-3333-333333333333", tenantId: "11111111-1111-1111-1111-111111111111", tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.cost-basis.read", "pricing.segments.read", "pricing.segments.manage"] }) }));
 
   await page.route("**/api/commerce/v1/pricing/segments**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (/\/products\/[^/]+\/cost$/.test(url.pathname)) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ costBasisAmount: 20000, salesTaxRate: 0, currentMarginPercent: 32.203389 }) });
+      return;
+    }
     if (/\/exclusions(?:\/[^/]+)?$/.test(url.pathname)) {
       if (request.method() === "GET") await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
       else if (request.method() === "POST") { savedExclusion = request.postDataJSON() as Record<string, unknown>; await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ exclusionId: crypto.randomUUID() }) }); }
@@ -35,7 +41,11 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
       return;
     }
     if (request.method() === "GET" && /\/items$/.test(url.pathname)) {
-      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+      itemReads += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
+        { productId, productCode: "PRD-000001", productName: "Aceite vegetal 3000 ml", amount: 29500, currencyCode: "COP", minimumQuantity: 1, targetMarginPercent: 32.203389, autoUpdatePrice: false, costBasisAmount: 20000, salesTaxRate: 0 },
+        { productId, productCode: "PRD-000001", productName: "Aceite vegetal 3000 ml", amount: 27000, currencyCode: "COP", minimumQuantity: 12, targetMarginPercent: 25.925926, autoUpdatePrice: true, costBasisAmount: 20000, salesTaxRate: 0 },
+      ]) });
       return;
     }
     if (request.method() === "GET") {
@@ -52,7 +62,10 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
     }
     if (request.method() === "PUT") {
       savedItem = request.postDataJSON() as Record<string, unknown>;
-      await route.fulfill({ status: 204 });
+      if (url.pathname.endsWith("/settings")) {
+        settingsWrites += 1;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ autoUpdatePrice: savedItem.autoUpdatePrice, itemSync: savedItem.itemSync ?? [] }) });
+      } else await route.fulfill({ status: 204 });
       return;
     }
     await route.fulfill({ status: 204 });
@@ -83,7 +96,7 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
         tenantId: headers["x-tenant-id"] ?? "22222222-2222-2222-2222-222222222222",
         businessId: headers["x-business-id"] ?? "22222222-2222-2222-2222-222222222222",
         roles: ["Administrator"],
-        permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.segments.read", "pricing.segments.manage"],
+        permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.cost-basis.read", "pricing.segments.read", "pricing.segments.manage"],
       }),
     });
   });
@@ -106,16 +119,21 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(createDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
   await createDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores");
+  await createDialog.getByRole("checkbox", { name: "Sincronizar precio de todos los productos" }).check();
   await createDialog.getByPlaceholder(/Código interno/).fill("Aceite");
   await createDialog.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
   const pricesDialog = page.getByRole("dialog", { name: "Precios por cantidad" });
   await expect(pricesDialog.getByText(/Aceite vegetal 3000 ml/)).toBeVisible();
+  await expect(pricesDialog.getByText("Costo base de la sede:", { exact: false })).toBeVisible();
+  await expect(pricesDialog.getByRole("checkbox")).toHaveCount(0);
+  await pricesDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-editor.png" });
   await pricesDialog.locator("#new-channel-product-minimum-0").fill("3");
   await pricesDialog.getByRole("button", { name: "Agregar precios" }).click();
+  await createDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-canal.png" });
   await createDialog.getByRole("button", { name: /Crear canal · 1 precios/ }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.getByRole("dialog", { name: "Distribuidores" })).toHaveCount(0);
-  expect(createdRequest).toMatchObject({ name: "Distribuidores", channelStrategy: "TieredProductPrice", items: [{ productId, amount: 29500, minimumQuantity: 3 }] });
+  expect(createdRequest).toMatchObject({ name: "Distribuidores", channelStrategy: "TieredProductPrice", items: [{ productId, amount: 29500, minimumQuantity: 3, autoUpdatePrice: true, targetMarginPercent: 32.203389 }] });
   await expect(page.getByRole("cell", { name: "Distribuidores" })).toBeVisible();
 
   await page.getByRole("cell", { name: "Mayoristas" }).click();
@@ -125,6 +143,22 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(detailDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
   await detailDialog.getByRole("button", { name: "Editar canal" }).click();
   const editDialog = page.getByRole("dialog", { name: "Editar canal de precios" });
+  const synchronizeAll = editDialog.getByRole("checkbox", { name: "Sincronizar precio de todos los productos" });
+  await expect(synchronizeAll).toHaveAttribute("data-state", "indeterminate");
+  const readsBeforeSave = itemReads;
+  await synchronizeAll.check();
+  await expect(editDialog.getByRole("checkbox")).toHaveCount(3);
+  await editDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 12 unidades" }).uncheck();
+  await expect(synchronizeAll).toHaveAttribute("data-state", "indeterminate");
+  await editDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-editar.png" });
+  await editDialog.getByRole("button", { name: "Guardar canal" }).click();
+  await expect(detailDialog).toBeVisible();
+  expect(settingsWrites).toBe(1);
+  expect(savedItem).toMatchObject({ autoUpdatePrice: true, itemSync: [{ productId, minimumQuantity: 12, autoUpdatePrice: false }] });
+  expect(itemReads).toBe(readsBeforeSave);
+  await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar precio de todos los productos" })).toHaveAttribute("data-state", "indeterminate");
+  await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 12 unidades" })).not.toBeChecked();
+  await detailDialog.getByRole("button", { name: "Editar canal" }).click();
   await editDialog.getByRole("button", { name: "Agregar producto" }).click();
 
   const itemDialog = page.getByRole("dialog", { name: "Agregar producto" });

@@ -391,6 +391,139 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Channel_sync_selection_updates_all_active_tiers_without_repricing_until_publication()
+    {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
+        var product = Guid.NewGuid();
+        await SeedProductAsync(product, $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}", 10_000m);
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
+            PricingPermissionCodes.BulkPublish, "pricing.segments.read", "pricing.segments.manage");
+        async Task Prepare(decimal cost)
+        {
+            using var result = await pricing.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/products/{product:D}/prepared-price",
+                new PublishProductPriceRequest(PriceInputModes.Margin, 20m, null,
+                    1m, PricingRoundingModes.Nearest, cost));
+            result.EnsureSuccessStatusCode();
+        }
+        async Task Publish()
+        {
+            using var result = await pricing.PostAsJsonAsync("/api/commerce/v1/pricing/publish",
+                new PublishPricesRequest([product]));
+            result.EnsureSuccessStatusCode();
+        }
+        async Task<Auraly.Api.PriceSegmentSummary> Create(string name, bool automatic)
+        {
+            using var result = await pricing.PostAsJsonAsync("/api/commerce/v1/pricing/segments",
+                new Auraly.Api.SavePriceSegmentRequest(name, "TieredProductPrice", null,
+                    [new(product, 0m, 1m, 50m, automatic, PriceInputModes.Margin),
+                     new(product, 0m, 5m, 25m, false, PriceInputModes.Margin)]));
+            result.EnsureSuccessStatusCode();
+            return (await result.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
+        }
+        async Task<Auraly.Api.PriceSegmentItem[]> Items(Guid id) =>
+            (await pricing.GetFromJsonAsync<Auraly.Api.PriceSegmentItem[]>(
+                $"/api/commerce/v1/pricing/segments/{id:D}/items"))!;
+        await Prepare(3_000m);
+        await Publish();
+        var channel = await Create($"Marcar todos {Guid.NewGuid():N}", true);
+        var other = await Create($"Precios fijos {Guid.NewGuid():N}", false);
+        var before = await Items(channel.Id);
+        Assert.Equal(new[] { true, false }, before.Select(item => item.AutoUpdatePrice));
+        var settingsUrl = $"/api/commerce/v1/pricing/segments/{channel.Id:D}/settings";
+        using (var forbidden = fixture.CreateAdminClient("pricing.segments.read"))
+        using (var result = await forbidden.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, true)))
+            Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        using (var enabled = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, true)))
+        {
+            enabled.EnsureSuccessStatusCode();
+            var response = await enabled.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.True(response.GetProperty("autoUpdatePrice").GetBoolean());
+        }
+        var selected = await Items(channel.Id);
+        Assert.All(selected, item => Assert.True(item.AutoUpdatePrice));
+        Assert.Equal(before.Select(item => (item.Amount, item.TargetMarginPercent)),
+            selected.Select(item => (item.Amount, item.TargetMarginPercent)));
+        await Prepare(6_000m);
+        Assert.Equal(before.Select(item => item.Amount), (await Items(channel.Id)).Select(item => item.Amount));
+        await Publish();
+        Assert.Equal(new[] { 12_000m, 8_000m }, (await Items(channel.Id)).Select(item => item.Amount));
+        Assert.Equal(new decimal?[] { 50m, 25m }, (await Items(channel.Id)).Select(item => item.TargetMarginPercent));
+        Assert.Equal(new[] { 6_000m, 4_000m }, (await Items(other.Id)).Select(item => item.Amount));
+        // One scale can opt out after selecting all; its margin and fixed amount remain intact.
+        using (var exception = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, true,
+                [new(product, 5m, false)])))
+            exception.EnsureSuccessStatusCode();
+        await Prepare(9_000m);
+        await Publish();
+        Assert.Equal(new[] { true, false }, (await Items(channel.Id)).Select(item => item.AutoUpdatePrice));
+        Assert.Equal(new[] { 18_000m, 8_000m }, (await Items(channel.Id)).Select(item => item.Amount));
+        using (var individual = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, null,
+                [new(product, 1m, false)])))
+            individual.EnsureSuccessStatusCode();
+        Assert.All(await Items(channel.Id), item => Assert.False(item.AutoUpdatePrice));
+        using (var disabled = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, false)))
+            disabled.EnsureSuccessStatusCode();
+        // Repeating the explicit selection does not create another tier/version.
+        using (var replay = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, false)))
+            replay.EnsureSuccessStatusCode();
+        await Prepare(12_000m);
+        await Publish();
+        Assert.All(await Items(channel.Id), item => Assert.False(item.AutoUpdatePrice));
+        Assert.Equal(new[] { 18_000m, 8_000m }, (await Items(channel.Id)).Select(item => item.Amount));
+        Assert.Equal(5, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product",
+            product, new SqlParameter("@ChannelId", channel.Id)));
+    }
+
+    [Fact]
+    public async Task Channel_sync_requires_margins_and_rejects_other_strategies_without_partial_changes()
+    {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
+        var product = Guid.NewGuid();
+        await SeedProductAsync(product, $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}", 10_000m);
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
+        using var pricing = fixture.CreateAdminClient("pricing.segments.read", "pricing.segments.manage");
+        using var created = await pricing.PostAsJsonAsync("/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest($"Sin costo {Guid.NewGuid():N}", "TieredProductPrice", null,
+                [new(product, 10_000m, 1m)]));
+        created.EnsureSuccessStatusCode();
+        var channel = (await created.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
+        var url = $"/api/commerce/v1/pricing/segments/{channel.Id:D}/settings";
+        using (var invalid = await pricing.PutAsJsonAsync(url,
+            new Auraly.Api.SavePriceChannelSettingsRequest("No debe guardarse", channel.Strategy, null, true)))
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        using (var invalid = await pricing.PutAsJsonAsync(url,
+            new Auraly.Api.SavePriceChannelSettingsRequest("No debe guardarse", "PercentageOverBasePrice", 10m, false)))
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        using (var invalidTarget = await pricing.PutAsJsonAsync(url,
+            new Auraly.Api.SavePriceChannelSettingsRequest("No debe guardarse", channel.Strategy, null, null,
+                [new(Guid.NewGuid(), 1m, false)])))
+            Assert.Equal(HttpStatusCode.BadRequest, invalidTarget.StatusCode);
+        using (var excludedMissingMargin = await pricing.PutAsJsonAsync(url,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, true,
+                [new(product, 1m, false)])))
+            excludedMissingMargin.EnsureSuccessStatusCode();
+        var stored = Assert.Single((await pricing.GetFromJsonAsync<Auraly.Api.PriceSegmentSummary[]>(
+            "/api/commerce/v1/pricing/segments"))!, item => item.Id == channel.Id);
+        Assert.Equal(channel.Name, stored.Name);
+        Assert.Equal(channel.Strategy, stored.Strategy);
+        var tiers = await pricing.GetFromJsonAsync<Auraly.Api.PriceSegmentItem[]>(
+            $"/api/commerce/v1/pricing/segments/{channel.Id:D}/items");
+        Assert.False(Assert.Single(tiers!).AutoUpdatePrice);
+        Assert.Equal(10_000m, tiers![0].Amount);
+    }
+
+    [Fact]
     public async Task Publishing_twenty_products_updates_all_automatic_channel_prices_in_one_batch()
     {
         await using var tenantAccess = await GrantTenantBusinessAccessAsync();

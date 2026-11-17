@@ -373,6 +373,11 @@ public static class PriceSegmentsApi
         if (!TryNormalizeChannelStrategy(request.ChannelStrategy, out var strategy) ||
             !TryValidateChannelValue(strategy, request.ChannelValue, out var value))
             return InvalidChannelSettings();
+        var itemSync = request.ItemSync ?? [];
+        if (itemSync.Count > 500 || itemSync.Any(item => item.ProductId == Guid.Empty || item.MinimumQuantity <= 0 || item.MinimumQuantity > 9999999999999.999999m ||
+                decimal.Round(item.MinimumQuantity, 6) != item.MinimumQuantity) ||
+            itemSync.GroupBy(item => (item.ProductId, item.MinimumQuantity)).Any(group => group.Count() > 1))
+            return Results.Problem("La selección de sincronización no es válida; guarda como máximo 500 excepciones por vez.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
@@ -387,6 +392,8 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@Name", name);
         command.Parameters.AddWithValue("@Strategy", strategy);
         command.Parameters.AddWithValue("@Value", (object?)value ?? DBNull.Value);
+        command.Parameters.AddWithValue("@AutoUpdatePrice", (object?)request.AutoUpdatePrice ?? DBNull.Value);
+        command.Parameters.Add("@ItemSyncJson", System.Data.SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(itemSync);
         try
         {
             await command.ExecuteNonQueryAsync(ct);
@@ -397,9 +404,16 @@ public static class PriceSegmentsApi
             await transaction.RollbackAsync(ct);
             return Results.NotFound();
         }
+        catch (SqlException exception) when (exception.Number == 51005)
+        {
+            await transaction.RollbackAsync(ct);
+            return Results.Problem(exception.Message, statusCode: 400);
+        }
         await SynchronizeAsync(identity.TenantId, businessIds,
             pricingSynchronization, synchronization, ct);
-        return Results.NoContent();
+        return request.AutoUpdatePrice.HasValue || itemSync.Count > 0
+            ? Results.Ok(new { autoUpdatePrice = request.AutoUpdatePrice, itemSync })
+            : Results.NoContent();
     }
 
     private static async Task<IResult> DeleteItemAsync(
@@ -594,7 +608,10 @@ public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amoun
 public sealed record CreatePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);
 public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity,
     decimal? TargetMarginPercent = null, bool AutoUpdatePrice = false, string? InputMode = null);
-public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue);
+public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue, bool? AutoUpdatePrice = null, IReadOnlyList<PriceChannelItemSyncSelection>? ItemSync = null);
 public sealed record PriceChannelExclusion(Guid ExclusionId, string ScopeType, Guid ScopeId,
     string ScopeName, int? CategoryDepth, string? ProductCode);
 public sealed record SavePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);
+
+public sealed record PriceChannelItemSyncSelection(Guid ProductId, decimal MinimumQuantity,
+    [property: System.Text.Json.Serialization.JsonRequired] bool AutoUpdatePrice);
