@@ -311,7 +311,30 @@ function PaymentsSection({ options, canPay, onCreate }: {
     options: PayrollOptions | null;
     canPay: boolean;
     onCreate: () => void;
-}) { return <Card className="rounded-3xl"><CardHeader><span className="flex items-center justify-between gap-3"><span><CardTitle>Pagos de nómina</CardTitle><CardDescription>Confirma un grupo de pago y consulta su resultado contable en Trazabilidad financiera.</CardDescription></span>{canPay && <Button onClick={onCreate}>Confirmar pago</Button>}</span></CardHeader><CardContent><div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[680px] text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-left">Fecha</th><th className="text-left">Referencia</th><th className="text-left">Medio</th><th className="text-right">Trabajadores</th><th className="text-right">Total</th><th className="pr-3 text-right">Estado</th></tr></thead><tbody>{options?.paymentBatches.map(item => <tr className="border-t" key={item.paymentBatchId}><td className="p-3">{item.paymentDate}</td><td>{item.referenceNumber}</td><td>{item.paymentMethodName}</td><td className="text-right">{item.employeeCount}</td><td className="text-right font-medium">{money.format(item.totalAmount)}</td><td className="pr-3 text-right">{businessStatusLabel(item.isPaid?"Paid":item.status)}<span className="block text-xs text-muted-foreground">{accountingStatusLabel(item.accountingStatus??"MissingAccountingJob")}</span></td></tr>)}</tbody></table>{!options?.paymentBatches.length && <Empty text="No hay pagos confirmados."/>}</div></CardContent></Card>; }
+}) { return <Card className="rounded-3xl">
+    <CardHeader><span className="flex items-center justify-between gap-3"><span><CardTitle>Pagos de nómina</CardTitle><CardDescription>Confirma un grupo de pago y consulta su resultado contable en Trazabilidad financiera.</CardDescription></span>{canPay && <Button onClick={onCreate}>Confirmar pago</Button>}</span></CardHeader>
+    <CardContent><div className="overflow-x-auto rounded-xl border">
+        <table className="w-full min-w-[800px] text-sm">
+            <thead className="bg-muted/50"><tr>
+                <th className="px-4 py-3 text-left">Fecha</th>
+                <th className="px-4 py-3 text-left">Referencia</th>
+                <th className="min-w-[9rem] px-4 py-3 text-left">Medio</th>
+                <th className="whitespace-nowrap px-4 py-3 text-center">Trabajadores</th>
+                <th className="min-w-[9rem] px-4 py-3 text-right">Total</th>
+                <th className="min-w-[10rem] px-4 py-3 text-left">Estado</th>
+            </tr></thead>
+            <tbody>{options?.paymentBatches.map(item => <tr className="border-t" key={item.paymentBatchId}>
+                <td className="whitespace-nowrap px-4 py-3">{item.paymentDate}</td>
+                <td className="max-w-xs px-4 py-3 [overflow-wrap:anywhere]">{item.referenceNumber}</td>
+                <td className="px-4 py-3">{item.paymentMethodName}</td>
+                <td className="px-4 py-3 text-center tabular-nums">{item.employeeCount}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">{money.format(item.totalAmount)}</td>
+                <td className="px-4 py-3 text-left">{businessStatusLabel(item.isPaid?"Paid":item.status)}<span className="block text-xs text-muted-foreground">{accountingStatusLabel(item.accountingStatus??"MissingAccountingJob")}</span></td>
+            </tr>)}</tbody>
+        </table>
+        {!options?.paymentBatches.length && <Empty text="No hay pagos confirmados."/>}
+    </div></CardContent>
+</Card>; }
 function ElectronicSection({ options, canGenerate, onGenerate }: {
     options: PayrollOptions | null;
     canGenerate: boolean;
