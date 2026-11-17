@@ -136,7 +136,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         ? "No fue posible guardar la recuperación automática del producto."
         : "No fue posible limpiar la recuperación local del producto."),
   });
-  const categories = useProductCategories(false);
+  const categories = useProductCategories(false, open);
   const compositionKinds = useReferenceOptions("product-composition-kind", open);
   const purchasePresentations = useReferenceOptions("purchase-presentation", open);
   const brands = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, enabled: open, staleTime: 5 * 60 * 1000 });

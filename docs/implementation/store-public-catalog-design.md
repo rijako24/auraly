@@ -22,8 +22,9 @@ Un producto no publicado muestra el motivo de indisponibilidad del enlace. Copia
 ```text
 Productos                                      Catálogo público  ↗  [copiar]
 
-Explorar por  [Productos ▾]                     Lista | Tarjetas | Galería
-Buscar…                                       Filtros
+Filtros
+[Productos] [Áreas] [Líneas] [Grupos] [Subgrupos]
+Buscar…                                       Lista | Tarjetas | Galería
 
 Aurali › Ropa › Deportiva › Camisetas
 
@@ -79,6 +80,8 @@ La separación entre agrupación del catálogo y presentación visual sigue el p
 
 ## Exploración administrativa de Productos
 
-«Explorar por» inicia en Productos y cambia únicamente el conjunto explorado. Lista, tarjetas y galería reutilizan DataTable y la preferencia existente por usuario/tenant. Abrir una categoría aplica su filtro canónico de productos y muestra su ruta; no crea otra clasificación. Los filtros de productos conservan su comportamiento.
+La navegación usa pestañas Productos, Áreas, Líneas, Grupos y Subgrupos inmediatamente sobre los resultados, debajo de los filtros. Inicia siempre en Productos y cambia únicamente el conjunto explorado. Lista, tarjetas y galería reutilizan DataTable y la preferencia existente por usuario/tenant. Abrir una categoría aplica su filtro canónico de productos y muestra su ruta, tanto desde tabla como desde tarjetas/galería y teclado; no crea otra clasificación. Los filtros de productos conservan su comportamiento.
+
+Las grillas de las otras pestañas no se consultan al entrar. Cada nivel activa su lectura paginada al abrirlo, sin montar paneles consultantes ocultos ni agregar polling. Los catálogos auxiliares de clasificación, marca y composición se consultan al desplegar Filtros. El formulario cerrado de Nuevo producto tampoco consulta categorías: usa el mismo hook/cache cuando se abre. Cambiar únicamente la presentación no repite la consulta de resultados.
 
 El propietario continúa siendo ProductAdminService y ProductCategoryRepository. La lectura administrativa `/businesses/{businessId}/product-categories/browse` aplica tenant, negocio, nivel, padre, estado y búsqueda en SQL antes de ordenar y paginar (20 por defecto, máximo 50). Cuenta y página son consultas separadas; los tres padres máximos se cargan mediante joins en la misma lectura de la página y MapCategoryTree conserva la regla existente de profundidad/ruta. Se reutilizan tablas y autorizaciones de productos. Solo la vista activa consulta sus resultados; las categorías de dropdown y las marcas no se cargan mientras se explora el listado de categorías. Sin SQL/HTTP por categoría ni paginación de una descarga completa. Presupuesto de primera página y siguientes: tres consultas, incluida autorización del negocio, y p95 ≤ 800 ms sin diagnóstico concurrente; navegación y paginación se prueban por nivel, con 20/50 elementos y aislamiento de tenant.

@@ -72,8 +72,10 @@ test("productos explora la jerarquía paginada y abre el filtro canónico sin co
     if (request.method() === "GET" && path.endsWith("/product-categories/browse")) categoryReads++;
   });
   await page.goto("/dashboard/products");
-  const explorer = page.getByRole("combobox", { name: "Explorar por", exact: true });
-  await expect(explorer).toHaveText("Productos");
+  const explorer = page.getByRole("tablist", { name: "Explorar productos", exact: true });
+  await expect(explorer.getByRole("tab", { name: "Productos", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => productReads).toBeGreaterThan(0);
+  expect(categoryReads).toBe(0);
   const levels = ["Áreas", "Líneas", "Grupos", "Subgrupos"];
   let area: { name: string; productCategoryId: string; path: string } | undefined;
   const productReadsBeforeCategories = productReads;
@@ -82,11 +84,11 @@ test("productos explora la jerarquía paginada y abre el filtro canónico sin co
       const url = new URL(response.url());
       return url.pathname.endsWith("/product-categories/browse") && url.searchParams.get("depth") === String(depth) && response.ok();
     });
-    await explorer.click();
-    await page.getByRole("option", { name: label, exact: true }).click();
+    await explorer.getByRole("tab", { name: label, exact: true }).click();
     const payload = await (await result).json() as { items: { name: string; productCategoryId: string; path: string; depth: number }[]; pageSize: number };
     expect(payload.items.every(item => item.depth === depth)).toBe(true);
     expect(payload.items.length).toBeLessThanOrEqual(payload.pageSize);
+    expect(categoryReads).toBe(depth + 1);
     if (depth === 0) area = payload.items[0];
   }
   expect(productReads).toBe(productReadsBeforeCategories);
@@ -98,19 +100,23 @@ test("productos explora la jerarquía paginada y abre el filtro canónico sin co
   await expect(views.getByRole("button", { name: "Galería", exact: true })).toHaveAttribute("aria-pressed", "true");
   expect(categoryReads).toBe(categoryReadsBeforePresentation);
   await views.getByRole("button", { name: "Tabla", exact: true }).click();
-  await explorer.click();
-  await page.getByRole("option", { name: "Áreas", exact: true }).click();
-  expect(area).toBeDefined();
-  await expect(page.getByRole("cell", { name: area!.name, exact: true }).first()).toBeVisible();
-  const products = page.waitForResponse(response => {
-    const url = new URL(response.url());
-    return /\/businesses\/[^/]+\/products$/.test(url.pathname) && url.searchParams.get("areaId") === area!.productCategoryId && response.ok();
-  });
-  await page.getByRole("cell", { name: area!.name, exact: true }).first().click();
-  await products;
-  await expect(explorer).toHaveText("Productos");
-  await expect(page.getByRole("navigation", { name: "Categoría explorada" })).toContainText(area!.path);
+  await explorer.getByRole("tab", { name: "Áreas", exact: true }).click();
+  if (area) {
+    await expect(page.getByRole("cell", { name: area.name, exact: true }).first()).toBeVisible();
+    const selectedArea = area;
+    const products = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return /\/businesses\/[^/]+\/products$/.test(url.pathname) && url.searchParams.get("areaId") === selectedArea.productCategoryId && response.ok();
+    });
+    await page.getByRole("cell", { name: area.name, exact: true }).first().click();
+    await products;
+    await expect(page.getByRole("navigation", { name: "Categoría explorada" })).toContainText(area.path);
+  } else {
+    await expect(page.getByText("Sin resultados.", { exact: true })).toBeVisible();
+    await explorer.getByRole("tab", { name: "Productos", exact: true }).click();
+  }
+  await expect(explorer.getByRole("tab", { name: "Productos", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.screenshot({ path: "test-results/products-category-navigation.png", fullPage: true });
   await page.reload();
-  await expect(explorer).toHaveText("Productos");
+  await expect(explorer.getByRole("tab", { name: "Productos", exact: true })).toHaveAttribute("aria-selected", "true");
 });

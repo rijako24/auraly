@@ -33,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -106,6 +107,7 @@ export default function ProductsPage() {
   const { viewMode, setViewMode } = useProductViewPreference(tenantId, userId);
   const [page, setPage] = useState(1);
   const [exploreBy, setExploreBy] = useState("products");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const exploringProducts = exploreBy === "products";
   const depth = exploringProducts ? undefined : Number(exploreBy);
   const categoryLevels = ["Área", "Línea", "Grupo", "Subgrupo"];
@@ -123,7 +125,7 @@ export default function ProductsPage() {
   const [allowsFractionalSale, setAllowsFractionalSale] = useState<TriState>("all");
   const [isWeighable, setIsWeighable] = useState<TriState>("all");
   const [compositionFilter, setCompositionFilter] = useState("all");
-  const compositionKinds = useReferenceOptions("product-composition-kind", exploringProducts);
+  const compositionKinds = useReferenceOptions("product-composition-kind", exploringProducts && filtersOpen);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("details");
   const [form, setForm] = useState<ProductFormState>(emptyForm);
@@ -147,8 +149,8 @@ export default function ProductsPage() {
       parentId: depth === 1 ? areaId : depth === 2 ? lineId : depth === 3 ? groupId : undefined }),
     enabled: !!businessId && !exploringProducts,
   });
-  const categoriesQuery = useProductCategories(false, exploringProducts);
-  const brandsQuery = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, enabled: !!businessId && exploringProducts, staleTime: 5 * 60 * 1000 });
+  const categoriesQuery = useProductCategories(false, exploringProducts && filtersOpen);
+  const brandsQuery = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, enabled: !!businessId && exploringProducts && filtersOpen, staleTime: 5 * 60 * 1000 });
   const categories = categoriesQuery.data ?? [];
   const areas = categories.filter(item => item.depth === 0);
   const lines = categories.filter(item => item.depth === 1 && (!areaId || item.parentProductCategoryId === areaId));
@@ -508,18 +510,20 @@ export default function ProductsPage() {
     setLineId(category.depth === 1 ? category.productCategoryId : undefined);
     setGroupId(category.depth === 2 ? category.productCategoryId : undefined);
     setSubgroupId(category.depth === 3 ? category.productCategoryId : undefined);
-    setExploreBy("products"); setPage(1); setSearch("");
+    setExploreBy("products"); setFiltersOpen(false); setPage(1); setSearch("");
   }
   const categoryColumns: ColumnDef<ProductCategory>[] = [
     { accessorKey: "name", header: "Nombre", cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
     { accessorKey: "path", header: "Ruta" },
     { accessorKey: "depth", header: "Nivel", cell: ({ row }) => categoryLevels[row.original.depth] },
   ];
-  const renderCategory = (category: ProductCategory) => <div className="space-y-3 p-4">
+  const renderCategory = (category: ProductCategory) => <button type="button" onClick={() => openCategory(category)}
+    aria-label={`Ver productos de ${category.name}`}
+    className="w-full space-y-3 rounded-xl p-4 text-left transition-colors hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
     <FolderTree className="h-8 w-8 text-primary"/><div><p className="font-semibold">{category.name}</p>
     <p className="mt-1 text-sm text-muted-foreground">{category.path}</p></div>
     <Badge variant="secondary">{categoryLevels[category.depth]}</Badge><p className="text-sm text-primary">Ver productos →</p>
-  </div>;
+  </button>;
 
   return (
     <div className="space-y-6">
@@ -534,18 +538,13 @@ export default function ProductsPage() {
       </div>
 
 
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-3">
-        <Label htmlFor="products-explore">Explorar por</Label>
-        <Select value={exploreBy} onValueChange={value => { setExploreBy(value); setPage(1); setSearch(""); }}>
-          <SelectTrigger id="products-explore" className="w-44"><SelectValue/></SelectTrigger>
-          <SelectContent><SelectItem value="products">Productos</SelectItem><SelectItem value="0">Áreas</SelectItem><SelectItem value="1">Líneas</SelectItem><SelectItem value="2">Grupos</SelectItem><SelectItem value="3">Subgrupos</SelectItem></SelectContent>
-        </Select>
-        {exploredCategory && <nav aria-label="Categoría explorada" className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+      {exploredCategory && <div className="rounded-xl border bg-card p-3">
+        <nav aria-label="Categoría explorada" className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
           <Button variant="link" className="h-auto p-0" onClick={() => { resetFilters(); setSearch(""); }}>Todos los productos</Button>
           <span aria-hidden="true">›</span><span className="text-muted-foreground">{exploredCategory.path.replaceAll(" > ", " › ")}</span>
-        </nav>}
-      </div>
-      {exploringProducts && <details className="group rounded-xl border bg-card">
+        </nav>
+      </div>}
+      {exploringProducts && <details className="group rounded-xl border bg-card" onToggle={event => setFiltersOpen(event.currentTarget.open)}>
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
           <span className="flex items-center gap-2 font-medium"><SlidersHorizontal className="h-4 w-4"/>Filtros {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount} activos</Badge>}</span>
           <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180"/>
@@ -571,6 +570,15 @@ export default function ProductsPage() {
         </div>
       </details>}
 
+      <Tabs value={exploreBy} onValueChange={value => { setExploreBy(value); setFiltersOpen(false); setPage(1); setSearch(""); }}>
+        <TabsList aria-label="Explorar productos" className="h-auto w-full flex-wrap justify-start gap-1">
+          <TabsTrigger value="products">Productos</TabsTrigger>
+          <TabsTrigger value="0">Áreas</TabsTrigger>
+          <TabsTrigger value="1">Líneas</TabsTrigger>
+          <TabsTrigger value="2">Grupos</TabsTrigger>
+          <TabsTrigger value="3">Subgrupos</TabsTrigger>
+        </TabsList>
+        <TabsContent value={exploreBy}>
       {!exploringProducts ? (categoryPage.isError ? <div role="alert" className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las categorías. <Button variant="link" onClick={() => categoryPage.refetch()}>Reintentar</Button></div> : <DataTable key={`categories-${exploreBy}`} columns={categoryColumns} data={categoryPage.data?.items ?? []} isLoading={categoryPage.isLoading || viewMode === null} isSearching={categoryPage.isFetching} page={categoryPage.data?.page} pageSize={categoryPage.data?.pageSize} pageCount={categoryPage.data?.totalPages} totalItems={categoryPage.data?.totalCount} onPaginationChange={setPage} onSearch={value => { setSearch(value); setPage(1); }} onRowClick={openCategory} searchKey="name" searchPlaceholder="Buscar categorías..." enableRowSelection={false} cardRenderer={renderCategory} listRenderer={renderCategory} listLayout="gallery" viewMode={viewMode ?? "table"} onViewModeChange={setViewMode} showColumnToggle={false}/>) : isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">
           No se pudo cargar el catálogo. <Button variant="link" onClick={() => refetch()}>Reintentar</Button>
@@ -600,6 +608,8 @@ export default function ProductsPage() {
           showColumnToggle={false}
         />
       )}
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={selectedProduct !== null} onOpenChange={(open) => { if(!open)dismissModal() }}>
         <DialogContent className="h-[96dvh] max-h-[96dvh] w-[96vw] max-w-[1480px] overflow-hidden p-0">
