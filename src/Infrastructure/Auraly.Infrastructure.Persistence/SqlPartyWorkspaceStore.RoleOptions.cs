@@ -91,6 +91,7 @@ public sealed partial class SqlPartyWorkspaceStore
               ON partyRole.PartyId=party.PartyId AND {role.Scope}
             {requestedRoles}
             WHERE party.TenantId=@TenantId AND partyRole.IsActive=1
+              AND (@PartyType IS NULL OR party.PartyType=@PartyType)
               AND (@RoleId IS NULL OR partyRole.{role.IdColumn}=@RoleId)
               AND (@PartyId IS NULL OR party.PartyId=@PartyId)
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
@@ -110,6 +111,7 @@ public sealed partial class SqlPartyWorkspaceStore
               ON partyRole.PartyId=party.PartyId AND {role.Scope}
             {requestedRoles}
             WHERE party.TenantId=@TenantId AND partyRole.IsActive=1
+              AND (@PartyType IS NULL OR party.PartyType=@PartyType)
               AND (@RoleId IS NULL OR partyRole.{role.IdColumn}=@RoleId)
               AND (@PartyId IS NULL OR party.PartyId=@PartyId)
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
@@ -123,6 +125,7 @@ public sealed partial class SqlPartyWorkspaceStore
             """;
         command.Parameters.AddRange([
             new SqlParameter("@TenantId", actor.TenantId),
+            new SqlParameter("@PartyType", (object?)query.PartyType ?? DBNull.Value),
             new SqlParameter("@BusinessId", actor.BusinessId),
             new SqlParameter("@RoleId", (object?)query.RoleId ?? DBNull.Value),
             new SqlParameter("@RoleIds", System.Data.SqlDbType.NVarChar, -1)

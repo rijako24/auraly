@@ -91,7 +91,16 @@ public sealed partial class SqlAccountingPostingProcessor(
             // Freeze before validation/savepoint so configuration retries keep their classification.
             var costCenterId = await ResolveAndFreezeCostCenterAsync(
                 connection, transaction, source, cancellationToken);
-            if (costCenterId is null)
+            // Contractual payroll lines can fully classify a distributed accrual
+            // without inventing a single header center. The payroll facts reader
+            // validates every explicit center in the same posting transaction.
+            var completePayrollCenters = false;
+            if(costCenterId is null && (source.DocumentType is PayrollAccountingDocumentTypes.Accrual or PayrollAccountingDocumentTypes.Adjustment))
+            {
+                var payroll=LoadPayrollPayload(source);
+                completePayrollCenters=payroll.Lines.All(line=>ReadPayrollEmployeeContext(payroll,line)?.CostCenterId is not null);
+            }
+            if (costCenterId is null && !completePayrollCenters)
             {
                 var isReturn = source.DocumentType is "SalesReturn" or "PurchaseReturn" or "RestaurantTipReversal";
                 await MarkPendingConfigurationAsync(connection, transaction, source,
@@ -189,7 +198,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     FinancialFactsResult.Ready(LoadDispatchCashDifferenceFacts(source)),
                 PayrollAccountingDocumentTypes.Accrual or
                 PayrollAccountingDocumentTypes.Adjustment =>
-                    FinancialFactsResult.Ready(LoadPayrollFacts(source)),
+                    await LoadPayrollFactsAsync(connection,transaction,source,cancellationToken),
                 PayrollAccountingDocumentTypes.Payment =>
                     await LoadPayrollPaymentFactsAsync(connection, transaction, source, cancellationToken),
                 InventoryDocumentTypes.StockCount or
@@ -351,13 +360,18 @@ public sealed partial class SqlAccountingPostingProcessor(
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@DocumentType", documentType);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(5)) return null;
-        return new SourceEnvelope(
-            reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-            reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5),
-            reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetGuid(7),
-            reader.GetBoolean(8),reader.GetBoolean(9),reader.GetString(10));
+        // A large payroll source must not be buffered as an entire asynchronous
+        // SQL row. Stream its one payload field, in column order, in this read.
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess,cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var tenantId=reader.GetGuid(0);var sourceBusinessId=reader.GetGuid(1);var sourceId=reader.GetGuid(2);
+        var sourceType=reader.GetString(3);var hash=(byte[])reader[4];
+        if(reader.IsDBNull(5))return null;
+        var occurredAt=reader.GetDateTimeOffset(5);
+        using var payloadReader=reader.GetTextReader(6);
+        var payload=await payloadReader.ReadToEndAsync(cancellationToken);
+        return new SourceEnvelope(tenantId,sourceBusinessId,sourceId,sourceType,hash,occurredAt,
+            payload,reader.IsDBNull(7)?null:reader.GetGuid(7),reader.GetBoolean(8),reader.GetBoolean(9),reader.GetString(10));
     }
 
     private static async Task<(SourceEnvelope Source, bool Missing)> ResolveBankAccountsAsync(
@@ -471,22 +485,33 @@ public sealed partial class SqlAccountingPostingProcessor(
         return payload;
     }
 
-    private static FinancialFacts LoadPayrollFacts(SourceEnvelope source)
-    {
-        var payload = LoadPayrollPayload(source);
-        return FinancialFacts.Payroll(payload.Description,
-            payload.Lines.Select(line => new CategoryLineSpec(
-                line.Category, line.Debit, line.Credit, line.PartyId,
-                line.Description)).ToArray());
-    }
-
     private static PayrollAccountingPayload LoadPayrollPayload(SourceEnvelope source)
     {
         var payload = PayrollContractSerializer.DeserializeAccounting(source.PayloadJson);
+        if(payload.Lines is null || payload.Lines.Any(line=>line is null))
+            throw new InvalidOperationException("The payroll accounting lines are missing.");
+        var contextual=payload.Employees is not null || payload.Concepts is not null;
+        if(contextual)
+        {
+            if(payload.Employees is null || payload.Concepts is null || payload.Employees.Count is <1 or >PayrollPaymentLimits.MaximumEmployees ||
+                payload.Concepts.Count<1 || payload.Concepts.Count>payload.Lines.Count ||
+                payload.Employees.Any(employee=>employee is null || employee.EmploymentId==Guid.Empty || employee.ProfileId is null || employee.ProfileId==Guid.Empty || employee.CostCenterId==Guid.Empty) ||
+                payload.Employees.Select(employee=>employee.EmploymentId).Distinct().Count()!=payload.Employees.Count ||
+                payload.Concepts.Any(concept=>concept is null || concept.ConceptId==Guid.Empty || string.IsNullOrWhiteSpace(concept.Description)) ||
+                payload.Lines.Any(line=>line.EmployeeIndex is not int worker || worker<0 || worker>=payload.Employees.Count ||
+                    line.ConceptIndex is not int concept || concept<0 || concept>=payload.Concepts.Count ||
+                    line.Description is not null && line.Description!=payload.Concepts[concept].Description ||
+                    payload.Concepts[concept].ConceptId is null && line.Category!=PayrollAccountingCategories.NetPayable))
+                throw new InvalidOperationException("The payroll accounting classification references are inconsistent.");
+            var concepts=payload.Concepts;
+            payload=payload with{Lines=payload.Lines.Select(line=>line with{Description=concepts[line.ConceptIndex!.Value].Description}).ToArray()};
+        }
+        else if(payload.Lines.Any(line=>line.EmployeeIndex is not null || line.ConceptIndex is not null))
+            throw new InvalidOperationException("The payroll accounting classification references are missing.");
         if (payload.PayrollRunId != source.DocumentId ||
             payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
             payload.Lines.Count == 0 || payload.Lines.Any(line =>
-                string.IsNullOrWhiteSpace(line.Category) || line.Category.Length > 64 ||
+                string.IsNullOrWhiteSpace(line.Category) || line.Category.Length > 64 || string.IsNullOrWhiteSpace(line.Description) ||
                 line.Debit < 0 || line.Credit < 0 ||
                 (line.Debit == 0) == (line.Credit == 0)) ||
             decimal.Round(payload.Lines.Sum(line => line.Debit), 4) !=
@@ -495,6 +520,9 @@ public sealed partial class SqlAccountingPostingProcessor(
 
         return payload;
     }
+
+    private static PayrollAccountingEmployee? ReadPayrollEmployeeContext(PayrollAccountingPayload payload,PayrollAccountingLine line) =>
+        line.EmployeeIndex is int index?payload.Employees![index]:null;
 
     private static async Task<FinancialFactsResult> LoadInventoryOperationFactsAsync(
         SqlConnection connection,
@@ -2416,6 +2444,13 @@ public sealed partial class SqlAccountingPostingProcessor(
             Guid.TryParse(category.AsSpan("PostedAccount:".Length), out accountId);
     }
 
+    // This is only the transient SQL transport for the journal. Missing nullable
+    // properties project to SQL NULL, without changing immutable source hashes.
+    private static readonly JsonSerializerOptions JournalTransportJson = new()
+    {
+        DefaultIgnoreCondition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
     private async Task InsertEntryAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         Guid periodId, string description, IReadOnlyList<JournalLine> lines,
@@ -2451,6 +2486,8 @@ public sealed partial class SqlAccountingPostingProcessor(
               Description nvarchar(max),Debit decimal(19,4),Credit decimal(19,4),
               SourceLineId uniqueidentifier,OpeningKind int,BaseAmount decimal(19,4),OpeningDocumentId uniqueidentifier,ExistingPositionId uniqueidentifier);
 
+            -- Choose joins and index maintenance for this batch's real line
+            -- count, rather than reuse the plan of a small earlier document.
             INSERT dbo.AccountingEntryLines
             (EntryId,LineNumber,AccountId,PartyId,PartyIdentificationSnapshot,
              PartyNameSnapshot,CostCenterId,CostCenterCodeSnapshot,
@@ -2460,7 +2497,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                    center.Code,center.Name,line.Description,line.Debit,line.Credit,line.SourceLineId,line.BaseAmount
             FROM @JournalLines line
             LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId
-            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId;
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId AND center.TenantId=@TenantId
+            OPTION(RECOMPILE);
             DECLARE @PersistedLineCount int=@@ROWCOUNT;
             -- Native tender accounts are derived from this journal. Manual groups
             -- and configured forms retain their existing financial participant.
@@ -2500,7 +2538,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
                 lines.Select((line, index) => new { LineNumber = index + 1, line.AccountId, line.PartyId,
                     line.CostCenterId, line.Description, line.Debit, line.Credit, line.SourceLineId, line.OpeningKind, line.BaseAmount,
-                    line.OpeningDocumentId, line.ExistingPositionId }));
+                    line.OpeningDocumentId, line.ExistingPositionId }),JournalTransportJson);
             if (await command.ExecuteScalarAsync(cancellationToken) is not int persisted || persisted != lines.Count)
                 throw new DBConcurrencyException("The complete journal entry was not persisted.");
         }
@@ -2693,7 +2731,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 if (DirectLines is not null)
                     return new HashSet<string>(StringComparer.Ordinal);
                 if (DirectCategoryLines is not null)
-                    return DirectCategoryLines.Select(line => line.Category).Where(RequiresConfiguredAccount)
+                    return DirectCategoryLines.Where(line=>line.AccountId is null).Select(line => line.Category).Where(RequiresConfiguredAccount)
                         .ToHashSet(StringComparer.Ordinal);
                 var values = new HashSet<string>(Settlements.Select(item => item.Category).Where(RequiresConfiguredAccount), StringComparer.Ordinal);
                 if (ExpenseLines is not null)
@@ -2773,8 +2811,8 @@ public sealed partial class SqlAccountingPostingProcessor(
             if (DirectCategoryLines is not null)
             {
                 foreach (var line in DirectCategoryLines)
-                    yield return new JournalLine(AccountForCategory(line.Category, accounts), line.Debit,
-                        line.Credit, line.PartyId, costCenter, line.Description,
+                    yield return new JournalLine(line.AccountId??AccountForCategory(line.Category, accounts), line.Debit,
+                        line.Credit, line.PartyId, line.CostCenterId??costCenter, line.Description,
                         OpeningKind: line.OpeningKind, OpeningDocumentId: line.OpeningDocumentId);
                 foreach (var line in AdditionalDirectLines ?? [])
                     yield return new JournalLine(line.AccountId, line.Debit, line.Credit,
@@ -3277,5 +3315,5 @@ public sealed partial class SqlAccountingPostingProcessor(
     private sealed record CategoryLineSpec(
         string Category, decimal Debit, decimal Credit, Guid? PartyId,
         string Description, JournalOpeningKind OpeningKind = JournalOpeningKind.None,
-        Guid? OpeningDocumentId = null);
+        Guid? OpeningDocumentId = null,Guid? AccountId=null,Guid? CostCenterId=null);
 }

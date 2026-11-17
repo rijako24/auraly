@@ -14,6 +14,13 @@ public static class PayrollApi
         group.MapGet("/options", (HttpContext context, PayrollService service,
             CancellationToken ct) => Execute(() => service.GetOptionsAsync(context.User.Identity(), ct)));
 
+        group.MapGet("/profiles",(HttpContext context,int? page,int? pageSize,string? search,bool? isActive,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PageProfilesAsync(context.User.Identity(),page??1,pageSize??20,search,isActive,ct)));
+        group.MapGet("/profiles/{id:guid}",(HttpContext context,Guid id,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.GetProfileAsync(context.User.Identity(),id,ct)));
+        group.MapPut("/profiles/{id:guid}",(HttpContext context,Guid id,SavePayrollProfileRequest request,PayrollService service,CancellationToken ct)=>
+            id!=request.ProfileId?Task.FromResult<IResult>(Results.BadRequest()):Execute(()=>service.SaveProfileAsync(context.User.Identity(),request,ct)));
+
         group.MapGet("/employments", (HttpContext context, int? page, int? pageSize,
             string? search, bool? isActive, Guid? employmentId, PayrollService service,
             CancellationToken ct) => Execute(() => service.PageEmploymentsAsync(

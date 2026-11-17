@@ -79,12 +79,12 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
 
         using (var partialCoverage = await client.PostAsJsonAsync(
                    "/api/commerce/v1/payroll/runs",
-                   new CreatePayrollRunRequest(Guid.NewGuid(), fixture.BusinessId, ruleSetId,
+                   new CreatePayrollRunRequest(Guid.NewGuid(), fixture.BusinessId,
                        Option(PayrollCatalogCodes.PayFrequency, "Monthly"), "Regular", null,
                        new DateOnly(2025, 12, 1), new DateOnly(2025, 12, 31), new DateOnly(2025, 12, 31))))
         {
-            Assert.Equal(HttpStatusCode.BadRequest, partialCoverage.StatusCode);
-            Assert.Contains("vigente", await partialCoverage.Content.ReadAsStringAsync());
+            Assert.True(partialCoverage.IsSuccessStatusCode,await partialCoverage.Content.ReadAsStringAsync());
+            Assert.Null((await partialCoverage.Content.ReadFromJsonAsync<PayrollRunView>())!.RuleSetId);
         }
 
         var concepts = await EnsureCalculationConceptsAsync(client,options);
@@ -112,7 +112,7 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
                 "CERT-EMP-001", new DateOnly(2026, 8, 1), null, 3_000_000m,
                   null, null, Option(PayrollCatalogCodes.Bank, "Bancolombia"),
                   Option(PayrollCatalogCodes.BankAccountType, "Savings"),
-                  "12345678901", true, null);
+                  "12345678901", true, null, Configuration:await CreateProfileFixtureAsync(ruleSetId));
         var employment = await PutAsync<PayrollEmploymentView>(client,
             $"/api/commerce/v1/payroll/employments/{employmentId:D}", employmentRequest);
         Assert.Equal(employeeOption.EmployeeId, employment.EmployeeId);
@@ -150,7 +150,7 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
 
         var invalidCalendarId=Guid.NewGuid();
         using(var invalidCalendar=await client.PostAsJsonAsync("/api/commerce/v1/payroll/runs",
-            new CreatePayrollRunRequest(invalidCalendarId,fixture.BusinessId,ruleSetId,
+            new CreatePayrollRunRequest(invalidCalendarId,fixture.BusinessId,
                 Option(PayrollCatalogCodes.PayFrequency,"Monthly"),"Regular",null,
                 new(2026,8,1),new(2026,8,30),new(2026,8,31))))
             Assert.Equal(HttpStatusCode.BadRequest,invalidCalendar.StatusCode);
@@ -163,7 +163,7 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
 
         var runId = Guid.NewGuid();
         var run = await PostAsync<PayrollRunView>(client, "/api/commerce/v1/payroll/runs",
-            new CreatePayrollRunRequest(runId, fixture.BusinessId, ruleSetId,
+            new CreatePayrollRunRequest(runId, fixture.BusinessId,
                 Option(PayrollCatalogCodes.PayFrequency, "Monthly"), "Regular", null,
                 new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 31), new DateOnly(2026, 8, 31)));
         var candidates = await GetAsync<PayrollRunEmploymentPage>(client,

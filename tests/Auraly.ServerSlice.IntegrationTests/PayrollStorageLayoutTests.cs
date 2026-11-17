@@ -80,6 +80,9 @@ public sealed class PayrollStorageLayoutTests(ServerSliceFixture fixture)
         }
         // Reproduce the previous published physical layout without altering a row.
         await using(var previous=new SqlCommand("""
+            -- Historical runs required one root rule set; the upgrade preserves
+            -- that identity while allowing per-contract configurations for new runs.
+            ALTER TABLE payroll.Runs ALTER COLUMN RuleSetId uniqueidentifier NOT NULL;
             ALTER TABLE payroll.PaymentLines DROP CONSTRAINT FK_PayrollPaymentLines_RunEmployee;
             ALTER TABLE payroll.RunLines DROP CONSTRAINT FK_PayrollRunLines_RunEmployee;
             ALTER TABLE payroll.RunEmployees DROP CONSTRAINT PK_PayrollRunEmployees;
@@ -98,6 +101,22 @@ public sealed class PayrollStorageLayoutTests(ServerSliceFixture fixture)
         await fixture.ReapplySchemaAsync();
         await connection.OpenAsync();
         Assert.Equal(before,await ReadRowsAsync(connection,runId,batchId,damageId));
+        await connection.CloseAsync();
+        await fixture.ReapplySchemaAsync();
+        await connection.OpenAsync();
+        Assert.Equal(before,await ReadRowsAsync(connection,runId,batchId,damageId));
+        await using var contract=new SqlCommand("""
+            SELECT is_nullable FROM sys.columns WHERE object_id=OBJECT_ID(N'payroll.Runs') AND name=N'RuleSetId';
+            SELECT COUNT(*) FROM payroll.Employments WHERE EmploymentId=@Employment AND AccountingProfileId IS NULL
+              AND HealthPartyId IS NULL AND PensionPartyId IS NULL AND SeverancePartyId IS NULL AND RiskPartyId IS NULL
+              AND CompensationPartyId IS NULL AND CostCenterId IS NULL;
+            """,connection);
+        contract.Parameters.AddWithValue("@Employment",employmentId);
+        await using(var state=await contract.ExecuteReaderAsync())
+        {
+            Assert.True(await state.ReadAsync());Assert.True(state.GetBoolean(0));
+            await state.NextResultAsync();Assert.True(await state.ReadAsync());Assert.Equal(1,state.GetInt32(0));
+        }
         await using var indexes=new SqlCommand("""
             SELECT COUNT(*) FROM sys.indexes WHERE (object_id=OBJECT_ID(N'payroll.RunEmployees') AND
               ((name=N'PK_PayrollRunEmployees' AND type=2) OR (name=N'UQ_PayrollRunEmployees_Run_Employment' AND type=1)))
@@ -123,11 +142,13 @@ public sealed class PayrollStorageLayoutTests(ServerSliceFixture fixture)
                 WHERE employee.PayrollRunId=@Run ORDER BY line.PayrollRunLineId FOR JSON PATH),
               (SELECT * FROM payroll.PaymentBatches WHERE PaymentBatchId=@Batch FOR JSON PATH),
               (SELECT * FROM payroll.PaymentLines WHERE PaymentBatchId=@Batch ORDER BY PaymentLineId FOR JSON PATH),
-              (SELECT * FROM dbo.InventoryOperations WHERE InventoryOperationId=@Damage FOR JSON PATH);
+              (SELECT * FROM dbo.InventoryOperations WHERE InventoryOperationId=@Damage FOR JSON PATH),
+              (SELECT employment.* FROM payroll.Employments employment JOIN payroll.RunEmployees result ON result.EmploymentId=employment.EmploymentId
+                WHERE result.PayrollRunId=@Run ORDER BY employment.EmploymentId FOR JSON PATH);
             """,connection);
         command.Parameters.AddWithValue("@Run",runId);command.Parameters.AddWithValue("@Batch",batchId);
         command.Parameters.AddWithValue("@Damage",damageId);
         await using var reader=await command.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
-        return Enumerable.Range(0,7).Select(reader.GetString).ToArray();
+        return Enumerable.Range(0,8).Select(reader.GetString).ToArray();
     }
 }

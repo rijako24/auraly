@@ -465,10 +465,12 @@ public sealed partial class SqlAccountingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT MappingId,TenantId,BusinessId,Category,AccountId,EffectiveFrom,EffectiveTo
-            FROM dbo.AccountingAccountMappings
-            WHERE TenantId=@TenantId AND (BusinessId IS NULL OR BusinessId=@BusinessId)
-            ORDER BY Category,EffectiveFrom DESC;
+            SELECT mapping.MappingId,mapping.TenantId,mapping.BusinessId,mapping.Category,mapping.AccountId,
+              mapping.EffectiveFrom,mapping.EffectiveTo,account.Code,account.Name
+            FROM dbo.AccountingAccountMappings mapping
+            LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=mapping.AccountId AND account.TenantId=mapping.TenantId
+            WHERE mapping.TenantId=@TenantId AND (mapping.BusinessId IS NULL OR mapping.BusinessId=@BusinessId)
+            ORDER BY mapping.Category,mapping.EffectiveFrom DESC;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -478,7 +480,8 @@ public sealed partial class SqlAccountingStore(
             values.Add(new(reader.GetGuid(0), reader.GetGuid(1),
                 reader.IsDBNull(2) ? null : reader.GetGuid(2), reader.GetString(3), reader.GetGuid(4),
                 DateOnly.FromDateTime(reader.GetDateTime(5)),
-                reader.IsDBNull(6) ? null : DateOnly.FromDateTime(reader.GetDateTime(6))));
+                reader.IsDBNull(6) ? null : DateOnly.FromDateTime(reader.GetDateTime(6)),
+                reader.IsDBNull(7)?null:reader.GetString(7),reader.IsDBNull(8)?null:reader.GetString(8)));
         return values;
     }
 

@@ -108,6 +108,10 @@ BEGIN
       Kind nvarchar(16),PositionId uniqueidentifier,SourceLineId uniqueidentifier,Amount decimal(19,4),
       EffectKind nvarchar(24),ReversesTransactionId uniqueidentifier,
       PRIMARY KEY(DocumentId,EffectId,Kind));
+    -- Defer manual-only parsing and its plan until this batch actually has a
+    -- new manual source. Other contracts cannot contribute manual credit targets.
+    IF EXISTS(SELECT 1 FROM @NewManualSources)
+    BEGIN
     INSERT @CreditTargets SELECT source.DocumentId,source.BusinessId,target.EffectId,target.SubledgerKind,
       target.SubledgerId,target.SourceLineId,target.Amount,target.EffectKind,target.ReversesTransactionId FROM @NewManualSources source
       CROSS APPLY accounting.ManualVoucherCreditTargets(source.Payload) target;
@@ -115,6 +119,7 @@ BEGIN
         OR PositionId IS NULL OR SourceLineId IS NULL OR Amount IS NULL OR Amount<=0)
       OR EXISTS(SELECT DocumentId FROM @CreditTargets GROUP BY DocumentId HAVING COUNT(*)>1000)
       THROW 51849,N'The financial application destinations are invalid.',1;
+    END;
     IF EXISTS(SELECT 1 FROM @CreditTargets)
     BEGIN
       DECLARE @CreditKeys TABLE(BusinessId uniqueidentifier,Kind nvarchar(16),PositionId uniqueidentifier,
@@ -269,6 +274,8 @@ BEGIN
       AND job.SourceDocumentType=source.SourceDocumentType
       AND job.TenantId=source.TenantId AND job.BusinessId=source.BusinessId;
 
+    IF EXISTS(SELECT 1 FROM @Accepted WHERE DocumentType=N'ManualAccountingVoucher')
+    BEGIN
     DECLARE @PartyReferences TABLE(DocumentId uniqueidentifier,DocumentType nvarchar(64),PartyId uniqueidentifier,
       PRIMARY KEY(DocumentId,DocumentType,PartyId));
     INSERT @PartyReferences
@@ -298,6 +305,7 @@ BEGIN
       THROW 51731,N'The financial concept is outside its acceptance scope.',1;
     INSERT accounting.SourceConceptIndex(FinancialConceptId,SourceDocumentId,SourceDocumentType)
       SELECT ConceptId,DocumentId,DocumentType FROM @ConceptReferences;
+    END;
 
     INSERT accounting.SourcePositionIndex(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,EffectId,
       SubledgerKind,SubledgerId,SourceLineId,Amount,EffectKind,ReversesTransactionId)

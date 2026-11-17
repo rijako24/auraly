@@ -301,7 +301,9 @@ public sealed record AccountingMappingView(
     string Category,
     Guid AccountId,
     DateOnly EffectiveFrom,
-    DateOnly? EffectiveTo);
+    DateOnly? EffectiveTo,
+    string? AccountCode = null,
+    string? AccountName = null);
 
 public sealed record AccountingDefaultsResult(
     int AccountCount,

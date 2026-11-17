@@ -17,10 +17,13 @@ public sealed record PayrollRunCalculationData(
         = new Dictionary<Guid, PayrollEmployeeCalculationSource>();
 }
 
-public sealed record PayrollEmployeeCalculationSource(decimal MaximumContractDays, byte[] NoveltyVersionHash);
+public sealed record PayrollEmployeeCalculationSource(decimal MaximumContractDays, byte[] NoveltyVersionHash, Guid RuleSetId);
 
 public interface IPayrollStore
 {
+    Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,CancellationToken ct);
+    Task<PayrollProfileView> GetProfileAsync(PayrollUserIdentity user,Guid id,CancellationToken ct);
+    Task<PayrollProfileView> SaveProfileAsync(PayrollUserIdentity user,SavePayrollProfileRequest request,CancellationToken ct);
     Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user, CancellationToken ct);
     Task<PayrollEmploymentPage> PageEmploymentsAsync(PayrollUserIdentity user, int page,
         int pageSize, string? search, bool? isActive, Guid? employmentId, CancellationToken ct);
@@ -75,6 +78,29 @@ public sealed class PayrollService(
     AccountingProcessingCoordinator accounting,
     FiscalProcessingCoordinator fiscalProcessing)
 {
+    public Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);
+        if(page<1 || pageSize is <1 or >100 || ((long)page-1)*pageSize>int.MaxValue || search?.Length>160)
+            throw new PayrollValidationException("Indica una página y búsqueda válidas para los perfiles.");
+        return store.PageProfilesAsync(user,page,pageSize,string.IsNullOrWhiteSpace(search)?null:search.Trim(),isActive,ct);
+    }
+    public Task<PayrollProfileView> GetProfileAsync(PayrollUserIdentity user,Guid id,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);
+        return store.GetProfileAsync(user,id,ct);
+    }
+    public Task<PayrollProfileView> SaveProfileAsync(PayrollUserIdentity user,SavePayrollProfileRequest request,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Configure);
+        if(request.ProfileId==Guid.Empty || request.RuleSetId==Guid.Empty || string.IsNullOrWhiteSpace(request.Code) || request.Code.Trim().Length>32 ||
+            string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length>160 || request.Mappings is null || request.Mappings.Count>500 ||
+            request.Mappings.Any(value=>value is null || value.MappingId==Guid.Empty || value.EffectiveTo<value.EffectiveFrom ||
+                value.BeneficiaryPartyId==Guid.Empty || value.DebitAccountId is null && value.CreditAccountId is null && value.BeneficiaryPartyId is null) ||
+            request.Mappings.Select(value=>value.MappingId).Distinct().Count()!=request.Mappings.Count)
+            throw new PayrollValidationException("Revisa el código, nombre y hasta 500 mappings de cuenta con vigencia e identidades distintas.");
+        return store.SaveProfileAsync(user,request with{Code=request.Code.Trim().ToUpperInvariant(),Name=request.Name.Trim()},ct);
+    }
     public Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user,
         CancellationToken ct = default)
     {

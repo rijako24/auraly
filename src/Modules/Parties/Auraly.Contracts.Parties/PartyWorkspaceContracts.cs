@@ -127,7 +127,8 @@ public sealed record PartyRoleOptionQuery(
     Guid? RoleId = null,
     Guid? PartyId = null,
     Guid? PartySiteId = null,
-    IReadOnlyCollection<Guid>? RoleIds = null);
+    IReadOnlyCollection<Guid>? RoleIds = null,
+    string? PartyType = null);
 
 public sealed record PartyRoleOption(
     Guid PartyId,

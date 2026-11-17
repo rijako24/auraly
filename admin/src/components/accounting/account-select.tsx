@@ -7,7 +7,7 @@ import { accountingApi, type AccountingAccount } from "@/services/api/accounting
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export function AccountSelect({ value, accounts, onChange, expenseOnly = false, liabilityOnly = false, disabled = false, resolveMissing = true }: {
+export function AccountSelect({ value, accounts, onChange, expenseOnly = false, liabilityOnly = false, disabled = false, resolveMissing = true, ariaLabel = "Seleccionar cuenta contable" }: {
   value: string;
   accounts?: Array<{ accountId: string; code: string; name: string }>;
   onChange: (value: string, account?: Pick<AccountingAccount, "accountId" | "code" | "name">) => void;
@@ -15,6 +15,7 @@ export function AccountSelect({ value, accounts, onChange, expenseOnly = false, 
   liabilityOnly?: boolean;
   disabled?: boolean;
   resolveMissing?: boolean;
+  ariaLabel?: string;
 }) {
   const tenantId = useTenantContextStore(state => state.selectedTenantId);
   const businessId = useBusinessContextStore(state => state.selectedBusinessId);
@@ -34,10 +35,10 @@ export function AccountSelect({ value, accounts, onChange, expenseOnly = false, 
     onChange={(id, option, account) => { if (account) setPicked(account); onChange(id, account); }}
     loadPage={(search, page, pageSize) => accountingApi.accountOptions({ search, page, pageSize, expenseOnly, liabilityOnly })}
     getOption={account => ({ value: account.accountId, label: `${account.code} · ${account.name}` })}
-    selectedOption={current ? { value: current.accountId, label: `${current.code} · ${current.name}` } : null}
+    selectedOption={current ? { value: current.accountId, label: current.code ? `${current.code} · ${current.name}` : current.name } : null}
     placeholder="Seleccionar cuenta"
     searchPlaceholder="Buscar por código o nombre…"
-    ariaLabel="Seleccionar cuenta contable"
+    ariaLabel={ariaLabel}
     openOnTyping
     disabled={!tenantId || disabled}
   />;

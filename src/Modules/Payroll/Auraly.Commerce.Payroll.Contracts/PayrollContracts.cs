@@ -155,7 +155,29 @@ public sealed record PayrollEmploymentOption(
     byte[] RowVersion)
 {
     public bool AppliesTransportAllowance { get; init; } = true;
+    public PayrollEmploymentConfigurationView? Configuration { get; init; }
 }
+
+public sealed record PayrollEmploymentConfiguration(
+    Guid? AccountingProfileId,Guid? HealthPartyId,Guid? PensionPartyId,
+    Guid? SeverancePartyId,Guid? RiskPartyId,Guid? CompensationPartyId,Guid? CostCenterId);
+
+public sealed record PayrollEmploymentConfigurationView(
+    PayrollEmploymentConfiguration Values,string? ProfileName,string? CostCenterName,
+    string? HealthName,string? PensionName,string? SeveranceName,string? RiskName,string? CompensationName);
+
+public sealed record PayrollProfileMapping(Guid MappingId,Guid? ConceptId,Guid? DebitAccountId,
+    Guid? CreditAccountId,DateOnly EffectiveFrom,DateOnly? EffectiveTo,
+    string? DebitAccountLabel=null,string? CreditAccountLabel=null)
+{
+    public Guid? BeneficiaryPartyId { get; init; }
+    public string? BeneficiaryName { get; init; }
+}
+public sealed record PayrollProfileView(Guid ProfileId,string Code,string Name,Guid RuleSetId,
+    bool IsActive,byte[] RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings);
+public sealed record PayrollProfilePage(IReadOnlyList<PayrollProfileView> Items,int Page,int PageSize,int TotalCount,int TotalPages);
+public sealed record SavePayrollProfileRequest(Guid ProfileId,string Code,string Name,Guid RuleSetId,
+    bool IsActive,byte[]? RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings);
 
 public sealed record PayrollEmploymentPage(
     IReadOnlyList<PayrollEmploymentOption> Items,
@@ -187,7 +209,8 @@ public sealed record SavePayrollEmploymentRequest(
     string? BankAccountNumber,
     bool IsActive,
     byte[]? RowVersion,
-    bool? AppliesTransportAllowance = null);
+    bool? AppliesTransportAllowance = null,
+    PayrollEmploymentConfiguration? Configuration = null);
 
 public sealed record PayrollEmploymentView(
     Guid EmploymentId,
@@ -215,6 +238,7 @@ public sealed record PayrollEmploymentView(
     byte[] RowVersion)
 {
     public bool AppliesTransportAllowance { get; init; } = true;
+    public PayrollEmploymentConfigurationView? Configuration { get; init; }
 }
 
 public sealed record SavePayrollConceptRequest(
@@ -442,10 +466,10 @@ public sealed record PayrollRunEmploymentPage(
     IReadOnlyList<PayrollRunEmploymentCandidate> Items, int Page, int PageSize,
     int TotalCount, int EligibleCount, int SelectedCount, byte[] RowVersion);
 
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record CreatePayrollRunRequest(
     Guid PayrollRunId,
     Guid BusinessId,
-    Guid RuleSetId,
     Guid PayFrequencyOptionId,
     string RunKind,
     Guid? OriginalPayrollRunId,
@@ -456,7 +480,7 @@ public sealed record CreatePayrollRunRequest(
 public sealed record PayrollRunView(
     Guid PayrollRunId,
     Guid BusinessId,
-    Guid RuleSetId,
+    Guid? RuleSetId,
     string RunKind,
     Guid? OriginalPayrollRunId,
     DateOnly PeriodStart,
@@ -668,7 +692,12 @@ public sealed record PayrollAccountingLine(
     decimal Debit,
     decimal Credit,
     Guid? PartyId,
-    string Description);
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Description,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? EmployeeIndex=null,
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? ConceptIndex=null);
+
+public sealed record PayrollAccountingEmployee(Guid EmploymentId,Guid? ProfileId,Guid? CostCenterId);
+public sealed record PayrollAccountingConcept(Guid? ConceptId,string Description);
 
 public sealed record PayrollAccountingPayload(
     Guid TenantId,
@@ -681,7 +710,15 @@ public sealed record PayrollAccountingPayload(
     string Description,
     IReadOnlyList<PayrollAccountingLine> Lines,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId=null,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodTypeCode=null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodTypeCode=null)
+{
+    // Shared immutable classification references, not account configuration.
+    // Null collections leave the existing flat source representation unchanged.
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<PayrollAccountingEmployee>? Employees { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<PayrollAccountingConcept>? Concepts { get; init; }
+}
 
 public static class PayrollContractSerializer
 {

@@ -28,6 +28,7 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Tables\PayrollProfiles.sql" />
     <Build Include="Schemas\WorkSessions.sql" />
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Functions\TenantDianQuotaSnapshot.sql" />
@@ -163,6 +164,7 @@
     <Build Include="Functions\PayrollPayableRunEmployees.sql" />
     <Build Include="Functions\PayrollEligibleRunEmployments.sql" />
     <Build Include="Functions\PayrollCalculationSourceVersions.sql" />
+    <Build Include="Functions\PayrollProfileRuleConfiguration.sql" />
     <Build Include="Schemas\Purchasing.sql" />
     <Build Include="Types\GuidIdList.sql" />
     <Build Include="Types\PayrollCalculationInputs.sql" />

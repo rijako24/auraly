@@ -68,7 +68,10 @@ public sealed class PartyWorkspaceService(
              actor.Permissions.Contains("restaurant.attend") ||
              actor.Permissions.Contains("restaurant.tables.open_without_waiter"));
         var accountingParty = query.Role?.Trim() == "Any" && actor.Permissions.Contains("accounting.read");
-        if (!accountingParty && !returnCustomer && (query.Role?.Trim() != "Supplier" ||
+        var payrollParty = query.Role?.Trim() == "Any" && query.PartyType=="Organization" &&
+            (actor.Permissions.Contains("payroll.manage") || actor.Permissions.Contains("payroll.configure"))
+            || query.Role?.Trim()=="Employee" && actor.Permissions.Contains("payroll.manage");
+        if (!accountingParty && !payrollParty && !returnCustomer && (query.Role?.Trim() != "Supplier" ||
             (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
              !actor.Permissions.Contains(ExpensePermissionCodes.Read) &&
              !actor.Permissions.Contains(InvoiceChargePermissions.Configure))))
@@ -84,6 +87,8 @@ public sealed class PartyWorkspaceService(
         var role = query.Role?.Trim();
         if (role is not ("Any" or "Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
             throw new PartyValidationException("Role must be Any, Customer, Supplier, Seller, Carrier, Employee, User or Waiter.");
+        if(query.PartyType is not (null or "Organization" or "NaturalPerson"))
+            throw new PartyValidationException("El tipo de tercero no es válido.");
         return store.RoleOptionsAsync(
             actor, page, query with { Role = role, Search = query.Search?.Trim() }, ct);
     }

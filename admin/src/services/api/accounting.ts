@@ -49,6 +49,7 @@ export interface AccountingPeriod {
 }
 export interface AccountingMapping {
   mappingId: string; tenantId: string; businessId: string | null; category: string;
+  accountCode?:string|null;accountName?:string|null;
   accountId: string; effectiveFrom: string; effectiveTo: string | null;
 }
 export interface AccountingDefaultsResult { accountCount: number; mappingCount: number; hasDefaultCostCenter: boolean; hasOpenPeriod: boolean; isReady: boolean; }

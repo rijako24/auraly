@@ -91,8 +91,8 @@ con arrays o `switch` en frontend o backend.
 ## 5. Reglas y cálculo
 
 Las reglas legales son datos versionados por vigencia. Cada conjunto conserva
-valores, tarifas, topes, redondeos y origen normativo; cada liquidación registra
-el conjunto utilizado. No se consulta una tabla vigente al reproducir un
+valores, tarifas, topes, redondeos y origen normativo; cada trabajador liquidado
+registra el conjunto utilizado y sus valores, según el perfil de su contrato. No se consulta una tabla vigente al reproducir un
 comprobante histórico.
 
 Orden de cálculo de la primera entrega:
@@ -544,7 +544,11 @@ explícitos, incluidos paginación histórica, perfiles/afiliaciones y calendari
   Identidad/foto/ciudad reutilizan Parties. Corte de vacaciones no agrega
   un workflow de solicitud/aprobación.
 - Operativo/Administrativo son perfiles del tenant asociados al contrato, con
-  mapping débito/crédito por concepto y parámetros aplicables versionados.
+  mapping débito/crédito por concepto con vigencia y referencia a sus parámetros
+  versionados existentes. Por precisión del usuario del 17-11-2026, el contrato
+  debe llegar configurado mediante ese parámetro/perfil: al liquidar no se pide
+  elegir otra vez un conjunto de reglas. El motor existente conserva la única
+  definición y aplicación de porcentajes y topes; el perfil no los duplica.
   Reutilizan conceptos y reglas legales; cambiar clasificación no cambia por
   sí mismo tarifas legales. Las tasas de las fotos no se copian como ley.
 - Salud/pensión se calculan sobre IBC; tarifa ordinaria del empleado 4%/4%
@@ -572,6 +576,146 @@ explícitos, incluidos paginación histórica, perfiles/afiliaciones y calendari
   método manual explícito no promete un autocálculo legal no certificado.
   Incapacidades/licencias/vacaciones conservan fechas y clasificación exigidas
   por su nodo oficial; no se envían todas como OtroConcepto por defecto.
+
+#### Configuración contractual y vigencias (17-11-2026)
+
+El parámetro del contrato referencia `payroll.AccountingProfiles`, compartido por
+el tenant. El perfil asigna cuentas por concepto y referencia un conjunto de
+`payroll.RuleSets`; no almacena porcentajes duplicados. Una serie conserva país y
+código. Un perfil asociado a parámetros generales admite las versiones publicadas
+de esa serie por su propio tenant: tienen prioridad desde su fecha efectiva y
+no requieren editar el perfil o los contratos. Una serie propia nunca consume
+versiones de otros tenants ni pasa a la general. Retirar o vencer una versión
+propia efectiva no restaura silenciosamente los parámetros generales.
+Nueva vigencia reutiliza
+el formulario y la aprobación existentes, con nueva identidad y fecha efectiva.
+No hay selector de reglas al crear cada liquidación.
+
+`payroll.ProfileRuleConfiguration` es el único resolvedor de vigencias usado al
+cargar, guardar y aprobar. Elige la última versión publicada efectiva al inicio
+del período y exige que esté aprobada y cubra todo el período. Un borrador no
+sustituye tarifas aprobadas; retirar la última versión no restaura una anterior.
+Si otra versión publicada empieza dentro del período, se exige alinear la
+vigencia con los períodos contractuales permitidos; no se mezclan porcentajes
+silenciosamente. Publicar una vigencia futura
+no invalida un cálculo anterior. Un cambio efectivo dentro del período sí exige
+recalcular antes de aprobar. Los resultados aprobados no se recalculan.
+
+El contrato conserva perfil, EPS, pensiones, cesantías, ARL, caja y centro
+opcional. Las afiliaciones requieren terceros jurídicos activos del tenant y
+quedan en el snapshot por trabajador. SENA e ICBF permiten beneficiario explícito
+en el mapping de su concepto del perfil; no se atribuye su obligación al empleado
+ni se inventan terceros. Los acuerdos conservan su beneficiario propio.
+
+Las cuentas explícitas del perfil se validan con `PostingAccountReadiness` y se
+resuelven por conjunto al contabilizar, según fecha del hecho. Una cuenta inválida
+o perfil/centro no disponible deja pendiente la fuente mediante el estado
+existente; no usa otra cuenta como fallback. El pago cancela el auxiliar del neto originalmente causado y conserva su centro
+cuando está informado, aunque cambie el mapping.
+Se conservan los ordinales de fuente necesarios para demostrar esa relación.
+
+La fuente conserva las partidas financieras en su orden original; cada una
+referencia por índice una clasificación de trabajador y concepto compartida en
+el mismo documento. Así no repite perfil, centro y descripción en cada partida,
+ni guarda cuentas o porcentajes que deban resolverse al contabilizar. La lectura
+valida los índices antes de resolver las cuentas por conjunto. Las fuentes
+planas ya aceptadas mantienen su contenido y hash; no se reescriben. La fuente
+inmutable sigue siendo `AccountingSourceDocuments`: el outbox de nómina solicita
+el trabajo mediante sus identidades, sin duplicar ese cuerpo. La publicación
+reutiliza `AccountingProcessingCoordinator` y el trabajo durable existente.
+
+El esquema es aditivo salvo la nulabilidad de `Runs.RuleSetId`: las identidades
+históricas se conservan; los nuevos cálculos guardan `EffectiveRuleSetId` y los
+valores en cada resultado. No se asignan perfiles o entidades ficticios a contratos
+anteriores. Los contratos pendientes siguen visibles; calcularlos exige completar
+su configuración. Las liquidaciones ya aprobadas conservan su fuente y pago.
+
+El cutover coordina API/admin: crear liquidación ya no acepta `ruleSetId` (400
+explícito si se envía). No retirar columnas ni volver `Runs.RuleSetId` obligatorio
+en rollback; un binario previo no conoce los nuevos períodos con ID raíz nulo.
+Después de producir nuevos cálculos se requiere corrección hacia adelante o
+restauración coordinada de una copia consistente, sin perder transacciones nuevas.
+No se reescriben fuentes, saldos, partidas ni parámetros históricos.
+
+Presupuesto del camino modificado: perfiles paginados en un comando (conteo y
+página antes de proyección), detalle en uno, guardado en dos dentro de transacción;
+parámetros en dos comandos de guardado y lectura acotada. El cálculo carga los
+perfiles/reglas de los contratos seleccionados en un comando por conjunto y
+mantiene nueve comandos para 2/100/500 trabajadores o recálculo individual. La
+resolución de cuentas contables añade un solo comando por fuente, sin lectura por
+partida/trabajador. Los selectores consultan sólo al abrirse; la configuración y
+las respuestas de mutación conservan un propietario, sin consultas de metadatos
+por fila ni recarga completa después de crear una liquidación o guardar reglas.
+
+Esta entrega cubre esos campos y perfiles; no certifica los otros campos de RR.
+HH., PILA o vacaciones enumerados en 13.4 que aún no tengan implementación y
+prueba. La aceptación local pasó: ocho escenarios SQL/API únicos (siete verticales y
+uno de actualización), incluidos 2/100/500/501 trabajadores; cambio de vigencia
+sin editar contrato; contrato no configurado visible pero sin cálculo; rechazo
+explícito del selector anterior; permisos y filtro de entidades; cambios de
+cuentas antes de contabilizar; centros contractuales sin centro general;
+centro inactivo sin efectos; pago en el auxiliar/centro original y replay.
+La actualización de nulabilidad conservó contratos, resultados, hashes y pagos,
+y la segunda publicación produjo el mismo contenido. Recálculo individual
+sobre 500: nueve comandos, p95 668,80 ms en veinte muestras (umbral 1.000 ms).
+
+La pantalla aprobó catorce escenarios únicos, incluidas las repeticiones
+focalizadas de los hallazgos. Guardar perfil actualiza las etiquetas desde su
+respuesta; cerrar el contrato desmonta su formulario antes de retirar la
+identidad de edición y no consulta un trabajador oculto. Nueva vigencia y
+crear liquidación reutilizan la respuesta y no recargan el workspace.
+TypeScript, lint focalizado y compilación de backend/esquema pasaron. La prueba
+histórica se ejecutó separada de los benchmarks. La revisión del diff comprobó
+propietarios canónicos, alcance tenant/sede, concurrencia, hashes legados y
+cuentas explícitas sin fallback. No hubo cambios de motores, colas, workers,
+writers ni dependencias. Evidencia local: `payroll-contract-profiles-suite.log`,
+`payroll-contract-profiles-targeted.log`, `payroll-contract-profile-history-final.log`,
+`payroll-profile-centers-final.log`, `payroll-profiles-browser.log`,
+`payroll-profiles-browser-fixed.log` y `payroll-profiles-browser-version.log`,
+en `work/full-local-dev-verification`; sus TRX y trazas conservan los resultados
+originales. La repetición puntual sustituyó sólo los casos afectados.
+La ampliación `payroll-profiles-reviewed` verificó 38 casos SQL/API: siete
+verticales, cinco variantes de pago y 26 de aceptación de fuentes/comprobantes.
+Pasaron 37; el caso concurrente preparaba salario de 29 días y auxilio de 30
+en un período histórico de 29 días. La preparación se corrigió por concepto,
+mediante las dos operaciones públicas existentes. `payroll-overlap-final` pasó
+ese caso sin repetir el conjunto aprobado. `payroll-profiles-final-corrections`
+volvió a aprobar vigencias, cuentas actuales, centros, pago original y filtro
+activo antes de paginar. La prueba histórica anterior sigue cubriendo la
+publicación repetida y la conservación íntegra de las filas.
+
+Una medición de 500 trabajadores obtuvo 1.933,49 ms de aceptación y 1.756,50 ms
+de contabilización. Repeticiones posteriores superaron el umbral de 2.000 ms:
+`payroll-approval-projection-final` pasó seis casos funcionales y falló el de
+500 (2.285,58/2.125,15 ms). La repetición aislada `payroll-statement-diagnostic`
+pasó ese caso con 1.876,36/1.663,89 ms, pero no demuestra resuelta la variabilidad;
+este gate de rendimiento permanece pendiente. El diagnóstico de instrucciones
+SQL se obtiene después de los tramos medidos, sin alterar sus límites.
+La resolución de perfiles hizo
+un comando con 25 configuraciones distintas, sin consultas por trabajador o
+partida. Se conservaron los fallos previos de rendimiento en sus logs; no se
+relajaron los umbrales. Las mejoras se limitan al transporte de la fuente y
+del asiento, al plan de la escritura por lote y a omitir el análisis de conjuntos
+manuales vacíos dentro del aceptador existente. Los 26 casos de aceptación
+verificaron que los comprobantes reales conservan sus controles y atomicidad.
+`payroll-contract-foundation` pasó 70 pruebas de nómina, incluidas las dos del
+contrato contable: hash serializado de fuente plana intacto y clasificación
+compartida sin alterar importes, terceros u orden.
+`payroll-global-rule-final` comprobó plantilla global, vigencia propia posterior
+sin reasignar contrato, retiro sin restaurar tarifas generales y concurrencia.
+La proyección de aprobación lee los escalares de cada snapshot una vez y resuelve
+los perfiles distintos dentro del mismo comando y transacción. Conserva el
+límite de 4.000 caracteres de `JSON_VALUE`; las pruebas rechazan una identidad
+excesiva y una versión de snapshot ausente antes de aprobar.
+La última repetición de pantalla `payroll-profiles-browser-final` pasó sus tres
+recorridos afectados. Verificó `isActive=true` sólo al abrir el selector del
+contrato, guardado sin GET redundante y etiquetas conservadas en móvil; se
+revisó visualmente `payroll-contract-profile-mobile.png`. TypeScript y lint
+focalizado volvieron a pasar. Esta iteración no ejecutó un nuevo empaquetado
+Next de producción ni se publicó en DEV; conserva esas validaciones como
+pendientes antes de promover este cambio.
+Estas verificaciones no equivalen a un despliegue ni certifican los otros gates
+de nómina electrónica, historiales o campos de RR. HH. todavía pendientes.
 
 ### 13.5 Contabilización y pago por grupo
 

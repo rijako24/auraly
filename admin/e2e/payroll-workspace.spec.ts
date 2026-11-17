@@ -90,7 +90,7 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
         Object.assign(runs[0], { status: "Calculated", employeeCount: 1, totalEarnings: 1000000, totalDeductions: 80000, netPayable: 920000,
           employees: [{ payrollRunEmployeeId: "run-employee", employmentId: employees[0].employmentId, partyId: employees[0].partyId,
             employeeName: "Elena Prueba", workedDays: 30, earnings: 1000000, deductions: 80000, employerContributions: 0, provisions: 0, netPayable: 920000, lines: [] }] }); body = runs[0]; }
-      else if (path.endsWith("/approve")) { if (path.includes("/rule-sets/")) options.ruleSets.at(-1)!.status = "Approved"; else { runs[0].status = "Approved"; runs[0].payableEmployees = [{ payrollRunEmployeeId: "run-employee",
+      else if (path.endsWith("/approve")) { if (path.includes("/rule-sets/")) {options.ruleSets.at(-1)!.status = "Approved"; body=options.ruleSets.at(-1)!;} else { runs[0].status = "Approved"; runs[0].payableEmployees = [{ payrollRunEmployeeId: "run-employee",
         paymentMethodOptionId: "payroll-payment-method-Cash", paymentMethodName: "Efectivo", amount: 920000, bankDestinationComplete: true, employeeName: "Elena Prueba" }]; } }
       else if (path.endsWith("/payroll/payments")) { body = { ...data, status: "Confirmed", employeeCount: 1, totalAmount: 920000, paymentMethodName: "Caja nómina", accountingStatus: "Pending", isPaid: false, remainingEmployees: [], rowVersion: version }; runs[0].payableEmployees = []; options.paymentBatches.push(body as PayrollOptions["paymentBatches"][number]); }
       else if (path.includes("/employments/")) { body = { ...data as SaveEmployment, employeeName: "Elena Prueba", rowVersion: version }; const old = employees.findIndex(item => item.employmentId === data.employmentId); if (old >= 0) employees[old] = body as typeof employees[number]; else employees.push(body as typeof employees[number]); }
@@ -165,7 +165,7 @@ test("liquidación, aprobación, pago, DIAN y reportes se recorren desde sus pes
   await page.getByRole("tab", { name: "Liquidaciones", exact: true }).click();
   await page.getByRole("button", { name: "Nueva liquidación", exact: true }).click();
   await choose(page, "Periodicidad", "Mensual");
-  await choose(page, "Reglas aprobadas", "CO-2026 · Reglas vigentes");
+  await expect(page.getByRole("combobox",{name:"Reglas aprobadas",exact:true})).toHaveCount(0);
   await page.getByRole("button", { name: "Crear borrador" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await page.getByRole("button").filter({ hasText: /Borrador/ }).click();
@@ -360,7 +360,7 @@ test.describe("fechas iniciales de nómina", () => {
       await paymentDate.click();
       await page.getByRole("button", {name:"Elegir hoy",exact:true}).click();
       await choose(page, "Periodicidad", "Mensual");
-      await choose(page, "Reglas aprobadas", "CO-2026 · Reglas vigentes");
+      await expect(page.getByRole("combobox",{name:"Reglas aprobadas",exact:true})).toHaveCount(0);
       const count = state.writes.length;
       await page.getByRole("button", { name: "Crear borrador", exact: true }).click();
       await expect.poll(() => state.writes.length).toBe(count + 1);
@@ -459,4 +459,100 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   expect(calculations[0].body).toEqual({rowVersion:version,recalculateEmploymentIds:[employee.employmentId]});
   expect(state.writes.filter(item=>item.path.endsWith("/novelties"))).toHaveLength(1);
   expect(state.reads.length).toBe(readsBefore);
+});
+
+
+test("perfil y nueva vigencia se configuran sin consultas ocultas ni volver a elegir reglas al liquidar", async ({ page, baseURL }) => {
+  await page.clock.install({time:new Date("2027-01-01T15:00:00Z")});
+  const state=await setup(page,baseURL!);
+  let profile={profileId:"profile",code:"OPER",name:"Operativo",ruleSetId:"rules",isActive:true,rowVersion:version,
+    mappings:[{mappingId:"net",conceptId:null,debitAccountId:null,creditAccountId:"net-account",creditAccountLabel:"250505 · Nómina por pagar",effectiveFrom:"2026-01-01",effectiveTo:null}]};
+  const profileReads:string[]=[];
+  await page.route("**/payroll/profiles**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(route.request().method()==="PUT"){
+      profile={...route.request().postDataJSON(),rowVersion:"AAAAAAAAAAI="};
+      await route.fulfill({json:profile});return;
+    }
+    profileReads.push(path);
+    await route.fulfill({json:path.endsWith("/profiles")?{items:[profile],page:1,pageSize:20,totalCount:1,totalPages:1}:profile});
+  });
+  await page.goto("/dashboard/payroll?section=configuration");
+  await expect(page.getByRole("heading",{name:"Perfiles contables",exact:true})).toBeVisible();
+  expect(profileReads).toEqual([]);
+  expect(state.reads.filter(read=>read.path.includes("account-options")||read.path.endsWith("/accounting/accounts"))).toEqual([]);
+  await page.getByRole("combobox",{name:"Consultar perfil de contrato"}).click();
+  await page.getByRole("option",{name:"OPER · Operativo",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"Seleccionar cuenta contable"})).toContainText("250505 · Nómina por pagar");
+  expect(profileReads.filter(path=>path.endsWith("/profile"))).toHaveLength(1);
+  expect(state.reads.filter(read=>read.path.includes("account-options"))).toHaveLength(0);
+  await page.getByLabel("Nombre",{exact:true}).fill("Operativo actualizado");
+  await page.getByRole("button",{name:"Guardar perfil",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"Consultar perfil de contrato"})).toContainText("Operativo actualizado");
+  const workspaceReads=()=>state.reads.filter(read=>read.path.endsWith("/payroll/options")||read.path.endsWith("/payroll/runs")).length;
+  const baseline=workspaceReads();
+  await page.getByRole("button",{name:"Nueva vigencia",exact:true}).click();
+  await expect(page.getByRole("dialog").getByLabel("Código",{exact:true})).toHaveValue("CO-2026");
+  await page.getByRole("dialog").getByLabel("Nombre",{exact:true}).fill("Parámetros de enero");
+  await page.getByRole("button",{name:"Guardar borrador",exact:true}).click();
+  await expect(page.getByText("CO-2026 · Parámetros de enero",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Aprobar",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Nueva vigencia",exact:true})).toHaveCount(2);
+  expect(workspaceReads()).toBe(baseline);
+  expect(state.writes.some(write=>write.path.includes("/employments/"))).toBe(false);
+  await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();
+  await page.getByRole("button",{name:"Nueva liquidación",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:/Reglas/})).toHaveCount(0);
+  await choose(page,"Periodicidad","Mensual");
+  await page.getByRole("button",{name:"Crear borrador",exact:true}).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.writes.find(write=>write.path.endsWith("/payroll/runs"))!.body).not.toHaveProperty("ruleSetId");
+  expect(workspaceReads()).toBe(baseline);
+});
+
+test("contrato conserva perfil y afiliaciones al editar sin lecturas por cada entidad",async({page,baseURL})=>{
+  const state=await setup(page,baseURL!);
+  const config={accountingProfileId:"oper",healthPartyId:"eps",pensionPartyId:"afp",severancePartyId:"severance",riskPartyId:"arl",compensationPartyId:"ccf",costCenterId:null};
+  const metadata={profileName:"Operativo",healthName:"EPS de prueba",pensionName:"Pensión de prueba",severanceName:"Cesantías de prueba",riskName:"ARL de prueba",compensationName:"Caja de prueba",costCenterName:null};
+  state.employees.push({employmentId:"contract",partyId:"party",businessId,employeeId:"employee",employeeName:"Elena Prueba",contractTypeOptionId:"payroll-contract-type-Indefinite",
+    salaryTypeOptionId:"payroll-salary-type-Ordinary",payFrequencyOptionId:"payroll-pay-frequency-Monthly",riskClassOptionId:"payroll-risk-class-I",workerTypeOptionId:"payroll-worker-type-01",workerSubtypeOptionId:"payroll-worker-subtype-00",
+    paymentMethodOptionId:"payroll-payment-method-Cash",contractNumber:"PROFILE-01",startDate:"2026-01-01",endDate:null,monthlySalary:1000000,integralSalaryPercentage:null,bankAccountReference:null,bankOptionId:null,bankAccountTypeOptionId:null,bankAccountNumber:null,isActive:true,appliesTransportAllowance:true,rowVersion:version,configuration:{values:config,...metadata}});
+  const institutions:string[]=[];const profiles:string[]=[];
+  await page.route("**/payroll/profiles**",async route=>{
+    profiles.push(route.request().url());
+    await route.fulfill({json:{items:[{profileId:"oper",code:"OPER",name:"Operativo",ruleSetId:"rules",isActive:true,rowVersion:version,mappings:[]}],page:1,pageSize:10,totalCount:1,totalPages:1}});
+  });
+  await page.route("**/parties/role-options**",async route=>{
+    institutions.push(route.request().url());
+    await route.fulfill({json:{items:[{partyId:"eps-new",roleId:"eps-new",role:"Any",displayName:"Nueva EPS de prueba",identification:"900001"}],page:1,pageSize:10,totalCount:1,totalPages:1}});
+  });
+  await page.route("**/payroll/employments/contract",async route=>{
+    const body=route.request().postDataJSON();
+    const result={...state.employees[0],...body,configuration:{values:body.configuration,...metadata,healthName:"Nueva EPS de prueba"}};
+    state.employees[0]=result;
+    await route.fulfill({json:result});
+  });
+  await page.goto("/dashboard/payroll?section=employments");
+  await page.getByRole("button",{name:"Editar",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"Parámetro de nómina",exact:true})).toContainText("Operativo");
+  await expect(page.getByRole("combobox",{name:"EPS",exact:true})).toContainText("EPS de prueba");
+  expect(institutions).toHaveLength(0);expect(profiles).toHaveLength(0);
+  await page.getByRole("combobox",{name:"Parámetro de nómina",exact:true}).click();
+  await page.getByRole("option",{name:"OPER · Operativo",exact:true}).click();
+  expect(profiles).toHaveLength(1);expect(new URL(profiles[0]).searchParams.get("isActive")).toBe("true");
+  await page.getByRole("combobox",{name:"EPS",exact:true}).click();
+  await page.getByRole("option",{name:/Nueva EPS de prueba/}).click();
+  expect(institutions).toHaveLength(1);
+  expect(new URL(institutions[0]).searchParams.get("partyType")).toBe("Organization");
+  const before=state.reads.length;
+  await page.getByRole("button",{name:"Guardar contrato",exact:true}).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.reads.length).toBe(before);
+  await page.getByRole("button",{name:"Editar",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"EPS",exact:true})).toContainText("Nueva EPS de prueba");
+  expect(institutions).toHaveLength(1);
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole("combobox",{name:"Parámetro de nómina",exact:true}).scrollIntoViewIfNeeded();
+  await expect(page.getByRole("combobox",{name:"Fondo de pensiones",exact:true})).toBeVisible();
+  await page.screenshot({path:"test-results/payroll-contract-profile-mobile.png",fullPage:true});
 });

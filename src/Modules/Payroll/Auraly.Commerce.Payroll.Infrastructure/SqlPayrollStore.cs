@@ -20,13 +20,32 @@ public sealed partial class SqlPayrollStore(
     TimeProvider timeProvider,
     ILogger<SqlPayrollStore> logger) : IPayrollStore
 {
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private const string EmploymentConfigurationProjection = """
+        ,JSON_QUERY((SELECT e.AccountingProfileId AS [Values.AccountingProfileId],e.HealthPartyId AS [Values.HealthPartyId],
+          e.PensionPartyId AS [Values.PensionPartyId],e.SeverancePartyId AS [Values.SeverancePartyId],
+          e.RiskPartyId AS [Values.RiskPartyId],e.CompensationPartyId AS [Values.CompensationPartyId],
+          e.CostCenterId AS [Values.CostCenterId],profile.Name AS ProfileName,center.Name AS CostCenterName,
+          health.DisplayName AS HealthName,pension.DisplayName AS PensionName,severance.DisplayName AS SeveranceName,
+          riskEntity.DisplayName AS RiskName,compensation.DisplayName AS CompensationName
+          FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER))
+        """;
+    private const string EmploymentConfigurationJoins = """
+        LEFT JOIN payroll.AccountingProfiles profile ON profile.ProfileId=e.AccountingProfileId AND profile.TenantId=e.TenantId
+        LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=e.CostCenterId AND center.TenantId=e.TenantId
+        LEFT JOIN dbo.Parties health ON health.PartyId=e.HealthPartyId AND health.TenantId=e.TenantId
+        LEFT JOIN dbo.Parties pension ON pension.PartyId=e.PensionPartyId AND pension.TenantId=e.TenantId
+        LEFT JOIN dbo.Parties severance ON severance.PartyId=e.SeverancePartyId AND severance.TenantId=e.TenantId
+        LEFT JOIN dbo.Parties riskEntity ON riskEntity.PartyId=e.RiskPartyId AND riskEntity.TenantId=e.TenantId
+        LEFT JOIN dbo.Parties compensation ON compensation.PartyId=e.CompensationPartyId AND compensation.TenantId=e.TenantId
+        """;
     public async Task<PayrollEmploymentPage> PageEmploymentsAsync(
         PayrollUserIdentity user, int page, int pageSize, string? search,
         bool? isActive, Guid? employmentId, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await using var command = new SqlCommand("""
+        await using var command = new SqlCommand($"""
             SELECT COUNT_BIG(1)
             FROM payroll.Employments e
             JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
@@ -37,6 +56,17 @@ public sealed partial class SqlPayrollStore(
                    OR p.Identification LIKE N'%'+@Search+N'%'
                    OR e.ContractNumber LIKE N'%'+@Search+N'%');
 
+            WITH EmploymentPage AS (
+                SELECT e.* FROM payroll.Employments e
+                JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+                WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+                  AND (@IsActive IS NULL OR e.IsActive=@IsActive)
+                  AND (@EmploymentId IS NULL OR e.EmploymentId=@EmploymentId)
+                  AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%'
+                       OR p.Identification LIKE N'%'+@Search+N'%'
+                       OR e.ContractNumber LIKE N'%'+@Search+N'%')
+                ORDER BY e.IsActive DESC,COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),e.EmploymentId
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY)
             SELECT e.EmploymentId,e.PartyId,e.BusinessId,e.ContractNumber,
                    COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
                    e.MonthlySalary,e.IsActive,e.EmployeeId,e.ContractTypeOptionId,
@@ -44,16 +74,11 @@ public sealed partial class SqlPayrollStore(
                    e.WorkerTypeOptionId,e.WorkerSubtypeOptionId,e.PaymentMethodOptionId,
                    e.StartDate,e.EndDate,e.IntegralSalaryPercentage,e.BankAccountReference,
                    e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.RowVersion,e.AppliesTransportAllowance
-            FROM payroll.Employments e
+                   {EmploymentConfigurationProjection}
+            FROM EmploymentPage e
             JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
-            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
-              AND (@IsActive IS NULL OR e.IsActive=@IsActive)
-              AND (@EmploymentId IS NULL OR e.EmploymentId=@EmploymentId)
-              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%'
-                   OR p.Identification LIKE N'%'+@Search+N'%'
-                   OR e.ContractNumber LIKE N'%'+@Search+N'%')
-            ORDER BY e.IsActive DESC,5,e.EmploymentId
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            {EmploymentConfigurationJoins}
+            ORDER BY e.IsActive DESC,5,e.EmploymentId;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -76,7 +101,7 @@ public sealed partial class SqlPayrollStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await using var command = new SqlCommand("""
+        await using var command = new SqlCommand($"""
             SELECT OptionId,CatalogCode,Code,Label,Description,MetadataCode,DianCode,IsActive,SortOrder
             FROM payroll.CatalogOptions WHERE IsActive=1 ORDER BY CatalogCode,SortOrder,Code;
 
@@ -99,7 +124,9 @@ public sealed partial class SqlPayrollStore(
                    e.WorkerTypeOptionId,e.WorkerSubtypeOptionId,e.PaymentMethodOptionId,
                    e.StartDate,e.EndDate,e.IntegralSalaryPercentage,e.BankAccountReference,
                    e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.RowVersion,e.AppliesTransportAllowance
+                   {EmploymentConfigurationProjection}
             FROM payroll.Employments e JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+            {EmploymentConfigurationJoins}
             WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND 1=0 ORDER BY e.IsActive DESC,5;
 
             SELECT p.PartyId,e.EmployeeId,p.Identification,
@@ -427,6 +454,28 @@ public sealed partial class SqlPayrollStore(
                     THROW 51703,N'Una opción del contrato no pertenece al catálogo esperado.',1;
                 IF @WorkerSubtype IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@WorkerSubtype AND CatalogCode=N'payroll-worker-subtype' AND IsActive=1)
                     THROW 51704,N'El subtipo de trabajador no es válido.',1;
+                IF @Configuration IS NOT NULL
+                BEGIN
+                  IF JSON_VALUE(@Configuration,'$.accountingProfileId') IS NOT NULL AND
+                    (JSON_VALUE(@Configuration,'$.healthPartyId') IS NULL OR JSON_VALUE(@Configuration,'$.pensionPartyId') IS NULL
+                     OR JSON_VALUE(@Configuration,'$.severancePartyId') IS NULL OR JSON_VALUE(@Configuration,'$.riskPartyId') IS NULL
+                     OR JSON_VALUE(@Configuration,'$.compensationPartyId') IS NULL)
+                    THROW 51704,N'Para usar un perfil completa EPS, pensión, cesantías, ARL y caja de compensación del contrato.',1;
+                  IF EXISTS(SELECT 1 FROM OPENJSON(@Configuration) value
+                    WHERE value.[key] IN(N'healthPartyId',N'pensionPartyId',N'severancePartyId',N'riskPartyId',N'compensationPartyId')
+                      AND value.[type]<>0 AND NOT EXISTS(SELECT 1 FROM dbo.Parties party
+                        WHERE party.PartyId=TRY_CONVERT(uniqueidentifier,value.value) AND party.TenantId=@TenantId
+                          AND party.PartyType=N'Organization' AND party.IsActive=1))
+                    THROW 51704,N'Las entidades de afiliación deben ser terceros jurídicos activos de esta empresa.',1;
+                  IF JSON_VALUE(@Configuration,'$.accountingProfileId') IS NOT NULL AND NOT EXISTS(
+                    SELECT 1 FROM payroll.AccountingProfiles WHERE ProfileId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.accountingProfileId'))
+                      AND TenantId=@TenantId AND IsActive=1)
+                    THROW 51704,N'El perfil de nómina no está activo en esta empresa.',1;
+                  IF JSON_VALUE(@Configuration,'$.costCenterId') IS NOT NULL AND NOT EXISTS(
+                    SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.costCenterId'))
+                      AND TenantId=@TenantId AND IsActive=1)
+                    THROW 51704,N'El centro de costo no está activo en esta empresa.',1;
+                END;
                 IF @Bank IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@Bank AND CatalogCode=N'payroll-bank' AND IsActive=1)
                     THROW 51704,N'El banco no pertenece al catálogo de nómina.',1;
                 IF @BankAccountType IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@BankAccountType AND CatalogCode=N'payroll-bank-account-type' AND IsActive=1)
@@ -461,6 +510,16 @@ public sealed partial class SqlPayrollStore(
                       @Salary,@IntegralPercentage,@BankReference,@Bank,@BankAccountType,
                       @BankAccountNumber,COALESCE(@ApplyTransport,CAST(1 AS bit)),@Active,@UserId,@Now);
                 END
+                IF @Configuration IS NOT NULL
+                  UPDATE payroll.Employments SET
+                    AccountingProfileId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.accountingProfileId')),
+                    HealthPartyId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.healthPartyId')),
+                    PensionPartyId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.pensionPartyId')),
+                    SeverancePartyId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.severancePartyId')),
+                    RiskPartyId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.riskPartyId')),
+                    CompensationPartyId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.compensationPartyId')),
+                    CostCenterId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(@Configuration,'$.costCenterId'))
+                  WHERE EmploymentId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId;
                 """, connection, tx);
             AddEmploymentParameters(command, user, request);
             await command.ExecuteNonQueryAsync(ct);
@@ -541,6 +600,9 @@ public sealed partial class SqlPayrollStore(
                 ELSE INSERT payroll.RuleSets(RuleSetId,TenantId,CountryCode,Code,Name,EffectiveFrom,EffectiveTo,
                     SourceReference,Status,CreatedBy,CreatedAt)
                   VALUES(@Id,@TenantId,@Country,@Code,@Name,@From,@To,@Source,N'Draft',@UserId,@Now);
+                INSERT payroll.RuleParameters(RuleParameterId,RuleSetId,Code,NumericValue,UnitCode,Description)
+                SELECT ParameterId,@Id,Code,NumericValue,UnitCode,Description FROM OPENJSON(@Parameters)
+                  WITH(ParameterId uniqueidentifier,Code nvarchar(64),NumericValue decimal(19,8),UnitCode nvarchar(32),Description nvarchar(300));
                 """, connection, tx))
             {
                 command.Parameters.AddWithValue("@Id", request.RuleSetId);
@@ -554,30 +616,19 @@ public sealed partial class SqlPayrollStore(
                 command.Parameters.AddWithValue("@UserId", user.UserId);
                 command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
                 command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value = (object?)request.RowVersion ?? DBNull.Value;
+                command.Parameters.Add("@Parameters",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(request.Parameters.Select(parameter=>new {
+                    ParameterId=ids.NewId(),parameter.Code,parameter.NumericValue,parameter.UnitCode,parameter.Description
+                }));
                 await command.ExecuteNonQueryAsync(ct);
             }
-            foreach (var parameter in request.Parameters)
-            {
-                await using var insert = new SqlCommand("""
-                    INSERT payroll.RuleParameters(RuleParameterId,RuleSetId,Code,NumericValue,UnitCode,Description)
-                    VALUES(@ParameterId,@RuleSetId,@Code,@Value,@Unit,@Description);
-                    """, connection, tx);
-                insert.Parameters.AddWithValue("@ParameterId", ids.NewId());
-                insert.Parameters.AddWithValue("@RuleSetId", request.RuleSetId);
-                insert.Parameters.AddWithValue("@Code", parameter.Code);
-                Decimal(insert, "@Value", parameter.NumericValue, 8);
-                insert.Parameters.AddWithValue("@Unit", parameter.UnitCode);
-                insert.Parameters.AddWithValue("@Description", (object?)parameter.Description ?? DBNull.Value);
-                await insert.ExecuteNonQueryAsync(ct);
-            }
-            await tx.CommitAsync(ct);
+            var result=await ReadRuleSetAsync(connection,tx,user.TenantId,request.RuleSetId,ct);
+            await tx.CommitAsync(ct);return result;
         }
         catch (SqlException error) when (error.Number == 51720)
         { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException(error.Message); }
         catch (SqlException error) when (error.Number is 2601 or 2627)
         { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException("Ya existe un conjunto o parámetro con ese código y vigencia."); }
         catch { await tx.RollbackAsync(CancellationToken.None); throw; }
-        return (await GetOptionsAsync(user, ct)).RuleSets.Single(x => x.RuleSetId == request.RuleSetId);
     }
 
     public async Task<PayrollRuleSetView> ApproveRuleSetAsync(PayrollUserIdentity user,
@@ -610,14 +661,15 @@ public sealed partial class SqlPayrollStore(
             update.Parameters.AddWithValue("@Id", ruleSetId); update.Parameters.AddWithValue("@TenantId", user.TenantId);
             update.Parameters.AddWithValue("@UserId", user.UserId); update.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
             update.Parameters.Add("@Version", SqlDbType.Timestamp).Value = rowVersion;
-            await update.ExecuteNonQueryAsync(ct); await tx.CommitAsync(ct);
+            await update.ExecuteNonQueryAsync(ct);
+            var result=await ReadRuleSetAsync(connection,tx,user.TenantId,ruleSetId,ct);
+            await tx.CommitAsync(ct);return result;
         }
         catch (Exception error) when (error is PayrollConflictException or PayrollValidationException)
         { await tx.RollbackAsync(CancellationToken.None); throw; }
         catch (SqlException error) when (error.Number == 51721)
         { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException(error.Message); }
         catch { await tx.RollbackAsync(CancellationToken.None); throw; }
-        return (await GetOptionsAsync(user, ct)).RuleSets.Single(x => x.RuleSetId == ruleSetId);
     }
 
     public async Task<PayrollRuleSetView> RetireRuleSetAsync(PayrollUserIdentity user,
@@ -636,7 +688,7 @@ public sealed partial class SqlPayrollStore(
         try { await command.ExecuteNonQueryAsync(ct); }
         catch (SqlException error) when (error.Number == 51721)
         { throw new PayrollConflictException(error.Message); }
-        return (await GetOptionsAsync(user, ct)).RuleSets.Single(x => x.RuleSetId == ruleSetId);
+        return await ReadRuleSetAsync(connection,null,user.TenantId,ruleSetId,ct);
     }
 
     public async Task<PayrollDeductionAgreementView> SaveDeductionAgreementAsync(
@@ -1044,7 +1096,7 @@ public sealed partial class SqlPayrollStore(
                 EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,1;
                 INSERT payroll.OutboxMessages(OutboxMessageId,TenantId,BusinessId,AggregateId,MessageType,
                   PayloadJson,OccurredAt,AttemptCount)
-                VALUES(@OutboxId,@TenantId,@BusinessId,@BatchId,N'AccountingPostingRequested',@Payload,@Now,0);
+                VALUES(@OutboxId,@TenantId,@BusinessId,@BatchId,N'AccountingPostingRequested',@Notification,@Now,0);
                 SELECT batch.RowVersion,COALESCE(batch.PaymentMethodName,method.Label),posting.AccountingStatus,posting.IsPaid FROM payroll.PaymentBatches batch
                   JOIN payroll.PaymentBatchPostingStatus posting ON posting.PaymentBatchId=batch.PaymentBatchId AND posting.TenantId=batch.TenantId AND posting.BusinessId=batch.BusinessId
                   JOIN payroll.CatalogOptions method ON method.OptionId=batch.PaymentMethodOptionId
@@ -1067,6 +1119,8 @@ public sealed partial class SqlPayrollStore(
             save.Parameters.AddWithValue("@UserId", user.UserId);
             save.Parameters.AddWithValue("@Now", now);
             save.Parameters.AddWithValue("@Payload", json);
+            save.Parameters.Add("@Notification",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(new{
+                DocumentId=request.PaymentBatchId,DocumentType=PayrollAccountingDocumentTypes.Payment,BusinessId=user.BusinessId},Json);
             save.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
             save.Parameters.AddWithValue("@OccurredAt", new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(
                 request.PaymentDate.ToDateTime(new TimeOnly(12,0)),paymentZone)));
@@ -1110,9 +1164,6 @@ public sealed partial class SqlPayrollStore(
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51740,N'La empresa está fuera del tenant.',1;
-            IF NOT EXISTS(SELECT 1 FROM payroll.RuleSets WHERE RuleSetId=@RuleSetId AND (TenantId=@TenantId OR TenantId IS NULL)
-              AND Status=N'Approved' AND EffectiveFrom<=@PeriodStart AND (EffectiveTo IS NULL OR EffectiveTo>=@PeriodEnd))
-              THROW 51741,N'El conjunto de reglas no está aprobado o vigente.',1;
             IF NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@Frequency AND CatalogCode=N'payroll-pay-frequency' AND IsActive=1)
               THROW 51742,N'La periodicidad no es válida.',1;
             IF NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE Code=@Kind AND CatalogCode=N'payroll-run-kind' AND IsActive=1)
@@ -1125,11 +1176,11 @@ public sealed partial class SqlPayrollStore(
             INSERT payroll.Runs(PayrollRunId,TenantId,BusinessId,RuleSetId,PayFrequencyOptionId,RunKind,
               OriginalPayrollRunId,PeriodStart,PeriodEnd,PaymentDate,Status,CalculationVersion,TotalEarnings,
               TotalDeductions,TotalEmployerContributions,TotalProvisions,NetPayable,CreatedBy,CreatedAt)
-            VALUES(@Id,@TenantId,@BusinessId,@RuleSetId,@Frequency,@Kind,@OriginalId,@PeriodStart,@PeriodEnd,
+            VALUES(@Id,@TenantId,@BusinessId,NULL,@Frequency,@Kind,@OriginalId,@PeriodStart,@PeriodEnd,
               @PaymentDate,N'Draft',0,0,0,0,0,0,@UserId,@Now);
             """, connection);
         command.Parameters.AddWithValue("@Id", request.PayrollRunId); command.Parameters.AddWithValue("@TenantId", user.TenantId);
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId); command.Parameters.AddWithValue("@RuleSetId", request.RuleSetId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@Frequency", request.PayFrequencyOptionId); command.Parameters.AddWithValue("@Kind", request.RunKind);
         command.Parameters.AddWithValue("@OriginalId", (object?)request.OriginalPayrollRunId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PeriodStart", request.PeriodStart.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@PeriodEnd", request.PeriodEnd.ToDateTime(TimeOnly.MinValue));
@@ -1145,10 +1196,10 @@ public sealed partial class SqlPayrollStore(
         CalculatePayrollRunRequest? request = null)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(ct);
-        Guid ruleSetId; bool exempt; byte[] runVersion; byte[] settingsVersion;
+        bool exempt; byte[] runVersion; byte[] settingsVersion;
         PayrollWorkPeriod period; bool partial;
         await using (var run = new SqlCommand("""
-            SELECT r.RuleSetId,r.PeriodStart,r.PeriodEnd,TRY_CONVERT(int,f.MetadataCode),r.RunKind,
+            SELECT r.PayrollRunId,r.PeriodStart,r.PeriodEnd,TRY_CONVERT(int,f.MetadataCode),r.RunKind,
                 COALESCE(s.IsEmployerExemptFromHealthSenaIcbf,CAST(0 AS bit)),r.RowVersion,
                 COALESCE(CONVERT(binary(8),s.RowVersion),CONVERT(binary(8),0x0)),r.Status,r.SelectionInitialized
             FROM payroll.Runs r JOIN payroll.CatalogOptions f ON f.OptionId=r.PayFrequencyOptionId
@@ -1161,7 +1212,7 @@ public sealed partial class SqlPayrollStore(
             run.Parameters.AddWithValue("@BusinessId",user.BusinessId);
             await using var reader=await run.ExecuteReaderAsync(ct);
             if(!await reader.ReadAsync(ct))throw new PayrollConflictException("La liquidación no existe o ya no admite cálculo.");
-            ruleSetId=reader.GetGuid(0); exempt=reader.GetBoolean(5); runVersion=(byte[])reader[6]; settingsVersion=(byte[])reader[7];
+            exempt=reader.GetBoolean(5); runVersion=(byte[])reader[6]; settingsVersion=(byte[])reader[7];
             if(request?.RowVersion is not null && !runVersion.SequenceEqual(request.RowVersion))
                 throw new PayrollConflictException("La liquidación cambió. Actualízala antes de continuar.");
             try
@@ -1175,16 +1226,6 @@ public sealed partial class SqlPayrollStore(
             if(partial && (reader.GetString(8)!=PayrollRunStatus.Calculated.ToString() || !reader.GetBoolean(9)))
                 throw new PayrollValidationException("Liquida primero los trabajadores antes de recalcularlos en Novedades.");
         }
-        var rules=new Dictionary<string,decimal>(StringComparer.Ordinal);
-        await using(var command=new SqlCommand("SELECT Code,NumericValue FROM payroll.RuleParameters WHERE RuleSetId=@Id;",connection))
-        {
-            command.Parameters.AddWithValue("@Id",ruleSetId);
-            await using var reader=await command.ExecuteReaderAsync(ct);
-            while(await reader.ReadAsync(ct))rules.Add(reader.GetString(0),reader.GetDecimal(1));
-        }
-        try{PayrollCalculator.ValidateRuleParameters(rules);}
-        catch(PayrollCalculationException error){throw new PayrollValidationException(error.Message);}
-
         var employees=new List<EmployeeSeed>();
         await using(var command=new SqlCommand("""
             SELECT COUNT(*) FROM OPENJSON(@ChangesJson) WITH(EmploymentId uniqueidentifier,IsSelected bit) change
@@ -1228,6 +1269,7 @@ public sealed partial class SqlPayrollStore(
         }
         if(employees.Count>PayrollPaymentLimits.MaximumEmployees)
             throw new PayrollValidationException("El cálculo admite hasta 500 trabajadores por comando.");
+        var profileRules=await ReadProfileRulesAsync(connection,user,employees,period,ct);
         var employeeIds=JsonSerializer.Serialize(employees.Select(employee=>new{employee.EmploymentId}));
         var concepts=new Dictionary<Guid,PayrollConceptDefinition>();
         var conceptVersions=new Dictionary<Guid,byte[]>();
@@ -1300,13 +1342,13 @@ public sealed partial class SqlPayrollStore(
             }
         }
         var inputs=employees.Select(employee=>new PayrollEmployeeCalculationInput(employee.EmploymentId,employee.PartyId,employee.MonthlySalary,employee.WorkedDays,
-            employee.IsIntegral,exempt,employee.RiskRate,rules,systemConcepts,noveltyLookup[employee.EmploymentId],employee.AppliesTransportAllowance,employee.EmploymentVersion,
+            employee.IsIntegral,exempt,employee.RiskRate,profileRules[employee.EmploymentId].Rules,systemConcepts,noveltyLookup[employee.EmploymentId],employee.AppliesTransportAllowance,employee.EmploymentVersion,
             employee.TransportBaseWorkedDays) {PeriodDays=period.NominalDays}).ToArray();
         return new(runId,inputs,runVersion)
         {
             PeriodDays=period.NominalDays,IsPartial=partial,ContextVersionHash=SHA256.HashData(contextBytes.ToArray()),
             Sources=employees.ToDictionary(employee=>employee.EmploymentId,employee=>new PayrollEmployeeCalculationSource(employee.MaximumContractDays,
-                SHA256.HashData(noveltyVersions[employee.EmploymentId].ToArray())))
+                SHA256.HashData(noveltyVersions[employee.EmploymentId].ToArray()),profileRules[employee.EmploymentId].RuleSetId))
         };
     }
 
@@ -1324,18 +1366,16 @@ public sealed partial class SqlPayrollStore(
         await using var tx = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
-            Guid ruleSetId;
             await using (var lockRun = new SqlCommand("""
-                SELECT RuleSetId FROM payroll.Runs WITH(UPDLOCK,HOLDLOCK)
+                SELECT PayrollRunId FROM payroll.Runs WITH(UPDLOCK,HOLDLOCK)
                 WHERE PayrollRunId=@RunId AND TenantId=@TenantId AND BusinessId=@BusinessId
                   AND Status IN(N'Draft',N'Calculated') AND RowVersion=@RowVersion;
                 """, connection, tx))
             {
                 lockRun.Parameters.AddWithValue("@RunId", runId); lockRun.Parameters.AddWithValue("@TenantId", user.TenantId); lockRun.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                 lockRun.Parameters.Add("@RowVersion",SqlDbType.Binary,8).Value=data.RowVersion;
-                ruleSetId = (Guid?)await lockRun.ExecuteScalarAsync(ct) ?? throw new PayrollConflictException("La liquidación ya no admite cálculo.");
+                if(await lockRun.ExecuteScalarAsync(ct) is not Guid)throw new PayrollConflictException("La liquidación ya no admite cálculo.");
             }
-            var ruleSnapshot = await RuleSnapshotAsync(connection, tx, ruleSetId, ct);
             var calculatedRows=calculations.Select(calculation=>new {
                 Id=ids.NewId(),calculation.EmploymentId,calculation.PartyId,calculation.WorkedDays,
                 calculation.Earnings,calculation.Deductions,calculation.EmployerContributions,
@@ -1343,6 +1383,8 @@ public sealed partial class SqlPayrollStore(
                 EmploymentVersion=calculation.EmploymentVersion!,
                 BaseWorkedDays=sourceInputs[calculation.EmploymentId].WorkedDays,
                 calculation.TransportBaseWorkedDays,calculation.ConceptWorkedDays,
+                EffectiveRuleSetId=data.Sources[calculation.EmploymentId].RuleSetId,
+                RuleSnapshot=JsonSerializer.Serialize(new SortedDictionary<string,decimal>(sourceInputs[calculation.EmploymentId].RuleParameters.ToDictionary(item=>item.Key,item=>item.Value),StringComparer.Ordinal)),
                 data.Sources[calculation.EmploymentId].MaximumContractDays,
                 sourceInputs[calculation.EmploymentId].RiskRate,
                 data.Sources[calculation.EmploymentId].NoveltyVersionHash,
@@ -1382,10 +1424,16 @@ public sealed partial class SqlPayrollStore(
             var conceptRows=calculatedRows.SelectMany(row=>row.Lines).Select(line=>new {
                 line.ConceptId,line.ConceptCode,line.ConceptName,line.Nature,line.AccountingCategoryCode,line.DianConceptCode
             }).Distinct();
-            await using(var batch=new SqlCommand("""
-                DECLARE @DayInputs TABLE(EmploymentId uniqueidentifier PRIMARY KEY,TransportBaseWorkedDays decimal(9,4),ConceptWorkedDays nvarchar(max));
-                INSERT @DayInputs SELECT EmploymentId,TransportBaseWorkedDays,ConceptWorkedDays
-                FROM OPENJSON(@DayInputsJson) WITH(EmploymentId uniqueidentifier,TransportBaseWorkedDays decimal(9,4),ConceptWorkedDays nvarchar(max) AS JSON);
+            await using(var batch=new SqlCommand($"""
+                DECLARE @DayInputs TABLE(EmploymentId uniqueidentifier PRIMARY KEY,TransportBaseWorkedDays decimal(9,4),ConceptWorkedDays nvarchar(max),EffectiveRuleSetId uniqueidentifier,RuleSnapshot nvarchar(max));
+                INSERT @DayInputs SELECT EmploymentId,TransportBaseWorkedDays,ConceptWorkedDays,EffectiveRuleSetId,RuleSnapshot
+                FROM OPENJSON(@DayInputsJson) WITH(EmploymentId uniqueidentifier,TransportBaseWorkedDays decimal(9,4),ConceptWorkedDays nvarchar(max) AS JSON,EffectiveRuleSetId uniqueidentifier,RuleSnapshot nvarchar(max));
+                IF EXISTS(SELECT 1 FROM @EmployeeRows input JOIN @DayInputs days ON days.EmploymentId=input.EmploymentId
+                  JOIN payroll.Employments e ON e.EmploymentId=input.EmploymentId AND e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+                  JOIN payroll.Runs run ON run.PayrollRunId=@RunId AND run.TenantId=@TenantId AND run.BusinessId=@BusinessId
+                  CROSS APPLY payroll.ProfileRuleConfiguration(@TenantId,e.AccountingProfileId,run.PeriodStart,run.PeriodEnd) configuration
+                  WHERE configuration.Issue IS NOT NULL OR configuration.RuleSetId<>days.EffectiveRuleSetId)
+                  THROW 51750,N'El perfil de un contrato cambió durante el cálculo; recalcula con sus parámetros vigentes.',1;
                 IF EXISTS(SELECT 1 FROM @EmployeeRows employee LEFT JOIN @DayInputs days ON days.EmploymentId=employee.EmploymentId WHERE days.EmploymentId IS NULL)
                     THROW 51750,N'Faltan las entradas de días de un trabajador calculado.',1;
                 IF @Partial=1
@@ -1439,14 +1487,16 @@ public sealed partial class SqlPayrollStore(
                         COALESCE(subtype.DianCode,N'00') AS WorkerSubtypeCode,
                         COALESCE(payment.DianCode,N'') AS PaymentMethodCode,
                         COALESCE(frequency.DianCode,N'') AS PayrollPeriodCode,
-                        bank.Label AS Bank,accountType.MetadataCode AS BankAccountType,e.BankAccountNumber
+                        bank.Label AS Bank,accountType.MetadataCode AS BankAccountType,e.BankAccountNumber,days.EffectiveRuleSetId
+                        {EmploymentConfigurationProjection} AS Configuration
                     FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER),
-                  @RuleSnapshot,input.WorkedDays,input.Earnings,input.Deductions,input.EmployerContributions,input.Provisions,input.NetPayable,input.Hash
+                  days.RuleSnapshot,input.WorkedDays,input.Earnings,input.Deductions,input.EmployerContributions,input.Provisions,input.NetPayable,input.Hash
                 FROM @EmployeeRows input
                 JOIN @DayInputs days ON days.EmploymentId=input.EmploymentId
                 JOIN payroll.Employments e ON e.EmploymentId=input.EmploymentId AND e.PartyId=input.PartyId
                   AND e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND e.RowVersion=input.EmploymentVersion
                 JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+                {EmploymentConfigurationJoins}
                   JOIN payroll.CatalogOptions salary ON salary.OptionId=e.SalaryTypeOptionId
                   JOIN payroll.CatalogOptions contract ON contract.OptionId=e.ContractTypeOptionId
                   JOIN payroll.CatalogOptions worker ON worker.OptionId=e.WorkerTypeOptionId
@@ -1472,7 +1522,7 @@ public sealed partial class SqlPayrollStore(
                 """,connection,tx))
             {
                 batch.Parameters.AddWithValue("@TenantId",user.TenantId);batch.Parameters.AddWithValue("@BusinessId",user.BusinessId);
-                batch.Parameters.AddWithValue("@RunId",runId);batch.Parameters.AddWithValue("@RuleSnapshot",ruleSnapshot);
+                batch.Parameters.AddWithValue("@RunId",runId);
                 batch.Parameters.AddWithValue("@Partial",data.IsPartial);batch.Parameters.AddWithValue("@PeriodDays",data.PeriodDays);
                 batch.Parameters.Add("@ContextHash",SqlDbType.Binary,32).Value=data.ContextVersionHash;
                 batch.Parameters.AddWithValue("@EmployeeCount",calculatedRows.Length);batch.Parameters.AddWithValue("@LineCount",calculations.Sum(value=>value.Lines.Count));
@@ -1482,7 +1532,7 @@ public sealed partial class SqlPayrollStore(
                 lines.TypeName="payroll.CalculationLineInput";lines.Value=lineRows;
                 batch.Parameters.Add("@ConceptsJson",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(conceptRows);
                 batch.Parameters.Add("@DayInputsJson",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(calculatedRows.Select(row=>new {
-                    row.EmploymentId,row.TransportBaseWorkedDays,row.ConceptWorkedDays
+                    row.EmploymentId,row.TransportBaseWorkedDays,row.ConceptWorkedDays,row.EffectiveRuleSetId,row.RuleSnapshot
                 }));
                 await batch.ExecuteNonQueryAsync(ct);
             }
@@ -1558,7 +1608,7 @@ public sealed partial class SqlPayrollStore(
             var accountingLines = await BuildAccountingLinesAsync(connection, tx, runId, ct);
             var description = $"Nómina {start:yyyy-MM-dd} a {end:yyyy-MM-dd}";
             var payload = new PayrollAccountingPayload(user.TenantId, user.BusinessId, runId, kind,
-                start, end, payment, description, accountingLines);
+                start, end, payment, description, accountingLines.Lines){Employees=accountingLines.Employees,Concepts=accountingLines.Concepts};
             var json = PayrollContractSerializer.Serialize(payload); var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(json)); var jobId = ids.NewId(); var now = timeProvider.GetUtcNow();
             await using var approve = new SqlCommand("""
                 IF EXISTS(SELECT 1 FROM payroll.RunEmployees result
@@ -1569,6 +1619,28 @@ public sealed partial class SqlPayrollStore(
                     TRY_CONVERT(binary(8),JSON_VALUE(result.EmployeeSnapshotJson,'$.EmploymentVersion'),2) IS NULL OR
                     employment.RowVersion<>TRY_CONVERT(binary(8),JSON_VALUE(result.EmployeeSnapshotJson,'$.EmploymentVersion'),2)))
                   THROW 51764,N'Un contrato cambió o el cálculo no conserva su versión. Recalcula antes de contabilizar.',1;
+                -- The version guard above also rejects a non-object snapshot.
+                -- Parse its remaining scalar evidence once, preserving JSON_VALUE's
+                -- lax 4,000-character limit before the existing TRY_CONVERT guards.
+                DECLARE @Snapshots TABLE(EmploymentId uniqueidentifier PRIMARY KEY,EffectiveRuleSetId uniqueidentifier,
+                  SnapshotVersion int,ContextHash binary(32),NoveltyHash binary(32),BaseDays decimal(9,4),
+                  MaximumDays decimal(9,4),RiskRate decimal(19,8),PeriodDays int,EmployeeSnapshotJson nvarchar(max));
+                INSERT @Snapshots
+                SELECT result.EmploymentId,
+                  TRY_CONVERT(uniqueidentifier,CASE WHEN DATALENGTH(snapshot.EffectiveRuleSetId)<=8000 THEN snapshot.EffectiveRuleSetId END),
+                  TRY_CONVERT(int,CASE WHEN DATALENGTH(snapshot.SnapshotVersion)<=8000 THEN snapshot.SnapshotVersion END),
+                  TRY_CONVERT(binary(32),CASE WHEN DATALENGTH(snapshot.ContextHash)<=8000 THEN snapshot.ContextHash END,2),
+                  TRY_CONVERT(binary(32),CASE WHEN DATALENGTH(snapshot.NoveltyHash)<=8000 THEN snapshot.NoveltyHash END,2),
+                  TRY_CONVERT(decimal(9,4),CASE WHEN DATALENGTH(snapshot.BaseDays)<=8000 THEN snapshot.BaseDays END),
+                  TRY_CONVERT(decimal(9,4),CASE WHEN DATALENGTH(snapshot.MaximumDays)<=8000 THEN snapshot.MaximumDays END),
+                  TRY_CONVERT(decimal(19,8),CASE WHEN DATALENGTH(snapshot.RiskRate)<=8000 THEN snapshot.RiskRate END),
+                  TRY_CONVERT(int,CASE WHEN DATALENGTH(snapshot.PeriodDays)<=8000 THEN snapshot.PeriodDays END),result.EmployeeSnapshotJson
+                FROM payroll.RunEmployees result
+                CROSS APPLY OPENJSON(result.EmployeeSnapshotJson) WITH(
+                  EffectiveRuleSetId nvarchar(max),SnapshotVersion nvarchar(max),ContextHash nvarchar(max) '$.ContextVersionHash',
+                  NoveltyHash nvarchar(max) '$.NoveltyVersionHash',BaseDays nvarchar(max) '$.BaseWorkedDays',
+                  MaximumDays nvarchar(max) '$.MaximumContractDays',RiskRate nvarchar(max),PeriodDays nvarchar(max)) snapshot
+                WHERE result.PayrollRunId=@RunId;
                 -- A calculated draft must not consume a novelty already approved in
                 -- another run, or a deduction whose authority changed after calculation.
                 IF EXISTS(
@@ -1614,6 +1686,22 @@ public sealed partial class SqlPayrollStore(
 
                 IF (SELECT COUNT(*) FROM payroll.RunEmployees WHERE PayrollRunId=@RunId)>500
                   THROW 51765,N'Recalcula y selecciona hasta 500 trabajadores antes de contabilizar.',1;
+                DECLARE @ProfileRules TABLE(ProfileId uniqueidentifier PRIMARY KEY,RuleSetId uniqueidentifier,Issue nvarchar(40));
+                INSERT @ProfileRules(ProfileId)
+                SELECT DISTINCT employment.AccountingProfileId FROM @Snapshots result
+                  JOIN payroll.Employments employment ON employment.EmploymentId=result.EmploymentId
+                    AND employment.TenantId=@TenantId AND employment.BusinessId=@BusinessId
+                  WHERE employment.AccountingProfileId IS NOT NULL;
+                UPDATE profiles SET RuleSetId=configuration.RuleSetId,Issue=configuration.Issue
+                FROM @ProfileRules profiles
+                CROSS APPLY payroll.ProfileRuleConfiguration(@TenantId,profiles.ProfileId,@PeriodStart,@PeriodEnd) configuration;
+                IF EXISTS(SELECT 1 FROM @Snapshots result
+                  JOIN payroll.Employments employment ON employment.EmploymentId=result.EmploymentId
+                    AND employment.TenantId=@TenantId AND employment.BusinessId=@BusinessId
+                  LEFT JOIN @ProfileRules configuration ON configuration.ProfileId=employment.AccountingProfileId
+                  WHERE configuration.ProfileId IS NULL OR configuration.Issue IS NOT NULL
+                    OR result.EffectiveRuleSetId IS NULL OR result.EffectiveRuleSetId<>configuration.RuleSetId)
+                  THROW 51765,N'La configuración de un contrato cambió o perdió vigencia; recalcula antes de aprobar.',1;
                 DECLARE @ContextHash binary(32)=(
                     SELECT HASHBYTES('SHA2_256',CONVERT(varbinary(max),STRING_AGG(CONVERT(varchar(max),SourceVersion,2),'')
                         WITHIN GROUP(ORDER BY SourceKind,SourceId),2))
@@ -1627,36 +1715,29 @@ public sealed partial class SqlPayrollStore(
                 FROM payroll.CalculationNoveltyVersions(@TenantId,@BusinessId,@RunId,@EmployeeIds)
                 GROUP BY EmploymentId;
                 IF EXISTS(
-                    SELECT 1 FROM payroll.RunEmployees result LEFT JOIN @NoveltyVersions currentNovelty ON currentNovelty.EmploymentId=result.EmploymentId
-                    WHERE result.PayrollRunId=@RunId AND (
-                        TRY_CONVERT(int,JSON_VALUE(result.EmployeeSnapshotJson,'$.SnapshotVersion'))<>1 OR
-                        TRY_CONVERT(binary(32),JSON_VALUE(result.EmployeeSnapshotJson,'$.ContextVersionHash'),2) IS NULL OR
-                        TRY_CONVERT(binary(32),JSON_VALUE(result.EmployeeSnapshotJson,'$.ContextVersionHash'),2)<>@ContextHash OR
-                        TRY_CONVERT(binary(32),JSON_VALUE(result.EmployeeSnapshotJson,'$.NoveltyVersionHash'),2) IS NULL OR
-                        TRY_CONVERT(binary(32),JSON_VALUE(result.EmployeeSnapshotJson,'$.NoveltyVersionHash'),2)<>
+                    SELECT 1 FROM @Snapshots result LEFT JOIN @NoveltyVersions currentNovelty ON currentNovelty.EmploymentId=result.EmploymentId
+                    WHERE result.SnapshotVersion IS NULL OR result.SnapshotVersion<>1 OR result.ContextHash IS NULL OR result.ContextHash<>@ContextHash OR
+                        result.NoveltyHash IS NULL OR result.NoveltyHash<>
                             COALESCE(currentNovelty.VersionHash,HASHBYTES('SHA2_256',CONVERT(varbinary(max),0x))) OR
-                        TRY_CONVERT(decimal(9,4),JSON_VALUE(result.EmployeeSnapshotJson,'$.BaseWorkedDays')) IS NULL OR
-                        TRY_CONVERT(decimal(9,4),JSON_VALUE(result.EmployeeSnapshotJson,'$.MaximumContractDays')) IS NULL))
+                        result.BaseDays IS NULL OR result.MaximumDays IS NULL)
                     THROW 51765,N'Las novedades o la configuración cambiaron, o falta su huella. Recalcula antes de contabilizar.',1;
-                IF EXISTS(SELECT 1 FROM payroll.RunEmployees result WHERE result.PayrollRunId=@RunId AND
-                    (TRY_CONVERT(decimal(9,4),JSON_VALUE(result.EmployeeSnapshotJson,'$.BaseWorkedDays'))>
-                    TRY_CONVERT(decimal(9,4),JSON_VALUE(result.EmployeeSnapshotJson,'$.MaximumContractDays')) OR
+                IF EXISTS(SELECT 1 FROM @Snapshots result WHERE result.BaseDays>result.MaximumDays OR
                     EXISTS(SELECT 1 FROM OPENJSON(result.EmployeeSnapshotJson,'$.ConceptWorkedDays') WITH(BaseDays decimal(9,4)) days
-                      WHERE days.BaseDays>TRY_CONVERT(decimal(9,4),JSON_VALUE(result.EmployeeSnapshotJson,'$.MaximumContractDays')))))
+                      WHERE days.BaseDays>result.MaximumDays))
                     THROW 51766,N'Hay días fuera de la vigencia contractual. Corrígelos en Novedades antes de contabilizar.',1;
                 IF EXISTS(
-                    SELECT 1 FROM payroll.RunEmployees result
+                    SELECT 1 FROM @Snapshots result
                     JOIN payroll.Employments employment ON employment.EmploymentId=result.EmploymentId AND employment.TenantId=@TenantId
                     JOIN payroll.CatalogOptions risk ON risk.OptionId=employment.RiskClassOptionId
-                    JOIN payroll.Runs run ON run.PayrollRunId=result.PayrollRunId
+                    JOIN payroll.Runs run ON run.PayrollRunId=@RunId
                     JOIN payroll.CatalogOptions frequency ON frequency.OptionId=run.PayFrequencyOptionId
-                    WHERE result.PayrollRunId=@RunId AND (
-                        TRY_CONVERT(decimal(19,8),JSON_VALUE(result.EmployeeSnapshotJson,'$.RiskRate')) IS NULL OR
+                    WHERE (
+                        result.RiskRate IS NULL OR
                         TRY_CONVERT(decimal(19,8),risk.MetadataCode) IS NULL OR
-                        TRY_CONVERT(decimal(19,8),JSON_VALUE(result.EmployeeSnapshotJson,'$.RiskRate'))<>TRY_CONVERT(decimal(19,8),risk.MetadataCode) OR
-                        TRY_CONVERT(int,JSON_VALUE(result.EmployeeSnapshotJson,'$.PeriodDays')) IS NULL OR
+                        result.RiskRate<>TRY_CONVERT(decimal(19,8),risk.MetadataCode) OR
+                        result.PeriodDays IS NULL OR
                         TRY_CONVERT(int,frequency.MetadataCode) IS NULL OR
-                        TRY_CONVERT(int,JSON_VALUE(result.EmployeeSnapshotJson,'$.PeriodDays'))<>CASE WHEN run.RunKind=N'Adjustment' THEN 0 ELSE TRY_CONVERT(int,frequency.MetadataCode) END))
+                        result.PeriodDays<>CASE WHEN run.RunKind=N'Adjustment' THEN 0 ELSE TRY_CONVERT(int,frequency.MetadataCode) END))
                     THROW 51765,N'La periodicidad o tarifa de riesgo cambió. Recalcula antes de contabilizar.',1;
 
                 UPDATE payroll.Runs SET Status=N'Approved',ApprovedBy=@UserId,ApprovedAt=@Now,
@@ -1683,7 +1764,7 @@ public sealed partial class SqlPayrollStore(
                 EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,1;
                 INSERT payroll.OutboxMessages(OutboxMessageId,TenantId,BusinessId,AggregateId,MessageType,
                   PayloadJson,OccurredAt,AttemptCount)
-                VALUES(@OutboxId,@TenantId,@BusinessId,@RunId,N'AccountingPostingRequested',@Payload,@Now,0);
+                VALUES(@OutboxId,@TenantId,@BusinessId,@RunId,N'AccountingPostingRequested',@Notification,@Now,0);
                 """, connection, tx);
             approve.Parameters.AddWithValue("@RunId", runId); approve.Parameters.AddWithValue("@TenantId", user.TenantId); approve.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             approve.Parameters.AddWithValue("@Kind",kind);
@@ -1691,6 +1772,10 @@ public sealed partial class SqlPayrollStore(
             approve.Parameters.AddWithValue("@PeriodEnd",end.ToDateTime(TimeOnly.MinValue));
             approve.Parameters.AddWithValue("@UserId", user.UserId); approve.Parameters.AddWithValue("@Now", now); approve.Parameters.AddWithValue("@Key", idempotencyKey);
             approve.Parameters.Add("@RequestHash", SqlDbType.Binary, 32).Value = requestHash; approve.Parameters.Add("@Version", SqlDbType.Timestamp).Value = rowVersion;
+            // The outbox requests existing work; the immutable financial body has
+            // one owner in AccountingSourceDocuments, not a second outbox copy.
+            approve.Parameters.Add("@Notification",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(new{
+                DocumentId=runId,DocumentType=documentType,BusinessId=user.BusinessId},Json);
             approve.Parameters.AddWithValue("@DocumentType", documentType); approve.Parameters.AddWithValue("@Payload", json); approve.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
             // Accrual recognizes the worked period, independently of the planned
             // payment. Preserve its civil accounting date in the site's zone.
@@ -2219,7 +2304,7 @@ public sealed partial class SqlPayrollStore(
         command.Parameters.AddWithValue("@RunId", runId); command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) throw new PayrollNotFoundException("La liquidación no existe.");
-        var header = new RunHeader(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
+        var header = new RunHeader(reader.GetGuid(0), reader.GetGuid(1), reader.IsDBNull(2)?null:reader.GetGuid(2), reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetGuid(4), DateOnly.FromDateTime(reader.GetDateTime(5)), DateOnly.FromDateTime(reader.GetDateTime(6)),
             DateOnly.FromDateTime(reader.GetDateTime(7)), reader.GetString(8), reader.GetInt32(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13), reader.GetDecimal(14), (byte[])reader[15],reader.GetInt32(16));
         await reader.NextResultAsync(ct);
@@ -2288,14 +2373,16 @@ public sealed partial class SqlPayrollStore(
 
     private static async Task<PayrollEmploymentView> ReadEmploymentAsync(SqlConnection connection,SqlTransaction transaction,PayrollUserIdentity user,Guid id,CancellationToken ct)
     {
-        await using var command = new SqlCommand("""
+        await using var command = new SqlCommand($"""
             SELECT e.EmploymentId,e.PartyId,e.BusinessId,e.EmployeeId,
               COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
               e.ContractTypeOptionId,e.SalaryTypeOptionId,e.PayFrequencyOptionId,e.RiskClassOptionId,
               e.WorkerTypeOptionId,e.WorkerSubtypeOptionId,e.PaymentMethodOptionId,e.ContractNumber,
               e.StartDate,e.EndDate,e.MonthlySalary,e.IntegralSalaryPercentage,e.BankAccountReference,
               e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.IsActive,e.RowVersion,e.AppliesTransportAllowance
+                   {EmploymentConfigurationProjection}
             FROM payroll.Employments e JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+            {EmploymentConfigurationJoins}
             WHERE e.EmploymentId=@Id AND e.TenantId=@TenantId AND e.BusinessId=@BusinessId;
             """, connection,transaction);
         command.Parameters.AddWithValue("@Id", id); command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -2306,7 +2393,7 @@ public sealed partial class SqlPayrollStore(
             DateOnly.FromDateTime(reader.GetDateTime(13)), reader.IsDBNull(14) ? null : DateOnly.FromDateTime(reader.GetDateTime(14)), reader.GetDecimal(15), reader.IsDBNull(16) ? null : reader.GetDecimal(16),
             NullableString(reader, 17), reader.IsDBNull(18) ? null : reader.GetGuid(18),
             reader.IsDBNull(19) ? null : reader.GetGuid(19), NullableString(reader, 20),
-            reader.GetBoolean(21), (byte[])reader[22]) { AppliesTransportAllowance = reader.GetBoolean(23) };
+            reader.GetBoolean(21), (byte[])reader[22]) { AppliesTransportAllowance = reader.GetBoolean(23), Configuration=JsonSerializer.Deserialize<PayrollEmploymentConfigurationView>(reader.GetString(24),Json) };
     }
 
     private async Task<PayrollDeductionAgreementView> ReadAgreementAsync(PayrollUserIdentity user, Guid id, CancellationToken ct)
@@ -2330,49 +2417,81 @@ public sealed partial class SqlPayrollStore(
             reader.GetDecimal(11), reader.GetInt16(12), reader.GetBoolean(13), reader.GetBoolean(14), (byte[])reader[15]);
     }
 
-    private static async Task<string> RuleSnapshotAsync(SqlConnection connection, SqlTransaction tx, Guid ruleSetId, CancellationToken ct)
+    private static async Task<(IReadOnlyList<PayrollAccountingLine> Lines,IReadOnlyList<PayrollAccountingEmployee> Employees,IReadOnlyList<PayrollAccountingConcept> Concepts)> BuildAccountingLinesAsync(SqlConnection connection, SqlTransaction tx, Guid runId, CancellationToken ct)
     {
-        var values = new SortedDictionary<string, decimal>(StringComparer.Ordinal);
-        await using var command = new SqlCommand("SELECT Code,NumericValue FROM payroll.RuleParameters WHERE RuleSetId=@Id ORDER BY Code;", connection, tx);
-        command.Parameters.AddWithValue("@Id", ruleSetId); await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) values.Add(reader.GetString(0), reader.GetDecimal(1));
-        return JsonSerializer.Serialize(values);
-    }
-
-    private static async Task<IReadOnlyList<PayrollAccountingLine>> BuildAccountingLinesAsync(SqlConnection connection, SqlTransaction tx, Guid runId, CancellationToken ct)
-    {
-        var values = new List<PayrollAccountingLine>();
-        await using var command = new SqlCommand("""
-            SELECT e.PartyId,l.NatureCode,l.AccountingCategoryCode,l.ConceptName,SUM(l.Amount)
-            FROM payroll.RunLines l JOIN payroll.RunEmployees e ON e.PayrollRunEmployeeId=l.PayrollRunEmployeeId
-            WHERE e.PayrollRunId=@RunId GROUP BY e.PartyId,l.NatureCode,l.AccountingCategoryCode,l.ConceptName
-            ORDER BY e.PartyId,l.NatureCode,l.AccountingCategoryCode,l.ConceptName;
-            SELECT PartyId,NetPayable FROM payroll.RunEmployees WHERE PayrollRunId=@RunId ORDER BY PartyId;
-            """, connection, tx);
-        command.Parameters.AddWithValue("@RunId", runId); await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        var values=new List<PayrollAccountingLine>();var contexts=new List<PayrollAccountingEmployee>();
+        var concepts=new List<PayrollAccountingConcept>();var conceptIndexes=new Dictionary<(Guid? Id,string Description),int>();
+        PayrollAccountingLine CreateLine(Guid? conceptId,string name,int employeeIndex,string category,decimal debit,decimal credit,Guid party)
         {
-            var party = reader.GetGuid(0); var nature = reader.GetString(1); var category = reader.GetString(2); var name = reader.GetString(3); var amount = reader.GetDecimal(4);
-            if (amount == 0) continue;
-            switch (nature)
+            if(!conceptIndexes.TryGetValue((conceptId,name),out var conceptIndex))
             {
-                case "Earning": values.Add(new(category, amount, 0, party, name)); break;
-                case "Deduction": values.Add(new(category, 0, amount, party, name)); break;
-                case "EmployerContribution":
-                    values.Add(new("EmployerContributionsExpense", amount, 0, party, name));
-                    values.Add(new(category, 0, amount, party, name)); break;
-                case "Provision":
-                    values.Add(new("BenefitsExpense", amount, 0, party, name));
-                    values.Add(new(category, 0, amount, party, name)); break;
-                default: throw new PayrollValidationException($"La naturaleza contable '{nature}' no es válida.");
+                conceptIndex=concepts.Count;conceptIndexes.Add((conceptId,name),conceptIndex);concepts.Add(new(conceptId,name));
             }
+            return new(category,debit,credit,party,null,employeeIndex,conceptIndex);
+        }
+        var employees=new Dictionary<Guid,(int Index,Guid EmploymentId,Guid PartyId,decimal Net,PayrollEmploymentConfiguration? Configuration)>();
+        await using var command=new SqlCommand("""
+            SELECT PayrollRunEmployeeId,EmploymentId,PartyId,NetPayable,JSON_QUERY(EmployeeSnapshotJson,'$.Configuration.Values')
+            FROM payroll.RunEmployees WHERE PayrollRunId=@RunId ORDER BY PayrollRunEmployeeId;
+            SELECT l.PayrollRunEmployeeId,l.ConceptId,l.NatureCode,l.AccountingCategoryCode,l.ConceptName,l.Amount,role.Code,mapping.BeneficiaryPartyId,agreement.BeneficiaryPartyId
+            FROM payroll.RunEmployees employee JOIN payroll.RunLines l ON l.PayrollRunEmployeeId=employee.PayrollRunEmployeeId
+            JOIN payroll.Concepts concept ON concept.ConceptId=l.ConceptId AND concept.TenantId=employee.TenantId
+            LEFT JOIN payroll.CatalogOptions role ON role.OptionId=concept.SystemRoleOptionId
+            JOIN payroll.Runs run ON run.PayrollRunId=employee.PayrollRunId AND run.TenantId=employee.TenantId
+            LEFT JOIN payroll.ProfileAccountMappings mapping ON mapping.ProfileId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(employee.EmployeeSnapshotJson,'$.Configuration.Values.AccountingProfileId'))
+              AND mapping.TenantId=employee.TenantId AND mapping.ConceptId=l.ConceptId
+              AND mapping.EffectiveFrom<=run.PeriodEnd AND (mapping.EffectiveTo IS NULL OR mapping.EffectiveTo>=run.PeriodEnd)
+            LEFT JOIN payroll.DeductionAgreements agreement ON agreement.DeductionAgreementId=l.DeductionAgreementId
+              AND agreement.TenantId=employee.TenantId AND agreement.EmploymentId=employee.EmploymentId
+            WHERE employee.PayrollRunId=@RunId ORDER BY employee.PayrollRunEmployeeId,l.LineNumber;
+            """,connection,tx);
+        command.Parameters.AddWithValue("@RunId",runId);await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))
+        {
+            PayrollEmploymentConfiguration? configuration=null;
+            if(!reader.IsDBNull(4))configuration=JsonSerializer.Deserialize<PayrollEmploymentConfiguration>(reader.GetString(4),Json);
+            var employmentId=reader.GetGuid(1);
+            employees.Add(reader.GetGuid(0),(contexts.Count,employmentId,reader.GetGuid(2),reader.GetDecimal(3),configuration));
+            contexts.Add(new(employmentId,configuration?.AccountingProfileId,configuration?.CostCenterId));
         }
         await reader.NextResultAsync(ct);
-        while (await reader.ReadAsync(ct))
-            if (reader.GetDecimal(1) > 0) values.Add(new(PayrollAccountingCategories.NetPayable, 0, reader.GetDecimal(1), reader.GetGuid(0), "Neto de nómina por pagar"));
-        if (values.Count == 0 || decimal.Round(values.Sum(x => x.Debit), 4) != decimal.Round(values.Sum(x => x.Credit), 4))
+        while(await reader.ReadAsync(ct))
+        {
+            var employee=employees[reader.GetGuid(0)];var concept=reader.GetGuid(1);var nature=reader.GetString(2);
+            var category=reader.GetString(3);var name=reader.GetString(4);var amount=reader.GetDecimal(5);
+            if(amount==0)continue;
+            var role=NullableString(reader,6);var config=employee.Configuration;
+            var creditor=role switch
+            {
+                PayrollSystemConceptRoles.EmployeeHealth or PayrollSystemConceptRoles.EmployerHealth=>config?.HealthPartyId,
+                PayrollSystemConceptRoles.EmployeePension or PayrollSystemConceptRoles.EmployerPension=>config?.PensionPartyId,
+                PayrollSystemConceptRoles.OccupationalRisk=>config?.RiskPartyId,
+                PayrollSystemConceptRoles.CompensationFund=>config?.CompensationPartyId,
+                _=>reader.IsDBNull(8)?reader.IsDBNull(7)?(Guid?)null:reader.GetGuid(7):reader.GetGuid(8)
+            };
+            if(nature=="EmployerContribution" && (role is PayrollSystemConceptRoles.Sena or PayrollSystemConceptRoles.Icbf) && creditor is null)
+                throw new PayrollValidationException($"Configura la entidad beneficiaria del concepto {name} en el perfil antes de contabilizar.");
+            PayrollAccountingLine Line(string accountCategory,decimal debit,decimal credit,Guid party)=>
+                CreateLine(concept,name,employee.Index,accountCategory,debit,credit,party);
+            switch(nature)
+            {
+                case "Earning":values.Add(Line(category,amount,0,employee.PartyId));break;
+                case "Deduction":values.Add(Line(category,0,amount,creditor??employee.PartyId));break;
+                case "EmployerContribution":
+                    values.Add(Line("EmployerContributionsExpense",amount,0,employee.PartyId));
+                    values.Add(Line(category,0,amount,creditor??employee.PartyId));break;
+                case "Provision":
+                    values.Add(Line("BenefitsExpense",amount,0,employee.PartyId));
+                    values.Add(Line(category,0,amount,employee.PartyId));break;
+                default:throw new PayrollValidationException($"La naturaleza contable '{nature}' no es válida.");
+            }
+        }
+        foreach(var employee in employees.Values)
+            if(employee.Net>0)values.Add(CreateLine(null,"Neto de nómina por pagar",employee.Index,
+                PayrollAccountingCategories.NetPayable,0,employee.Net,employee.PartyId));
+        if(values.Count==0 || decimal.Round(values.Sum(value=>value.Debit),4)!=decimal.Round(values.Sum(value=>value.Credit),4))
             throw new PayrollValidationException("La fuente contable de nómina no está balanceada.");
-        return values;
+        return(values,contexts,concepts);
     }
 
     private static async Task<Guid?> FindAccountingJobAsync(SqlConnection connection, SqlTransaction tx, Guid runId, string type, CancellationToken ct)
@@ -2396,6 +2515,8 @@ public sealed partial class SqlPayrollStore(
         command.Parameters.AddWithValue("@BankAccountType", (object?)request.BankAccountTypeOptionId ?? DBNull.Value);
         command.Parameters.AddWithValue("@BankAccountNumber", (object?)request.BankAccountNumber ?? DBNull.Value);
         command.Parameters.Add("@ApplyTransport",SqlDbType.Bit).Value=(object?)request.AppliesTransportAllowance??DBNull.Value;
+        command.Parameters.Add("@Configuration",SqlDbType.NVarChar,-1).Value=request.Configuration is null
+            ? DBNull.Value : JsonSerializer.Serialize(request.Configuration,Json);
         command.Parameters.AddWithValue("@UserId", user.UserId); command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow()); command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value = (object?)request.RowVersion ?? DBNull.Value;
     }
 
@@ -2424,7 +2545,7 @@ public sealed partial class SqlPayrollStore(
         reader.IsDBNull(17) ? null : reader.GetDecimal(17), NullableString(reader, 18),
         reader.IsDBNull(19) ? null : reader.GetGuid(19),
         reader.IsDBNull(20) ? null : reader.GetGuid(20), NullableString(reader, 21),
-        (byte[])reader[22]) { AppliesTransportAllowance = reader.GetBoolean(23) };
+        (byte[])reader[22]) { AppliesTransportAllowance = reader.GetBoolean(23), Configuration=JsonSerializer.Deserialize<PayrollEmploymentConfigurationView>(reader.GetString(24),Json) };
     private static string? NullableString(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     private static object DbDate(DateOnly? value) => value is null ? DBNull.Value : value.Value.ToDateTime(TimeOnly.MinValue);
     private static void Decimal(SqlCommand command, string name, decimal value, byte scale) { var p = command.Parameters.Add(name, SqlDbType.Decimal); p.Precision = 19; p.Scale = scale; p.Value = value; }
@@ -2449,7 +2570,7 @@ public sealed partial class SqlPayrollStore(
     }
 
     private sealed record EmployeeSeed(Guid EmploymentId, Guid PartyId, decimal MonthlySalary, decimal WorkedDays, bool IsIntegral, decimal RiskRate, bool AppliesTransportAllowance, byte[] EmploymentVersion, decimal MaximumContractDays,decimal TransportBaseWorkedDays);
-    private sealed record RunHeader(Guid Id, Guid BusinessId, Guid RuleSetId, string Kind, Guid? OriginalId, DateOnly Start, DateOnly End, DateOnly Payment, string Status, int Version, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net, byte[] RowVersion, int EmployeeCount);
+    private sealed record RunHeader(Guid Id, Guid BusinessId, Guid? RuleSetId, string Kind, Guid? OriginalId, DateOnly Start, DateOnly End, DateOnly Payment, string Status, int Version, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net, byte[] RowVersion, int EmployeeCount);
     private sealed record EmployeeRow(Guid Id, Guid EmploymentId, Guid PartyId, string Name, decimal Days, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net,decimal? BaseDays,decimal? MaximumDays,int? PeriodDays,string? Identification,string? ContractNumber,decimal? MonthlySalary,IReadOnlyList<PayrollConceptWorkedDaysView> ConceptWorkedDays);
     private sealed class ElectronicEmployeeSnapshotSeed(
         Guid partyId,

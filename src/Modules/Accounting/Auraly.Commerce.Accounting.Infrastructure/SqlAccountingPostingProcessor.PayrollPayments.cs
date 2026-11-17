@@ -42,9 +42,9 @@ public sealed partial class SqlAccountingPostingProcessor
             WHERE PaymentBatchId=@DocumentId AND TenantId=@TenantId AND BusinessId=@BusinessId
               AND Status=N'Confirmed' AND @RunCount=1 AND (SELECT COUNT(*) FROM @Requested) BETWEEN 1 AND @Limit;
 
-            DECLARE @Original TABLE(PartyId uniqueidentifier,AccountId uniqueidentifier,Credit decimal(19,4));
+            DECLARE @Original TABLE(PartyId uniqueidentifier,AccountId uniqueidentifier,CostCenterId uniqueidentifier,Credit decimal(19,4));
             INSERT @Original
-            SELECT posted.PartyId,posted.AccountId,posted.Credit
+            SELECT posted.PartyId,posted.AccountId,posted.CostCenterId,posted.Credit
             FROM payroll.Runs run
             JOIN dbo.AccountingSourceDocuments original ON original.TenantId=run.TenantId AND original.BusinessId=run.BusinessId
               AND original.SourceDocumentId=run.PayrollRunId
@@ -67,12 +67,12 @@ public sealed partial class SqlAccountingPostingProcessor
               AND fact.Category=@Category AND fact.Debit=0 AND fact.Credit>0;
             -- Materialize the aggregate once before matching workers. A joined
             -- aggregate can otherwise be scanned again for every requested party.
-            DECLARE @OriginalAccounts TABLE(PartyId uniqueidentifier,AccountId uniqueidentifier,
-              Credit decimal(19,4),AccountCount int,PRIMARY KEY(PartyId,AccountId));
+            DECLARE @OriginalAccounts TABLE(PartyId uniqueidentifier,AccountId uniqueidentifier,CostCenterId uniqueidentifier,
+              Credit decimal(19,4),AccountCount int);
             INSERT @OriginalAccounts
-            SELECT PartyId,AccountId,SUM(Credit),COUNT(*) OVER(PARTITION BY PartyId)
-            FROM @Original GROUP BY PartyId,AccountId OPTION(RECOMPILE);
-            SELECT requested.PartyId,original.AccountId,requested.Amount
+            SELECT PartyId,AccountId,CostCenterId,SUM(Credit),COUNT(*) OVER(PARTITION BY PartyId)
+            FROM @Original GROUP BY PartyId,AccountId,CostCenterId OPTION(RECOMPILE);
+            SELECT requested.PartyId,original.AccountId,requested.Amount,original.CostCenterId
             FROM @Requested requested LEFT JOIN @OriginalAccounts original
               ON original.PartyId=requested.PartyId AND original.AccountCount=1 AND original.Credit>=requested.Amount
             OPTION(RECOMPILE);
@@ -98,21 +98,21 @@ public sealed partial class SqlAccountingPostingProcessor
             var partyId = reader.GetGuid(0);
             if (reader.IsDBNull(1) || !seen.Add(partyId))
                 return FinancialFactsResult.Pending("PayrollOriginalPayableMissing",
-                    "No se puede identificar un único auxiliar activo y contabilizable de la causación original para cada trabajador.");
+                    "No se puede identificar una única cuenta y centro de la causación original para cada trabajador.");
             if (!requested.TryGetValue(partyId, out var amount) || amount != reader.GetDecimal(2))
                 throw new InvalidOperationException("The payroll payment members do not match their accepted source.");
-            originalPayables.Add(new(reader.GetGuid(1), amount, 0, partyId, null, payload.Description));
+            originalPayables.Add(new(reader.GetGuid(1), amount, 0, partyId, reader.IsDBNull(3)?null:reader.GetGuid(3), payload.Description));
         }
         if (originalPayables.Count != requested.Count)
             throw new InvalidOperationException("The payroll payment members are incomplete.");
         if (settlementAccount is { } accountId)
         {
-            originalPayables.Add(new(accountId, 0, credits[0].Credit, null, null, credits[0].Description));
+            originalPayables.Add(new(accountId, 0, credits[0].Credit, null, null, credits[0].Description!));
             return FinancialFactsResult.Ready(FinancialFacts.Manual(payload.Description, originalPayables));
         }
         // Historical requests without a tenant form keep their settlement category;
         // they still cancel the original payable through the same posting path.
         return FinancialFactsResult.Ready(FinancialFacts.Payroll(payload.Description,
-            [new(credits[0].Category, 0, credits[0].Credit, null, credits[0].Description)], originalPayables));
+            [new(credits[0].Category, 0, credits[0].Credit, null, credits[0].Description!)], originalPayables));
     }
 }

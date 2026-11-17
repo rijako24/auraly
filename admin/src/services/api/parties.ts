@@ -74,7 +74,7 @@ export interface CreateSellerUserAccess { username:string; email:string; passwor
 export const partiesApi = {
   page: (params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean; roleId?: string; partyId?: string }) =>
     apiClient.get<PartyWorkspacePage>("/commerce/v1/parties", params),
-  roleOptions: (params: { page: number; pageSize: number; role: PartyRole | "Any"; search?: string; roleId?: string; partyId?: string }) =>
+  roleOptions: (params: { page: number; pageSize: number; role: PartyRole | "Any"; search?: string; roleId?: string; partyId?: string; partyType?: "Organization" | "NaturalPerson" }) =>
     apiClient.get<PartyRoleOptionPage>("/commerce/v1/parties/role-options", params),
   resolveRoleOptions: (role: PartyRole, roleIds: string[]) =>
     apiClient.post<PartyRoleOptionPage>("/commerce/v1/parties/role-options", { role, roleIds, pageSize: roleIds.length }),

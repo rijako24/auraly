@@ -23,6 +23,7 @@ const toSelection = (item: PartyRoleOption): PartyRoleSelection => ({
 
 type PartyRoleSelectProps = {
   role?: PartyRole;
+  partyType?: "Organization" | "NaturalPerson";
   value: string;
   onChange: (value: string, party?: PartyRoleSelection) => void;
   onResolved?: (party: PartyRoleSelection) => void;
@@ -41,7 +42,7 @@ type PartyRoleSelectProps = {
   onValuesChange?: (values:string[],options:PagedEntityOption[])=>void;
 };
 
-export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, ariaLabel, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey,values,selectedOptions,onValuesChange }: PartyRoleSelectProps) {
+export function PartyRoleSelect({ role, partyType, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, ariaLabel, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey,values,selectedOptions,onValuesChange }: PartyRoleSelectProps) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [picked, setPicked] = useState<PagedEntityOption | null>(null);
   const getOption = useCallback((item: PartyRoleSelection) => ({
@@ -51,11 +52,11 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
   }), [includePartyId, role]);
   useEffect(() => { if (picked && picked.value !== value) setPicked(null); }, [picked, value]);
   const selectedQuery = useQuery({
-    queryKey: ["party-role-select-value", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId, value],
+    queryKey: ["party-role-select-value", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId, partyType, value],
     queryFn: async () => {
       const item = loadPage
         ? (await loadPage(value,1,10)).items.find(option=>(includePartyId||!role?option.partyId:option.roleId)===value)
-        : (await partiesApi.roleOptions({page:1,pageSize:1,role:role??"Any",...(includePartyId||!role?{partyId:value}:{roleId:value})})).items[0];
+        : (await partiesApi.roleOptions({page:1,pageSize:1,role:role??"Any",partyType,...(includePartyId||!role?{partyId:value}:{roleId:value})})).items[0];
       return item ? toSelection(item) : null;
     },
     enabled: Boolean(businessId||loadPage) && Boolean(value) && !selectedOption && picked?.value !== value && !leadingOptions?.some(option => option.value === value),
@@ -66,7 +67,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
   useEffect(() => { onResolvedRef.current = onResolved; }, [onResolved]);
   useEffect(() => { if (selectedQuery.data) onResolvedRef.current?.(selectedQuery.data); }, [selectedQuery.data]);
   return <PagedEntitySelect
-    queryKey={["party-role-select", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId]}
+    queryKey={["party-role-select", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId, partyType]}
     value={value}
     values={values}
     selectedOptions={selectedOptions}
@@ -78,7 +79,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
     loadPage={async (search, page, pageSize) => {
       const result = loadPage
         ? await loadPage(search,page,pageSize)
-        : await partiesApi.roleOptions({page,pageSize,role:role??"Any",search:search||undefined});
+        : await partiesApi.roleOptions({page,pageSize,role:role??"Any",partyType,search:search||undefined});
       return { ...result, items: result.items.map(toSelection) };
     }}
     getOption={getOption}

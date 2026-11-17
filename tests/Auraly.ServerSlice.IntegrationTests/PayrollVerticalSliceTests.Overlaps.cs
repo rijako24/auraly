@@ -30,7 +30,7 @@ public sealed partial class PayrollVerticalSliceTests
             Option(PayrollCatalogCodes.PayFrequency, "Monthly"), Option(PayrollCatalogCodes.RiskClass, "I"),
             Option(PayrollCatalogCodes.WorkerType, "01"), Option(PayrollCatalogCodes.WorkerSubtype, "00"),
             Option(PayrollCatalogCodes.PaymentMethod, "Cash"), "OVERLAP-" + employmentId.ToString("N"),
-            new(2026, 1, 1), null, 3_000_000, null, null, null, null, null, true, null);
+            new(2026, 1, 1), null, 3_000_000, null, null, null, null, null, true, null, Configuration:await CreateProfileFixtureAsync(ruleId));
         var employment = await PutAsync<PayrollEmploymentView>(client,
             $"/api/commerce/v1/payroll/employments/{employmentId:D}", employmentRequest);
         using var scope = fixture.CreateScope();
@@ -41,7 +41,7 @@ public sealed partial class PayrollVerticalSliceTests
 
         async Task<PayrollRunView> Calculate(DateOnly start, DateOnly end, Guid frequency, Guid selectedEmployment)
         {
-            var draft = await service.CreateRunAsync(user, new(Guid.NewGuid(), fixture.BusinessId, ruleId,
+            var draft = await service.CreateRunAsync(user, new(Guid.NewGuid(), fixture.BusinessId,
                 frequency, "Regular", null, start, end, end.AddDays(7)));
             return await service.CalculateRunAsync(user, draft.PayrollRunId,
                 new CalculatePayrollRunRequest(draft.RowVersion, false, [new(selectedEmployment, true)]));
@@ -64,8 +64,14 @@ public sealed partial class PayrollVerticalSliceTests
         var legacy=await store.GetRunAsync(user,legacyId,default);
         var second=await service.CalculateRunAsync(user,legacyId,
             new CalculatePayrollRunRequest(legacy.RowVersion,false,[new(employmentId,true)]));
+        var transportId=Assert.Single(second.Employees).Lines.Single(line=>line.ConceptCode=="TRANSPORT").ConceptId;
+        // Days are independent per concept: both drafts must be valid before
+        // racing approval, otherwise the day guard can mask the overlap proof.
         second = await service.CalculateRunAsync(user, second.PayrollRunId,
             new CalculatePayrollRunRequest(second.RowVersion, WorkedDaysChanges: [new(employmentId, 29)]));
+        second = await service.CalculateRunAsync(user, second.PayrollRunId,
+            new CalculatePayrollRunRequest(second.RowVersion, WorkedDaysChanges: [new(employmentId,29,transportId)]));
+        Assert.All(Assert.Single(second.Employees).ConceptWorkedDays,days=>Assert.Equal(29,days.BaseDays));
         (PayrollRunAcceptance? Acceptance, PayrollConflictException? Conflict)[] outcomes;
         var elapsed = Stopwatch.StartNew();
         int commands;

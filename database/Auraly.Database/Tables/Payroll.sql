@@ -145,6 +145,13 @@ CREATE TABLE [payroll].[Employments]
     [BankAccountTypeOptionId] UNIQUEIDENTIFIER NULL,
     [BankAccountNumber] NVARCHAR(64) NULL,
     [AppliesTransportAllowance] BIT NOT NULL CONSTRAINT [DF_PayrollEmployments_AppliesTransportAllowance] DEFAULT (1),
+    [AccountingProfileId] UNIQUEIDENTIFIER NULL,
+    [HealthPartyId] UNIQUEIDENTIFIER NULL,
+    [PensionPartyId] UNIQUEIDENTIFIER NULL,
+    [SeverancePartyId] UNIQUEIDENTIFIER NULL,
+    [RiskPartyId] UNIQUEIDENTIFIER NULL,
+    [CompensationPartyId] UNIQUEIDENTIFIER NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NULL,
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -155,6 +162,13 @@ CREATE TABLE [payroll].[Employments]
     CONSTRAINT [UQ_PayrollEmployments_Tenant_Employment] UNIQUE ([TenantId],[EmploymentId]),
     CONSTRAINT [UQ_PayrollEmployments_Tenant_Contract] UNIQUE ([TenantId],[ContractNumber]),
     CONSTRAINT [FK_PayrollEmployments_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+    CONSTRAINT FK_PayrollEmployments_Profile FOREIGN KEY (TenantId,AccountingProfileId) REFERENCES payroll.AccountingProfiles(TenantId,ProfileId),
+    CONSTRAINT FK_PayrollEmployments_Health FOREIGN KEY (TenantId,HealthPartyId) REFERENCES dbo.Parties(TenantId,PartyId),
+    CONSTRAINT FK_PayrollEmployments_Pension FOREIGN KEY (TenantId,PensionPartyId) REFERENCES dbo.Parties(TenantId,PartyId),
+    CONSTRAINT FK_PayrollEmployments_Severance FOREIGN KEY (TenantId,SeverancePartyId) REFERENCES dbo.Parties(TenantId,PartyId),
+    CONSTRAINT FK_PayrollEmployments_Risk FOREIGN KEY (TenantId,RiskPartyId) REFERENCES dbo.Parties(TenantId,PartyId),
+    CONSTRAINT FK_PayrollEmployments_Compensation FOREIGN KEY (TenantId,CompensationPartyId) REFERENCES dbo.Parties(TenantId,PartyId),
+    CONSTRAINT FK_PayrollEmployments_Center FOREIGN KEY (TenantId,CostCenterId) REFERENCES dbo.AccountingCostCenters(TenantId,CostCenterId),
     CONSTRAINT [FK_PayrollEmployments_Party] FOREIGN KEY ([TenantId],[PartyId]) REFERENCES [dbo].[Parties]([TenantId],[PartyId]),
     CONSTRAINT [FK_PayrollEmployments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_PayrollEmployments_Employees] FOREIGN KEY ([EmployeeId]) REFERENCES [dbo].[Employees]([EmployeeId]),
@@ -169,6 +183,9 @@ CREATE TABLE [payroll].[Employments]
     CONSTRAINT [FK_PayrollEmployments_BankAccountType] FOREIGN KEY ([BankAccountTypeOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
     CONSTRAINT [CK_PayrollEmployments_Dates] CHECK ([EndDate] IS NULL OR [EndDate] >= [StartDate]),
     CONSTRAINT [CK_PayrollEmployments_Salary] CHECK ([MonthlySalary] > 0),
+    CONSTRAINT CK_PayrollEmployments_ProfileAffiliations CHECK (AccountingProfileId IS NULL OR
+      (HealthPartyId IS NOT NULL AND PensionPartyId IS NOT NULL AND SeverancePartyId IS NOT NULL
+       AND RiskPartyId IS NOT NULL AND CompensationPartyId IS NOT NULL)),
     CONSTRAINT [CK_PayrollEmployments_IntegralPercentage] CHECK ([IntegralSalaryPercentage] IS NULL OR [IntegralSalaryPercentage] BETWEEN 0 AND 1)
     ,CONSTRAINT [CK_PayrollEmployments_BankAccount] CHECK (
       ([BankOptionId] IS NULL AND [BankAccountTypeOptionId] IS NULL AND [BankAccountNumber] IS NULL)
@@ -260,7 +277,8 @@ CREATE TABLE [payroll].[Runs]
     [PayrollRunId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [RuleSetId] UNIQUEIDENTIFIER NOT NULL,
+    -- Retained for historical runs; new calculations resolve parameters per contract.
+    [RuleSetId] UNIQUEIDENTIFIER NULL,
     [PayFrequencyOptionId] UNIQUEIDENTIFIER NOT NULL,
     [RunKind] NVARCHAR(24) NOT NULL,
     [OriginalPayrollRunId] UNIQUEIDENTIFIER NULL,

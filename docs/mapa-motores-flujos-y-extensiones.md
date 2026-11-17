@@ -306,6 +306,13 @@ consulta el resultado, pero no duplica ni suplanta ese pipeline.
   trabajador y totales en la transacción. ApplicableCalculationConcepts y las
   funciones CalculationContextVersions/CalculationNoveltyVersions comparten las
   fuentes vigentes para cálculo y aceptación (13.13, en validación).
+- La configuración del contrato referencia `payroll.AccountingProfiles` del tenant
+  y las afiliaciones canónicas de Parties. El perfil enlaza las reglas versionadas
+  existentes; `payroll.ProfileRuleConfiguration` resuelve una única vigencia por
+  período al cargar, guardar y aprobar. El calculador no pide una regla por lote.
+  Porcentajes usados e identidad efectiva quedan por trabajador; el motor contable
+  resuelve en conjunto las cuentas del perfil al contabilizar. No hay otro motor,
+  tabla de trabajo, writer o cola (decisión de nómina, 13.4).
 - El detalle y la aceptación del lote comparten `payroll.PayableRunEmployees`
   para seleccionar el medio contractual congelado, causación Posted y netos
   todavía pendientes. `SqlPayrollStore` conserva la transacción/PaymentLines;

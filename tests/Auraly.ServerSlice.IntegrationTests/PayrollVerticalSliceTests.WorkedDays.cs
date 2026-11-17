@@ -72,7 +72,7 @@ public sealed partial class PayrollVerticalSliceTests
         return detail;
     }
 
-    private async Task AssertWorkedDaysAsync(HttpClient configurationClient,PayrollWorkspaceOptions options,PayrollService service,
+    private async Task<PayrollRunView> AssertWorkedDaysAsync(HttpClient configurationClient,PayrollWorkspaceOptions options,PayrollService service,
         IPayrollStore store,PayrollUserIdentity user,PayrollRunView initial,Guid employmentId)
     {
         Guid Option(string catalog,string code)=>options.Catalogs[catalog].Single(value=>value.Code==code).OptionId;
@@ -106,7 +106,7 @@ public sealed partial class PayrollVerticalSliceTests
             {
                 current=await service.CalculateRunAsync(user,initial.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,
                     WorkedDaysChanges:[new(employmentId,days)]));
-                Assert.Equal(10,commands.Count);
+                Assert.Equal(9,commands.Count);
             }
             samples.Add(elapsed.Elapsed.TotalMilliseconds);
             sqlSamples.Add(commandTimes.ToArray());
@@ -119,7 +119,7 @@ public sealed partial class PayrollVerticalSliceTests
         var p95=samples.Order().ElementAt(18);
         var file=Path.Combine(AppContext.BaseDirectory,"TestResults","payroll-worked-days-500.json");
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        await File.WriteAllTextAsync(file,JsonSerializer.Serialize(new{workers=500,affected=1,commands=10,p95,samples,sqlSamples}));
+        await File.WriteAllTextAsync(file,JsonSerializer.Serialize(new{workers=500,affected=1,commands=9,p95,samples,sqlSamples}));
         Assert.True(p95<1000,$"Individual recalculation exceeded its budget: {p95:F1} ms");
         PayrollRunView reread;
         using(var reads=new InventoryBalanceProcessingTests.CommandCounter(database))
@@ -161,6 +161,7 @@ public sealed partial class PayrollVerticalSliceTests
         current=await service.CalculateRunAsync(user,initial.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,SelectionChanges:[new(employmentId,true)]));
         Assert.Equal(25,current.Employees.Single(value=>value.EmploymentId==employmentId).WorkedDays);
         Assert.Equal(20,current.Employees.Single(value=>value.EmploymentId==employmentId).Lines.Single(line=>line.ConceptId==transportId).Quantity);
+        return current;
     }
 
     private async Task AssertContractDayBoundsAsync(PayrollService service,IPayrollStore store,PayrollUserIdentity user,
@@ -191,7 +192,7 @@ public sealed partial class PayrollVerticalSliceTests
             update.Parameters.AddWithValue("@Frequency",halfMonthFrequency);update.Parameters.AddWithValue("@Id",employmentId);update.Parameters.AddWithValue("@Tenant",user.TenantId);
             await update.ExecuteNonQueryAsync();
         }
-        var half=await store.CreateRunAsync(user,new(Guid.NewGuid(),user.BusinessId,initial.RuleSetId,halfMonthFrequency,"Regular",null,
+        var half=await store.CreateRunAsync(user,new(Guid.NewGuid(),user.BusinessId,halfMonthFrequency,"Regular",null,
             initial.PeriodStart.AddDays(15),initial.PeriodEnd,initial.PaymentDate),CancellationToken.None);
         half=await service.CalculateRunAsync(user,half.PayrollRunId);
         worker=Assert.Single(half.Employees);Assert.Equal(15,worker.WorkedDays);Assert.Equal(12,worker.MaximumContractDays);Assert.Equal(15,worker.PeriodDays);
