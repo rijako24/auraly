@@ -315,7 +315,7 @@ public sealed class PayrollService(
         if (changes.Count > PayrollPaymentLimits.MaximumEmployees || changes.Any(value => value is null || value.EmploymentId == Guid.Empty)
             || changes.Select(value => value.EmploymentId).Distinct().Count() != changes.Count)
             throw new PayrollValidationException("La selección admite hasta 500 contratos distintos.");
-        if (dayChanges.Count > PayrollPaymentLimits.MaximumEmployees || dayChanges.Any(value => value is null || value.EmploymentId == Guid.Empty)
+        if (dayChanges.Count > PayrollPaymentLimits.MaximumEmployees || dayChanges.Any(value => value is null || value.EmploymentId == Guid.Empty || value.ConceptId == Guid.Empty)
             || dayChanges.Select(value => value.EmploymentId).Distinct().Count() != dayChanges.Count)
             throw new PayrollValidationException("La edición de días admite hasta 500 contratos distintos.");
         if (recalculate.Count > PayrollPaymentLimits.MaximumEmployees || recalculate.Any(id => id == Guid.Empty)
@@ -336,13 +336,13 @@ public sealed class PayrollService(
         {
             if (dayChanges.Count > 0)
             {
-                var byEmployment = dayChanges.ToDictionary(value => value.EmploymentId, value => value.WorkedDays);
+                var byEmployment = dayChanges.ToDictionary(value => value.EmploymentId);
                 if (byEmployment.Keys.Except(data.Employees.Select(value => value.EmploymentId)).Any())
                     throw new PayrollValidationException("Sólo se pueden editar los días de trabajadores seleccionados en esta liquidación.");
                 data = data with
                 {
-                    Employees = data.Employees.Select(input => byEmployment.TryGetValue(input.EmploymentId, out var days)
-                        ? calculator.WithFinalWorkedDays(input, days, data.PeriodDays) : input).ToArray()
+                    Employees = data.Employees.Select(input => byEmployment.TryGetValue(input.EmploymentId, out var change)
+                        ? calculator.WithConceptWorkedDays(input, change.ConceptId, change.WorkedDays, data.PeriodDays) : input).ToArray()
                 };
             }
             var calculations = data.Employees.Select(calculator.Calculate).ToArray();

@@ -138,6 +138,72 @@ public sealed class PayrollCalculatorTests
         Assert.Equal(result.CalculationHash, calculator.Calculate(edited).CalculationHash);
     }
 
+    [Fact]
+    public void Concept_days_are_independent_and_transport_does_not_change_contributions()
+    {
+        var calculator = new PayrollCalculator();
+        var input = Input(1_500_000m);
+        var transportId = input.SystemConcepts[PayrollSystemConceptRoles.TransportAllowance].ConceptId;
+        var salaryId = input.SystemConcepts[PayrollSystemConceptRoles.BasicSalary].ConceptId;
+        var original = calculator.Calculate(input);
+        var transportEdit = calculator.WithConceptWorkedDays(input, transportId, 25, 30);
+        var result = calculator.Calculate(transportEdit);
+        Assert.Equal(30, result.WorkedDays);
+        Assert.Equal(135_000m, result.Lines.Single(line => line.ConceptCode == "TRANSPORT").Amount);
+        Assert.Equal(original.Deductions, result.Deductions);
+        Assert.Equal(original.EmployerContributions, result.EmployerContributions);
+        Assert.Equal(1_635_000m, result.Lines.Single(line => line.ConceptCode == "SEVERANCE").BaseAmount);
+        var salaryEdit = calculator.WithConceptWorkedDays(transportEdit, salaryId, 20, 30);
+        result = calculator.Calculate(salaryEdit);
+        Assert.Equal(20, result.WorkedDays);
+        Assert.Equal(25, result.Lines.Single(line => line.ConceptCode == "TRANSPORT").Quantity);
+        Assert.Equal(40_000m, result.Lines.Single(line => line.ConceptCode == "HEALTH_EMPLOYEE").Amount);
+        Assert.Equal(result.CalculationHash, calculator.Calculate(salaryEdit).CalculationHash);
+        Assert.Equal(2, result.ConceptWorkedDays.Count);
+    }
+
+    [Fact]
+    public void Absences_apply_once_to_each_concept_base_and_zero_days_can_be_restored()
+    {
+        var calculator = new PayrollCalculator();
+        var absence = new PayrollNoveltyInput(Guid.NewGuid(), Concept("ABSENCE", PayrollLineNature.Deduction),
+            PayrollNoveltyTypeCodes.Days, 2, null, 0, null, true, false);
+        var input = Input(1_500_000m) with { Novelties = [absence] };
+        var transportId = input.SystemConcepts[PayrollSystemConceptRoles.TransportAllowance].ConceptId;
+        var edited = calculator.WithConceptWorkedDays(input, transportId, 25, 30);
+        Assert.Equal(27, edited.TransportBaseWorkedDays);
+        var result = calculator.Calculate(edited);
+        Assert.Equal(28, result.WorkedDays);
+        Assert.Equal(25, result.Lines.Single(line => line.ConceptId == transportId).Quantity);
+        var newAbsence = edited with { Novelties = [absence with { Quantity = 3 }] };
+        result = calculator.Calculate(newAbsence);
+        Assert.Equal(27, result.WorkedDays);
+        Assert.Equal(24, result.Lines.Single(line => line.ConceptId == transportId).Quantity);
+        var zero = calculator.WithConceptWorkedDays(newAbsence, transportId, 0, 30);
+        zero = calculator.WithFinalWorkedDays(zero, 0, 30);
+        result = calculator.Calculate(zero);
+        Assert.Equal(0, result.Earnings);
+        Assert.Equal(2, result.ConceptWorkedDays.Count);
+        Assert.Contains(result.Lines, line => line.ConceptId == transportId && line.Quantity == 0 && line.Amount == 0);
+        result = calculator.Calculate(calculator.WithConceptWorkedDays(zero, transportId, 10, 30));
+        Assert.Equal(0, result.WorkedDays);
+        Assert.Equal(54_000m, result.Earnings);
+    }
+
+    [Fact]
+    public void Derived_and_ineligible_concepts_cannot_override_days()
+    {
+        var calculator = new PayrollCalculator();
+        var input = Input(1_500_000m);
+        var healthId = input.SystemConcepts[PayrollSystemConceptRoles.EmployeeHealth].ConceptId;
+        var transportId = input.SystemConcepts[PayrollSystemConceptRoles.TransportAllowance].ConceptId;
+        Assert.Throws<PayrollCalculationException>(() => calculator.WithConceptWorkedDays(input, healthId, 25, 30));
+        Assert.Throws<PayrollCalculationException>(() => calculator.WithConceptWorkedDays(input with { AppliesTransportAllowance = false }, transportId, 25, 30));
+        var adjustment = calculator.Calculate(input with { WorkedDays = 0, PeriodDays = 0 });
+        Assert.Empty(adjustment.ConceptWorkedDays);
+        Assert.Empty(adjustment.Lines);
+    }
+
     [Theory]
     [InlineData(-1, 30)]
     [InlineData(31, 30)]

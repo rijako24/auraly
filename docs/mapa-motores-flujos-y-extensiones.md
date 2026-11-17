@@ -300,7 +300,8 @@ consulta el resultado, pero no duplica ni suplanta ese pipeline.
   existente aplica todos/ninguno y cambios acotados, comprueba la versión del
   run y devuelve el detalle autoritativo (13.12); no añade otro flujo de cálculo.
 - La edición de días en Novedades extiende ese mismo comando y entrada con
-  BaseWorkedDays. PayrollCalculator conserva una sola aritmética de ausencias;
+  BaseWorkedDays para salario y TransportBaseWorkedDays para transporte,
+  independientes por concepto. PayrollCalculator conserva una sola aritmética de ausencias;
   el guardado individual reemplaza únicamente sus resultados y devuelve el
   trabajador y totales en la transacción. ApplicableCalculationConcepts y las
   funciones CalculationContextVersions/CalculationNoveltyVersions comparten las

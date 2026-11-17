@@ -7,6 +7,7 @@ const options={catalogs:{"payroll-concept-nature":[{optionId:id(900),code:"Earni
 function worker(number:number,name:string,days:number){return{payrollRunEmployeeId:id(number+100),employmentId:id(number),partyId:id(number+200),employeeName:name,
     identification:String(number),contractNumber:`N-${number}`,workedDays:days,baseWorkedDays:30,maximumContractDays:30,periodDays:30,
     earnings:days*50000,deductions:days*4000,employerContributions:0,provisions:0,netPayable:days*46000,
+    conceptWorkedDays:[{conceptId:id(500),baseDays:30,workedDays:days}],
     lines:[{lineNumber:1,conceptId:id(500),conceptCode:"SALARY",conceptName:"Salario",natureCode:"Earning",quantity:days,baseAmount:1500000,rate:null,amount:days*50000,isEmployerCost:false,isSalaryBase:true}]};}
 function run(businessId:string){return{payrollRunId:id(1),businessId,ruleSetId:id(2),runKind:"Regular",periodStart:"2026-03-01",periodEnd:"2026-03-31",paymentDate:"2026-03-31",
     status:"Calculated",calculationVersion:1,employeeCount:2,totalEarnings:2900000,totalDeductions:232000,totalEmployerContributions:0,totalProvisions:0,netPayable:2668000,
@@ -35,16 +36,10 @@ test("novedades: recálculo individual conserva compañeros, evita refetch y blo
         }
         if(path.endsWith("/calculate")){
             calculations++;
-            if(calculations===3){
-                expect(route.request().postDataJSON()).toEqual({rowVersion:"AAAAAAAAAAI=",recalculateEmploymentIds:[id(10)]});
-                const updated={...worker(10,"Ana días",24),baseWorkedDays:27,payrollRunEmployeeId:id(998)};
-                current={...current,employees:[updated,current.employees[1]],rowVersion:"AAAAAAAAAAM=",calculationVersion:3};
-                await route.fulfill({json:{...current,isPartialCalculation:true,employees:[updated]}});return;
-            }
-            expect(route.request().postDataJSON()).toEqual({rowVersion:"AAAAAAAAAAE=",workedDaysChanges:[{employmentId:id(10),workedDays:25}]});
+            expect(route.request().postDataJSON()).toEqual({rowVersion:"AAAAAAAAAAE=",workedDaysChanges:[{employmentId:id(10),conceptId:id(500),workedDays:25}]});
             if(fail){fail=false;await route.fulfill({status:503,json:{detail:"Días temporalmente no disponibles"}});return;}
             await released;
-            const updated={...worker(10,"Ana días",25),baseWorkedDays:27,payrollRunEmployeeId:id(999)};
+            const updated={...worker(10,"Ana días",25),baseWorkedDays:27,conceptWorkedDays:[{conceptId:id(500),baseDays:27,workedDays:25}],payrollRunEmployeeId:id(999)};
             current={...current,employees:[updated,current.employees[1]],rowVersion:"AAAAAAAAAAI=",totalEarnings:2750000,totalDeductions:220000,netPayable:2530000,calculationVersion:2};
             await route.fulfill({json:{...current,isPartialCalculation:true,employees:[updated]}});return;
         }
@@ -52,13 +47,16 @@ test("novedades: recálculo individual conserva compañeros, evita refetch y blo
     });
     await openWorker(page);
     const editor=page.getByRole("region",{name:"Liquidación de Ana días",exact:true});
-    const days=editor.getByRole("spinbutton",{name:"Días trabajados",exact:true});
+    await expect(editor.getByRole("button",{name:"Recalcular trabajador",exact:true})).toHaveCount(0);
+    await expect(editor.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
+    await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
+    const days=editor.getByRole("spinbutton",{name:"Días trabajados de Salario",exact:true});
     await expect(days).toHaveValue("28");await expect(days).toHaveAttribute("max","28");
-    await days.fill("");await editor.getByRole("button",{name:"Guardar y recalcular trabajador",exact:true}).click();
+    await days.fill("");await editor.getByRole("button",{name:"Guardar días de Salario",exact:true}).click();
     await expect(days).toBeFocused();expect(calculations).toBe(0);
-    await days.fill("25");await editor.getByRole("button",{name:"Guardar y recalcular trabajador",exact:true}).click();
+    await days.fill("25");await editor.getByRole("button",{name:"Guardar días de Salario",exact:true}).click();
     await expect(editor.getByRole("alert")).toHaveText("Días temporalmente no disponibles");await expect(days).toHaveValue("25");
-    await editor.getByRole("button",{name:"Guardar y recalcular trabajador",exact:true}).click();
+    await editor.getByRole("button",{name:"Guardar días de Salario",exact:true}).click();
     await expect(days).toBeDisabled();await expect(page.getByRole("button",{name:"Volver a trabajadores",exact:true})).toBeDisabled();
     await expect(page.getByRole("button",{name:"Actualizar nómina",exact:true})).toBeDisabled();
     await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();
@@ -70,20 +68,61 @@ test("novedades: recálculo individual conserva compañeros, evita refetch y blo
     await expect(page.locator("summary").filter({hasText:"Bruno completo"})).toContainText(/1[.]380[.]000/);
     await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeEnabled();
     await page.getByRole("tab",{name:"Novedades",exact:true}).click();
-    await page.getByRole("button",{name:"Ana días",exact:true}).click();await expect(days).toHaveValue("25");
-    await expect(editor.getByText(/Días base: 27 · Ausencias registradas: 2/)).toBeVisible();
+    await page.getByRole("button",{name:"Ana días",exact:true}).click();
+    await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();await expect(days).toHaveValue("25");
+    await expect(editor.getByText(/Ausencias registradas: 2/)).toBeVisible();
     await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
     await page.getByRole("button",{name:"Bruno completo",exact:true}).click();
+    await page.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
     await expect(page.getByRole("region",{name:"Liquidación de Bruno completo",exact:true}).getByRole("spinbutton")).toHaveValue("30");
     await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
     await page.getByRole("button",{name:"Ana días",exact:true}).click();
-    await editor.getByRole("button",{name:"Recalcular trabajador",exact:true}).click();
-    await expect(days).toHaveValue("24");
-    await expect(editor.getByText(/Días base: 27 · Ausencias registradas: 3/)).toBeVisible();
+    await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
+    await expect(days).toHaveValue("25");
+    await expect(editor.getByText(/Ausencias registradas: 2/)).toBeVisible();
     await editor.getByRole("heading",{name:"Ana días",exact:true}).scrollIntoViewIfNeeded();
     await page.screenshot({path:testInfo.outputPath("novedades-dias.png")});
-    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);expect(calculations).toBe(3);
+    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);expect(calculations).toBe(2);
     expect(candidateReads).toBe(readsDuringSave);
+});
+
+test("días por concepto: transporte conserva salario y deducciones sin lecturas adicionales",async({page,baseURL})=>{
+    const scenario=financialVoucherScenario();scenario.user.permissions.push("payroll.read","payroll.calculate");
+    await installFinancialVoucherContext(page,baseURL!,scenario);
+    const salary=worker(10,"Ana días",30);
+    const transport={...salary.lines[0],lineNumber:2,conceptId:id(501),conceptCode:"TRANSPORT",conceptName:"Auxilio de transporte",quantity:30,amount:162000};
+    let current={...run(scenario.businessId),employeeCount:1,totalEarnings:1662000,totalDeductions:120000,netPayable:1542000,employees:[{...salary,earnings:1662000,netPayable:1542000,
+        conceptWorkedDays:[...salary.conceptWorkedDays,{conceptId:id(501),baseDays:30,workedDays:30}],lines:[...salary.lines,transport]}]};
+    let reads=0,calculations=0;
+    await page.route("**/api/commerce/v1/payroll/**",async route=>{
+        const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/options")){reads++;await route.fulfill({json:options});return;}
+        if(path.endsWith("/runs")){reads++;await route.fulfill({json:[current]});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){reads++;await route.fulfill({json:current});return;}
+        if(path.endsWith("/calculate")){
+            calculations++;
+            expect(route.request().postDataJSON()).toEqual({rowVersion:current.rowVersion,
+                workedDaysChanges:[{employmentId:id(10),conceptId:id(501),workedDays:25}]});
+            const updated={...current.employees[0],payrollRunEmployeeId:id(999),earnings:1635000,netPayable:1515000,
+                conceptWorkedDays:[salary.conceptWorkedDays[0],{conceptId:id(501),baseDays:25,workedDays:25}],
+                lines:[salary.lines[0],{...transport,quantity:25,amount:135000}]};
+            current={...current,rowVersion:"AAAAAAAAAAI=",totalEarnings:1635000,netPayable:1515000,employees:[updated]};
+            await route.fulfill({json:{...current,isPartialCalculation:true}});return;
+        }
+        throw new Error(`Unexpected request ${path}`);
+    });
+    await openWorker(page);
+    const editor=page.getByRole("region",{name:"Liquidación de Ana días",exact:true});
+    await expect(editor.getByRole("spinbutton")).toHaveCount(0);
+    await editor.getByRole("button",{name:"Editar días de Auxilio de transporte",exact:true}).click();
+    await editor.getByRole("spinbutton",{name:"Días trabajados de Auxilio de transporte",exact:true}).fill("25");
+    await editor.getByRole("button",{name:"Guardar días de Auxilio de transporte",exact:true}).click();
+    await expect(editor.getByRole("spinbutton")).toHaveValue("25");
+    await expect(editor.getByRole("row").filter({hasText:"SALARY · Salario"})).toContainText("30");
+    await editor.getByRole("button",{name:"Cancelar edición de días",exact:true}).click();
+    await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
+    await expect(editor.getByRole("spinbutton")).toHaveValue("30");
+    expect(reads).toBe(3);expect(calculations).toBe(1);
 });
 
 test("novedades: lectura histórica no inventa entradas editables",async({page,baseURL})=>{
@@ -99,9 +138,9 @@ test("novedades: lectura histórica no inventa entradas editables",async({page,b
     });
     await openWorker(page);
     const editor=page.getByRole("region",{name:"Liquidación de Ana días",exact:true});
-    await expect(editor.getByRole("spinbutton")).toBeDisabled();
+    await expect(editor.getByRole("spinbutton")).toHaveCount(0);
     await expect(editor.getByText("Los días de este cálculo se conservan en lectura.",{exact:true})).toBeVisible();
-    await expect(editor.getByRole("button",{name:"Guardar y recalcular trabajador",exact:true})).toHaveCount(0);
+    await expect(editor.getByRole("button",{name:/Editar días/})).toHaveCount(0);
 });
 
 test("novedades lista todos los trabajadores y excluye borradores sin consultar por trabajador",async({page,baseURL},testInfo)=>{

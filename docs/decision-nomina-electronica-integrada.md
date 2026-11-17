@@ -592,9 +592,21 @@ explícitos, incluidos paginación histórica, perfiles/afiliaciones y calendari
   El incremento de 13.9 añade la separación de grupos del contrato congelado.
   El incremento de 13.10 añade formas del tenant y auxiliares originales;
   las restantes ampliaciones de esta sección conservan su estado explícito.
-- La forma del tenant seleccionada incluye sólo pendientes compatibles con
-  el tipo contractual congelado: transferencia o efectivo. Se muestran lista,
-  cantidad y suma. Se paga el neto completo por integrante; sin abonos parciales
+- Al seleccionar la liquidación se muestran primero los grupos contractuales
+  de transferencia y efectivo, contraídos, con cantidad y total pendientes.
+  No se exige adivinar una forma para descubrir a sus trabajadores. Expandir
+  cada grupo muestra integrantes y permite escoger una forma del tenant
+  compatible con su tipo. Cada grupo conserva su fecha, referencia y origen;
+  confirmar uno deja el otro disponible en la misma ventana, conservando su
+  captura. Son lotes independientes del mismo comando, con identidades
+  idempotentes distintas; no existe un pago global ni un nuevo flujo financiero.
+  Mientras un lote se confirma se bloquean otros envíos y el cierre de la
+  ventana para evitar respuestas competidoras sobre los pendientes.
+  Las formas se consultan paginadas por uso Payroll y tipo desde el selector
+  existente: cero consultas al catálogo con grupos contraídos, una página por
+  selector abierto, sin consultas por trabajador ni GET del detalle después
+  de pagar. La respuesta autoritativa actualiza pendientes e historial en sus
+  propietarios actuales. Se paga el neto completo por integrante; sin abonos parciales
   por trabajador. Neto cero no exige egreso. Neto negativo se rechaza con el
   control existente de deducciones superiores al devengado y exige corregir
   las entradas; no se convierte automáticamente en préstamo/CxC ni se arrastra
@@ -1165,7 +1177,8 @@ work/payroll-selection-ui-final-build.log, work/payroll-selection-ui-final-lint.
 Este incremento continúa en implementación y auditoría. No declara terminado
 ni publicable el contrato completo de la sección 13.
 
-RunEmploymentInputs conserva IsSelected y BaseWorkedDays. Desmarcar conserva
+RunEmploymentInputs conserva IsSelected, BaseWorkedDays (salario) y
+TransportBaseWorkedDays (auxilio de transporte). Desmarcar conserva
 los días introducidos para una futura reincorporación; los resultados siguen
 siendo reemplazables. La selección inicial carga 30/15, sin prorratear de forma
 oculta un ingreso/retiro. PayrollWorkPeriod calcula el máximo contractual en
@@ -1176,13 +1189,33 @@ referencia oficial del [Concepto 322391 de 2021](https://www1.funcionpublica.gov
 que expone ese criterio en el ámbito de empleo público; no amplía el alcance a
 regímenes especiales ni convierte esa respuesta en una norma privada general.
 
-Editar días finales usa PayrollCalculator.WithFinalWorkedDays: actualiza la
-misma entrada base sumando las ausencias identificadas. Recalcular vuelve a
-restarlas una sola vez. La entrada admite cuatro decimales, como su columna;
+La decisión aprobada permite días independientes por concepto: salario 30 y
+transporte 25 son entradas válidas. Novedades los edita en la cantidad de cada
+partida; los botones de editar/retirar son íconos con etiqueta accesible. Los
+30/15 iniciales dependen del contrato y no fuerzan todas las cantidades. Salud
+y pensión siguen derivadas de su base; las novedades manuales conservan su
+captura existente de días, horas o importe, sin convertirlos en días globales.
+No hay botón permanente de recálculo en Novedades: guardar, editar o retirar
+ya actualiza al trabajador. Sólo un fallo de ese cálculo ofrece Reintentar
+cálculo, sobre el mismo comando y sin volver a guardar la novedad. El error
+de presentación se conserva por liquidación/trabajador y se retira al recibir
+su resultado correcto; no crea estado durable ni otro proceso. El recálculo
+general permanece en Liquidaciones.
+
+Editar días finales usa PayrollCalculator.WithConceptWorkedDays: actualiza
+solo la base del concepto indicado, sumando las ausencias identificadas.
+Recalcular vuelve a restarlas una sola vez en cada base independiente. Cambiar
+salario conserva transporte y viceversa. El ConceptId debe corresponder a los
+roles canónicos BasicSalary/TransportAllowance; el calculador rechaza otros
+conceptos y transporte no elegible. WithFinalWorkedDays conserva el contrato
+anterior como edición de salario. La entrada admite cuatro decimales, como su columna;
 una base no representable no se redondea silenciosamente. Las ausencias de
 días no pueden añadir simultáneamente una deducción monetaria. Su partida de
 valor cero conserva cantidad y origen para revisión y consumo. La contabilidad
 ya excluye importes cero en su proyección existente.
+Salario/transporte de valor cero conservan sus filas operativas y metadatos
+ConceptWorkedDays para poder restaurar días. Los ajustes no exponen esos
+editores y conservan la exclusión anterior de partidas automáticas cero.
 El cálculo completo también rechaza días finales no representables con cuatro
 decimales; no delega un redondeo silencioso al TVP o a la columna SQL.
 
@@ -1192,7 +1225,9 @@ las deducciones sobre los ingresos completos. La protección del mínimo usa los
 importes efectivamente calculados y elimina el cálculo aproximado paralelo.
 El resultado no depende del orden de identidad de ingresos/deducciones.
 
-El mismo POST calculate incorpora WorkedDaysChanges. Una edición sin cambios
+El mismo POST calculate incorpora WorkedDaysChanges con ConceptId opcional
+(omitido significa salario), hasta 500 empleados distintos y una edición por
+empleado en el comando. Una edición sin cambios
 de selección opera únicamente sobre los trabajadores indicados, previamente
 liquidados, y conserva las demás entradas/resultados. El TVP de empleados V2
 es aditivo; se conserva el tipo V1 durante el cutover. El lote existente también
@@ -1201,6 +1236,21 @@ del run se agregan sobre sus hasta 500 resultados; el guardado devuelve dentro
 de su transacción el trabajador afectado y los totales, con EmployeeCount e
 IsPartialCalculation. El cálculo completo conserva la respuesta completa y
 los clientes anteriores siguen enviando body vacío o sin body.
+Los días de transporte y los metadatos de edición viajan como JSON acotado en
+ese mismo comando SQL por conjunto; no crean otro TVP, endpoint ni escritura
+por trabajador. El snapshot del resultado incorpora ConceptWorkedDays; UI
+habilita los editores desde ese resultado autoritativo y reutiliza la respuesta.
+
+Despliegue: la columna nullable y su índice se publican mediante el DACPAC
+antes de API/web. No se rellenan entradas ni snapshots históricos. Un recálculo
+explícito toma la base salarial previa cuando aún no hay base de transporte y
+guarda ambas de forma independiente. Los aprobados siguen inmutables. Rollback:
+conservar columna y datos; una vez usados días distintos, no volver al calculador
+anterior que los colapsaría. Corregir mediante roll-forward o impedir nuevas
+ediciones mientras se repone la versión, sin recalcular ni recontabilizar historia.
+Presupuesto del incremento: máximo 500 empleados, diez comandos SQL por cálculo,
+una lectura SQL del detalle, p95 individual <1 s y cálculo de 500 <5 s, medidos
+sin otra carga diagnóstica. No añade GET posterior, polling ni I/O por fila.
 
 ReadRunAsync es la lectura compartida del detalle completo y de la respuesta
 acotada. Resuelve los IDs autorizados antes de proyectar trabajadores/partidas,
@@ -1265,6 +1315,40 @@ de perfiles/afiliaciones, centros por línea e historiales descritos en 13.4 y 1
 
 Evidencia y auditoría del incremento, sin declarar cerrado el diseño completo:
 
+- Verificación puntual de días por concepto e íconos (16-11-2026):
+  `payroll-concept-days-foundation.trx` (32 aprobadas),
+  `payroll-concept-days-sql.trx` (5 aprobadas: flujo completo y lotes
+  2/100/500/501), `payroll-concept-days-e2e.log` (17 aprobadas), build y lint.
+  Con 500 trabajadores, el cálculo completo tomó 1.585 ms y el p95 de veinte
+  recálculos individuales 660 ms, conservando diez comandos y una lectura SQL
+  del detalle. Se verificaron persistencia, ausencias, rechazo de edición de
+  salud, compañeros intactos, selección y exclusión fiscal/contable de ceros.
+  `payroll-concept-days-upgrade-proof.json` conserva la misma huella de entradas,
+  resultados y partidas previos antes, después y al repetir el despliegue local.
+  `payroll-concept-days-local.png` muestra salario 30/transporte 25 después de
+  recargar, sin modificar el cálculo de otro trabajador.
+  Tras retirar el botón permanente se ejecutaron sólo nueve escenarios
+  afectados (`payroll-automatic-novelties-final-e2e.log`), todos aprobados,
+  además de build/lint. Verifican que Reintentar cálculo aparece sólo después
+  de un fallo, conserva el error al volver al trabajador, desaparece al
+  completarse y no guarda dos veces la novedad. La vista final con datos
+  persistidos está en `payroll-novelties-final-local.png`.
+- La presentación de grupos antes del selector extiende exclusivamente
+  PaymentForm y el lector PayableRunEmployees existente. No cambia aceptación
+  ni posting. `payroll-visible-payment-groups-e2e.log` contiene seis casos
+  puntuales aprobados: dos lotes en la misma ventana, identidades distintas,
+  bloqueo concurrente/cierre, captura del otro grupo conservada, cero lecturas
+  ocultas y dos páginas de formas (una por tipo), error/reintento de catálogo,
+  catálogo vacío y destino incompleto. No vuelve a ejecutar la regresión
+  completa; conserva la base anterior y los checks del camino afectado.
+  El recorrido real en navegador local creó/liquidó/contabilizó una nómina
+  sintética de enero de 2027, mostró ambos grupos contraídos y registró cada
+  uno desde la misma ventana. La falta inicial del período 2027 bloqueó el
+  pago correctamente; crear ese período local y reintentar la misma causación
+  por Trazabilidad financiera la dejó Posted. No se reescribió el trabajo ni
+  se eludió la validación. `payroll-payment-groups-local-ledger-proof.json`
+  comprueba dos trabajadores pagados exactamente una vez, cero pendientes y
+  tres asientos balanceados. No se envió dinero ni nómina electrónica.
 - `payroll-worked-days-foundation-audit.trx`: 1.195 pruebas aprobadas, incluidas
   dominio, arquitectura y regresiones comerciales/fiscales. La suite tardó
   4 min 23 s; las dos verificaciones arquitectónicas de proyectos consumieron

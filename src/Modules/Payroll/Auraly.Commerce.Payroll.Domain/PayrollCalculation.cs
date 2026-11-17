@@ -109,7 +109,13 @@ public sealed record PayrollEmployeeCalculationInput(
     IReadOnlyDictionary<string, PayrollConceptDefinition> SystemConcepts,
     IReadOnlyList<PayrollNoveltyInput> Novelties,
     bool AppliesTransportAllowance = true,
-    byte[]? EmploymentVersion = null);
+    byte[]? EmploymentVersion = null,
+    decimal? TransportBaseWorkedDays = null)
+{
+    public int? PeriodDays { get; init; }
+}
+
+public sealed record PayrollConceptWorkedDays(Guid ConceptId, decimal BaseDays, decimal WorkedDays);
 
 public sealed record PayrollCalculatedLine(
     Guid ConceptId,
@@ -141,6 +147,8 @@ public sealed record PayrollEmployeeCalculation(
 {
     public bool AppliesTransportAllowance { get; init; } = true;
     public byte[]? EmploymentVersion { get; init; }
+    public decimal TransportBaseWorkedDays { get; init; }
+    public IReadOnlyList<PayrollConceptWorkedDays> ConceptWorkedDays { get; init; } = [];
 }
 
 public sealed class PayrollCalculator
@@ -195,6 +203,8 @@ public sealed class PayrollCalculator
 
         var absenceDays = AbsenceDays(input);
         var workedDays = input.WorkedDays - absenceDays;
+        var transportBaseDays = input.TransportBaseWorkedDays ?? input.WorkedDays;
+        var transportDays = transportBaseDays - absenceDays;
         if (workedDays < 0)
             throw new PayrollCalculationException("Los días de ausencia superan los días reconocidos del período.");
         if (decimal.Round(workedDays,4) != workedDays)
@@ -202,6 +212,9 @@ public sealed class PayrollCalculator
 
         var basicSalary = Money(input.MonthlySalary / monthlyDays * workedDays);
         Add(lines, concepts[PayrollSystemConceptRoles.BasicSalary], workedDays, null, input.MonthlySalary / monthlyDays, basicSalary);
+        var dayInputs = new List<PayrollConceptWorkedDays>();
+        if (input.PeriodDays != 0)
+            dayInputs.Add(new(concepts[PayrollSystemConceptRoles.BasicSalary].ConceptId,input.WorkedDays,workedDays));
 
         IReadOnlyCollection<PayrollCalculatedLine>? percentageEarningBase = null;
         foreach (var novelty in input.Novelties.OrderBy(NoveltyStage).ThenBy(x => x.NoveltyId))
@@ -238,10 +251,14 @@ public sealed class PayrollCalculator
             : salaryEarnings + excessNonSalary;
         contributionBase = Money(Math.Min(contributionBase, maximumBase));
 
-        if (input.AppliesTransportAllowance && !input.IsIntegralSalary && input.MonthlySalary <= minimum * Rule(rules, PayrollRuleParameterCodes.TransportAllowanceSalaryLimitMultiple))
+        if (AppliesTransport(input))
         {
-            var allowance = Money(Rule(rules, PayrollRuleParameterCodes.TransportAllowance) / monthlyDays * workedDays);
-            Add(lines, concepts[PayrollSystemConceptRoles.TransportAllowance], workedDays, null, null, allowance);
+            if (transportDays < 0 || decimal.Round(transportDays,4) != transportDays)
+                throw new PayrollCalculationException("Las ausencias superan los días de transporte o su resultado requiere más de cuatro decimales.");
+            var allowance = Money(Rule(rules, PayrollRuleParameterCodes.TransportAllowance) / monthlyDays * transportDays);
+            Add(lines, concepts[PayrollSystemConceptRoles.TransportAllowance], transportDays, null, null, allowance);
+            if (input.PeriodDays != 0)
+                dayInputs.Add(new(concepts[PayrollSystemConceptRoles.TransportAllowance].ConceptId,transportBaseDays,transportDays));
         }
 
         AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployeeHealth], contributionBase,
@@ -293,13 +310,22 @@ public sealed class PayrollCalculator
             throw new PayrollCalculationException("Las deducciones autorizadas afectan el mínimo protegido del trabajador.");
         var employer = Money(lines.Where(x => x.Nature == PayrollLineNature.EmployerContribution).Sum(x => x.Amount));
         var provisions = Money(lines.Where(x => x.Nature == PayrollLineNature.Provision).Sum(x => x.Amount));
-        var normalized = lines.Where(x => x.Amount != 0 || x.NoveltyId.HasValue).ToArray();
+        var editableConcepts = dayInputs.Select(input => input.ConceptId).ToHashSet();
+        var normalized = lines.Where(x => x.Amount != 0 || x.NoveltyId.HasValue || editableConcepts.Contains(x.ConceptId)).ToArray();
         return new PayrollEmployeeCalculation(input.EmploymentId, input.PartyId, workedDays,
-            earnings, deductions, employer, provisions, Money(earnings - deductions), normalized, Hash(normalized)) { AppliesTransportAllowance = input.AppliesTransportAllowance, EmploymentVersion = input.EmploymentVersion };
+            earnings, deductions, employer, provisions, Money(earnings - deductions), normalized, Hash(normalized))
+        {
+            AppliesTransportAllowance = input.AppliesTransportAllowance, EmploymentVersion = input.EmploymentVersion,
+            TransportBaseWorkedDays = transportBaseDays, ConceptWorkedDays = dayInputs
+        };
     }
 
     public PayrollEmployeeCalculationInput WithFinalWorkedDays(PayrollEmployeeCalculationInput input,
         decimal workedDays, int periodDays)
+        => WithConceptWorkedDays(input,null,workedDays,periodDays);
+
+    public PayrollEmployeeCalculationInput WithConceptWorkedDays(PayrollEmployeeCalculationInput input,
+        Guid? conceptId, decimal workedDays, int periodDays)
     {
         if (periodDays <= 0 || workedDays < 0 || workedDays > periodDays || decimal.Round(workedDays, 4) != workedDays)
             throw new PayrollCalculationException("Los días trabajados deben estar dentro del período y admitir como máximo cuatro decimales.");
@@ -308,11 +334,26 @@ public sealed class PayrollCalculator
             throw new PayrollCalculationException("Las ausencias requieren ajustar su precisión antes de guardar días con cuatro decimales.");
         if (baseDays > periodDays)
             throw new PayrollCalculationException("Los días trabajados y las ausencias superan los días del período.");
-        return input with { WorkedDays = baseDays };
+        if (!input.SystemConcepts.TryGetValue(PayrollSystemConceptRoles.BasicSalary,out var salary) ||
+            !input.SystemConcepts.TryGetValue(PayrollSystemConceptRoles.TransportAllowance,out var transport))
+            throw new PayrollCalculationException("Falta configurar los conceptos de salario y transporte.");
+        if (conceptId is null || conceptId == salary.ConceptId)
+            return input with { WorkedDays = baseDays, TransportBaseWorkedDays = input.TransportBaseWorkedDays ?? input.WorkedDays };
+        if (conceptId == transport.ConceptId)
+        {
+            if (!AppliesTransport(input))
+                throw new PayrollCalculationException("El auxilio de transporte no aplica a este contrato.");
+            return input with { TransportBaseWorkedDays = baseDays };
+        }
+        throw new PayrollCalculationException("Este concepto no admite edición directa de días; se calcula según su base o su novedad.");
     }
 
     private static bool IsAbsence(PayrollNoveltyInput novelty)
         => novelty.NoveltyTypeCode == PayrollNoveltyTypeCodes.Days && novelty.Concept.Nature == PayrollLineNature.Deduction;
+
+    private static bool AppliesTransport(PayrollEmployeeCalculationInput input)
+        => input.AppliesTransportAllowance && !input.IsIntegralSalary && input.MonthlySalary <=
+            Rule(input.RuleParameters,PayrollRuleParameterCodes.MinimumMonthlySalary) * Rule(input.RuleParameters,PayrollRuleParameterCodes.TransportAllowanceSalaryLimitMultiple);
 
     private static decimal AbsenceDays(PayrollEmployeeCalculationInput input)
         => input.Novelties.Where(IsAbsence).Sum(novelty => novelty.Quantity);
@@ -343,6 +384,11 @@ public sealed class PayrollCalculator
             throw new PayrollCalculationException($"Faltan conceptos de sistema: {string.Join(", ", missingConcepts)}.");
         if (input.WorkedDays > Rule(input.RuleParameters, PayrollRuleParameterCodes.MonthlyDays))
             throw new PayrollCalculationException("Los días reconocidos superan los días del período mensual.");
+        var transportBaseDays = input.TransportBaseWorkedDays ?? input.WorkedDays;
+        var periodDays = input.PeriodDays ?? Rule(input.RuleParameters,PayrollRuleParameterCodes.MonthlyDays);
+        if (periodDays < 0 || input.WorkedDays > periodDays || transportBaseDays < 0 || transportBaseDays > periodDays ||
+            decimal.Round(input.WorkedDays,4) != input.WorkedDays || decimal.Round(transportBaseDays,4) != transportBaseDays)
+            throw new PayrollCalculationException("Los días de cada concepto deben estar dentro del período y admitir como máximo cuatro decimales.");
     }
 
     private static decimal Rule(IReadOnlyDictionary<string, decimal> rules, string code) => rules[code];

@@ -313,17 +313,19 @@ CREATE TABLE [payroll].[RunEmploymentInputs]
     [EmploymentId] UNIQUEIDENTIFIER NOT NULL,
     [IsSelected] BIT NOT NULL CONSTRAINT [DF_PayrollRunEmploymentInputs_Selected] DEFAULT (1),
     [BaseWorkedDays] DECIMAL(9,4) NULL,
+    [TransportBaseWorkedDays] DECIMAL(9,4) NULL,
     CONSTRAINT [PK_PayrollRunEmploymentInputs] PRIMARY KEY ([PayrollRunId],[EmploymentId]),
     CONSTRAINT [FK_PayrollRunEmploymentInputs_Run] FOREIGN KEY ([TenantId],[PayrollRunId])
         REFERENCES [payroll].[Runs]([TenantId],[PayrollRunId]),
     CONSTRAINT [FK_PayrollRunEmploymentInputs_Employment] FOREIGN KEY ([TenantId],[EmploymentId])
         REFERENCES [payroll].[Employments]([TenantId],[EmploymentId]),
-    CONSTRAINT [CK_PayrollRunEmploymentInputs_Days] CHECK ([BaseWorkedDays] IS NULL OR [BaseWorkedDays]>=0)
+    CONSTRAINT [CK_PayrollRunEmploymentInputs_Days] CHECK ([BaseWorkedDays] IS NULL OR [BaseWorkedDays]>=0),
+    CONSTRAINT [CK_PayrollRunEmploymentInputs_TransportDays] CHECK ([TransportBaseWorkedDays] IS NULL OR [TransportBaseWorkedDays]>=0)
 );
 GO
 CREATE INDEX [IX_PayrollRunEmploymentInputs_Run_Selected]
     ON [payroll].[RunEmploymentInputs]([PayrollRunId],[IsSelected],[EmploymentId])
-    INCLUDE ([TenantId],[BaseWorkedDays]);
+    INCLUDE ([TenantId],[BaseWorkedDays],[TransportBaseWorkedDays]);
 GO
 
 CREATE TABLE [payroll].[RunEmployees]

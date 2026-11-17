@@ -420,7 +420,9 @@ public sealed record PayrollPayableEmployee(Guid PayrollRunEmployeeId,Guid Payme
     string PaymentMethodName,decimal Amount,bool BankDestinationComplete,string EmployeeName);
 
 public sealed record PayrollRunEmploymentSelection(Guid EmploymentId, bool IsSelected);
-public sealed record PayrollWorkedDaysChange(Guid EmploymentId, decimal WorkedDays);
+public sealed record PayrollWorkedDaysChange(Guid EmploymentId, decimal WorkedDays, Guid? ConceptId = null);
+
+public sealed record PayrollConceptWorkedDaysView(Guid ConceptId, decimal BaseDays, decimal WorkedDays);
 
 public sealed record PayrollRunEmploymentFilter(
     string? ContractNumber = null, string SortBy = "employeeName", string SortDirection = "asc");
@@ -503,6 +505,7 @@ public sealed record PayrollRunEmployeeView(
     IReadOnlyList<PayrollRunLineView> Lines)
 {
     public IReadOnlyList<PayrollNoveltyView> Novelties { get; init; } = [];
+    public IReadOnlyList<PayrollConceptWorkedDaysView> ConceptWorkedDays { get; init; } = [];
     public decimal? MonthlySalary { get; init; }
     public decimal? BaseWorkedDays { get; init; }
     public decimal? MaximumContractDays { get; init; }

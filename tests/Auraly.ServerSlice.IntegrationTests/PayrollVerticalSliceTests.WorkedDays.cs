@@ -52,10 +52,15 @@ public sealed partial class PayrollVerticalSliceTests
             new CalculatePayrollRunRequest(run.RowVersion,RecalculateEmploymentIds:[employmentId]));
         Assert.True(run.IsPartialCalculation);Assert.Equal(2,run.EmployeeCount);
         Assert.Equal(30,Assert.Single(run.Employees).BaseWorkedDays);Assert.Equal(27,Assert.Single(run.Employees).WorkedDays);
+        var transportId=Assert.Single(run.Employees).Lines.Single(line=>line.ConceptCode=="TRANSPORT").ConceptId;
+        run=await PostAsync<PayrollRunView>(client,$"/api/commerce/v1/payroll/runs/{run.PayrollRunId}/calculate",
+            new CalculatePayrollRunRequest(run.RowVersion,WorkedDaysChanges:[new(employmentId,0,transportId)]));
+        Assert.Equal(27,Assert.Single(run.Employees).WorkedDays);
         var edited=await PostAsync<PayrollRunView>(client,$"/api/commerce/v1/payroll/runs/{run.PayrollRunId}/calculate",
             new CalculatePayrollRunRequest(run.RowVersion,WorkedDaysChanges:[new(employmentId,0)]));
         var zero=Assert.Single(edited.Employees);Assert.Equal(0,zero.WorkedDays);Assert.Equal(0,zero.Earnings);
-        Assert.Equal(3,zero.BaseWorkedDays);Assert.Equal(0,Assert.Single(zero.Lines).Amount);
+        Assert.Equal(3,zero.BaseWorkedDays);Assert.All(zero.Lines,line=>Assert.Equal(0,line.Amount));
+        Assert.Equal(2,zero.ConceptWorkedDays.Count);Assert.All(zero.ConceptWorkedDays,input=>Assert.Equal(0,input.WorkedDays));
         Assert.Equal(absence.NoveltyId,Assert.Single(zero.Novelties).NoveltyId);
         var future=await PostAsync<PayrollNoveltyView>(client,"/api/commerce/v1/payroll/novelties",new SavePayrollNoveltyRequest(
             Guid.NewGuid(),employmentId,conceptId,Option(PayrollCatalogCodes.NoveltyType,"Amount"),null,null,
@@ -86,6 +91,7 @@ public sealed partial class PayrollVerticalSliceTests
         var full=await service.CalculateRunAsync(user,initial.PayrollRunId);
         var worker=full.Employees.Single(value=>value.EmploymentId==employmentId);
         Assert.Equal(28,worker.WorkedDays);Assert.Equal(30,worker.BaseWorkedDays);
+        var transportId=worker.Lines.Single(line=>line.ConceptCode=="TRANSPORT").ConceptId;
         Assert.Equal(noveltyId,Assert.Single(worker.Lines,line=>line.NoveltyId==noveltyId).NoveltyId);
         Assert.Equal(0,worker.Lines.Single(line=>line.NoveltyId==noveltyId).Amount);
         var unaffected=full.Employees.Where(value=>value.EmploymentId!=employmentId).ToDictionary(value=>value.EmploymentId);
@@ -107,6 +113,7 @@ public sealed partial class PayrollVerticalSliceTests
             Assert.True(current.IsPartialCalculation);Assert.Equal(500,current.EmployeeCount);
             worker=Assert.Single(current.Employees);Assert.Equal(employmentId,worker.EmploymentId);
             Assert.Equal(days,worker.WorkedDays);Assert.Equal(days+2,worker.BaseWorkedDays);
+            Assert.Equal(28,worker.Lines.Single(line=>line.ConceptId==transportId).Quantity);
             Assert.Equal(days*2000m,worker.Lines.Single(line=>line.ConceptCode=="HEALTH_EMPLOYEE").Amount);
         }
         var p95=samples.Order().ElementAt(18);
@@ -132,7 +139,15 @@ public sealed partial class PayrollVerticalSliceTests
             Assert.Equal(unaffected[item.EmploymentId].NetPayable,item.NetPayable);
         }
         current=await service.CalculateRunAsync(user,initial.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,WorkedDaysChanges:[new(employmentId,25)]));
+        current=await service.CalculateRunAsync(user,initial.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,
+            WorkedDaysChanges:[new(employmentId,20,transportId)]));
+        worker=Assert.Single(current.Employees);Assert.Equal(25,worker.WorkedDays);
+        Assert.Equal(20,worker.Lines.Single(line=>line.ConceptId==transportId).Quantity);
+        Assert.Equal(22,worker.ConceptWorkedDays.Single(input=>input.ConceptId==transportId).BaseDays);
         var savedVersion=current.RowVersion;
+        var healthId=worker.Lines.Single(line=>line.ConceptCode=="HEALTH_EMPLOYEE").ConceptId;
+        await Assert.ThrowsAsync<PayrollValidationException>(()=>service.CalculateRunAsync(user,initial.PayrollRunId,
+            new CalculatePayrollRunRequest(savedVersion,WorkedDaysChanges:[new(employmentId,20,healthId)])));
         await Assert.ThrowsAsync<PayrollValidationException>(()=>service.CalculateRunAsync(user,initial.PayrollRunId,
             new CalculatePayrollRunRequest(savedVersion,WorkedDaysChanges:[new(employmentId,29)])));
         await Assert.ThrowsAsync<PayrollValidationException>(()=>service.CalculateRunAsync(user,initial.PayrollRunId,
@@ -140,10 +155,12 @@ public sealed partial class PayrollVerticalSliceTests
         Assert.Equal(savedVersion,(await store.GetRunAsync(user,initial.PayrollRunId,CancellationToken.None)).RowVersion);
         current=await service.CalculateRunAsync(user,initial.PayrollRunId);
         Assert.Equal(25,current.Employees.Single(value=>value.EmploymentId==employmentId).WorkedDays);
+        Assert.Equal(20,current.Employees.Single(value=>value.EmploymentId==employmentId).Lines.Single(line=>line.ConceptId==transportId).Quantity);
         current=await service.CalculateRunAsync(user,initial.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,SelectionChanges:[new(employmentId,false)]));
         Assert.Equal(499,current.EmployeeCount);
         current=await service.CalculateRunAsync(user,initial.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,SelectionChanges:[new(employmentId,true)]));
         Assert.Equal(25,current.Employees.Single(value=>value.EmploymentId==employmentId).WorkedDays);
+        Assert.Equal(20,current.Employees.Single(value=>value.EmploymentId==employmentId).Lines.Single(line=>line.ConceptId==transportId).Quantity);
     }
 
     private async Task AssertContractDayBoundsAsync(PayrollService service,IPayrollStore store,PayrollUserIdentity user,
@@ -163,7 +180,8 @@ public sealed partial class PayrollVerticalSliceTests
         var bounds=await Assert.ThrowsAsync<PayrollConflictException>(()=>service.ApproveRunAsync(user,current.PayrollRunId,"contract-days-outside-employment",current.RowVersion));
         Assert.Contains("vigencia contractual",bounds.Message);
         current=await service.CalculateRunAsync(user,current.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,WorkedDaysChanges:[new(employmentId,0)]));
-        worker=Assert.Single(current.Employees);Assert.Equal(0,worker.NetPayable);Assert.Empty(worker.Lines);
+        worker=Assert.Single(current.Employees);Assert.Equal(0,worker.NetPayable);Assert.All(worker.Lines,line=>Assert.Equal(0,line.Amount));
+        Assert.Single(worker.ConceptWorkedDays);
         current=await service.CalculateRunAsync(user,current.PayrollRunId,new CalculatePayrollRunRequest(current.RowVersion,WorkedDaysChanges:[new(employmentId,12)]));
         Assert.Equal(12,Assert.Single(current.Employees).WorkedDays);
         await using(var connection=new SqlConnection(fixture.ConnectionString))

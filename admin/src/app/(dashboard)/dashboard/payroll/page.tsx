@@ -42,7 +42,7 @@ export default function PayrollPage() {
 function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: string; businessId: string; permissions: Set<string> }) {
     const queryClient = useQueryClient();
     const [selectedId, setSelectedId] = useState<string | null>(null), [section, setSection] = useState<Section>("runs");
-    const [creatingPayment, setCreatingPayment] = useState(false);
+    const [creatingPayment, setCreatingPayment] = useState(false),[paying,setPaying]=useState(false);
     const detailVisible = section === "runs" || section === "novelties" || creatingPayment;
     const workspace = useQuery({ queryKey: ["payroll-workspace", tenantId, businessId], queryFn: async () => {
         const [options, runs] = await Promise.all([payrollApi.options(), payrollApi.runs()]);
@@ -58,6 +58,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     const editingNovelty=noveltyEditorState?.initial??null,noveltyPreset=noveltyEditorState?.preset??null;
     const creatingNovelty=noveltyEditorState!==null && editingNovelty===null;
     const [voidingNovelty,setVoidingNovelty]=useState(false);
+    const [calculationErrors,setCalculationErrors]=useState<Record<string,Record<string,string>>>({});
     function closeNoveltyEditor(){setNoveltyEditorState(null);}
     const calculationKey=["payroll-calculation",tenantId,businessId];
     const calculationPending=useIsMutating({mutationKey:calculationKey})>0;
@@ -103,7 +104,10 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
       try {
         await calculateRun(current.payrollRunId,{rowVersion:current.rowVersion,recalculateEmploymentIds:[result.employmentId]});
       } catch(error) {
-        toast.error(`${savedLabel}. No fue posible actualizar el cálculo: ${message(error,"Usa Recalcular trabajador antes de contabilizar.")}`);
+        setCalculationErrors(previous=>({...previous,[current.payrollRunId]:{
+          ...previous[current.payrollRunId],[result.employmentId]:message(error,"No fue posible actualizar el cálculo del trabajador.")
+        }}));
+        toast.error(`${savedLabel}. No fue posible actualizar el cálculo: ${message(error,"Reintenta el cálculo del trabajador antes de contabilizar.")}`);
       }
     }
     async function voidNovelty(item:PayrollNovelty) {
@@ -141,6 +145,14 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
         await queryClient.invalidateQueries({queryKey:["payroll-run-employments",tenantId,businessId],refetchType:"none"});
     }
     function runCalculated(result:PayrollRun){
+      setCalculationErrors(previous=>{
+        const errors=previous[result.payrollRunId];if(!errors)return previous;
+        const calculatedIds=new Set(result.employees.map(employee=>employee.employmentId));
+        const remaining=result.isPartialCalculation?Object.fromEntries(Object.entries(errors).filter(([id])=>!calculatedIds.has(id))):{};
+        const next={...previous};
+        if(Object.keys(remaining).length)next[result.payrollRunId]=remaining;else delete next[result.payrollRunId];
+        return next;
+      });
       const key=["payroll-run",tenantId,businessId,result.payrollRunId];
       let updated=result;
       if(result.isPartialCalculation){
@@ -194,6 +206,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     {section === "novelties" && <div className="space-y-5">
       <PayrollRunNovelties key={selectedId??"none"} runs={runs} selectedId={selectedId} run={selected} loading={detail.isFetching}
         error={detail.isError} canCalculate={permissions.has("payroll.calculate")} calculating={calculationPending}
+        calculationErrors={calculationErrors[selectedId??""]??{}}
         natures={options?catalog(options,"payroll-concept-nature"):[]} onSelect={selectRun} onRetry={()=>void detail.refetch()} onCalculate={calculateRun}
         canManage={permissions.has("payroll.manage")} voiding={voidingNovelty}
         editorEmploymentId={editingNovelty?.employmentId??noveltyPreset?.employmentId??null} onCloseEditor={closeNoveltyEditor}
@@ -232,7 +245,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     <Dialog open={creatingRules || editingRules !== null} onOpenChange={open => { if (!open) { setCreatingRules(false); setEditingRules(null); } }}><DialogContent className="max-h-[92dvh] max-w-4xl overflow-y-auto"><DialogHeader><DialogTitle>{editingRules ? "Editar reglas en borrador" : "Nuevo conjunto de reglas"}</DialogTitle><DialogDescription>Los parámetros y unidades se cargan desde tabla. Verifica la fuente normativa antes de aprobar.</DialogDescription></DialogHeader>{options && <RuleSetForm options={options} initial={editingRules} onSaved={async () => { setCreatingRules(false); setEditingRules(null); await load(); }}/>}</DialogContent></Dialog>
     <Dialog open={creatingElectronic} onOpenChange={setCreatingElectronic}><DialogContent><DialogHeader><DialogTitle>Consolidar nómina electrónica</DialogTitle><DialogDescription>Reserva la serie, crea el XML por trabajador y lo envía al motor fiscal para validar, firmar y transmitir a la DIAN.</DialogDescription></DialogHeader><p className="rounded-xl bg-muted p-3 text-sm">{dianRemaining === null ? "El cupo se verificará al preparar los documentos." : <>Cupo disponible: <b>{dianRemaining.toLocaleString("es-CO")} documentos DIAN</b>. Se requiere uno por trabajador.</>}{dianRemaining === 0 && " Para generar documentos nuevos necesitas ampliar el cupo; puedes recuperar un mes ya preparado."}</p><ElectronicPeriodForm businessId={businessId} onSaved={async () => { setCreatingElectronic(false); await load(); }}/></DialogContent></Dialog>
     <Dialog open={creatingAgreement || editingAgreement !== null} onOpenChange={open => { if (!open) { setCreatingAgreement(false); setEditingAgreement(null); } }}><DialogContent className="max-h-[92dvh] max-w-3xl overflow-y-auto"><DialogHeader><DialogTitle>{editingAgreement ? "Editar descuento autorizado" : "Nuevo descuento autorizado"}</DialogTitle><DialogDescription>Registra autoridad, evidencia, prioridad, vigencia y límites antes de descontar.</DialogDescription></DialogHeader>{options && <DeductionAgreementForm options={options} initial={editingAgreement} onSaved={result=>{agreementSaved(result);setCreatingAgreement(false);setEditingAgreement(null);}}/>}</DialogContent></Dialog>
-    <Dialog open={creatingPayment} onOpenChange={setCreatingPayment}><DialogContent className="max-h-[92dvh] overflow-y-auto"><DialogHeader><DialogTitle>Confirmar lote de pago</DialogTitle><DialogDescription>Consulta una liquidación y paga su grupo pendiente cuando la causación esté contabilizada.</DialogDescription></DialogHeader>{options && <PaymentForm options={options} runs={runs} selectedRun={selected} loading={detail.isFetching} error={detail.isError} onRunChange={selectRun} onRetry={()=>void detail.refetch()} onSaved={result=>{
+    <Dialog open={creatingPayment} onOpenChange={open=>{if(!paying)setCreatingPayment(open);}}><DialogContent showClose={!paying} className="max-h-[92dvh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>Confirmar lote de pago</DialogTitle><DialogDescription>Consulta una liquidación y paga su grupo pendiente cuando la causación esté contabilizada.</DialogDescription></DialogHeader>{options && <PaymentForm options={options} runs={runs} selectedRun={selected} loading={detail.isFetching} error={detail.isError} busy={paying} setBusy={setPaying} onRunChange={selectRun} onRetry={()=>void detail.refetch()} onSaved={result=>{
       queryClient.setQueryData<{options:PayrollOptions;runs:PayrollRunSummary[]}>(["payroll-workspace",tenantId,businessId],current=>{
         if(!current)return current;
         const batches=current.options.paymentBatches;
@@ -242,7 +255,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
         return {...current,options:{...current.options,paymentBatches:updated}};
       });
       queryClient.setQueryData<PayrollRun>(["payroll-run",tenantId,businessId,result.payrollRunId],current=>current?{...current,payableEmployees:result.remainingEmployees}:current);
-      setCreatingPayment(false);
+      if(result.remainingEmployees.length===0)setCreatingPayment(false);
     }}/>}</DialogContent></Dialog>
   </div>;
 }
@@ -455,50 +468,79 @@ catch (error) {
 finally {
     setBusy(false);
 } } return <div className="grid gap-4 sm:grid-cols-2"><Field label="Trabajador">{initial || preset ? <Input value={initial?.employeeName??preset?.employeeName??""} readOnly/> : <PayrollEmploymentSelect value={form.employmentId} onChange={value=>setForm(current => ({ ...current, employmentId: value, deductionAgreementId: null }))}/>}</Field><Field label="Concepto"><Select value={form.conceptId} onValueChange={value => setForm(current => ({ ...current, conceptId: value, deductionAgreementId: null, unitAmount: null, totalAmount: 0 }))}><SelectTrigger aria-label="Concepto"><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.code} · {item.name}</SelectItem>)}</SelectContent></Select></Field><CatalogField label="Tipo de novedad" options={catalog(options, "payroll-novelty-type")} value={form.noveltyTypeOptionId} onChange={value => set("noveltyTypeOptionId", value)}/><Field label="Acuerdo de descuento (si aplica)"><Select value={form.deductionAgreementId ?? "_none"} onValueChange={value => set("deductionAgreementId", value === "_none" ? null : value)}><SelectTrigger aria-label="Acuerdo de descuento (si aplica)"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="_none">No aplica</SelectItem>{agreements.map(item => <SelectItem key={item.deductionAgreementId} value={item.deductionAgreementId}>{item.referenceNumber}</SelectItem>)}</SelectContent></Select></Field><Field label="Inicio"><DatePicker today={today} value={form.startDate} onChange={value => set("startDate", value)}/></Field><Field label="Fin"><DatePicker today={today} value={form.endDate} onChange={value => set("endDate", value)}/></Field><Field label="Cantidad"><Input type="number" min={zeroQuantityAllowed ? 0 : 0.000001} step="any" value={form.quantity} onChange={event => set("quantity", event.currentTarget.valueAsNumber || 0)}/></Field><Field label={method === "PercentageOfBase" ? "Tarifa decimal" : "Valor unitario"}><Input type="number" min={0} step="any" value={form.unitAmount ?? ""} onChange={event => set("unitAmount", event.target.value ? event.currentTarget.valueAsNumber : null)}/></Field><Field label={needsRate ? "Total calculado por el motor" : "Valor total"}><Input type="number" min={0} step="any" disabled={needsRate} value={form.totalAmount} onChange={event => set("totalAmount", event.currentTarget.valueAsNumber || 0)}/></Field><Field label="Evidencia (URL)"><Input type="url" value={form.evidenceUrl ?? ""} onChange={event => set("evidenceUrl", event.target.value || null)}/></Field><label className="space-y-2 sm:col-span-2"><span className="block text-sm font-medium">Notas</span><Input maxLength={500} value={form.notes ?? ""} onChange={event => set("notes", event.target.value || null)}/></label><DialogFooter className="sm:col-span-2"><Button disabled={busy || !form.employmentId || !form.conceptId || !form.noveltyTypeOptionId || (form.quantity < 0 || (form.quantity === 0 && !zeroQuantityAllowed)) || form.endDate < form.startDate || (selectedConcept?.requiresDeductionAgreement && !form.deductionAgreementId) || (needsRate && form.unitAmount === null)} onClick={() => void save()}>{busy ? "Guardando novedad…" : initial ? "Guardar novedad" : "Registrar novedad"}</Button></DialogFooter></div>; }
-function PaymentForm({ options, runs, selectedRun, loading, error, onRunChange, onRetry, onSaved }: {
+function PaymentForm({ options, runs, selectedRun, loading, error, busy, setBusy, onRunChange, onRetry, onSaved }: {
     options: PayrollOptions; runs: PayrollRunSummary[]; selectedRun: PayrollRun|null;
     loading: boolean; error: boolean; onRunChange:(id:string)=>void; onRetry:()=>void;
+    busy:boolean;setBusy:(busy:boolean)=>void;
     onSaved:(result:PayrollPaymentBatch)=>void;
 }) {
-    const tenantId=useTenantContextStore(state=>state.selectedTenantId), businessId=useBusinessContextStore(state=>state.selectedBusinessId);
-    const today = useBusinessDates(businessId).today();
-    const [runId,setRunId]=useState(""),[form,setForm]=useState<PaymentMethod|null>(null),[date,setDate]=useState(""),
-      [reference,setReference]=useState(""),[busy,setBusy]=useState(false),[paymentBatchId]=useState(()=>crypto.randomUUID());
-    const methodId=catalog(options,"payroll-payment-method").find(option=>option.code===form?.methodCode)?.optionId??"";
+    const [runId,setRunId]=useState("");
+    const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
+    const today=useBusinessDates(businessId).today();
     const current=selectedRun?.payrollRunId===runId?selectedRun:null;
-    const employees=(current?.payableEmployees??[]).filter(employee=>employee.paymentMethodOptionId===methodId);
-    const total=employees.reduce((sum,employee)=>sum+employee.amount,0);
-    const invalidDestination=employees.some(employee=>!employee.bankDestinationComplete);
-    async function save(){
-      if(busy||loading||error||!current||!employees.length||invalidDestination||!form||!methodId)return;
+    const methods=catalog(options,"payroll-payment-method");
+    const pending=current?.payableEmployees??[];
+    const missingMethod=pending.some(employee=>!methods.some(method=>method.optionId===employee.paymentMethodOptionId));
+    async function save(method:PayrollCatalogOption,form:PaymentMethod,date:string,reference:string,paymentBatchId:string){
+      const employees=pending.filter(employee=>employee.paymentMethodOptionId===method.optionId);
+      if(busy||loading||error||!current||missingMethod||!employees.length||employees.some(employee=>!employee.bankDestinationComplete)
+        ||form.methodCode!==method.code||!date||!reference.trim())return;
       setBusy(true);
       try{
-        const result=await payrollApi.createPayment({paymentBatchId,payrollRunId:runId,paymentMethodOptionId:methodId,paymentMethodId:form.paymentMethodId,paymentDate:date,referenceNumber:reference});
+        const result=await payrollApi.createPayment({paymentBatchId,payrollRunId:runId,paymentMethodOptionId:method.optionId,paymentMethodId:form.paymentMethodId,paymentDate:date,referenceNumber:reference});
         onSaved(result);toast.success("Grupo de pago confirmado y enviado a contabilidad.");
       }catch(error){toast.error(message(error,"No fue posible confirmar el pago."));}
       finally{setBusy(false);}
     }
     return <div className="grid gap-4">
       <Field label="Liquidación"><Select value={runId} disabled={busy} onValueChange={id=>{setRunId(id);onRunChange(id);}}><SelectTrigger aria-label="Liquidación"><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{runs.filter(run=>run.status==="Approved").map(run=><SelectItem key={run.payrollRunId} value={run.payrollRunId}>{run.periodStart} — {run.periodEnd} · Neto liquidado {money.format(run.netPayable)}</SelectItem>)}</SelectContent></Select></Field>
-      <Field label="Forma de pago"><PagedEntitySelect<PaymentMethod> ariaLabel="Forma de pago" value={form?.paymentMethodId??""}
-        queryKey={["payment-method-choices",tenantId,businessId,"Payroll"]} disabled={busy}
-        selectedOption={form?{value:form.paymentMethodId,label:form.name,description:`${form.accountCode} · ${form.accountName}`}:null}
-        searchPlaceholder="Buscar forma de pago…" emptyMessage="No hay formas habilitadas para nómina."
-        loadPage={async(search,page,pageSize)=>{const result=await paymentMethodsApi.list({usage:"Payroll",search,page,pageSize});
-          return {...result,totalPages:Math.ceil(result.totalCount/result.pageSize)};}}
-        getOption={item=>({value:item.paymentMethodId,label:item.name,description:`${item.code} · ${item.accountCode} · ${item.accountName}`})}
-        onChange={(_id,_option,item)=>{if(item)setForm(item);}}/></Field>
-      {form&&<p className="text-sm">Cuenta: {form.accountCode} · {form.accountName}. Se usará la cuenta vigente de esta forma al contabilizar.</p>}
-      {runId&&loading?<p role="status">Consultando trabajadores pendientes…</p>:runId&&error?<p role="alert">No fue posible consultar la liquidación. <Button variant="link" onClick={onRetry}>Reintentar</Button></p>:runId&&current&&<section aria-label="Trabajadores del grupo de pago" className="space-y-2 rounded-xl border p-3">
-        <div className="flex items-center justify-between gap-3"><p className="font-medium">{employees.length} {employees.length===1?"trabajador":"trabajadores"} · {money.format(total)}</p><Button type="button" variant="outline" size="sm" disabled={busy||loading} onClick={onRetry}>Actualizar pendientes</Button></div>
-        {!methodId?<p className="text-sm text-muted-foreground">Selecciona la forma de pago para consultar su grupo.</p>:employees.length===0?<p className="text-sm text-muted-foreground">No hay trabajadores pendientes compatibles. La causación debe estar contabilizada para pagar.</p>:<ul className="max-h-56 space-y-2 overflow-y-auto text-sm">{employees.map(employee=><li key={employee.payrollRunEmployeeId} className="flex justify-between gap-3"><span>{employee.employeeName}</span><b>{money.format(employee.amount)}</b></li>)}</ul>}
-        {invalidDestination&&<p role="alert" className="text-sm text-destructive">Un trabajador del grupo no tiene destino bancario completo en la liquidación.</p>}
-        <p className="text-xs text-muted-foreground">Se confirma el neto completo de cada integrante. Los demás grupos conservan sus valores pendientes. El grupo se envía a contabilidad; no envía dinero al banco.</p>
-      </section>}
-      <Field label="Fecha de pago"><DatePicker today={today} disabled={busy} value={date} onChange={setDate}/></Field>
-      <Field label="Referencia bancaria o de caja"><Input disabled={busy} maxLength={100} value={reference} onChange={event=>setReference(event.target.value)}/></Field>
-      <DialogFooter><Button disabled={busy||loading||error||!current||!employees.length||invalidDestination||!methodId||!date||!reference.trim()} onClick={()=>void save()}>Confirmar pago del grupo</Button></DialogFooter>
+      {runId&&loading&&<p role="status">Consultando trabajadores pendientes…</p>}
+      {runId&&error&&<p role="alert">No fue posible consultar la liquidación. <Button variant="link" onClick={onRetry}>Reintentar</Button></p>}
+      {current&&<>
+        <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{pending.length} {pending.length===1?"trabajador pendiente":"trabajadores pendientes"} · {money.format(pending.reduce((sum,employee)=>sum+employee.amount,0))}</p><Button type="button" variant="outline" size="sm" disabled={busy||loading} onClick={onRetry}>Actualizar pendientes</Button></div>
+        {missingMethod&&<p role="alert">Hay trabajadores cuyo medio contractual no está disponible en el catálogo. Revisa su configuración antes de pagar.</p>}
+        {pending.length===0&&<p className="text-sm text-muted-foreground">No hay trabajadores pendientes. La causación debe estar contabilizada para pagar.</p>}
+        {methods.map(method=><PayrollPaymentGroup key={`${runId}:${method.optionId}`} method={method}
+          employees={pending.filter(employee=>employee.paymentMethodOptionId===method.optionId)} today={today} busy={busy||missingMethod||loading||error} onPay={save}/>)}
+        <p className="text-xs text-muted-foreground">Se confirma el neto completo de cada integrante. Los demás grupos conservan sus valores pendientes. Registrar el pago no envía dinero al banco.</p>
+      </>}
     </div>;
+}
+
+function PayrollPaymentGroup({method,employees,today,busy,onPay}:{
+    method:PayrollCatalogOption;employees:PayrollRun["payableEmployees"];today:string;busy:boolean;
+    onPay:(method:PayrollCatalogOption,form:PaymentMethod,date:string,reference:string,paymentBatchId:string)=>Promise<void>;
+}) {
+    const tenantId=useTenantContextStore(state=>state.selectedTenantId),businessId=useBusinessContextStore(state=>state.selectedBusinessId);
+    const [expanded,setExpanded]=useState(false),[form,setForm]=useState<PaymentMethod|null>(null),[date,setDate]=useState(""),
+      [reference,setReference]=useState(""),[paymentBatchId]=useState(()=>crypto.randomUUID());
+    const total=employees.reduce((sum,employee)=>sum+employee.amount,0);
+    const invalidDestination=employees.some(employee=>!employee.bankDestinationComplete);
+    const contentId=`payroll-payment-${method.optionId}`;
+    const open=expanded&&employees.length>0;
+    return <section aria-label={`Grupo ${method.label}`} className="overflow-hidden rounded-xl border">
+      <Button type="button" variant="ghost" className="h-auto w-full justify-between gap-3 whitespace-normal rounded-none p-4 text-left"
+        aria-expanded={open} aria-controls={contentId} disabled={busy||employees.length===0} onClick={()=>setExpanded(!expanded)}>
+        <span><span className="block font-semibold">{method.label}</span><span className="text-xs text-muted-foreground">{employees.length} {employees.length===1?"trabajador pendiente":"trabajadores pendientes"}</span></span>
+        <span className="flex items-center gap-2"><b>{money.format(total)}</b><span aria-hidden="true">{open?"−":"+"}</span></span>
+      </Button>
+      {open&&<div id={contentId} className="grid gap-4 border-t p-4">
+        <ul aria-label={`Trabajadores ${method.label}`} className="max-h-56 space-y-2 overflow-y-auto text-sm">{employees.map(employee=><li key={employee.payrollRunEmployeeId} className="flex justify-between gap-3"><span>{employee.employeeName}</span><b>{money.format(employee.amount)}</b></li>)}</ul>
+        {invalidDestination&&<p role="alert" className="text-sm text-destructive">Un trabajador del grupo no tiene destino bancario completo en la liquidación.</p>}
+        <Field label="Forma de pago"><PagedEntitySelect<PaymentMethod> ariaLabel="Forma de pago" value={form?.paymentMethodId??""}
+          queryKey={["payment-method-choices",tenantId,businessId,"Payroll",method.code]} disabled={busy}
+          selectedOption={form?{value:form.paymentMethodId,label:form.name,description:`${form.accountCode} · ${form.accountName}`}:null}
+          searchPlaceholder="Buscar forma de pago…" emptyMessage="No hay formas habilitadas para nómina."
+          loadPage={async(search,page,pageSize)=>{const result=await paymentMethodsApi.list({usage:"Payroll",methodCode:method.code,search,page,pageSize});
+            return {...result,totalPages:Math.ceil(result.totalCount/result.pageSize)};}}
+          getOption={item=>({value:item.paymentMethodId,label:item.name,description:`${item.code} · ${item.accountCode} · ${item.accountName}`})}
+          onChange={(_id,_option,item)=>{if(item)setForm(item);}}/></Field>
+        {form&&<p className="text-sm">Cuenta: {form.accountCode} · {form.accountName}. Se usará la cuenta vigente de esta forma al contabilizar.</p>}
+        <Field label="Fecha de pago"><DatePicker today={today} disabled={busy} value={date} onChange={setDate}/></Field>
+        <Field label="Referencia bancaria o de caja"><Input disabled={busy} maxLength={100} value={reference} onChange={event=>setReference(event.target.value)}/></Field>
+        <Button disabled={busy||invalidDestination||!form||!date||!reference.trim()} onClick={()=>{if(form)void onPay(method,form,date,reference,paymentBatchId);}}>Confirmar pago del grupo</Button>
+      </div>}
+    </section>;
 }
 function PayrollAccountingMappings({ options, canConfigure }: {
     options: PayrollOptions;

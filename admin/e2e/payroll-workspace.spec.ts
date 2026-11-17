@@ -177,6 +177,7 @@ test("liquidación, aprobación, pago, DIAN y reportes se recorren desde sus pes
   await page.getByRole("button", { name: "Confirmar pago", exact: true }).click();
   await page.getByRole("combobox", { name: "Liquidación", exact: true }).click();
   await page.getByRole("option").click();
+  await page.getByRole("region",{name:"Grupo Efectivo",exact:true}).getByRole("button",{expanded:false}).click();
   await page.getByRole("combobox", { name: "Forma de pago", exact: true }).click();
   await page.getByRole("option", { name: /Caja nómina/ }).click();
   await page.getByRole("button", { name: "Fecha de pago", exact: true }).click();
@@ -241,6 +242,8 @@ test("crear y reabrir contrato, descuento y novedad conserva sus datos", async (
   await expect(noveltyEditor).toBeHidden();
   expect(state.options.novelties[0].quantity).toBe(0);
   expect(state.reads.length).toBe(readsBefore);
+  await expect(page.getByRole("button",{name:"Editar novedad",exact:true})).toHaveText("");
+  await expect(page.getByRole("button",{name:"Retirar novedad",exact:true})).toHaveText("");
   await page.getByRole("button",{name:"Editar novedad",exact:true}).click();
   await expect(noveltyEditor.getByRole("textbox").first()).toHaveValue("Elena Prueba");
   await page.getByLabel("Valor total",{exact:true}).fill("60000");
@@ -408,6 +411,8 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   await page.getByRole("option",{name:"2026-08-01 — 2026-08-31",exact:true}).click();
   await page.getByRole("button",{name:"Elena Prueba",exact:true}).click();
   const editor=page.getByRole("region",{name:"Liquidación de Elena Prueba",exact:true});
+  await expect(editor.getByRole("button",{name:"Recalcular trabajador",exact:true})).toHaveCount(0);
+  await expect(editor.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
   const readsBefore=state.reads.length;
   await editor.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
   const dialog=page.getByRole("region",{name:"Edición de novedad",exact:true});
@@ -444,8 +449,11 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
   await expect(dialog).toBeHidden();
   expect(state.options.novelties).toHaveLength(1);
-  await editor.getByRole("button",{name:"Recalcular trabajador",exact:true}).click();
+  await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
+  await page.getByRole("button",{name:"Elena Prueba",exact:true}).click();
+  await editor.getByRole("button",{name:"Reintentar cálculo",exact:true}).click();
   await expect(editor.getByRole("row").filter({hasText:"PRESTAMO"})).toContainText("50.000");
+  await expect(editor.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
   const calculations=state.writes.filter(item=>item.path.endsWith("/calculate"));
   expect(calculations).toHaveLength(2);
   expect(calculations[0].body).toEqual({rowVersion:version,recalculateEmploymentIds:[employee.employmentId]});
