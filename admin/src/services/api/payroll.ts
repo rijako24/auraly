@@ -13,7 +13,7 @@ export interface PayrollEmployment { configuration?:PayrollEmploymentConfigurati
 export interface PayrollEmploymentPage { items:PayrollEmployment[];page:number;pageSize:number;totalCount:number;totalPages:number }
 export interface PayrollParty { partyId:string;employeeId:string;identification:string;name:string }
 export interface PayrollRuleParameter { code:string;numericValue:number;unitCode:string;description:string|null }
-export interface PayrollRuleSet { ruleSetId:string;countryCode:string;code:string;name:string;effectiveFrom:string;effectiveTo:string|null;sourceReference:string;status:string;parameters:PayrollRuleParameter[];rowVersion:string }
+export interface PayrollRuleSet { isGlobal:boolean; ruleSetId:string;countryCode:string;code:string;name:string;effectiveFrom:string;effectiveTo:string|null;sourceReference:string;status:string;parameters:PayrollRuleParameter[];rowVersion:string }
 export interface PayrollSettings { isEmployerExemptFromHealthSenaIcbf:boolean;electronicPayrollEnabled:boolean;rowVersion:string }
 export interface FiscalIssuerOption { fiscalIssuerConfigurationId:string;version:number;legalName:string;softwareIdentificationCode:string;softwarePinSecretReference:string;environment:number;testSetId:string|null;isActive:boolean }
 export interface ElectronicPayrollConfiguration { businessId:string;fiscalIssuerConfigurationId:string;softwareIdentificationCode:string;softwarePinSecretReference:string;testSetId:string|null;prefix:string;nextConsecutive:number;qrValidationUrl:string;isActive:boolean;rowVersion:string }

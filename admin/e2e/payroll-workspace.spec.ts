@@ -41,7 +41,7 @@ function fixture(): PayrollOptions {
       accountingCategoryCode: "EmployeeLoansReceivable", systemRoleCode: null, isSalaryBase: false,
       isSocialSecurityBase: false, isBenefitsBase: false, isTaxWithholdingBase: false,
       requiresDeductionAgreement: true, effectiveFrom: "2026-01-01", effectiveTo: null, isActive: true, rowVersion: version }],
-    ruleSets: [{ ruleSetId: "rules", countryCode: "CO", code: "CO-2026", name: "Reglas vigentes", effectiveFrom: "2026-01-01",
+    ruleSets: [{ isGlobal:false, ruleSetId: "rules", countryCode: "CO", code: "CO-2026", name: "Reglas vigentes", effectiveFrom: "2026-01-01",
       effectiveTo: null, sourceReference: "Fuente de prueba", status: "Approved", parameters: [{ code: "MonthlyDays", numericValue: 30, unitCode: "Days", description: null }], rowVersion: version }],
     settings: { isEmployerExemptFromHealthSenaIcbf: false, electronicPayrollEnabled: true, rowVersion: version },
     electronicConfiguration: null, fiscalIssuers: [], deductionAgreements: [], novelties: [], paymentBatches: [], electronicPeriods: [],
@@ -106,7 +106,7 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
         options.novelties[index]=novelty;body=novelty;
       }
       else if (path.includes("/concepts/")) { const form = data as SaveConcept; options.concepts.push({ ...options.concepts[0], conceptId: form.conceptId, code: form.code, name: form.name }); }
-      else if (path.includes("/rule-sets/")) { body = { ...data, status: "Draft", rowVersion: version }; options.ruleSets.push(body as typeof options.ruleSets[number]); }
+      else if (path.includes("/rule-sets/")) { body = { ...data, isGlobal:false, status: "Draft", rowVersion: version }; options.ruleSets.push(body as typeof options.ruleSets[number]); }
       else if (path.endsWith("/electronic-periods")) { body = { ...data, status: "Generated", documents: [{ electronicPayrollDocumentId: "electronic", partyId: "party", employeeName: "Elena Prueba", documentKind: "Regular", fiscalDocumentId: "fiscal", status: "Queued", sourceHashHex: "hash" }], rowVersion: version }; options.electronicPeriods.push(body as typeof options.electronicPeriods[number]); }
       else if (path.endsWith("/settings")) { options.settings = { ...data, rowVersion: version }; body = options.settings; }
       else if (path.endsWith("/electronic-configuration")) { options.electronicConfiguration = { ...data, rowVersion: version }; body = options.electronicConfiguration; }
@@ -465,6 +465,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
 test("perfil y nueva vigencia se configuran sin consultas ocultas ni volver a elegir reglas al liquidar", async ({ page, baseURL }) => {
   await page.clock.install({time:new Date("2027-01-01T15:00:00Z")});
   const state=await setup(page,baseURL!);
+  state.options.ruleSets[0].isGlobal=true;
   let profile={profileId:"profile",code:"OPER",name:"Operativo",ruleSetId:"rules",isActive:true,rowVersion:version,
     mappings:[{mappingId:"net",conceptId:null,debitAccountId:null,creditAccountId:"net-account",creditAccountLabel:"250505 · Nómina por pagar",effectiveFrom:"2026-01-01",effectiveTo:null}]};
   const profileReads:string[]=[];
@@ -480,6 +481,8 @@ test("perfil y nueva vigencia se configuran sin consultas ocultas ni volver a el
   await page.goto("/dashboard/payroll?section=configuration");
   await expect(page.getByRole("heading",{name:"Perfiles contables",exact:true})).toBeVisible();
   expect(profileReads).toEqual([]);
+  await expect(page.getByText("Base general · Desde 2026-01-01 · 1 parámetros",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Retirar",exact:true})).toHaveCount(0);
   expect(state.reads.filter(read=>read.path.includes("account-options")||read.path.endsWith("/accounting/accounts"))).toEqual([]);
   await page.getByRole("combobox",{name:"Consultar perfil de contrato"}).click();
   await page.getByRole("option",{name:"OPER · Operativo",exact:true}).click();
@@ -498,6 +501,7 @@ test("perfil y nueva vigencia se configuran sin consultas ocultas ni volver a el
   await expect(page.getByText("CO-2026 · Parámetros de enero",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Aprobar",exact:true}).click();
   await expect(page.getByRole("button",{name:"Nueva vigencia",exact:true})).toHaveCount(2);
+  await expect(page.getByRole("button",{name:"Retirar",exact:true})).toHaveCount(1);
   expect(workspaceReads()).toBe(baseline);
   expect(state.writes.some(write=>write.path.includes("/employments/"))).toBe(false);
   await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();

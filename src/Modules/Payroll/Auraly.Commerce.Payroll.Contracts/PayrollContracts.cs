@@ -304,7 +304,10 @@ public sealed record PayrollRuleSetView(
     string SourceReference,
     string Status,
     IReadOnlyList<PayrollRuleParameterView> Parameters,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public bool IsGlobal { get; init; }
+}
 
 public sealed record SavePayrollDeductionAgreementRequest(
     Guid DeductionAgreementId,

@@ -50,6 +50,16 @@ public sealed partial class PayrollVerticalSliceTests
             Assert.Equal(1,await global.ExecuteNonQueryAsync());
         }
         var configuration=await CreateProfileFixtureAsync(firstRules.RuleSetId);
+        var localDraftId=Guid.NewGuid();
+        var localDraft=await PutAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{localDraftId}",
+            new SavePayrollRuleSetRequest(localDraftId,firstRules.CountryCode,firstRules.Code,"Borrador de la empresa con fecha de la base general",
+                firstRules.EffectiveFrom,null,"Datos sintéticos para comprobar agrupación y alcance",
+                firstRules.Parameters.Select(row=>new SavePayrollRuleParameterRequest(row.Code,row.NumericValue,row.UnitCode,row.Description)).ToArray(),null));
+        Assert.False(localDraft.IsGlobal);
+        var globalOptions=await GetAsync<PayrollWorkspaceOptions>(client,"/api/commerce/v1/payroll/options");
+        Assert.True(globalOptions.RuleSets.Single(row=>row.RuleSetId==firstRules.RuleSetId).IsGlobal);
+        Assert.Equal(firstRules.Parameters.Count,globalOptions.RuleSets.Single(row=>row.RuleSetId==firstRules.RuleSetId).Parameters.Count);
+        Assert.Equal(firstRules.Parameters.Count,globalOptions.RuleSets.Single(row=>row.RuleSetId==localDraftId).Parameters.Count);
         var center=await PostAsync<AccountingCostCenterView>(client,"/api/commerce/v1/accounting/cost-centers",
             new CreateCostCenterRequest(Guid.NewGuid(),fixture.TenantId,"P"+Guid.NewGuid().ToString("N")[..20],"Centro contractual de prueba",null,false));
         configuration=configuration with{CostCenterId=center.CostCenterId};
@@ -137,6 +147,7 @@ public sealed partial class PayrollVerticalSliceTests
         var firstRun=await Calculate(11);
         Assert.Equal(120_000,Assert.Single(firstRun.Employees).Lines.Single(row=>row.ConceptCode=="HEALTH_EMPLOYEE").Amount);
         var futureRules=await Version(new(2026,12,1),.05m);
+        Assert.False(futureRules.IsGlobal);
         // Exercise malformed scalar evidence before consuming the real draft.
         // The batched projection must retain JSON_VALUE's length semantics and
         // must reject a missing snapshot version rather than accept SQL UNKNOWN.

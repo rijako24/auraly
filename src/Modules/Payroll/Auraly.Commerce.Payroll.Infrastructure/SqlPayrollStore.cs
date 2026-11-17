@@ -145,10 +145,11 @@ public sealed partial class SqlPayrollStore(
             ORDER BY 4,p.Identification;
 
             SELECT r.RuleSetId,r.CountryCode,r.Code,r.Name,r.EffectiveFrom,r.EffectiveTo,
-                   r.SourceReference,r.Status,r.RowVersion,p.Code,p.NumericValue,p.UnitCode,p.Description
+                   r.SourceReference,r.Status,r.RowVersion,p.Code,p.NumericValue,p.UnitCode,p.Description,
+                   CONVERT(bit,CASE WHEN r.TenantId IS NULL THEN 1 ELSE 0 END)
             FROM payroll.RuleSets r LEFT JOIN payroll.RuleParameters p ON p.RuleSetId=r.RuleSetId
             WHERE (r.TenantId=@TenantId OR r.TenantId IS NULL)
-            ORDER BY r.EffectiveFrom DESC,r.Code,p.Code;
+            ORDER BY r.EffectiveFrom DESC,r.Code,r.RuleSetId,p.Code;
 
             SELECT IsEmployerExemptFromHealthSenaIcbf,ElectronicPayrollEnabled,RowVersion
             FROM payroll.Settings WHERE TenantId=@TenantId;
@@ -241,6 +242,7 @@ public sealed partial class SqlPayrollStore(
         var rules = new List<PayrollRuleSetView>();
         Guid? currentId = null;
         string country = "", code = "", name = "", source = "", status = "";
+        var isGlobal=false;
         DateOnly effectiveFrom = default; DateOnly? effectiveTo = null; byte[] version = [];
         var parameters = new List<PayrollRuleParameterView>();
         while (await reader.ReadAsync(ct))
@@ -249,19 +251,20 @@ public sealed partial class SqlPayrollStore(
             if (currentId is not null && currentId != id)
             {
                 rules.Add(new(currentId.Value, country, code, name, effectiveFrom, effectiveTo,
-                    source, status, parameters.ToArray(), version));
+                    source, status, parameters.ToArray(), version){IsGlobal=isGlobal});
                 parameters.Clear();
             }
             currentId = id; country = reader.GetString(1); code = reader.GetString(2);
             name = reader.GetString(3); effectiveFrom = DateOnly.FromDateTime(reader.GetDateTime(4));
             effectiveTo = reader.IsDBNull(5) ? null : DateOnly.FromDateTime(reader.GetDateTime(5));
             source = reader.GetString(6); status = reader.GetString(7); version = (byte[])reader[8];
+            isGlobal=reader.GetBoolean(13);
             if (!reader.IsDBNull(9))
                 parameters.Add(new(reader.GetString(9), reader.GetDecimal(10), reader.GetString(11), NullableString(reader, 12)));
         }
         if (currentId is not null)
             rules.Add(new(currentId.Value, country, code, name, effectiveFrom, effectiveTo,
-                source, status, parameters.ToArray(), version));
+                source, status, parameters.ToArray(), version){IsGlobal=isGlobal});
 
         await reader.NextResultAsync(ct);
         PayrollSettingsView? settings = null;

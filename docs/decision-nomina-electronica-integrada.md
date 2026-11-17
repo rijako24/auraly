@@ -689,8 +689,12 @@ de contabilización. Repeticiones posteriores superaron el umbral de 2.000 ms:
 `payroll-approval-projection-final` pasó seis casos funcionales y falló el de
 500 (2.285,58/2.125,15 ms). La repetición aislada `payroll-statement-diagnostic`
 pasó ese caso con 1.876,36/1.663,89 ms, pero no demuestra resuelta la variabilidad;
-este gate de rendimiento permanece pendiente. El diagnóstico de instrucciones
-SQL se obtiene después de los tramos medidos, sin alterar sus límites.
+la estabilidad en ese equipo todavía no queda certificada. SQL confirmó
+`process_physical_memory_low`; algunas repeticiones posteriores agotaron el
+tiempo de espera antes del tramo medido. No se cambió la configuración global
+de la instancia compartida. El diagnóstico opcional de instrucciones SQL se
+limita a la base aislada, retira su sesión al terminar y marca sus muestras;
+una corrida con captura no constituye certificación de latencia.
 La resolución de perfiles hizo
 un comando con 25 configuraciones distintas, sin consultas por trabajador o
 partida. Se conservaron los fallos previos de rendimiento en sus logs; no se
@@ -707,6 +711,25 @@ La proyección de aprobación lee los escalares de cada snapshot una vez y resue
 los perfiles distintos dentro del mismo comando y transacción. Conserva el
 límite de 4.000 caracteres de `JSON_VALUE`; las pruebas rechazan una identidad
 excesiva y una versión de snapshot ausente antes de aprobar.
+La validación aislada de Windows 2022 del commit `b155bbf5`, Quality gates
+`44138867690`, pasó los 39 casos seleccionados: siete verticales, cinco variantes
+de pago, actualización histórica y 26 casos de aceptación contable. Incluye el
+lote de 500 con los límites originales activos. La solución completa compiló
+sin advertencias ni errores. Es evidencia distinta de las muestras locales
+afectadas por memoria; los fallos originales permanecen registrados.
+
+El origen general o propio de los parámetros se deriva de `RuleSets.TenantId`
+en las mismas consultas existentes. La pantalla distingue Base general y
+Empresa: una base permite Nueva vigencia, mientras editar, aprobar y retirar
+se ofrecen únicamente para versiones propias. El servidor conserva su control
+de alcance. La lectura agrupa primero por identidad de regla para mantener
+juntos sus parámetros incluso al compartir código y fecha entre ambos alcances.
+El ajuste de origen y agrupación pasó el caso API/SQL
+`payroll-rule-ownership.trx` y el recorrido de pantalla
+`payroll-rule-ownership-browser.log`. Verifican parámetros completos por identidad,
+borrador propio sin alterar la vigencia aprobada, acciones según origen y cero
+recargas adicionales del workspace. Tipos, lint y compilación puntual pasaron;
+se conserva la base de 39 casos anterior para los caminos que no cambiaron.
 La última repetición de pantalla `payroll-profiles-browser-final` pasó sus tres
 recorridos afectados. Verificó `isActive=true` sólo al abrir el selector del
 contrato, guardado sin GET redundante y etiquetas conservadas en móvil; se

@@ -66,7 +66,7 @@ export function PayrollProfiles({ options, canConfigure, canReadAccounting }: {
         <label className="space-y-2"><span className="text-sm">Nombre</span><Input maxLength={160} value={form.name} onChange={event=>setForm({...form,name:event.target.value})}/></label>
         <label className="space-y-2"><span className="text-sm">Porcentajes y topes aprobados</span><Select disabled={busy||!canConfigure} value={form.ruleSetId} onValueChange={ruleSetId=>setForm({...form,ruleSetId})}>
           <SelectTrigger aria-label="Porcentajes y topes del parámetro"><SelectValue placeholder="Selecciona la configuración aprobada"/></SelectTrigger>
-          <SelectContent>{options.ruleSets.filter(row=>row.status==="Approved"||row.ruleSetId===form.ruleSetId).map(row=><SelectItem key={row.ruleSetId} value={row.ruleSetId} disabled={row.status!=="Approved"}>{row.code} · {row.name} · {row.effectiveFrom}</SelectItem>)}</SelectContent>
+          <SelectContent>{options.ruleSets.filter(row=>row.status==="Approved"||row.ruleSetId===form.ruleSetId).map(row=><SelectItem key={row.ruleSetId} value={row.ruleSetId} disabled={row.status!=="Approved"}>{row.code} · {row.name} · {row.effectiveFrom} · {row.isGlobal?"Base general":"Empresa"}</SelectItem>)}</SelectContent>
         </Select></label>
         <label className="flex items-center gap-2"><Checkbox disabled={busy||!canConfigure} checked={form.isActive} onCheckedChange={checked=>setForm({...form,isActive:checked===true})}/>Perfil activo</label>
       </div>
