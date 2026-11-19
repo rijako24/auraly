@@ -2,7 +2,9 @@ CREATE TABLE [dbo].[Dispatches] (
     [DispatchId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
+    -- Preserves the former header value on historical dispatches. Current scope
+    -- is BusinessId; each source sales document owns its warehouse.
+    [WarehouseId] UNIQUEIDENTIFIER NULL,
     [DispatchNumber] NVARCHAR(64) NOT NULL,
     [ScheduledDate] DATE NOT NULL,
     [DriverUserId] UNIQUEIDENTIFIER NULL,
@@ -49,6 +51,7 @@ CREATE TABLE [dbo].[DispatchSourceDocuments] (
     [SellerId] UNIQUEIDENTIFIER NULL,
     [SellerNameSnapshot] NVARCHAR(201) NOT NULL,
     [DocumentTotalSnapshot] DECIMAL(19,4) NOT NULL,
+    [CreditAmountSnapshot] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL CONSTRAINT [DF_DispatchSourceDocuments_Status] DEFAULT N'Pending',
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_DispatchSourceDocuments] PRIMARY KEY ([DispatchSourceDocumentId]),

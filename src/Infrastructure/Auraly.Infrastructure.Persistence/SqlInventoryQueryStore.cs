@@ -2,6 +2,7 @@ using Auraly.Application.Inventory;
 using Auraly.Contracts.Inventory;
 using Auraly.BuildingBlocks.Domain.RestaurantDemand;
 using System.Data;
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -411,9 +412,10 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         return new(documentTypes.Order(StringComparer.Ordinal).ToArray(),movementTypes.Order(StringComparer.Ordinal).ToArray());
     }
 
-    public async Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token)
+    public async Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, IReadOnlyList<string> allowedDocumentTypes, bool includeCosts, CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand("dbo.InventoryOperationsSearch",connection){CommandType=CommandType.StoredProcedure}; AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@DocumentType",(object?)query.DocumentType??DBNull.Value); command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value); command.Parameters.AddWithValue("@From",(object?)query.From??DBNull.Value); command.Parameters.AddWithValue("@To",(object?)query.To??DBNull.Value); command.Parameters.AddWithValue("@ReasonCode",(object?)query.ReasonCode??DBNull.Value); command.Parameters.AddWithValue("@DestinationWarehouseId",(object?)query.DestinationWarehouseId??DBNull.Value); command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value); command.Parameters.AddWithValue("@PurchaseEvidenceType",(object?)query.PurchaseEvidenceType??DBNull.Value); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
+        command.Parameters.Add("@AllowedDocumentTypesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(allowedDocumentTypes);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryOperationItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.IsDBNull(5)?null:reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetString(6),reader.GetString(7),reader.GetString(8),reader.GetFieldValue<DateTimeOffset>(9),reader.GetInt32(10),reader.IsDBNull(11)?null:reader.GetDecimal(11),reader.IsDBNull(12)?null:reader.GetDecimal(12),reader.IsDBNull(13)?null:reader.GetDecimal(13),reader.IsDBNull(14)?null:reader.GetDecimal(14),reader.IsDBNull(15)?null:reader.GetDecimal(15),reader.IsDBNull(16)?null:reader.GetDecimal(16)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
@@ -481,6 +483,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             FROM dbo.InventoryOperationLines l
             INNER JOIN dbo.InventoryOperations o ON o.InventoryOperationId=l.InventoryOperationId
             WHERE l.InventoryOperationId=@Id AND o.BusinessId=@BusinessId
+              AND o.DocumentType=N'WarehouseTransfer' AND o.TransferMode=N'DispatchAndReceive'
             ORDER BY l.LineNumber;
             """;
         await using var connection = connections.Create();
@@ -505,7 +508,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     }
 
     public async Task<InventoryOperationDetail?> GetOperationDetailAsync(
-        InventoryUserIdentity user, Guid documentId, bool includeCosts, CancellationToken token)
+        InventoryUserIdentity user, Guid documentId, IReadOnlyList<string> allowedDocumentTypes, bool includeCosts, CancellationToken token)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
@@ -532,7 +535,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsSystem=0
               LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
               LEFT JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=o.RecipeVersionId
-              WHERE o.BusinessId=@BusinessId
+              WHERE o.BusinessId=@BusinessId AND o.InventoryOperationId=@DocumentId
+                AND o.DocumentType IN (SELECT [value] FROM OPENJSON(@AllowedDocumentTypesJson))
               UNION ALL
               SELECT g.GoodsReceiptId,N'GoodsReceipt',g.DocumentNumber,g.WarehouseId,w.Name,
                      NULL,NULL,N'GOODS_RECEIPT',N'Recepción de mercancía',NULL,NULL,g.Notes,
@@ -542,7 +546,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
               FROM dbo.GoodsReceipts g
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.IsSystem=0
-              WHERE g.BusinessId=@BusinessId
+              WHERE g.BusinessId=@BusinessId AND g.GoodsReceiptId=@DocumentId
+                AND N'GoodsReceipt' IN (SELECT [value] FROM OPENJSON(@AllowedDocumentTypesJson))
             ) d
             WHERE d.DocumentId=@DocumentId;
 
@@ -560,12 +565,19 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      l.ProcessedUnitCost,l.ProcessedValue,l.ConversionFactor,l.ConversionEquivalentQuantity,
                      l.DispatchedQuantity,l.ReceivedQuantity
               FROM dbo.InventoryOperationLines l
+              JOIN dbo.InventoryOperations operation ON operation.InventoryOperationId=l.InventoryOperationId
+                AND operation.BusinessId=@BusinessId
+                AND operation.DocumentType IN (SELECT [value] FROM OPENJSON(@AllowedDocumentTypesJson))
+              WHERE l.InventoryOperationId=@DocumentId
               UNION ALL
               SELECT l.GoodsReceiptId,l.LineNumber,N'RECEIPT',l.ProductId,
                      COALESCE(p.ProductCode,p.Sku),l.DescriptionSnapshot,l.Quantity,
                      NULL,NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal,NULL,NULL,NULL,NULL
               FROM dbo.GoodsReceiptLines l
               INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
+              JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=l.GoodsReceiptId AND receipt.BusinessId=@BusinessId
+              WHERE l.GoodsReceiptId=@DocumentId
+                AND N'GoodsReceipt' IN (SELECT [value] FROM OPENJSON(@AllowedDocumentTypesJson))
             ) l
             WHERE l.DocumentId=@DocumentId
             ORDER BY l.LineNumber;
@@ -574,6 +586,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@IncludeCosts", includeCosts);
+        command.Parameters.Add("@AllowedDocumentTypesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(allowedDocumentTypes);
         await using var reader = await command.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token)) return null;
 

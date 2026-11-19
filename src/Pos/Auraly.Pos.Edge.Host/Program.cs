@@ -970,11 +970,11 @@ public static class PosEdgeHostApplication
             PosCatalogStore catalog,
             CancellationToken ct) =>
             Results.Ok(await catalog.SettlementConfigurationAsync(ct)));
-        edge.MapGet("/payment-methods", async (int? page,int? pageSize,string? search,string? methodCode,
+        edge.MapGet("/payment-methods", async (int? page,int? pageSize,string? search,string? methodCode,string? excludeMethodCode,
             PosCatalogStore catalog,CancellationToken ct) =>
         {
             try { return Results.Ok(await catalog.PaymentMethodsPageAsync(
-                new Auraly.Contracts.Catalog.PaymentMethodQuery(page??1,pageSize??10,search,Usage:"Sales",MethodCode:methodCode),ct)); }
+                new Auraly.Contracts.Catalog.PaymentMethodQuery(page??1,pageSize??10,search,Usage:"Sales",MethodCode:methodCode,ExcludeMethodCode:excludeMethodCode),ct)); }
             catch(ArgumentException error) { return Results.Problem(error.Message,statusCode:400); }
             catch(InvalidDataException error) { return Results.Problem(error.Message,statusCode:409); }
         });

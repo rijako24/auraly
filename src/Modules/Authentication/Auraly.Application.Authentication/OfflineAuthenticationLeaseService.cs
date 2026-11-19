@@ -83,7 +83,7 @@ public sealed class OfflineAuthenticationLeaseService(
         if (string.IsNullOrWhiteSpace(request.Username) ||
             string.IsNullOrWhiteSpace(request.Password))
             throw new AuthenticationValidationException(
-                "Username and password are required.");
+                "Escribe el usuario y la contraseña.");
 
         var now = timeProvider.GetUtcNow();
         var user = await authenticationSessions.FindUserAsync(
@@ -137,7 +137,7 @@ public sealed class OfflineAuthenticationLeaseService(
         policy.EnsureValid();
         EnsureDevice(device);
         if (userId == Guid.Empty)
-            throw new AuthenticationValidationException("UserId is required.");
+            throw new AuthenticationValidationException("Se requiere un usuario válido.");
 
         var now = timeProvider.GetUtcNow();
         var payload = new OfflineAuthenticationLeasePayload(
@@ -163,7 +163,7 @@ public sealed class OfflineAuthenticationLeaseService(
     {
         EnsureDevice(device);
         if (leaseId == Guid.Empty)
-            throw new AuthenticationValidationException("LeaseId is required.");
+            throw new AuthenticationValidationException("Se requiere una autorización de acceso válida.");
         return leases.ReleaseAsync(
             device.TenantId,
             device.DeviceId,
@@ -181,7 +181,7 @@ public sealed class OfflineAuthenticationLeaseService(
         EnsureDevice(device);
         if (leaseId == Guid.Empty || userId == Guid.Empty)
             throw new AuthenticationValidationException(
-                "LeaseId and UserId are required.");
+                "Se requiere una autorización de acceso y un usuario válidos.");
         return leases.IsActiveAsync(
             device.TenantId,
             device.DeviceId,

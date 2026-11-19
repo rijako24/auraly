@@ -14,7 +14,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 [Trait("EngineCertification", "Operational")]
-public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fixture)
+public sealed partial class InventoryOperationsVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
     public async Task One_and_twenty_transfer_lines_keep_round_trips_bounded_for_dispatch_and_partial_receipt()

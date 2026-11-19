@@ -146,6 +146,11 @@ public static class WorkSessionApi
             await Handle(async () => Results.Ok(await service.ListCashDifferencesAsync(
                 context.User.ToWorkSessionIdentity(), from, to, cancellationToken))));
 
+        group.MapGet("/closures/inbox", async (HttpContext context, DateOnly from, DateOnly to,
+            string? status, int? page, int? pageSize, WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.ListClosureInboxAsync(
+                context.User.ToWorkSessionIdentity(), from, to, status, page ?? 1, pageSize ?? 50, cancellationToken))));
+
         group.MapGet("/closures", async (HttpContext context, DateOnly from, DateOnly to,
             string? status, int? page, int? pageSize, WorkSessionService service, CancellationToken cancellationToken) =>
             await Handle(async () => Results.Ok(await service.ListClosuresAsync(

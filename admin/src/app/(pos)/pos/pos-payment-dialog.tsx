@@ -1,6 +1,6 @@
 "use client";
 
-import { CreditCard, FileText, Loader2, Receipt, Trash2, X } from "lucide-react";
+import { CreditCard, FileText, Loader2, Receipt, Trash2 } from "lucide-react";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { PaymentMethodCatalogSnapshot } from "@/services/api/payment-methods";
+import { CardPaymentDetailsDialog, TransferPaymentDetailsDialog } from "@/components/payments/payment-details-dialogs";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -62,6 +63,7 @@ export function PosPaymentDialog({
   onCancel,
   onConfirm,
   portfolioDirection,
+  allowPendingCollection=false,
   portfolioPaymentDate,
   onBack,
   maxPaymentMethods,
@@ -86,6 +88,7 @@ export function PosPaymentDialog({
     methodLabels: Readonly<Record<string, string>>,
   ) => Promise<void>;
   portfolioDirection?: "receivable" | "payable";
+  allowPendingCollection?: boolean;
   portfolioPaymentDate?: { value: string; today?: string; onChange: (value: string) => void };
   onBack?: () => void;
   maxPaymentMethods?: number;
@@ -93,16 +96,6 @@ export function PosPaymentDialog({
 }) {
   const paymentMethods = usePosReferenceOptions(client, "payment-method");
   const cardFranchises = usePosReferenceOptions(client, "card-franchise");
-  const methods = useMemo(
-    () => (paymentMethods.data ?? []).filter(option => !portfolioDirection ||
-      option.code === "Cash" || option.code === "Transfer" ||
-      option.code === "DebitCard" || option.code === "CreditCard").slice(0, 5).map((option, index) => ({
-      code: option.code,
-      label: option.label,
-      shortcut: `F${index + 1}`,
-    })),
-    [paymentMethods.data, portfolioDirection],
-  );
   const tenantId = useTenantContextStore(state => state.selectedTenantId);
   const businessId = useBusinessContextStore(state => state.selectedBusinessId);
   const configurationQuery = useQuery({
@@ -117,6 +110,16 @@ export function PosPaymentDialog({
   const catalogReady = formCatalog?.contractVersion === 2;
   const effectiveMaximum = maxPaymentMethods ?? (portfolioDirection ? 10 : undefined);
   const forms = useMemo(() => (catalogReady ? formCatalog.forms : []).filter(form => portfolioDirection === "receivable" ? form.useForReceipts : portfolioDirection === "payable" ? form.useForSupplierPayments : form.useForSales), [catalogReady, formCatalog, portfolioDirection]);
+  const pendingEligible=allowPendingCollection&&documentType==="SalesReceipt"&&!portfolioDirection;
+  const methods=useMemo(()=>{
+    const options=(paymentMethods.data??[]).filter(option=>option.code!=="PendingCollection"&&(!portfolioDirection||
+      option.code==="Cash"||option.code==="Transfer"||option.code==="DebitCard"||option.code==="CreditCard"))
+      .slice(0,5).map((option,index)=>({code:option.code,label:option.label,shortcut:`F${index+1}`}));
+    const pending=pendingEligible&&forms.some(form=>form.methodCode==="PendingCollection")
+      ?paymentMethods.data?.find(option=>option.code==="PendingCollection"):null;
+    return pending?[...options,{code:pending.code,label:pending.label,shortcut:""}]:options;
+  },[paymentMethods.data,portfolioDirection,pendingEligible,forms]);
+  const shortcutCount=methods.filter(method=>method.shortcut).length;
   const automaticCredit = !portfolioDirection && !forms.some(form => form.methodCode === "Credit");
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
@@ -266,10 +269,16 @@ export function PosPaymentDialog({
   const addPayment = useCallback((requestedMethod?: string) => {
     if (busy || !catalogReady || !settlementConfigurationLoaded) return;
     setCreditError(null);
+    if(requestedMethod==="PendingCollection"){
+      if(!pendingEligible) return;
+      const id=crypto.randomUUID();
+      const payment=selectOnlyForm({id,methodCode:requestedMethod,amount:paymentTotalForCollection(total),reference:null,notes:null,bankAccountId:null});
+      setPayments([payment]);setActivePaymentId(id);setPendingFocusId(id);return;
+    }
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
       : null;
-    if (requestedMethod && (settlement.missing <= 0 || payments.length >= (effectiveMaximum ?? Number.POSITIVE_INFINITY))) {
+    if (requestedMethod && (payments.some(payment=>payment.methodCode==="PendingCollection") || settlement.missing <= 0 || payments.length >= (effectiveMaximum ?? Number.POSITIVE_INFINITY))) {
       const current = active ?? payments[0];
       if (!current) return;
       const updated = selectOnlyForm({ ...current, methodCode: requestedMethod, paymentMethodId: null,
@@ -301,7 +310,7 @@ export function PosPaymentDialog({
     if (payment.paymentMethodId && requiresCardCapture(nextMethod.code)) openCardCapture(id, payment);
     else if (payment.paymentMethodId && nextMethod.code === "Transfer") openTransferCapture(id, payment);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
+  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, methods, openCardCapture, openTransferCapture, payments, pendingEligible, total, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -309,7 +318,9 @@ export function PosPaymentDialog({
     setPendingFocusId(null);
   }, [focusAmount, pendingFocusId, payments]);
 
-  const canSubmit = settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded && catalogReady &&
+  const pendingValid=!payments.some(payment=>payment.methodCode==="PendingCollection")||
+    pendingEligible&&payments.length===1&&payments[0].amount===paymentTotalForCollection(total);
+  const canSubmit = pendingValid && settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded && catalogReady &&
     (!portfolioDirection || !portfolioPaymentDate || Boolean(portfolioPaymentDate.value)) &&
     payments.every(payment=>
       (automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null) ||
@@ -480,7 +491,7 @@ export function PosPaymentDialog({
               {portfolioDirection === "receivable" ? "Abono a cartera" : portfolioDirection === "payable" ? "Pago a proveedores" : "Finalizar venta"}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Escribe el valor recibido. ↑/↓ recorre los valores; {methods.length ? `F1-F${methods.length}` : "las teclas F"} seleccionan el medio{portfolioDirection ? "." : " y F6 cambia el documento."}
+              Escribe el valor recibido. ↑/↓ recorre los valores; {methods.length ? `F1-F${shortcutCount}` : "las teclas F"} seleccionan el medio{portfolioDirection ? "." : " y F6 cambia el documento."}
             </p>
           </div>
           <p className="text-right">
@@ -500,6 +511,7 @@ export function PosPaymentDialog({
           </div>
           {!documentTypeReady&&<p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Completa la configuración de factura electrónica para poder emitir esta venta.</p>}</>}
         </section>
+        {!pendingValid&&<p role="alert" className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Por recaudar requiere el valor completo de un comprobante de pedido. Cambia el medio de pago o el documento para continuar.</p>}
         {effectiveMaximum === 1 && <p className="mt-3 text-sm text-slate-500">Para varias facturas se usa un solo medio de pago.</p>}
 
         <div className={`mt-5 grid grid-cols-2 gap-2 ${portfolioDirection ? "sm:grid-cols-4" : "md:grid-cols-3 xl:grid-cols-5"}`}>
@@ -512,7 +524,7 @@ export function PosPaymentDialog({
               className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-slate-300 px-3 py-2 text-left text-sm font-semibold outline-none transition hover:border-teal-500 hover:bg-teal-50 focus:ring-2 focus:ring-teal-600/20 disabled:opacity-45"
             >
               <span className="min-w-0 whitespace-normal leading-tight">{method.label}</span>
-              <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{method.shortcut}</span>
+              {method.shortcut&&<span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{method.shortcut}</span>}
             </button>
           ))}
         </div>
@@ -584,7 +596,7 @@ export function PosPaymentDialog({
                   type="text"
                   inputMode="decimal"
                   data-payment-amount="true"
-                  aria-label={`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
+                  aria-label={payment.methodCode==="PendingCollection"?"Importe por recaudar":`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
                   value={amountDrafts[payment.id] ?? formatMoneyValue(payment.amount, portfolioDirection ? 4 : 2)}
                   onFocus={(event) => event.currentTarget.select()}
                   onKeyDown={(event) => handleAmountKeyDown(event, payment.id)}
@@ -650,32 +662,26 @@ export function PosPaymentDialog({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
-            {methods.length ? `F1-F${methods.length}` : "Las teclas F"} cambian el medio enfocado; Enter confirma únicamente cuando el pago está completo y E elimina la fila activa.
+            {methods.length ? `F1-F${shortcutCount}` : "Las teclas F"} cambian el medio enfocado; Enter confirma únicamente cuando el pago está completo y E elimina la fila activa.
           </p>
           {portfolioDirection && settlement.received>settlement.paymentTotal ? <p role="alert" className="text-sm font-semibold text-red-700">La diferencia requiere un concepto o corregir los importes.</p> : <PaymentStatus settlement={settlement} />}
         </div>
 
-        {cardCapture && (
-          <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
-            <div onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); saveCardCapture(); } }} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="card-capture-title">
-              <div className="flex items-start justify-between gap-3"><div><h3 id="card-capture-title" className="text-lg font-bold text-slate-950">Datos de la tarjeta</h3><p className="mt-1 text-sm text-slate-500">Selecciona la franquicia y registra la aprobación del datáfono.</p></div><button type="button" onClick={() => setCardCapture(null)} aria-label="Cerrar datos de tarjeta" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button></div>
-              <label className="mt-5 block text-sm font-medium text-slate-700">Franquicia<Select value={cardCapture.franchiseCode} onValueChange={franchiseCode => setCardCapture(current => current ? { ...current, franchiseCode } : null)}><SelectTrigger className="mt-1 h-11"><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{(cardFranchises.data ?? []).map(item => <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></label>
-              <label className="mt-4 block text-sm font-medium text-slate-700">Número de aprobación<input ref={cardApprovalRef} autoFocus required value={cardCapture.approvalNumber} onChange={event => setCardCapture(current => current ? { ...current, approvalNumber: event.target.value } : null)} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-lg font-semibold tracking-wide outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Aprobación del datáfono"/></label>
-              <p className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">Enter guarda y vuelve al valor recibido.</p><button type="button" onClick={saveCardCapture} disabled={!cardCapture.franchiseCode || !cardCapture.approvalNumber.trim()} className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold text-white disabled:opacity-45">Guardar datos · Enter</button>
-            </div>
-          </div>
-        )}
-        {transferCapture && (
-          <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
-            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="transfer-capture-title">
-              <div className="flex items-start justify-between gap-3"><div><h3 id="transfer-capture-title" className="text-lg font-bold text-slate-950">Datos de la transferencia</h3><p className="mt-1 text-sm text-slate-500">Registra el soporte del movimiento. La cuenta corresponde a la forma de pago seleccionada.</p></div><button type="button" onClick={() => setTransferCapture(null)} aria-label="Cerrar datos de transferencia" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button></div>
-              {<div className="mt-5 text-sm"><span className="font-medium text-slate-700">Cuenta de la forma de pago</span><p className="mt-1 rounded-lg border bg-slate-50 px-3 py-2">{forms.find(form=>form.paymentMethodId===payments.find(payment=>payment.id===transferCapture.paymentId)?.paymentMethodId)?.accountCode} · {forms.find(form=>form.paymentMethodId===payments.find(payment=>payment.id===transferCapture.paymentId)?.paymentMethodId)?.accountName}</p></div>}
-              <label className={`${accountingEnabled ? "mt-4" : "mt-5"} block text-sm font-medium text-slate-700`}>Referencia<input ref={transferReferenceRef} required maxLength={160} value={transferCapture.reference} onChange={event => setTransferCapture(current => current ? { ...current, reference: event.target.value } : null)} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-base font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Número o referencia del comprobante"/></label>
-              <label className="mt-4 block text-sm font-medium text-slate-700">Nota <span className="font-normal text-slate-400">(opcional)</span><textarea maxLength={500} rows={3} value={transferCapture.notes} onChange={event => setTransferCapture(current => current ? { ...current, notes: event.target.value } : null)} className="mt-1 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Detalle útil para identificar la transferencia"/></label>
-              <button type="button" onClick={saveTransferCapture} disabled={!transferCapture.reference.trim() || !transferCapture.bankAccountId} className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold text-white disabled:opacity-45">Guardar transferencia</button>
-            </div>
-          </div>
-        )}
+        {cardCapture && <CardPaymentDetailsDialog
+          value={cardCapture} franchises={cardFranchises.data ?? []} inputRef={cardApprovalRef} catalogFailed={cardFranchises.isError}
+          onChange={value => setCardCapture(current => current ? { ...current, ...value } : null)}
+          onSave={saveCardCapture} onClose={() => setCardCapture(null)}
+        />}
+        {transferCapture && <TransferPaymentDetailsDialog
+          value={transferCapture} inputRef={transferReferenceRef}
+          accountLabel={(() => {
+            const form = forms.find(form => form.paymentMethodId === payments.find(payment => payment.id === transferCapture.paymentId)?.paymentMethodId);
+            return `${form?.accountCode ?? ""} · ${form?.accountName ?? ""}`;
+          })()}
+          canSave={Boolean(transferCapture.bankAccountId)}
+          onChange={value => setTransferCapture(current => current ? { ...current, ...value } : null)}
+          onSave={saveTransferCapture} onClose={() => setTransferCapture(null)}
+        />}
         </div>
 
         {submissionError && <div role="alert" className="shrink-0 border-t border-red-200 bg-red-50 px-5 py-3 text-sm text-red-900"><p className="font-semibold">{submissionError.title}</p><p className="mt-1">{submissionError.message}</p></div>}

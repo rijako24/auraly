@@ -3,7 +3,8 @@ import { login } from "./support/auth";
 
 test.use({ timezoneId: "Asia/Tokyo" });
 
-test("factura, imprime y avanza el contador pedido por pedido en una instalación", async ({ page, baseURL }) => {
+for (const paymentCode of ["Cash", "DebitCard", "CreditCard", "Transfer", "PendingCollection"] as const) {
+test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalación`, async ({ page, baseURL }) => {
   test.setTimeout(120_000);
   await page.clock.setFixedTime(new Date("2026-11-17T01:30:00Z"));
   if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
@@ -59,8 +60,9 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   const sequence: string[] = [];
   let brandingReads = 0;
   let orderReads = 0;
-  const longPaymentName = "Caja del lote · Recepción de pedidos y ventas del mostrador principal";
+  const longPaymentName = "Medio del lote · Recepción de pedidos y ventas del mostrador principal";
   const invoiceRequests: Array<{
+    paymentMethodCode: string; documentType?: string; paymentMethodId?: string; cardFranchiseCode?: string; approvalNumber?: string; paymentReference?: string; bankAccountId?: string;
     orderIds: string[];
     charges?: Array<{
       chargeId: string;
@@ -164,8 +166,14 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
           }],
         }));
     }
+    else if (path.endsWith("/reference-options/card-franchise")) {
+      body = [{ id: "visa", code: "Visa", label: "Visa", description: null, sortOrder: 1 }];
+    }
     else if (path.endsWith("/payment-methods/")) {
-      body = { items: [{ paymentMethodId: "form-cash-native", code: "CASH-BATCH", name: longPaymentName, methodCode: "Cash",
+      expect(url.searchParams.get("excludeMethodCode")).toBe("Credit");
+      if(paymentCode==="PendingCollection")expect(url.searchParams.get("usage")).toBe("OrderReceipts");
+      body = { items: [{ paymentMethodId: "form-cash-native", code: "CASH-BATCH", name: longPaymentName, methodCode: paymentCode,
+        bankAccountId: paymentCode === "Transfer" ? "bank-configured" : null, accountCode: "111005", accountName: "Cuenta configurada",
         version: 1, accountId: "account-cash-native", isActive: true, useForSales: true }], page: 1, pageSize: 10, totalCount: 1 };
     }
     else if (path.endsWith("/orders") && route.request().method() === "GET") {
@@ -221,6 +229,8 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
 
   await page.goto("/dashboard/orders#edgeToken=edge-test-token");
   await expect(page.getByText("PED-001")).toBeVisible();
+  if(paymentCode==="PendingCollection") await page.getByRole("button",{name:"Comprobante de venta",exact:true}).click();
+  const invoiceAction = page.getByRole("button", { name: paymentCode==="PendingCollection"?"Emitir de contado (3)":"Facturar de contado (3)" });
   const refreshButton = page.getByRole("button", { name: "Actualizar pedidos", exact: true });
   await expect(refreshButton).toBeEnabled();
   const readsBeforeRefresh = orderReads;
@@ -243,9 +253,9 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     "print:end:PED-003",
   ]);
   sequence.length = 0;
-  await expect(page.getByRole("button", { name: "Facturar de contado (3)" })).toBeEnabled();
+  await expect(invoiceAction).toBeEnabled();
   await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
-  const longPaymentOption = page.getByRole("option", { name: /Caja del lote/ });
+  const longPaymentOption = page.getByRole("option", { name: /Medio del lote/ });
   await expect(longPaymentOption.getByText(longPaymentName, { exact: true })).toBeVisible();
   const labelLayout = await longPaymentOption.getByText(longPaymentName, { exact: true }).evaluate((element) => ({
     fits: element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight,
@@ -267,7 +277,30 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   }
   await page.screenshot({ path: "../work/orders-toolbar-review/payment-options.png", fullPage: true });
   await longPaymentOption.click();
-  await page.getByRole("button", { name: "Facturar de contado (3)" }).click();
+  if (paymentCode !== "Cash" && paymentCode!=="PendingCollection") {
+    // Closing without saving must not confirm a payment; the next invoice action
+    // requests the same missing evidence before any command leaves the browser.
+    await page.getByRole("button", { name: paymentCode === "Transfer" ? "Cerrar datos de transferencia" : "Cerrar datos de tarjeta", exact: true }).click();
+    await invoiceAction.click();
+    expect(invoiceRequests).toHaveLength(0);
+    if (paymentCode === "Transfer") {
+      const dialog = page.getByRole("dialog", { name: "Datos de la transferencia", exact: true });
+      await dialog.getByRole("textbox", { name: "Referencia", exact: true }).fill("TRANSFER-456");
+      await dialog.getByRole("button", { name: "Guardar transferencia", exact: true }).click();
+    } else {
+      const dialog = page.getByRole("dialog", { name: "Datos de la tarjeta", exact: true });
+      await dialog.getByRole("combobox").click();
+      await expect(page.getByRole("option", { name: "Visa", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("combobox").click();
+      await page.getByRole("option", { name: "Visa", exact: true }).click();
+      await dialog.getByRole("textbox", { name: "Número de aprobación", exact: true }).fill("APPROVAL-456");
+      await dialog.getByRole("button", { name: "Guardar datos · Enter", exact: true }).click();
+    }
+    await expect(page.getByRole("dialog", { name: /Datos de la/ })).toHaveCount(0);
+  } else await expect(page.getByRole("dialog", { name: /Datos de la/ })).toHaveCount(0);
+  await invoiceAction.click();
 
   await expect(page.getByText("1/3", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("2/3", { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -289,8 +322,16 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   ]);
   expect(invoiceRequests).toHaveLength(3);
   expect(invoiceRequests).toEqual(expect.arrayContaining([expect.objectContaining({ paymentMethodId: "form-cash-native", paymentFormCode: "CASH-BATCH" })]));
+  expect(invoiceRequests.every(request => request.paymentMethodCode === paymentCode)).toBe(true);
+  if(paymentCode==="PendingCollection")expect(invoiceRequests.every(request=>request.documentType==="SalesReceipt")).toBe(true);
+  if (paymentCode === "DebitCard" || paymentCode === "CreditCard")
+    expect(invoiceRequests.every(request => request.cardFranchiseCode === "Visa" && request.approvalNumber === "APPROVAL-456" && request.paymentReference === null)).toBe(true);
+  if (paymentCode === "Transfer")
+    expect(invoiceRequests.every(request => request.paymentReference === "TRANSFER-456" && request.bankAccountId === "bank-configured" && request.cardFranchiseCode === undefined)).toBe(true);
   expect(brandingReads).toBe(1);
   expect(invoiceRequests.every((request) => request.charges == null)).toBe(true);
+
+  if (paymentCode !== "Cash") return;
 
   orders.push(...Array.from({ length: 2 }, (_, index) => ({
     ...orders[index],
@@ -306,7 +347,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   await expect(page.getByText("PED-004")).toBeVisible();
   await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
   await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
-  await page.getByRole("option", { name: /Caja del lote/ }).click();
+  await page.getByRole("option", { name: /Medio del lote/ }).click();
   const chargeButton = page.getByRole("button", { name: "Facturar 2 pedidos con cargo" });
   await expect(chargeButton).toBeVisible();
   const chargeButtonBox = await chargeButton.boundingBox();
@@ -330,3 +371,5 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   ]);
   expect(brandingReads).toBe(2);
 });
+
+}

@@ -138,17 +138,19 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         Guid? supplierId, DateOnly? from, DateOnly? to, string? status, string? payableStatus, CancellationToken ct)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(ct);
-        const string filter = """e.BusinessId=@BusinessId AND EXISTS(SELECT 1 FROM dbo.Businesses business WHERE business.BusinessId=e.BusinessId AND business.TenantId=@TenantId) AND (@Search IS NULL OR e.DocumentNumber LIKE N'%'+@Search+N'%' OR e.SupplierDocumentNumber LIKE N'%'+@Search+N'%' OR s.Name LIKE N'%'+@Search+N'%' OR c.Name LIKE N'%'+@Search+N'%') AND (@ConceptId IS NULL OR e.ExpenseConceptId=@ConceptId OR EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments src CROSS APPLY OPENJSON(src.PayloadJson,'$.lines') WITH(ConceptId uniqueidentifier '$.conceptId') line WHERE src.SourceDocumentId=e.ExpenseId AND src.BusinessId=e.BusinessId AND src.SourceDocumentType=N'Expense' AND line.ConceptId=@ConceptId)) AND (@SupplierId IS NULL OR e.SupplierId=@SupplierId) AND (@From IS NULL OR CONVERT(date,e.IssuedAt)>=@From) AND (@To IS NULL OR CONVERT(date,e.IssuedAt)<=@To) AND (@Status IS NULL OR (@Status=N'Returned' AND e.Status=N'Processed' AND returned.AppliedChargeId IS NOT NULL) OR (@Status<>N'Returned' AND e.Status=@Status AND (@Status<>N'Processed' OR returned.AppliedChargeId IS NULL))) AND (@PayableStatus IS NULL OR (@PayableStatus=N'None' AND p.PayableId IS NULL) OR p.Status=@PayableStatus)""";
+        const string filter = """e.BusinessId=@BusinessId AND EXISTS(SELECT 1 FROM dbo.Businesses business WHERE business.BusinessId=e.BusinessId AND business.TenantId=@TenantId) AND (@Search IS NULL OR e.DocumentNumber LIKE N'%'+@Search+N'%' OR e.SupplierDocumentNumber LIKE N'%'+@Search+N'%' OR s.Name LIKE N'%'+@Search+N'%' OR c.Name LIKE N'%'+@Search+N'%') AND (@ConceptId IS NULL OR e.ExpenseConceptId=@ConceptId OR EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments src CROSS APPLY OPENJSON(src.PayloadJson,'$.lines') WITH(ConceptId uniqueidentifier '$.conceptId') line WHERE src.SourceDocumentId=e.ExpenseId AND src.BusinessId=e.BusinessId AND src.SourceDocumentType=N'Expense' AND line.ConceptId=@ConceptId)) AND (@SupplierId IS NULL OR e.SupplierId=@SupplierId) AND (@From IS NULL OR CONVERT(date,e.IssuedAt)>=@From) AND (@To IS NULL OR CONVERT(date,e.IssuedAt)<=@To) AND (@Status IS NULL OR (@Status=N'Returned' AND e.Status=N'Processed' AND returned.AppliedChargeId IS NOT NULL) OR (@Status<>N'Returned' AND e.Status=@Status AND (@Status<>N'Processed' OR returned.AppliedChargeId IS NULL))) AND (@PayableStatus IS NULL OR (@PayableStatus=N'None' AND p.PayableId IS NULL AND dispatchExpense.AcceptedExpenseId IS NULL) OR p.Status=@PayableStatus OR (@PayableStatus=N'Paid' AND e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL))""";
         await using var command = new SqlCommand($"""
             SELECT COUNT(*),COALESCE(SUM(e.GrossAmount),0),COALESCE(SUM(e.WithholdingAmount),0),COALESCE(SUM(e.NetPayable),0)
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId LEFT JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId
               LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense' AND p.BusinessId=e.BusinessId
+              LEFT JOIN dbo.DispatchExpenses dispatchExpense ON dispatchExpense.AcceptedExpenseId=e.ExpenseId AND dispatchExpense.BusinessId=e.BusinessId
               LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId WHERE {filter};
             SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name,e.ExpenseConceptId,COALESCE(c.Name,e.Description),
               e.IssuedAt,e.DueDate,e.GrossAmount,e.WithholdingAmount,e.NetPayable,e.CurrencyCode,e.Status,e.EvidenceUrl,e.PurchaseEvidenceType,
-              p.Status,p.OutstandingAmount,CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),p.PayableId
+              COALESCE(p.Status,CASE WHEN e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL THEN N'Paid' END),COALESCE(p.OutstandingAmount,CASE WHEN e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL THEN 0 END),CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),p.PayableId
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId LEFT JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId
               LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense' AND p.BusinessId=e.BusinessId
+              LEFT JOIN dbo.DispatchExpenses dispatchExpense ON dispatchExpense.AcceptedExpenseId=e.ExpenseId AND dispatchExpense.BusinessId=e.BusinessId
               LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId
               WHERE {filter} ORDER BY e.IssuedAt DESC,e.ExpenseId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
             """, connection);
@@ -179,7 +181,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               e.CancellationId,e.CancellationReason,adjustment.FiscalNumber,adjustment.FiscalStatus,
               e.SourceInvoiceId,invoice.DocumentNumber,
               CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),COALESCE(source.PayloadJson,legacy.PayloadJson),
-              p.PartySiteId,site.Name
+              p.PartySiteId,site.Name,dispatchExpense.DispatchId
             FROM dbo.Expenses e
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
             JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId AND s.TenantId=b.TenantId
@@ -192,7 +194,8 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               AND adjustment.BusinessId=e.BusinessId AND adjustment.FiscalDocumentType=N'SupportDocumentAdjustment'
             LEFT JOIN dbo.SalesDocuments invoice ON invoice.DocumentId=e.SourceInvoiceId
               AND invoice.BusinessId=e.BusinessId
-            LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId
+            LEFT JOIN dbo.DispatchExpenses dispatchExpense ON dispatchExpense.AcceptedExpenseId=e.ExpenseId AND dispatchExpense.BusinessId=e.BusinessId
+              LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId
             LEFT JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=e.ExpenseId
               AND source.SourceDocumentType=N'Expense' AND source.BusinessId=e.BusinessId
             LEFT JOIN dbo.DocumentProcessingPayloads legacy ON legacy.DocumentId=e.ExpenseId AND legacy.DocumentType=N'Expense'
@@ -221,7 +224,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             reader.IsDBNull(27) ? null : reader.GetString(27),
             reader.IsDBNull(28) ? null : reader.GetString(28),
             reader.IsDBNull(29) ? null : reader.GetGuid(29),
-            reader.IsDBNull(30) ? null : reader.GetString(30), reader.GetBoolean(31), snapshot?.Lines, snapshot?.Withholding);
+            reader.IsDBNull(30) ? null : reader.GetString(30), reader.GetBoolean(31), snapshot?.Lines, snapshot?.Withholding,reader.IsDBNull(35)?null:reader.GetGuid(35));
     }
 
     public async Task<ExpenseAcceptance> AcceptAsync(ExpenseUserIdentity user, string idempotencyKey, ConfirmExpenseRequest request,
@@ -238,6 +241,8 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                 await tx.CommitAsync(ct);
                 return replay;
             }
+            if (request.DispatchExpenseId is not null)
+                await LockDispatchApprovalAsync(connection, tx, user, request, withholding.NetAmount, ct);
             Guid accountId; Guid? defaultCenter; string? purchaseEvidencePolicy;
             if (resolution is not null)
             {
@@ -306,12 +311,17 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             var accountingJobId = ids.NewId(); var center = request.CostCenterId ?? defaultCenter;
             var payload = new ExpenseDocumentPayload(user.TenantId, user.BusinessId, request.ExpenseId, request.SupplierId,
                 resolution is { Lines.Count: 1 } ? resolution.Lines[0].ConceptId : request.ConceptId,
-                accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding, PurchaseEvidenceType: request.PurchaseEvidenceType, Lines: resolution?.Lines, PartySiteId: request.PartySiteId);
+                accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding, PurchaseEvidenceType: request.PurchaseEvidenceType, Lines: resolution?.Lines, PartySiteId: request.PartySiteId,
+                Payment: request.DispatchCashPaymentMethodId is {} cashForm && withholding.NetAmount > 0
+                    ? new Auraly.BuildingBlocks.Domain.Payments.PaymentTender("Cash",withholding.NetAmount,
+                        PaymentMethodId:cashForm,PaymentMethodVersion:request.DispatchCashPaymentMethodVersion) : null);
             await PersistAcceptedAsync(connection, tx,
                 [new(payload, idempotencyKey, requestHash, accountingJobId)], now, ct);
+            var dispatchApproval = request.DispatchExpenseId is not null
+                ? await ApplyDispatchApprovalAsync(connection, tx, user, request, withholding.NetAmount, now, ct) : null;
             if (support is not null)
                 await InsertSupportFiscalAsync(connection, tx, payload, support, now, ct);
-            await tx.CommitAsync(ct); return new(request.ExpenseId, Guid.Empty, number.FullNumber, "Accepted", 0, false, accountingJobId, support is not null);
+            await tx.CommitAsync(ct); return new(request.ExpenseId, Guid.Empty, number.FullNumber, "Accepted", 0, false, accountingJobId, support is not null, dispatchApproval);
         }
         catch (ExpenseConflictException) { await tx.RollbackAsync(CancellationToken.None); throw; }
         catch (SqlException error) when (error.Number is 2601 or 2627) { await tx.RollbackAsync(CancellationToken.None); throw new ExpenseConflictException("El número de factura del proveedor ya fue registrado."); }

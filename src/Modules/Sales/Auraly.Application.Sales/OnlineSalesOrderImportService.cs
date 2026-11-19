@@ -27,7 +27,7 @@ public sealed class OnlineSalesOrderImportService(
         ArgumentNullException.ThrowIfNull(request);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+                $"No tienes permiso para crear ventas.");
         if (draftId == Guid.Empty || request.SourceOrderId == Guid.Empty ||
             request.ExpectedVersion < 1 ||
             string.IsNullOrWhiteSpace(request.OrderNumber) ||

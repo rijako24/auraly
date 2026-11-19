@@ -259,8 +259,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         Assert.Equal(PosSaleRemoteStatuses.FiscalIntegrityConflict, result.Status);
     }
 
-    [Fact]
-    public async Task Pos_sale_consumes_the_source_order_PED_reservation_without_transfers()
+    [Theory]
+    [InlineData(SaleCollectionMode.Dispatch)]
+    [InlineData(SaleCollectionMode.Session)]
+    public async Task Pos_sale_consumes_the_source_order_PED_reservation_without_transfers(SaleCollectionMode collectionMode)
     {
         var orderId = Guid.NewGuid();
         var claimId = Guid.NewGuid();
@@ -321,7 +323,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             await seed.ExecuteNonQueryAsync();
         }
 
-        var sale = fixture.CreateValidRequest(184) with { SourceOrderId = orderId };
+        var sale = fixture.CreateValidRequest(184 + (int)collectionMode) with { SourceOrderId = orderId,CollectionMode=collectionMode };
         using var client = fixture.CreateClient();
         using (var upload = fixture.CreateUploadMessage(sale))
         using (var response = await client.SendAsync(upload))
@@ -358,7 +360,9 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.InventoryMovements
                WHERE DocumentId=@DocumentId AND MovementType=N'TransferOut' AND WarehouseId=@OrdersWarehouseId),
               (SELECT COUNT(*) FROM dbo.InventoryMovements
-               WHERE DocumentId=@DocumentId AND MovementType IN (N'TransferIn',N'Sale') AND WarehouseId=@SalesWarehouseId);
+               WHERE DocumentId=@DocumentId AND MovementType IN (N'TransferIn',N'Sale') AND WarehouseId=@SalesWarehouseId),
+              (SELECT CollectionMode FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@DocumentId);
             """;
         verify.Parameters.AddWithValue("@OrderId", orderId);
         verify.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
@@ -373,6 +377,8 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         Assert.Equal(1, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(0, reader.GetInt32(5));
+        Assert.Equal(collectionMode.ToString(), reader.GetString(6));
+        Assert.Equal(collectionMode == SaleCollectionMode.Session ? sale.Payments.Count : 0, reader.GetInt32(7));
     }
 
     private async Task AssertProcessingCompletedAsync(Guid documentId)

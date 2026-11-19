@@ -10,6 +10,13 @@ internal static class SqlPaymentMethodResolver
     public static Task ValidateSaleAsync(SqlConnection connection, SqlTransaction transaction,
         Auraly.Contracts.Sales.PosSaleUploadRequest sale, CancellationToken cancellationToken)
     {
+        var purposeError=Auraly.Contracts.Sales.OrderCollectionPaymentPolicy.Validate(sale.SourceOrderId,
+            sale.CommercialSnapshot.DocumentType,sale.Credit is not null,
+            sale.Payments.Select(payment=>new Auraly.Contracts.Sales.SalePaymentPurpose(payment.MethodCode,
+                payment.PaymentMethodId is {} form && form!=Guid.Empty,!string.IsNullOrWhiteSpace(payment.Reference)||
+                payment.TenderedAmount is not null||payment.BankAccountId is not null||!string.IsNullOrWhiteSpace(payment.Notes)||
+                !string.IsNullOrWhiteSpace(payment.CardFranchiseCode)||!string.IsNullOrWhiteSpace(payment.ApprovalNumber))).ToArray(),sale.CollectionMode);
+        if(purposeError is not null) throw new Auraly.Application.Sales.PosSaleInvalidException(purposeError);
         if (!PaymentMethodEvidence.IsValidSale(sale.Payments.Select(payment => new PaymentMethodEvidence(
                 payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
                 payment.PaymentMethodName, payment.AccountId)), sale.Credit is { } credit ?

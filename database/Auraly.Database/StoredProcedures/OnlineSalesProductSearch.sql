@@ -28,7 +28,7 @@ BEGIN
     LEFT JOIN dbo.WorkSessions s
       ON @RestaurantAccountId IS NULL
      AND s.WorkSessionId=@WorkSessionId AND s.BusinessId=b.BusinessId
-     AND s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open'
+     AND s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open' AND s.Kind=N'Normal'
     LEFT JOIN sales.RestaurantAccounts account
       ON @RestaurantAccountId IS NOT NULL
      AND account.AccountId=@RestaurantAccountId AND account.BusinessId=b.BusinessId

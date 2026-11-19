@@ -104,7 +104,7 @@ public sealed class CatalogService(
         CatalogUserIdentity user, Guid productId, CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Read);
-        if (productId == Guid.Empty) throw new CatalogValidationException("ProductId is required.");
+        if (productId == Guid.Empty) throw new CatalogValidationException("Se requiere un producto válido.");
         return store.ProductRotationAsync(user.TenantId, user.BusinessId, productId, ct);
     }
 
@@ -121,7 +121,7 @@ public sealed class CatalogService(
     {
         Require(user, requiredPermission);
         if (productId == Guid.Empty)
-            throw new CatalogValidationException("ProductId is required.");
+            throw new CatalogValidationException("Se requiere un producto válido.");
         return store.WarehouseAvailabilityAsync(
             null, user.TenantId, user.BusinessId, productId,
             user.Permissions.Contains(BusinessesReadPermission), ct);
@@ -130,9 +130,9 @@ public sealed class CatalogService(
     public Task<ProductPage> PageAsync(CatalogUserIdentity user, ProductPageRequest request, CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Read);
-        if (request.PageSize is < 1 or > 200) throw new CatalogValidationException("PageSize must be between 1 and 200.");
+        if (request.PageSize is < 1 or > 200) throw new CatalogValidationException("La cantidad de registros por página debe estar entre 1 y 200.");
         if (request.MinimumPrice < 0 || request.MaximumPrice < 0 || request.MinimumPrice > request.MaximumPrice)
-            throw new CatalogValidationException("The price range is invalid.");
+            throw new CatalogValidationException("El rango de precios no es válido.");
         return store.PageAsync(user.TenantId, user.BusinessId, request, user.Permissions.Contains(CatalogPermissionCodes.ReadCosts), ct);
     }
 
@@ -152,11 +152,11 @@ public sealed class CatalogService(
     {
         Require(user, CatalogPermissionCodes.Update);
         if (request.BusinessId != user.BusinessId)
-            throw new CatalogForbiddenException("The tax profile scope does not match the authenticated user.");
+            throw new CatalogForbiddenException("El perfil tributario no pertenece al alcance autorizado del usuario.");
         var code = request.Code?.Trim() ?? string.Empty;
         var name = request.Name?.Trim() ?? string.Empty;
         if (code.Length is < 1 or > 32 || name.Length is < 1 or > 120 || request.Rate is < 0 or > 100)
-            throw new CatalogValidationException("Code, name and VAT rate are invalid.");
+            throw new CatalogValidationException("Revisa el código, el nombre y la tarifa de IVA.");
         return store.SaveTaxProfileAsync(user, taxProfileId, request with { Code = code, Name = name },
             timeProvider.GetUtcNow(), ct);
     }
@@ -175,14 +175,14 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Update);
         if (request.SalesTaxProfileId == Guid.Empty || request.PurchaseTaxProfileId == Guid.Empty
             || !PurchasingTaxTreatmentIsSupported(request.PurchaseTaxTreatment))
-            throw new CatalogValidationException("The product VAT configuration is invalid.");
+            throw new CatalogValidationException("La configuración de IVA del producto no es válida.");
         return store.SaveProductTaxConfigurationAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
     }
     private static void ValidateScope(CatalogUserIdentity user, SaveProductRequest request)
     {
         if (request.BusinessId != user.BusinessId)
-            throw new CatalogForbiddenException("The product scope does not match the authenticated user.");
+            throw new CatalogForbiddenException("El producto no pertenece al alcance autorizado del usuario.");
     }
 
     private static void RequireCapabilities(CatalogUserIdentity user, SaveProductRequest request)
@@ -217,7 +217,7 @@ public sealed class CatalogService(
     };
     private static void Require(CatalogUserIdentity user, string permission)
     {
-        if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"Permission '{permission}' is required.");
+        if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 
     private static void Validate(SaveProductRequest request)
@@ -232,65 +232,65 @@ public sealed class CatalogService(
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty ||
             (!request.IsGenericProduct && (!request.PurchaseTaxProfileId.HasValue || request.PurchaseTaxProfileId.Value == Guid.Empty)))
-            throw new CatalogValidationException("Name, base unit, sales VAT and purchase VAT are required for ordinary products.");
+            throw new CatalogValidationException("Los productos ordinarios requieren nombre, unidad base, IVA de venta e IVA de compra.");
         if (!PurchasingTaxTreatmentIsSupported(request.PurchaseTaxTreatment))
-            throw new CatalogValidationException("The purchase VAT treatment is invalid.");
+            throw new CatalogValidationException("El tratamiento de IVA de la compra no es válido.");
         if (request.Scale is not null && !request.IsWeighable)
-            throw new CatalogValidationException("A scale configuration requires a product sold by weight.");
+            throw new CatalogValidationException("La configuración de balanza requiere un producto vendido por peso.");
         if (request.UnitGrossWeightKg is <= 0)
-            throw new CatalogValidationException("Product weight must be greater than zero when provided.");
+            throw new CatalogValidationException("El peso del producto debe ser mayor que cero si se indica.");
         if (request.Prices.Count != 1 || (!request.IsGenericProduct && request.Prices.Any(price =>
             price.Amount < 0 || (price.Amount == 0 && price.PreparedAmount is not > 0))))
             throw new CatalogValidationException(
-                "Every sellable product requires exactly one positive base price for its business.");
+                "Cada producto vendible requiere un único precio base mayor que cero en su sede.");
         if (!request.IsGenericProduct && request.Prices.Any(price =>
                 price.CostBasisAmount is null or <= 0 ||
                 price.TargetMarginPercent is null or < 0 or >= 100))
             throw new CatalogValidationException(
-                "Every product requires a positive cost and a margin between zero and less than 100 percent.");
+                "El producto requiere un costo mayor que cero y un margen entre 0 % y menos de 100 %.");
         if (!request.IsGenericProduct && request.Prices.Any(price =>
                 (price.PreparedAmount ?? price.Amount) <= 0 ||
                 price.RoundingIncrement <= 0 ||
                 price.InputMode is not ("Margin" or "SalePrice") ||
                 price.RoundingMode is not ("Nearest" or "Up" or "Down")))
-            throw new CatalogValidationException("The prepared product price configuration is invalid.");
+            throw new CatalogValidationException("La configuración del precio preparado del producto no es válida.");
         if ((request.Images ?? []).Count(image => image.IsPrimary) > 1
             || (request.Images ?? []).Any(image => image.ProductImageId == Guid.Empty
                 || string.IsNullOrWhiteSpace(image.MediaReference)
                 || image.MediaReference.Length > 1500
                 || image.AltText?.Length > 300
                 || image.DisplayOrder < 0))
-            throw new CatalogValidationException("The product image configuration is invalid.");
+            throw new CatalogValidationException("La configuración de imagen del producto no es válida.");
         if (!request.IsGenericProduct && (request.Suppliers.Count == 0 || request.Suppliers.Count(supplier => supplier.IsPrimary) != 1))
-            throw new CatalogValidationException("Every product requires exactly one primary supplier.");
+            throw new CatalogValidationException("Cada producto requiere un único proveedor principal.");
         if (request.Suppliers.Any(supplier => supplier.SupplierId == Guid.Empty || supplier.BaseUnitCost <= 0))
-            throw new CatalogValidationException("Every product supplier requires an identifier and a positive cost.");
+            throw new CatalogValidationException("Cada proveedor del producto requiere una identificación y un costo mayor que cero.");
         if (request.Suppliers.Any(supplier => string.IsNullOrWhiteSpace(supplier.PurchasePresentationName)
             || supplier.PurchasePresentationName.Trim().Length > 80 || supplier.UnitsPerPresentation <= 0))
-            throw new CatalogValidationException("Every supplier presentation requires a name and a positive conversion factor.");
+            throw new CatalogValidationException("Cada presentación del proveedor requiere un nombre y un factor de conversión mayor que cero.");
         if (request.Suppliers.GroupBy(supplier => supplier.Identification.Trim(), StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
-            throw new CatalogValidationException("A supplier cannot be repeated for the same product.");
+            throw new CatalogValidationException("Un proveedor no puede repetirse en el mismo producto.");
         if (request.Suppliers.GroupBy(supplier => supplier.SupplierId).Any(group => group.Count() > 1))
-            throw new CatalogValidationException("A supplier cannot be repeated for the same product.");
+            throw new CatalogValidationException("Un proveedor no puede repetirse en el mismo producto.");
         if (request.Barcodes.Any(barcode => string.IsNullOrWhiteSpace(barcode.Value)))
-            throw new CatalogValidationException("Barcodes cannot be empty.");
+            throw new CatalogValidationException("Los códigos de barras no pueden estar vacíos.");
         if (request.Scale is { ValueStart: < 0 } or { ValueLength: <= 0 } or { DecimalPlaces: < 0 or > 6 })
-            throw new CatalogValidationException("The scale barcode positions are invalid.");
+            throw new CatalogValidationException("Las posiciones del código de barras de balanza no son válidas.");
         if (request.IsWeighable && !request.AllowsFractionalSale)
-            throw new CatalogValidationException("A weighable product must allow fractional quantities.");
+            throw new CatalogValidationException("Un producto pesable debe permitir cantidades decimales.");
         if (request.IsGenericProduct && request.ManageInventory)
-            throw new CatalogValidationException("A generic product cannot control inventory.");
+            throw new CatalogValidationException("Un producto genérico no puede controlar inventario.");
         if (request.Link is { SharesInventory: true } && request.ManageInventory)
-            throw new CatalogValidationException("A product that shares its parent's inventory cannot control a separate inventory.");
+            throw new CatalogValidationException("Un producto que comparte el inventario del principal no puede controlar un inventario independiente.");
         if (request.Link is { SharesInventory: true, InventoryFactor: null or <= 0 })
-            throw new CatalogValidationException("The linked inventory factor must be positive.");
+            throw new CatalogValidationException("El factor de inventario vinculado debe ser mayor que cero.");
         if (request.Link is { SharesPrice: true, PriceFactor: null or <= 0 })
-            throw new CatalogValidationException("The linked cost factor must be positive.");
+            throw new CatalogValidationException("El factor de costo vinculado debe ser mayor que cero.");
         if (request.Link is { AllowsConversion: true } link &&
             (link.SharesInventory || !request.ManageInventory || link.ConversionFactor is null or <= 0))
-            throw new CatalogValidationException("A convertible linked product must manage separate inventory and define a positive conversion factor.");
+            throw new CatalogValidationException("Un producto vinculado convertible debe controlar inventario propio y tener un factor de conversión mayor que cero.");
         if (request.Link is { AllowsConversion: false, ConversionFactor: not null })
-            throw new CatalogValidationException("A conversion factor requires conversion to be enabled.");
+            throw new CatalogValidationException("Para indicar el factor debes habilitar la conversión.");
 
     }
 }

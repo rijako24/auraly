@@ -130,3 +130,22 @@ el permiso limitado a captura de gasto. El endpoint GET publicado se conserva.
 - retiro final de columnas de proveedor anteriores cuando no tengan consumidores.
 
 Estos puntos no tienen contratos o interfaces vacías en esta rebanada.
+
+
+## Validaciones visibles en español (18 de noviembre de 2026)
+
+Las reglas compartidas PartyValidation y PartyIdentityNormalizer mantienen sus
+mismos límites y normalización. Sus mensajes públicos y las etiquetas que reciben
+del servicio están en español. No agregan el sufijo técnico de ArgumentException
+con el nombre del parámetro en inglés a la respuesta ProblemDetails.detail.
+No se añade otro validador ni una traducción de reglas en la interfaz; los contratos,
+identificadores, permisos y escrituras permanecen en sus propietarios existentes.
+El cambio de mensajes no añade I/O y no modifica datos ni documentos históricos.
+
+spanish-public-validation-final.trx verifica cuatro rechazos públicos por campo
+vacío, caracteres inválidos y longitud, sin confundirlos con la regla específica
+de los códigos ISO de país. La prueba de país inicial ya rechazaba esos códigos
+con su propio mensaje; se conservó como evidencia fallida de selección incorrecta
+del endpoint y se reemplazó por el endpoint de divisiones que usa el validador
+compartido. La prueba válida de identidad, sedes y precios del cliente también
+pasó en spanish-inventory-sql.trx. El rollback del mensaje no exige cambiar datos.

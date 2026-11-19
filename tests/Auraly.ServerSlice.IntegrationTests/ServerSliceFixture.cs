@@ -55,7 +55,7 @@ public sealed class ServerSliceCollection : ICollectionFixture<ServerSliceFixtur
     public const string Name = "Auraly server slice";
 }
 
-public sealed class ServerSliceFixture : IAsyncLifetime
+public sealed partial class ServerSliceFixture : IAsyncLifetime
 {
     public const string TechnicalKeyValue = "AURALY-TEST-TECHNICAL-KEY";
     public const string TechnicalKeyVersion = "test-v1";
@@ -112,18 +112,24 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
     public Guid FiscalIssuerConfigurationId { get; } = Guid.NewGuid();
 
-    internal async Task EnsureSupplierPaymentSeriesAsync(SqlConnection connection, SqlTransaction? transaction = null)
+    internal Task EnsureSupplierPaymentSeriesAsync(SqlConnection connection, SqlTransaction? transaction = null)
+        => EnsurePortfolioPaymentSeriesAsync(connection,"PayablePayment","PGP",transaction);
+
+    internal async Task EnsurePortfolioPaymentSeriesAsync(SqlConnection connection,string documentType,string prefix,
+        SqlTransaction? transaction = null)
     {
         Assert.StartsWith("AuralyServerSlice_", connection.Database);
         await using var command = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId AND DocumentType=N'PayablePayment' AND IsActive=1)
+            IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId AND DocumentType=@Type AND IsActive=1)
               INSERT dbo.DocumentSeries
                 (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                  Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-              VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGP',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+              VALUES(@SeriesId,@BusinessId,NULL,@Type,@Prefix,N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
             """, connection, transaction);
         command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
         command.Parameters.AddWithValue("@BusinessId", BusinessId);
+        command.Parameters.AddWithValue("@Type",documentType);
+        command.Parameters.AddWithValue("@Prefix",prefix);
         await command.ExecuteNonQueryAsync();
     }
 
@@ -1510,7 +1516,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         }
     }
 
-    private static string FindRepositoryRoot()
+    internal static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)

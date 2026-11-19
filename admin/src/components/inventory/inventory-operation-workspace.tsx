@@ -71,6 +71,7 @@ import {
 import type { LocalDraftCoordinator } from "@/lib/local-draft-coordinator";
 import {
   defaultInventoryOperationKind,
+  canCreateInventoryOperation,
   type InventoryOperationKind,
 } from "@/lib/inventory-operation-launch";
 
@@ -140,49 +141,42 @@ const operationOptions: Array<{
   label: string;
   description: string;
   icon: typeof Scale;
-  permission: string;
 }> = [
   {
     id: "count",
     label: "Conteo físico",
     description: "Compara el conteo real con el saldo del sistema.",
     icon: ClipboardCheck,
-    permission: "inventory.physical-counts.manage",
   },
   {
     id: "adjustment",
     label: "Movimientos de mercancía",
     description: "Registra una entrada o salida de mercancía con su motivo.",
     icon: Scale,
-    permission: "inventory.adjustments.confirm",
   },
   {
     id: "transfer",
     label: "Traslado",
     description: "Confirma la salida; la bodega destino recibe después.",
     icon: ArrowLeftRight,
-    permission: "inventory.transfers.dispatch",
   },
   {
     id: "conversion",
     label: "Conversión",
     description: "Transforma presentaciones conservando su valor.",
     icon: RefreshCw,
-    permission: "inventory.conversions.confirm",
   },
   {
     id: "damage",
     label: "Avería",
     description: "Retira unidades dañadas o no vendibles.",
     icon: PackageX,
-    permission: "inventory.damages.confirm",
   },
   {
     id: "production",
     label: "Producción",
     description: "Consume ingredientes y recibe el producto terminado según su receta.",
     icon: ChefHat,
-    permission: "inventory.production.confirm",
   },
 ];
 
@@ -231,11 +225,11 @@ export function InventoryOperationWorkspace({
   const suppressDraftPersistence = useRef(false);
 
   const selected = operationOptions.find((option) => option.id === kind)!;
-  const allowed = permissions.has(selected.permission);
+  const allowed = canCreateInventoryOperation(permissions, kind) || Boolean(physicalCountDraft && kind === "count" && permissions.has("inventory.physical-counts.capture"));
   const reasonsQuery = useQuery({
     queryKey: ["inventory-reasons", businessId, operationDocumentTypes[kind]],
     queryFn: () => inventoryApi.reasons({ operationType: operationDocumentTypes[kind] }),
-    enabled: Boolean(businessId) && kind !== "production",
+    enabled: allowed && Boolean(businessId) && kind !== "production" && kind !== "count",
   });
   const reasons = useMemo(() => reasonsQuery.data ?? [], [reasonsQuery.data]);
   const selectedProductIds = useMemo(
@@ -245,7 +239,7 @@ export function InventoryOperationWorkspace({
   const initialWarehouseId = warehouses.length === 1 ? warehouses[0].id : "";
   const warehouseIdsKey = warehouses.map((warehouse) => warehouse.id).join("|");
   const allowedKindsKey = operationOptions
-    .filter(option => permissions.has(option.permission))
+    .filter(option => canCreateInventoryOperation(permissions, option.id))
     .map(option => option.id)
     .join("|");
   const draftKey = inventoryDraftKey(businessId, kind);
@@ -257,7 +251,7 @@ export function InventoryOperationWorkspace({
   const productionPreview = useQuery({
     queryKey: ["production-preview", businessId, productionReview],
     queryFn: () => inventoryApi.productionPreview(productionReview!.warehouseId, productionReview!.productId, productionReview!.quantity),
-    enabled: kind === "production" && productionReview !== null,
+    enabled: allowed && kind === "production" && productionReview !== null,
     retry: false,
   });
   const productionInsufficient = productionPreview.data?.ingredients.some(line => line.requiredQuantity > line.quantityOnHand) ?? false;
@@ -321,7 +315,7 @@ export function InventoryOperationWorkspace({
   }, [allowedKindsKey, businessId, initialKind, physicalCountDraft]);
 
   useEffect(() => {
-    if (!activeKindHydrated) return;
+    if (!activeKindHydrated || !allowed) return;
     let active = true;
     setHydratedKey(null);
     void localDrafts.load(draftKey)
@@ -358,19 +352,21 @@ export function InventoryOperationWorkspace({
         toast.error("No fue posible recuperar el borrador local de inventario.");
       });
     return () => { active = false; };
-  }, [activeKindHydrated, draftKey, initialWarehouseId, warehouseIdsKey, localDrafts]);
+  }, [activeKindHydrated, allowed, draftKey, initialWarehouseId, warehouseIdsKey, localDrafts]);
 
   function selectKind(nextKind: OperationKind) {
+    if (!canCreateInventoryOperation(permissions, nextKind)) return;
     setKind(nextKind);
     void saveActiveInventoryOperationKind(businessId, nextKind)
       .catch(() => toast.error("No fue posible guardar el tipo de operación."));
   }
 
   useLayoutEffect(() => {
-    if (physicalCountDraft || hydratedKey !== draftKey) return;
+    if (!allowed || physicalCountDraft || hydratedKey !== draftKey) return;
     if (!suppressDraftPersistence.current)
       localDrafts.update(draftKey, localSnapshot);
   }, [
+    allowed,
     draftKey,
     hydratedKey,
     localSnapshot,
@@ -646,7 +642,7 @@ export function InventoryOperationWorkspace({
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         {operationOptions.map((option) => {
           const Icon = option.icon;
-          const enabled = permissions.has(option.permission);
+          const enabled = canCreateInventoryOperation(permissions, option.id) || Boolean(physicalCountDraft && option.id === "count" && permissions.has("inventory.physical-counts.capture"));
           return (
             <button
               key={option.id}
@@ -669,7 +665,7 @@ export function InventoryOperationWorkspace({
         })}
       </div>
 
-      {kind === "count" ? (
+      {!allowed ? <p role="alert" className="rounded-xl border p-4 text-muted-foreground">No tienes permiso para consultar o editar esta operación.</p> : kind === "count" ? (
         physicalCountDraft
           ? <PhysicalCountDraftEditForm
               value={physicalCountDraft}

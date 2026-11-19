@@ -49,7 +49,7 @@ public static class OfflineAuthenticationLeaseTokenCodec
 
     public static OfflineAuthenticationLeasePayload Deserialize(ReadOnlySpan<byte> payload) =>
         JsonSerializer.Deserialize<OfflineAuthenticationLeasePayload>(payload, SerializerOptions)
-        ?? throw new InvalidDataException("The offline authentication lease payload is empty.");
+        ?? throw new InvalidDataException("La autorización de acceso sin conexión está vacía.");
 
     public static string Encode(ReadOnlySpan<byte> value) =>
         Convert.ToBase64String(value)

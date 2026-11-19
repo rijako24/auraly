@@ -8,6 +8,20 @@ CREATE TABLE [dbo].[DispatchDeliveryPayments] (
     [Amount] DECIMAL(19,4) NOT NULL,
     [Reference] NVARCHAR(120) NULL,
     [EvidenceUrl] NVARCHAR(1000) NULL,
+    [PaymentMethodId] UNIQUEIDENTIFIER NULL,
+    [PaymentMethodVersion] INT NULL,
+    [CardFranchiseCode] NVARCHAR(40) NULL,
+    [ApprovalNumber] NVARCHAR(80) NULL,
+    [ReviewedPaymentMethodId] UNIQUEIDENTIFIER NULL,
+    [ReviewedPaymentMethodVersion] INT NULL,
+    [ReviewedReference] NVARCHAR(120) NULL,
+    [ReviewedCardFranchiseCode] NVARCHAR(40) NULL,
+    [ReviewedApprovalNumber] NVARCHAR(80) NULL,
+    [CorrectionReason] NVARCHAR(500) NULL,
+    [CorrectedBy] UNIQUEIDENTIFIER NULL,
+    [CorrectedAt] DATETIMEOFFSET(7) NULL,
+    [VerifiedBy] UNIQUEIDENTIFIER NULL,
+    [VerifiedAt] DATETIMEOFFSET(7) NULL,
     [RecordedBy] UNIQUEIDENTIFIER NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -16,13 +30,26 @@ CREATE TABLE [dbo].[DispatchDeliveryPayments] (
     CONSTRAINT [FK_DispatchDeliveryPayments_Dispatches] FOREIGN KEY ([DispatchId]) REFERENCES [dbo].[Dispatches] ([DispatchId]),
     CONSTRAINT [FK_DispatchDeliveryPayments_Documents] FOREIGN KEY ([DispatchSourceDocumentId]) REFERENCES [dbo].[DispatchSourceDocuments] ([DispatchSourceDocumentId]),
     CONSTRAINT [FK_DispatchDeliveryPayments_Users] FOREIGN KEY ([RecordedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_DispatchDeliveryPayments_Form] FOREIGN KEY ([PaymentMethodId]) REFERENCES [reference].[PaymentMethods] ([PaymentMethodId]),
+    CONSTRAINT [FK_DispatchDeliveryPayments_ReviewedForm] FOREIGN KEY ([ReviewedPaymentMethodId]) REFERENCES [reference].[PaymentMethods] ([PaymentMethodId]),
+    CONSTRAINT [FK_DispatchDeliveryPayments_VerifiedBy] FOREIGN KEY ([VerifiedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_DispatchDeliveryPayments_CorrectedBy] FOREIGN KEY ([CorrectedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [CK_DispatchDeliveryPayments_Verified] CHECK (([VerifiedBy] IS NULL AND [VerifiedAt] IS NULL) OR ([VerifiedBy] IS NOT NULL AND [VerifiedAt] IS NOT NULL)),
+    CONSTRAINT [CK_DispatchDeliveryPayments_Correction] CHECK (
+      ([ReviewedPaymentMethodId] IS NULL AND [ReviewedPaymentMethodVersion] IS NULL AND [CorrectedBy] IS NULL AND [CorrectedAt] IS NULL AND [CorrectionReason] IS NULL)
+      OR ([ReviewedPaymentMethodId] IS NOT NULL AND [ReviewedPaymentMethodVersion] IS NOT NULL AND [ReviewedPaymentMethodVersion]>0 AND [CorrectedBy] IS NOT NULL AND [CorrectedAt] IS NOT NULL AND [CorrectionReason] IS NOT NULL AND LEN(LTRIM(RTRIM([CorrectionReason])))>0)),
+    CONSTRAINT [CK_DispatchDeliveryPayments_FormIdentity] CHECK (([PaymentMethodId] IS NULL AND [PaymentMethodVersion] IS NULL) OR ([PaymentMethodId] IS NOT NULL AND [PaymentMethodVersion] IS NOT NULL AND [PaymentMethodVersion]>0)),
     CONSTRAINT [CK_DispatchDeliveryPayments_Application] CHECK ([ApplicationType] IN (N'InvoicePayment',N'CreditDocument',N'CreditAdvance')),
     CONSTRAINT [CK_DispatchDeliveryPayments_Shape] CHECK (
       ([ApplicationType]=N'CreditDocument' AND [PaymentMethod] IS NULL AND [Amount]=0 AND [EvidenceUrl] IS NOT NULL)
-      OR ([ApplicationType] IN (N'InvoicePayment',N'CreditAdvance') AND [PaymentMethod] IN (N'Cash',N'Deposit') AND [Amount]>0))
+      OR ([ApplicationType] IN (N'InvoicePayment',N'CreditAdvance') AND [PaymentMethod] IN (N'Cash',N'Deposit',N'Transfer',N'DebitCard',N'CreditCard') AND [Amount]>0))
 );
 GO
 CREATE INDEX [IX_DispatchDeliveryPayments_Dispatch_Document] ON [dbo].[DispatchDeliveryPayments] ([DispatchId],[DispatchSourceDocumentId]);
+GO
+CREATE INDEX [IX_DispatchDeliveryPayments_PaymentMethod] ON [dbo].[DispatchDeliveryPayments] ([PaymentMethodId]) WHERE [PaymentMethodId] IS NOT NULL;
+GO
+CREATE INDEX [IX_DispatchDeliveryPayments_ReviewedPaymentMethod] ON [dbo].[DispatchDeliveryPayments] ([ReviewedPaymentMethodId]) WHERE [ReviewedPaymentMethodId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[DispatchDeliveryReturns] (
@@ -64,6 +91,9 @@ CREATE TABLE [dbo].[DispatchDeliveryEvents] (
     [RecordedBy] UNIQUEIDENTIFIER NOT NULL,
     [ReceivedAt] DATETIMEOFFSET(7) NOT NULL,
     [IdempotencyKey] NVARCHAR(128) NOT NULL,
+    [PayloadHash] BINARY(32) NULL,
+    [ReturnTotal] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_DispatchDeliveryEvents_ReturnTotal] DEFAULT(0),
+    [IsCurrent] BIT NOT NULL CONSTRAINT [DF_DispatchDeliveryEvents_IsCurrent] DEFAULT(1),
     CONSTRAINT [PK_DispatchDeliveryEvents] PRIMARY KEY ([DispatchDeliveryEventId]),
     CONSTRAINT [FK_DispatchDeliveryEvents_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_DispatchDeliveryEvents_Dispatches] FOREIGN KEY ([DispatchId]) REFERENCES [dbo].[Dispatches] ([DispatchId]),
@@ -74,7 +104,7 @@ CREATE TABLE [dbo].[DispatchDeliveryEvents] (
     CONSTRAINT [CK_DispatchDeliveryEvents_Reason] CHECK ([DeliveryStatus]<>N'NotDelivered' OR [Reason] IS NOT NULL)
 );
 GO
-CREATE UNIQUE INDEX [UX_DispatchDeliveryEvents_Document] ON [dbo].[DispatchDeliveryEvents] ([DispatchSourceDocumentId]);
+CREATE UNIQUE INDEX [UX_DispatchDeliveryEvents_Document] ON [dbo].[DispatchDeliveryEvents] ([DispatchSourceDocumentId]) WHERE [IsCurrent]=1;
 GO
 
 CREATE TABLE [dbo].[DispatchDocumentSequences] (
@@ -89,38 +119,5 @@ CREATE TABLE [dbo].[DispatchDocumentSequences] (
     CONSTRAINT [FK_DispatchDocumentSequences_Users] FOREIGN KEY ([UpdatedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [CK_DispatchDocumentSequences_Sequence] CHECK ([Sequence]>0),
     CONSTRAINT [UQ_DispatchDocumentSequences_Order] UNIQUE ([DispatchId],[Sequence])
-);
-GO
-
-CREATE TABLE [dbo].[DispatchSettlements] (
-    [DispatchSettlementId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [DispatchId] UNIQUEIDENTIFIER NOT NULL,
-    [ExpectedCash] DECIMAL(19,4) NOT NULL,
-    [DeclaredCash] DECIMAL(19,4) NOT NULL,
-    [CashDifference] AS (COALESCE([CashReceived],[DeclaredCash])-[ExpectedCash]) PERSISTED,
-    [DepositTotal] DECIMAL(19,4) NOT NULL,
-    [CreditDocumentTotal] DECIMAL(19,4) NOT NULL,
-    [CreditAdvanceTotal] DECIMAL(19,4) NOT NULL,
-    [ReturnTotal] DECIMAL(19,4) NOT NULL,
-    [DifferenceReason] NVARCHAR(500) NULL,
-    [TransporterClosedBy] UNIQUEIDENTIFIER NOT NULL,
-    [TransporterClosedAt] DATETIMEOFFSET(7) NOT NULL,
-    [CashReceived] DECIMAL(19,4) NULL,
-    [ReceivedBy] UNIQUEIDENTIFIER NULL,
-    [ReceivedAt] DATETIMEOFFSET(7) NULL,
-    [Notes] NVARCHAR(500) NULL,
-    [Status] NVARCHAR(32) NOT NULL,
-    [IdempotencyKey] NVARCHAR(128) NOT NULL,
-    CONSTRAINT [PK_DispatchSettlements] PRIMARY KEY ([DispatchSettlementId]),
-    CONSTRAINT [FK_DispatchSettlements_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_DispatchSettlements_Dispatches] FOREIGN KEY ([DispatchId]) REFERENCES [dbo].[Dispatches] ([DispatchId]),
-    CONSTRAINT [FK_DispatchSettlements_ClosedBy] FOREIGN KEY ([TransporterClosedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [FK_DispatchSettlements_ReceivedBy] FOREIGN KEY ([ReceivedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [UQ_DispatchSettlements_Dispatch] UNIQUE ([DispatchId]),
-    CONSTRAINT [UQ_DispatchSettlements_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
-    CONSTRAINT [CK_DispatchSettlements_Values] CHECK ([ExpectedCash]>=0 AND [DeclaredCash]>=0 AND [DepositTotal]>=0 AND [CreditDocumentTotal]>=0 AND [CreditAdvanceTotal]>=0 AND [ReturnTotal]>=0),
-    CONSTRAINT [CK_DispatchSettlements_Difference] CHECK ([DeclaredCash]=[ExpectedCash] OR [DifferenceReason] IS NOT NULL),
-    CONSTRAINT [CK_DispatchSettlements_Status] CHECK ([Status] IN (N'PendingReview',N'Processing',N'Completed',N'Attention'))
 );
 GO

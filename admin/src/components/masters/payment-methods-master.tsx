@@ -28,6 +28,8 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
   const queryKey = ["payment-methods", tenantId, filters];
   const list = useQuery({ queryKey, queryFn: () => paymentMethodsApi.list(filters), enabled: !!tenantId });
   const types = useReferenceOptions("payment-method");
+  const selectedType=types.data?.find(type=>type.id===draft?.paymentTypeId)?.code;
+  const salesOnly=selectedType==="Credit"||selectedType==="PendingCollection";
   const save = useMutation({ mutationFn: (input: {value: SavePaymentMethod; filters: typeof filters; queryKey: typeof queryKey; tenant: string}) => {
       if (input.tenant !== activeTenant.current) throw new Error("El tenant cambió. Abre nuevamente la forma de pago.");
       return paymentMethodsApi.save(input.value, input.filters);
@@ -51,15 +53,16 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
     </>}
     {draft && editingTenant === tenantId && <form className="space-y-4 rounded-xl border p-4" onSubmit={event => {event.preventDefault();save.mutate({value:draft,filters,queryKey,tenant:tenantId!});}}>
       <div className="grid gap-4 sm:grid-cols-2"><Label>Código<Input required maxLength={64} value={draft.code} disabled={!!draft.rowVersion || save.isPending} onChange={event=>setDraft({...draft,code:event.target.value})}/></Label><Label>Nombre<Input required maxLength={160} value={draft.name} disabled={save.isPending} onChange={event=>setDraft({...draft,name:event.target.value})}/></Label>
-      <div className="space-y-2"><Label htmlFor="payment-form-type">Tipo</Label><Select value={draft.paymentTypeId} disabled={save.isPending || types.isError || types.isPending} onValueChange={value=>setDraft({...draft,paymentTypeId:value})}><SelectTrigger id="payment-form-type"><SelectValue placeholder="Seleccionar tipo"/></SelectTrigger><SelectContent>{types.data?.map(type=><SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-2"><Label htmlFor="payment-form-type">Tipo</Label><Select value={draft.paymentTypeId} disabled={save.isPending || types.isError || types.isPending} onValueChange={value=>{const restricted=types.data?.some(type=>type.id===value&&(type.code==="Credit"||type.code==="PendingCollection"));setDraft({...draft,paymentTypeId:value,...(restricted?{useForSales:true,useForReceipts:false,useForSupplierPayments:false,useForPayroll:false,useForVouchers:false}:{})});}}><SelectTrigger id="payment-form-type"><SelectValue placeholder="Seleccionar tipo"/></SelectTrigger><SelectContent>{types.data?.map(type=><SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>)}</SelectContent></Select></div>
       <div><Label>Auxiliar contable</Label><AccountSelect value={draft.accountId} accounts={account?[account]:[]} onChange={(id,value)=>{setDraft({...draft,accountId:id});setAccount(value??null);}} disabled={save.isPending}/></div>
       <Label>Orden<Input type="number" required min={0} value={draft.sortOrder} onChange={event=>setDraft({...draft,sortOrder:Number(event.target.value)})}/></Label></div>
+      {selectedType==="PendingCollection"&&<p className="rounded-xl bg-muted p-3 text-sm">Se usa al facturar un pedido como comprobante. No representa dinero recibido ni abre cartera del cliente.</p>}
       <fieldset disabled={save.isPending} className="flex flex-wrap gap-4"><legend className="mb-2 text-sm font-medium">Usos y estado</legend>
-        <Label className="flex items-center gap-2"><Checkbox checked={draft.useForSales} onCheckedChange={value=>setDraft({...draft,useForSales:value===true})}/> Ventas/POS</Label>
-        <Label className="flex items-center gap-2"><Checkbox checked={draft.useForReceipts} onCheckedChange={value=>setDraft({...draft,useForReceipts:value===true})}/> Recibos de caja</Label>
-        <Label className="flex items-center gap-2"><Checkbox checked={draft.useForSupplierPayments} onCheckedChange={value=>setDraft({...draft,useForSupplierPayments:value===true})}/> Proveedores / egresos</Label>
-        <Label className="flex items-center gap-2"><Checkbox checked={draft.useForPayroll} onCheckedChange={value=>setDraft({...draft,useForPayroll:value===true})}/> Nómina</Label>
-        <Label className="flex items-center gap-2"><Checkbox checked={draft.useForVouchers === true} onCheckedChange={value=>setDraft({...draft,useForVouchers:value===true})}/> Comprobantes</Label>
+        <Label className="flex items-center gap-2"><Checkbox checked={draft.useForSales} onCheckedChange={value=>setDraft({...draft,useForSales:value===true})}/> {selectedType==="PendingCollection"?"Comprobantes de pedidos":"Ventas/POS"}</Label>
+        <Label className="flex items-center gap-2"><Checkbox disabled={salesOnly} checked={draft.useForReceipts} onCheckedChange={value=>setDraft({...draft,useForReceipts:value===true})}/> Recibos de caja</Label>
+        <Label className="flex items-center gap-2"><Checkbox disabled={salesOnly} checked={draft.useForSupplierPayments} onCheckedChange={value=>setDraft({...draft,useForSupplierPayments:value===true})}/> Proveedores / egresos</Label>
+        <Label className="flex items-center gap-2"><Checkbox disabled={salesOnly} checked={draft.useForPayroll} onCheckedChange={value=>setDraft({...draft,useForPayroll:value===true})}/> Nómina</Label>
+        <Label className="flex items-center gap-2"><Checkbox disabled={salesOnly} checked={draft.useForVouchers === true} onCheckedChange={value=>setDraft({...draft,useForVouchers:value===true})}/> Comprobantes</Label>
         <Label className="flex items-center gap-2"><Checkbox checked={draft.isActive} onCheckedChange={value=>setDraft({...draft,isActive:value===true})}/> Activa</Label>
       </fieldset>
       {(save.isError || types.isError) && <p role="alert" className="text-sm text-destructive">{save.error?.message ?? "No se pudieron cargar los tipos de pago."}</p>}

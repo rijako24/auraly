@@ -3,6 +3,7 @@ export interface SalesReturnCalculationLine {
   soldQuantity: number;
   availableQuantity: number;
   lineTotal: number;
+  returnedLineTotal?: number;
 }
 
 export interface SalesReturnSelection {
@@ -34,7 +35,10 @@ export function calculateSalesReturnSelection(
     }
     if (quantity === 0) continue;
     selectedLineNumbers.push(line.originalLineNumber);
-    const lineTotal = salesReturnPurchasedUnitPrice(line) * quantity;
+    const proportional = salesReturnPurchasedUnitPrice(line) * quantity;
+    const lineTotal = quantity === line.availableQuantity && line.returnedLineTotal !== undefined
+      ? line.lineTotal - line.returnedLineTotal
+      : Math.round(proportional * 10000) / 10000;
     lineTotals[line.originalLineNumber] = lineTotal;
     estimatedTotal += lineTotal;
   }

@@ -11,7 +11,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlSalesReturnStore(
+public sealed partial class SqlSalesReturnStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : ISalesReturnStore
@@ -68,9 +68,11 @@ public sealed class SqlSalesReturnStore(
                 reason.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                 reason.Parameters.AddWithValue("@Code", request.ReasonCode);
                 if (Convert.ToInt64(await reason.ExecuteScalarAsync(cancellationToken)) != 1)
-                    throw new SalesReturnValidationException("The return reason is not active for this business.");
+                    throw new SalesReturnValidationException("El motivo de devolución no está activo en esta sede.");
             }
 
+            decimal? dispatchReturnTotal = request.DispatchId is not null
+                ? await ValidateDispatchReturnAsync(connection, transaction, user, request, cancellationToken) : null;
             var original = await LoadOriginalAsync(
                 connection, transaction, user, request, cancellationToken);
             var originalLines = await LoadOriginalLinesAsync(
@@ -83,7 +85,7 @@ public sealed class SqlSalesReturnStore(
             {
                 if (!originalLines.TryGetValue(requested.OriginalLineNumber, out var source))
                     throw new SalesReturnValidationException(
-                        $"Original sale line {requested.OriginalLineNumber} was not found.");
+                        $"No se encontró la línea {requested.OriginalLineNumber} de la venta original.");
                 if (requested.InventoryDisposition == ReturnInventoryDispositions.NotReturned &&
                     !source.IsRestaurantCheckout)
                     throw new SalesReturnValidationException(
@@ -135,17 +137,32 @@ public sealed class SqlSalesReturnStore(
                 original.OriginalRounding - original.RemainingRounding,
                 returnedUnrounded);
             if (total <= 0) throw new SalesReturnValidationException(
-                "The return must have a positive economic value.");
+                "El valor de la devolución debe ser mayor que cero.");
             if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
                 original.CustomerId is null)
                 throw new SalesReturnValidationException(
-                    "Customer credit requires an identified customer on the original sale.");
+                    "El abono a cartera requiere identificar al cliente de la venta original.");
             if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
                 (original.ReceivableOutstanding <= 0 || total > original.ReceivableOutstanding))
                 throw new SalesReturnValidationException(
                     "El abono a cartera requiere saldo pendiente suficiente en la cuenta por cobrar de la venta.");
 
+            if (dispatchReturnTotal is { } expectedReturn && total != expectedReturn)
+                throw new SalesReturnConflictException("El importe de la devolución cambió desde la entrega. Revisa el documento antes de conciliar.");
             var settlement = new RefundSettlementContext(null, null, null, null);
+            decimal? receivableReversal = null;
+            if(request.EconomicResolution == ReturnEconomicResolutions.ReverseUncollected)
+            {
+                if(original.ReceivableOutstanding<0)
+                    throw new SalesReturnConflictException("La cartera y sus reservas requieren conciliación antes de devolver la venta.");
+                // Keep the existing credit-first return policy. Only the
+                // remainder cancels logical tenders that were never collected.
+                receivableReversal=decimal.Min(total,original.ReceivableOutstanding);
+            }
+            IReadOnlyList<UncollectedPaymentReversal>? uncollectedReversals = request.EconomicResolution == ReturnEconomicResolutions.ReverseUncollected
+                ? total==receivableReversal ? [] : await AllocateUncollectedReversalAsync(
+                    connection, transaction, request, total-receivableReversal!.Value, cancellationToken)
+                : null;
             if (request.EconomicResolution == ReturnEconomicResolutions.Refund ||
                 request.WorkSessionId is not null)
             {
@@ -180,12 +197,14 @@ public sealed class SqlSalesReturnStore(
                 request.OriginalPaymentNumber, request.ReasonCode, request.Notes,
                 request.ReturnScopeCode, settlement.CardFranchiseCode,
                 settlement.ApprovalNumber, request.BankAccountId,
-                request.SettlementReference, request.SettlementNotes, charges);
+                request.SettlementReference, request.SettlementNotes, charges,
+                DispatchId: request.DispatchId, UncollectedPaymentReversals: uncollectedReversals,
+                ReceivableReversalAmount: receivableReversal,OriginalDispatchPaymentId:request.OriginalDispatchPaymentId);
             var payloadJson = SalesReturnContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
             var movementId = ids.NewId();
             await InsertReturnAsync(connection, transaction, request, user, number,
-                original, settlement, requestHash, idempotencyKey, untaxed, tax, total, now,
+                original, settlement, requestHash, idempotencyKey, untaxed, tax, total, receivableReversal, now,
                 cancellationToken);
             await InsertLinesAsync(connection, transaction, request.ReturnId,
                 request.OriginalDocumentId, lines, cancellationToken);
@@ -216,7 +235,7 @@ public sealed class SqlSalesReturnStore(
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw new SalesReturnConflictException(
-                "The return number, DocumentId or idempotency key is already in use.");
+                "El número, la identidad o la clave de la devolución ya están en uso.");
         }
         catch
         {
@@ -248,7 +267,7 @@ public sealed class SqlSalesReturnStore(
         if (!await reader.ReadAsync(cancellationToken)) return null;
         if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
             throw new SalesReturnConflictException(
-                "The idempotency key or ReturnId was reused with another payload.");
+                "La identidad o clave de la devolución ya se usó con otros datos.");
         return new SalesReturnAcceptance(reader.GetGuid(0), reader.GetGuid(5),
             reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true,
             reader.GetDecimal(6), reader.IsDBNull(7) ? null : reader.GetString(7),
@@ -263,12 +282,52 @@ public sealed class SqlSalesReturnStore(
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WITH (HOLDLOCK)
                            WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
-              THROW 51200,'The business is outside the authenticated tenant.',1;
+              THROW 51200,'La sede no pertenece a la empresa autenticada.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WITH (HOLDLOCK)
                            WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1)
               THROW 51201,'Selecciona una bodega de venta válida para la devolución.',1;
+            -- Dispatch assignment, delivery and return acceptance use the same
+            -- aggregate lock order. Never change a captured manifest behind it.
+            DECLARE @ActiveDispatch uniqueidentifier,@DispatchSource uniqueidentifier,@Delivery nvarchar(24),@Collection nvarchar(16);
+            SELECT @ActiveDispatch=dispatch.DispatchId,@DispatchSource=source.DispatchSourceDocumentId,
+              @Delivery=delivery.DeliveryStatus,@Collection=sale.CollectionMode
+            FROM dbo.DispatchSourceDocuments source WITH(READCOMMITTEDLOCK,FORCESEEK(IX_DispatchSourceDocuments_Source(SourceDocumentId)))
+            JOIN dbo.Dispatches dispatch WITH(UPDLOCK,HOLDLOCK) ON source.DispatchId=dispatch.DispatchId
+            JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId
+            LEFT JOIN dbo.DispatchDeliveryEvents delivery ON delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId AND delivery.IsCurrent=1
+            WHERE source.SourceDocumentId=@OriginalDocumentId AND dispatch.BusinessId=@BusinessId
+              AND dispatch.TenantId=@TenantId AND dispatch.Status NOT IN(N'Cancelled',N'Closed')
+            OPTION(FORCE ORDER,LOOP JOIN);
+            -- An absent assignment must not take a serializable range lock
+            -- before the sale: assignment holds that sale before inserting its
+            -- source. Lock the sale, then detect an assignment that won the race.
+            DECLARE @LockedSale uniqueidentifier;
+            SELECT @LockedSale=DocumentId FROM dbo.SalesDocuments WITH(UPDLOCK,HOLDLOCK)
+              WHERE DocumentId=@OriginalDocumentId AND BusinessId=@BusinessId;
+            IF @ActiveDispatch IS NULL AND EXISTS(SELECT 1 FROM dbo.DispatchSourceDocuments source WITH(READCOMMITTEDLOCK)
+              JOIN dbo.Dispatches dispatch WITH(READCOMMITTEDLOCK) ON dispatch.DispatchId=source.DispatchId
+              WHERE source.SourceDocumentId=@OriginalDocumentId AND dispatch.BusinessId=@BusinessId
+                AND dispatch.TenantId=@TenantId AND dispatch.Status NOT IN(N'Cancelled',N'Closed'))
+              THROW 51202,N'La venta fue asignada a un despacho mientras se preparaba la devolución. Revisa su entrega antes de continuar.',1;
+            IF @ActiveDispatch IS NOT NULL AND @FromDispatch=0
+            BEGIN
+              IF @Delivery IS NULL OR @Collection=N'Dispatch'
+                THROW 51202,N'La venta está asignada a un despacho. Registra la devolución en su entrega; si aún es borrador, retira primero la venta del despacho.',1;
+              IF EXISTS(SELECT 1 FROM OPENJSON(@RequestedLines) WITH(OriginalLineNumber int,Quantity decimal(19,6),InventoryDisposition nvarchar(24)) requested
+                LEFT JOIN dbo.DispatchLines assigned ON assigned.DispatchSourceDocumentId=@DispatchSource AND assigned.SourceLineNumber=requested.OriginalLineNumber
+                LEFT JOIN dbo.SalesDocumentLines original ON original.DocumentId=@OriginalDocumentId AND original.LineNumber=requested.OriginalLineNumber
+                LEFT JOIN dbo.DispatchDeliveryReturns captured ON captured.DispatchSourceDocumentId=@DispatchSource AND captured.OriginalLineNumber=requested.OriginalLineNumber
+                OUTER APPLY(SELECT SUM(prior.Quantity) Quantity FROM dbo.SalesReturnLines prior
+                  WHERE prior.OriginalDocumentId=@OriginalDocumentId AND prior.OriginalLineNumber=requested.OriginalLineNumber) already
+                WHERE assigned.DispatchLineId IS NULL OR requested.Quantity>
+                  CASE WHEN @Delivery=N'NotDelivered' THEN assigned.AssignedQuantity ELSE COALESCE(captured.Quantity,0) END
+                    -(COALESCE(already.Quantity,0)-(original.Quantity-assigned.AssignedQuantity))
+                  OR requested.InventoryDisposition<>CASE WHEN @Delivery=N'NotDelivered' THEN N'Sellable' ELSE captured.InventoryDisposition END)
+                THROW 51202,N'El reembolso administrativo debe corresponder a la mercancía registrada como devuelta en la entrega y aún no reembolsada.',1;
+            END;
             SELECT d.CustomerId,d.CustomerIdentification,
-                   COALESCE((SELECT SUM(r.OutstandingAmount) FROM dbo.Receivables r
+                   COALESCE((SELECT SUM(available.AvailableAmount) FROM dbo.Receivables r WITH(UPDLOCK,HOLDLOCK)
+                     CROSS APPLY accounting.ObligationAvailability(r.BusinessId,N'Receivable',r.ReceivableId,r.OutstandingAmount,NULL) available
                      WHERE r.BusinessId=d.BusinessId AND r.SourceDocumentId=d.DocumentId
                        AND r.SourceDocumentType=d.DocumentType
                        AND r.Status IN(N'Open',N'PartiallyPaid')),0),
@@ -276,7 +335,9 @@ public sealed class SqlSalesReturnStore(
                    d.PayableAmount-d.UntaxedAmount-d.TaxAmount,
                    d.UntaxedAmount+d.TaxAmount-COALESCE(prior.Unrounded,0),
                    d.PayableAmount-d.UntaxedAmount-d.TaxAmount-
-                     COALESCE(prior.Rounding,0)
+                     COALESCE(prior.Rounding,0),
+                   CAST(CASE WHEN @IsRefund=1 AND EXISTS(SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,d.DocumentId) payment
+                     WHERE payment.EffectivePaymentReady=0) THEN 1 ELSE 0 END AS bit)
             FROM dbo.SalesDocuments d WITH (UPDLOCK,HOLDLOCK)
             OUTER APPLY (
               SELECT SUM(r.UntaxedAmount+r.TaxAmount) Unrounded,
@@ -293,12 +354,17 @@ public sealed class SqlSalesReturnStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@OriginalDocumentId", request.OriginalDocumentId);
+        command.Parameters.AddWithValue("@IsRefund", request.EconomicResolution == ReturnEconomicResolutions.Refund);
+        command.Parameters.AddWithValue("@FromDispatch", request.DispatchId is not null);
+        command.Parameters.Add("@RequestedLines",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(request.Lines);
         try
         {
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 throw new SalesReturnValidationException(
-                    "The original completed invoice was not found in this business.");
+                    "No se encontró la venta original procesada en esta sede.");
+            if (request.EconomicResolution == ReturnEconomicResolutions.Refund && reader.GetBoolean(7))
+                throw new SalesReturnConflictException("La corrección del recaudo debe terminar de procesarse antes de reembolsar la venta.");
             return new OriginalSale(
                 reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1),
                 reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4),
@@ -307,6 +373,10 @@ public sealed class SqlSalesReturnStore(
         catch (SqlException exception) when (exception.Number is 51200 or 51201)
         {
             throw new SalesReturnValidationException(exception.Message);
+        }
+        catch (SqlException exception) when (exception.Number == 51202)
+        {
+            throw new SalesReturnConflictException(exception.Message);
         }
     }
 
@@ -405,20 +475,27 @@ public sealed class SqlSalesReturnStore(
             return new(null, request.BankAccountId, null, null);
         }
 
+        if(request.OriginalDispatchPaymentId is not null)
+            return await ValidateDispatchCardRefundAsync(connection,transaction,user,request,requestedAmount,cancellationToken);
         await using var card = new SqlCommand("""
-            SELECT p.MethodCode,p.Amount+p.RoundingAdjustment-COALESCE(reversed.Amount,0),
-                   p.CardFranchiseCode,p.ApprovalNumber
-            FROM dbo.SalesPayments p WITH(UPDLOCK,HOLDLOCK)
+            SELECT p.EffectiveMethodCode,p.EffectiveAmount-COALESCE(reversed.Amount,0),
+                   p.EffectiveCardFranchiseCode,p.EffectiveApprovalNumber
+            FROM dbo.SalesDocuments sale
+            CROSS APPLY accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,sale.DocumentId) p
             OUTER APPLY
             (
-                SELECT SUM(s.Amount) Amount
-                FROM dbo.SalesReturnSettlements s WITH(UPDLOCK,HOLDLOCK)
+                SELECT SUM(s.TotalAmount) Amount
+                FROM dbo.SalesReturns s WITH(UPDLOCK,HOLDLOCK)
                 WHERE s.OriginalDocumentId=p.DocumentId
                   AND s.OriginalPaymentNumber=p.PaymentNumber
+                  AND s.EconomicResolution=N'Refund'
             ) reversed
-            WHERE p.DocumentId=@DocumentId AND p.PaymentNumber=@PaymentNumber;
+            WHERE sale.DocumentId=@DocumentId AND sale.CollectionMode=N'Session'
+              AND p.PaymentNumber=@PaymentNumber AND p.EffectivePaymentReady=1;
             """, connection, transaction);
         card.Parameters.AddWithValue("@DocumentId", request.OriginalDocumentId);
+        card.Parameters.AddWithValue("@TenantId", user.TenantId);
+        card.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         card.Parameters.AddWithValue("@PaymentNumber", request.OriginalPaymentNumber!.Value);
         await using var reader = await card.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) ||
@@ -445,11 +522,11 @@ public sealed class SqlSalesReturnStore(
         catch (SqlException exception) when (exception.Number == 51730)
         {
             throw new SalesReturnValidationException(
-                "No active SalesReturn document series is configured for the business.", exception);
+                "Esta sede no tiene una serie activa para devoluciones de venta.", exception);
         }
         catch (SqlException exception) when (exception.Number == 51731)
         {
-            throw new SalesReturnValidationException("The SalesReturn document series is exhausted.", exception);
+            throw new SalesReturnValidationException("Se agotó la serie de devoluciones de venta.", exception);
         }
     }
 
@@ -457,7 +534,7 @@ public sealed class SqlSalesReturnStore(
         SqlConnection connection, SqlTransaction transaction, ConfirmSalesReturnRequest request,
         SalesReturnUserIdentity user, AuralyDocumentNumberAssignment number, OriginalSale original,
         RefundSettlementContext settlement, byte[] requestHash, string idempotencyKey,
-        decimal untaxed, decimal tax, decimal total,
+        decimal untaxed, decimal tax, decimal total, decimal? receivableReversal,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
@@ -468,11 +545,11 @@ public sealed class SqlSalesReturnStore(
                CardFranchiseCode,ApprovalNumber,BankAccountId,RefundReference,RefundNotes,CorrectionCode,
                ReasonCode,ReasonDescription,Notes,
                CustomerId,CustomerIdentification,UntaxedAmount,TaxAmount,TotalAmount,Status,
-               CreatedByUserId,AcceptedAt)
+               CreatedByUserId,AcceptedAt,ReceivableReversalAmount,OriginalDispatchPaymentId)
             VALUES(@Id,@BusinessId,@WarehouseId,@WorkSessionId,@OriginalId,@SeriesId,@Number,@Prefix,@SeriesCode,
                @Consecutive,@Key,@Hash,@ReturnedAt,@ReturnScopeCode,@Resolution,@Method,@PaymentNumber,
                @CardFranchiseCode,@ApprovalNumber,@BankAccountId,@RefundReference,@RefundNotes,N'1',@ReasonCode,@Reason,@Notes,@CustomerId,
-               @CustomerIdentification,@Untaxed,@Tax,@Total,N'Accepted',@UserId,@Now);
+               @CustomerIdentification,@Untaxed,@Tax,@Total,N'Accepted',@UserId,@Now,@ReceivableReversal,@DispatchPayment);
             """, connection, transaction);
         command.Parameters.AddWithValue("@Id", request.ReturnId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
@@ -491,6 +568,7 @@ public sealed class SqlSalesReturnStore(
         command.Parameters.AddWithValue("@Resolution", request.EconomicResolution);
         command.Parameters.AddWithValue("@Method", (object?)request.RefundMethodCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@PaymentNumber", (object?)request.OriginalPaymentNumber ?? DBNull.Value);
+        command.Parameters.AddWithValue("@DispatchPayment",(object?)request.OriginalDispatchPaymentId??DBNull.Value);
         command.Parameters.AddWithValue("@CardFranchiseCode", (object?)settlement.CardFranchiseCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@ApprovalNumber", (object?)settlement.ApprovalNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@BankAccountId", (object?)request.BankAccountId ?? DBNull.Value);
@@ -503,6 +581,9 @@ public sealed class SqlSalesReturnStore(
         command.Parameters.AddWithValue("@CustomerIdentification", original.CustomerIdentification);
         AddDecimal(command,"@Untaxed",untaxed,19,4); AddDecimal(command,"@Tax",tax,19,4);
         AddDecimal(command,"@Total",total,19,4);
+        command.Parameters.Add("@ReceivableReversal",SqlDbType.Decimal).Value=(object?)receivableReversal??DBNull.Value;
+        command.Parameters["@ReceivableReversal"].Precision=19;
+        command.Parameters["@ReceivableReversal"].Scale=4;
         command.Parameters.AddWithValue("@UserId", user.UserId);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -539,7 +620,7 @@ public sealed class SqlSalesReturnStore(
             SELECT WorkSessionId
             FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND UserId=@UserId
-              AND Status=N'Open' AND (@RequestedId IS NULL OR WorkSessionId=@RequestedId)
+              AND Status=N'Open' AND Kind=N'Normal' AND (@RequestedId IS NULL OR WorkSessionId=@RequestedId)
               AND ((@DeviceId IS NULL AND DeviceId IS NULL)
                 OR (@DeviceId IS NOT NULL AND DeviceId=@DeviceId));
             """, connection, transaction);

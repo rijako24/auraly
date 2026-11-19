@@ -83,7 +83,7 @@ public sealed partial class SqlWorkSessionStore
             INNER JOIN dbo.BusinessReasons r
               ON r.BusinessId=ws.BusinessId AND r.ReasonId=@ReasonId
             WHERE ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=@BusinessId
-              AND ws.UserId=@UserId AND ws.Status=N'Open'
+              AND ws.UserId=@UserId AND ws.Status=N'Open' AND ws.Kind=N'Normal'
               AND b.TenantId=@TenantId AND r.IsActive=1
               AND r.Code=@ReasonCode AND r.Direction=@Direction;
             """, connection, transaction);
@@ -96,7 +96,7 @@ public sealed partial class SqlWorkSessionStore
         command.Parameters.AddWithValue("@Direction", movement.Reason.Direction.ToString());
         if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) != 1)
             throw new WorkSessionConflictException(
-                "The cash movement session or reason is no longer available.");
+                "La sesión de caja o el motivo del movimiento ya no está disponible.");
         if (movement.CostCenterId is { } costCenterId)
             await ValidateCostCenterAsync(
                 connection, transaction, movement.BusinessId, costCenterId,

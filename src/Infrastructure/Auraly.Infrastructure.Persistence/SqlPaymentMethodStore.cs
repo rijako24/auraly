@@ -38,9 +38,11 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
             TenantId=@Tenant AND (@Id IS NULL OR PaymentMethodId=@Id)
             AND (@Active IS NULL OR IsActive=@Active)
             AND (@Method IS NULL OR MethodCode=@Method)
+            AND (@ExcludedMethod IS NULL OR MethodCode<>@ExcludedMethod)
             AND (@Search IS NULL OR Code LIKE @Search OR Name LIKE @Search)
             AND (@Usage IS NULL OR IsActive=1 AND IsReady=1 AND
-              ((@Usage=N'Sales' AND UseForSales=1) OR (@Usage=N'Receipts' AND UseForReceipts=1)
+              ((@Usage=N'Sales' AND UseForSales=1 AND MethodCode<>N'PendingCollection')
+               OR (@Usage=N'OrderReceipts' AND UseForSales=1) OR (@Usage=N'Receipts' AND UseForReceipts=1)
                OR (@Usage=N'ServiceInvoices' AND UseForSales=1 AND MethodCode IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard'))
                OR (@Usage=N'TipPayments' AND UseForSupplierPayments=1 AND MethodCode IN(N'Cash',N'Transfer'))
                OR (@Usage=N'SupplierPayments' AND UseForSupplierPayments=1) OR (@Usage=N'Payroll' AND UseForPayroll=1)
@@ -61,6 +63,7 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         command.Parameters.AddWithValue("@Id", (object?)query.PaymentMethodId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Active", (object?)query.IsActive ?? DBNull.Value);
         command.Parameters.AddWithValue("@Method", (object?)query.MethodCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ExcludedMethod", (object?)query.ExcludeMethodCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", string.IsNullOrEmpty(query.Search) ? DBNull.Value : $"%{query.Search}%");
         command.Parameters.AddWithValue("@Usage", (object?)query.Usage ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", checked((query.Page - 1) * query.PageSize));
@@ -90,6 +93,9 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
               @TypeLockedAt IS NOT NULL OR
               EXISTS(SELECT 1 FROM dbo.SalesPayments WHERE PaymentMethodId=@Id)
               OR EXISTS(SELECT 1 FROM dbo.SalesDocuments WHERE CreditPaymentMethodId=@Id)
+              OR EXISTS(SELECT 1 FROM dbo.DispatchDeliveryPayments WHERE PaymentMethodId=@Id)
+              OR EXISTS(SELECT 1 FROM dbo.DispatchDeliveryPayments WHERE ReviewedPaymentMethodId=@Id)
+              OR EXISTS(SELECT 1 FROM dbo.DispatchExpenses WHERE CashPaymentMethodId=@Id)
               OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentTenders WHERE PaymentMethodId=@Id)
               OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentTenders WHERE PaymentMethodId=@Id)
               OR EXISTS(SELECT 1 FROM payroll.PaymentBatches WHERE TenantId=@Tenant AND PaymentMethodId=@Id)
@@ -103,7 +109,7 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
               WHERE TenantId=@Tenant AND AccountId=@Account
                 AND (@Active=0 OR IsActive=1 AND AllowsPosting=1 AND FinancialFunction IS NOT NULL))
               THROW 51220,N'El tipo o auxiliar de la forma de pago no está disponible.',1;
-            IF (@Type=N'Credit' AND (@Receipts=1 OR @Suppliers=1 OR @Payroll=1 OR @VoucherUsage=1))
+            IF (@Type IN(N'Credit',N'PendingCollection') AND (@Receipts=1 OR @Suppliers=1 OR @Payroll=1 OR @VoucherUsage=1))
               OR (@Payroll=1 AND @Type NOT IN(N'Cash',N'Transfer'))
               THROW 51220,N'El tipo no admite los usos seleccionados.',1;
             IF @Active=1 AND EXISTS(SELECT 1 FROM (VALUES

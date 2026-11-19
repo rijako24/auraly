@@ -74,7 +74,7 @@ public sealed partial class SqlOnlineSalesDraftStore
              AND sessionRow.TenantId=account.TenantId
              AND sessionRow.BusinessId=account.BusinessId
              AND sessionRow.UserId=@UserId
-             AND sessionRow.Status=N'Open'
+             AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
              AND sessionRow.DeviceId IS NULL
             WHERE account.AccountId=@AccountId
               AND account.TenantId=@TenantId
@@ -186,7 +186,7 @@ public sealed partial class SqlOnlineSalesDraftStore
              AND sessionRow.BusinessId=account.BusinessId
              AND sessionRow.TenantId=account.TenantId
              AND sessionRow.UserId=@UserId
-             AND sessionRow.Status=N'Open'
+             AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
             JOIN dbo.FiscalSeries series
               ON series.BusinessId=account.BusinessId
              AND series.DeviceId IS NULL
@@ -314,7 +314,7 @@ public sealed partial class SqlOnlineSalesDraftStore
              AND sessionRow.BusinessId=account.BusinessId
              AND sessionRow.TenantId=account.TenantId
              AND sessionRow.UserId=@UserId
-             AND sessionRow.Status=N'Open'
+             AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
              AND sessionRow.DeviceId IS NULL
             WHERE account.AccountId=@AccountId
               AND account.BusinessId=@BusinessId

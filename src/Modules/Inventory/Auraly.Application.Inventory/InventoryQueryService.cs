@@ -20,8 +20,8 @@ public interface IInventoryQueryStore
     Task<InventoryBalancePage> GetBalancesAsync(InventoryUserIdentity user, InventoryBalanceQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryMovementFilterOptions> GetMovementFilterOptionsAsync(InventoryUserIdentity user, CancellationToken token);
-    Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token);
-    Task<InventoryOperationDetail?> GetOperationDetailAsync(InventoryUserIdentity user, Guid documentId, bool includeCosts, CancellationToken token);
+    Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, IReadOnlyList<string> allowedDocumentTypes, bool includeCosts, CancellationToken token);
+    Task<InventoryOperationDetail?> GetOperationDetailAsync(InventoryUserIdentity user, Guid documentId, IReadOnlyList<string> allowedDocumentTypes, bool includeCosts, CancellationToken token);
     Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token);
     Task<WarehouseTransferDetail?> GetTransferAsync(InventoryUserIdentity user, Guid transferId, CancellationToken token);
 }
@@ -40,22 +40,24 @@ public sealed class InventoryQueryService(
     public Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, CancellationToken token = default)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
-        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
+        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("Selecciona una bodega.");
         return store.GetProductsAsync(user, query with { Search = Normalize(query.Search) }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
 
     public Task<ProductConversionProductPage> GetConversionProductsAsync(InventoryUserIdentity user, ProductConversionProductQuery query, CancellationToken token = default)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
-        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
-        if (query.FamilyRootProductId == Guid.Empty) throw new InventoryValidationException("FamilyRootProductId is invalid.");
+        InventoryOperationAccess.RequireRead(user, InventoryDocumentTypes.Conversion);
+        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("Selecciona una bodega.");
+        if (query.FamilyRootProductId == Guid.Empty) throw new InventoryValidationException("Selecciona una familia de productos válida.");
         return store.GetConversionProductsAsync(user, query with { Search = Normalize(query.Search) }, token);
     }
 
     public Task<ProductionProductPage> GetProductionProductsAsync(InventoryUserIdentity user, ProductionProductQuery query, CancellationToken token = default)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
-        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
+        InventoryOperationAccess.RequireRead(user, InventoryDocumentTypes.Production);
+        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("Selecciona una bodega.");
         return store.GetProductionProductsAsync(user, query with { Search = Normalize(query.Search) }, token);
     }
 
@@ -64,6 +66,7 @@ public sealed class InventoryQueryService(
         DateOnly startDate, int days, CancellationToken token = default)
     {
         Validate(user, user.BusinessId, 1, 1);
+        InventoryOperationAccess.RequireRead(user, InventoryDocumentTypes.Production);
         var today = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
         if (warehouseId == Guid.Empty || productId == Guid.Empty || days is < 1 or > 90 ||
             startDate < today.AddDays(-1) || startDate > today.AddDays(365))
@@ -83,6 +86,7 @@ public sealed class InventoryQueryService(
     public Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user, Guid warehouseId, Guid productId, decimal quantity, CancellationToken token = default)
     {
         Validate(user, user.BusinessId, 1, 1);
+        InventoryOperationAccess.RequireRead(user, InventoryDocumentTypes.Production);
         if (warehouseId == Guid.Empty || productId == Guid.Empty || quantity <= 0 || quantity > 9999999999999.999999m)
             throw new InventoryValidationException("Selecciona producto, bodega y una cantidad válida.");
         return store.GetProductionPreviewAsync(user, warehouseId, productId, quantity,
@@ -105,9 +109,9 @@ public sealed class InventoryQueryService(
     {
         RequireWarehouseManagement(user);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 160)
-            throw new InventoryValidationException("Warehouse name is required and cannot exceed 160 characters.");
+            throw new InventoryValidationException("El nombre de la bodega es obligatorio y admite máximo 160 caracteres.");
         if (request.PriceFormationCostBasis is not ("LatestReceiptCost" or "WeightedAverageCost"))
-            throw new InventoryValidationException("Warehouse cost basis is invalid.");
+            throw new InventoryValidationException("Selecciona una base de costo válida para la bodega.");
         var saved = await store.SaveWarehouseAsync(
             user, warehouseId, request with { Name = request.Name.Trim() }, token);
         await synchronization.DispatchPendingAsync(
@@ -167,14 +171,17 @@ public sealed class InventoryQueryService(
     public Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, CancellationToken token = default)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
-        if (query.From is not null && query.To is not null && query.From > query.To) throw new InventoryValidationException("The starting date cannot be after the ending date.");
+        if (query.From is not null && query.To is not null && query.From > query.To) throw new InventoryValidationException("La fecha inicial no puede ser posterior a la fecha final.");
         return store.GetMovementsAsync(user, query with { Search = Normalize(query.Search), DocumentType = Normalize(query.DocumentType), MovementType = Normalize(query.MovementType) }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
 
     public Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, CancellationToken token = default)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
-        if (query.From is not null && query.To is not null && query.From > query.To) throw new InventoryValidationException("The starting date cannot be after the ending date.");
+        if (query.From is not null && query.To is not null && query.From > query.To) throw new InventoryValidationException("La fecha inicial no puede ser posterior a la fecha final.");
+        var allowedTypes = InventoryOperationAccess.ReadableDocumentTypes(user.Permissions);
+        if (Normalize(query.DocumentType) is { } documentType) InventoryOperationAccess.RequireRead(user, documentType);
+        if (allowedTypes.Count == 0) return Task.FromResult(new InventoryOperationPage([], query.Page, query.PageSize, 0, 0));
         return store.GetOperationsAsync(user, query with
         {
             Search = Normalize(query.Search),
@@ -182,16 +189,18 @@ public sealed class InventoryQueryService(
             Status = Normalize(query.Status),
             ReasonCode = Normalize(query.ReasonCode),
             PurchaseEvidenceType = Normalize(query.PurchaseEvidenceType)
-        }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+        }, allowedTypes, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
     public Task<InventoryOperationDetail?> GetOperationDetailAsync(
         InventoryUserIdentity user, Guid documentId, CancellationToken token = default)
     {
         Validate(user, user.BusinessId, 1, 1);
         if (documentId == Guid.Empty)
-            throw new InventoryValidationException("DocumentId is required.");
+            throw new InventoryValidationException("Se requiere un documento válido.");
+        var allowedTypes = InventoryOperationAccess.ReadableDocumentTypes(user.Permissions);
+        if (allowedTypes.Count == 0) throw new InventoryForbiddenException("No tienes permiso para consultar operaciones de inventario.");
         return store.GetOperationDetailAsync(
-            user, documentId, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+            user, documentId, allowedTypes, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
 
     public Task<InventoryMovementFilterOptions> GetMovementFilterOptionsAsync(InventoryUserIdentity user, CancellationToken token = default)
@@ -203,13 +212,15 @@ public sealed class InventoryQueryService(
     public Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token = default)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
+        InventoryOperationAccess.RequireRead(user, InventoryDocumentTypes.Transfer);
         return store.GetPendingTransfersAsync(user, query with { Search = Normalize(query.Search) }, token);
     }
 
     public Task<WarehouseTransferDetail?> GetTransferAsync(InventoryUserIdentity user, Guid transferId, CancellationToken token = default)
     {
         Validate(user, user.BusinessId, 1, 1);
-        if (transferId == Guid.Empty) throw new InventoryValidationException("TransferId is required.");
+        InventoryOperationAccess.RequireRead(user, InventoryDocumentTypes.Transfer);
+        if (transferId == Guid.Empty) throw new InventoryValidationException("Se requiere un traslado válido.");
         return store.GetTransferAsync(user, transferId, token);
     }
 
@@ -217,13 +228,13 @@ public sealed class InventoryQueryService(
     private static void RequireWarehouseManagement(InventoryUserIdentity user)
     {
         if (!user.Permissions.Contains(InventoryPermissionCodes.ManageWarehouses))
-            throw new InventoryForbiddenException($"Permission '{InventoryPermissionCodes.ManageWarehouses}' is required.");
+            throw new InventoryForbiddenException("No tienes permiso para administrar bodegas.");
     }
     private static void Validate(InventoryUserIdentity user, Guid businessId, int page, int pageSize)
     {
-        if (user.BusinessId != businessId) throw new InventoryForbiddenException("The query belongs to another business.");
-        if (!user.Permissions.Contains(InventoryPermissionCodes.Read)) throw new InventoryForbiddenException($"Permission '{InventoryPermissionCodes.Read}' is required.");
-        if (page < 1 || pageSize is < 1 or > 200) throw new InventoryValidationException("Page must be positive and PageSize must be between 1 and 200.");
+        if (user.BusinessId != businessId) throw new InventoryForbiddenException("La consulta pertenece a otra sede.");
+        if (!user.Permissions.Contains(InventoryPermissionCodes.Read)) throw new InventoryForbiddenException("No tienes permiso para consultar inventario.");
+        if (page < 1 || pageSize is < 1 or > 200) throw new InventoryValidationException("La página debe ser mayor que cero y contener entre 1 y 200 registros.");
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

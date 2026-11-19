@@ -569,7 +569,7 @@ public sealed partial class SqlPosSaleServerStore(
             INSERT INTO dbo.SalesDocuments
             (
                 DocumentId, BusinessId, WarehouseId, TableId,
-                DeviceId, WorkSessionId, SourceMode, DocumentSeriesId, DocumentNumber,
+                DeviceId, WorkSessionId, CollectionMode, SourceMode, DocumentSeriesId, DocumentNumber,
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
@@ -582,7 +582,7 @@ public sealed partial class SqlPosSaleServerStore(
             VALUES
             (
                 @DocumentId, @BusinessId, @WarehouseId, @TableId,
-                @DeviceId, @WorkSessionId, @SourceMode, @DocumentSeriesId, @DocumentNumber,
+                @DeviceId, @WorkSessionId, @CollectionMode, @SourceMode, @DocumentSeriesId, @DocumentNumber,
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
@@ -658,6 +658,7 @@ public sealed partial class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@CreditDueDate", (object?)request.Credit?.DueDate ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@CreditForm", (object?)request.Credit?.PaymentMethodId ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@CreditFormVersion", (object?)request.Credit?.PaymentMethodVersion ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CollectionMode",request.CollectionMode.ToString());
         sqlCommand.Parameters.AddWithValue("@CreditFormCode", (object?)request.Credit?.PaymentMethodCode ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@CreditFormName", (object?)request.Credit?.PaymentMethodName ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@CufeReceived", (object?)fiscal?.Cufe ?? DBNull.Value);

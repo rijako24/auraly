@@ -21,17 +21,17 @@ public sealed class SqlDispatchCashDifferenceDocumentHandler(
             document.Payload,
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))
             ?? throw new InvalidOperationException(
-                "The dispatch cash-difference payload is invalid.");
+                "La fuente de conciliación del despacho no es válida.");
         if (payload.DispatchSettlementId != document.DocumentId.Value ||
             payload.BusinessId != document.BusinessId.Value ||
-            payload.TenantId != document.TenantId.Value || payload.Difference == 0 ||
+            payload.TenantId != document.TenantId.Value || (payload.Difference == 0 && payload.Collections is null) ||
             decimal.Round(payload.CashReceived - payload.ExpectedCash, 4) !=
             decimal.Round(payload.Difference, 4))
             throw new InvalidOperationException(
-                "The dispatch cash-difference envelope does not match its payload.");
+                "La identidad de la conciliación del despacho no coincide con su fuente.");
 
         await SqlAccountingPostingJobWriter.InsertAsync(
             sessions.Current.Connection, sessions.Current.Transaction, document, payload.OccurredAt, ids, timeProvider,
-            cancellationToken);
+            cancellationToken, AccountingJobRequirement.PreserveCommercialEffects);
     }
 }

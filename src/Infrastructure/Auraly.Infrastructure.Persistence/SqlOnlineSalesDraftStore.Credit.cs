@@ -6,6 +6,7 @@ using System.Text.Json;
 using Auraly.Contracts.Sales;
 using Auraly.Application.Sales;
 using Microsoft.Data.SqlClient;
+using PaymentTransactionStatus = Auraly.Platform.Domain.Enums.PaymentTransactionStatus;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -44,11 +45,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                                         AND business.TenantId=@TenantId AND business.IsActive=1
               JOIN OrderTotals orderTotal
                 ON orderTotal.OrderId=o.OrderId AND orderTotal.BusinessId=o.BusinessId
-              LEFT JOIN dbo.PaymentTransactions payment ON payment.PaymentTransactionId=o.PaymentTransactionId
+              LEFT JOIN dbo.PaymentTransactions payment ON payment.PaymentTransactionId=o.PaymentTransactionId AND payment.BusinessId=o.BusinessId
               LEFT JOIN dbo.OrderInvoiceLinks invoiceLink ON invoiceLink.OrderId=o.OrderId
               WHERE o.CustomerConfirmed=1 AND o.Status IN(2,4)
                 AND invoiceLink.OrderId IS NULL
-                AND ISNULL(payment.Status,-1)<>2
+                AND ISNULL(payment.Status,-1)<>@ConfirmedPaymentStatus
               GROUP BY o.CustomerId
             ), Outstanding AS (
               SELECT eligible.CustomerId,
@@ -91,6 +92,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 { OrderId = item.Key, AdditionalAmount = item.Value }))),
             P("@BusinessId", businessId),
             P("@TenantId", user.TenantId),
+            P("@ConfirmedPaymentStatus",(int)PaymentTransactionStatus.Confirmed),
             P("@OverdueBefore", overdueBefore)
         ]);
         var issues = new List<OnlineOrderCreditValidationIssue>();

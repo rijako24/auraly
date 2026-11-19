@@ -73,6 +73,12 @@ function buildExecutionHeaders(includeExecutionContext = true): Record<string, s
   return headers;
 }
 
+function publicTransportFailure(error: unknown, signal: AbortSignal): never {
+  if(signal.aborted)throw error;
+  if(error instanceof TypeError)throw new TypeError("No fue posible conectar con el servidor. Revisa la conexión.",{cause:error});
+  throw error;
+}
+
 export function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -80,7 +86,7 @@ export function fetchWithTimeout(
 ): Promise<Response> {
   const deadline = AbortSignal.timeout(timeoutMs);
   const caller = init.signal;
-  if (!caller) return fetch(input, { ...init, signal: deadline });
+  if (!caller) return fetch(input, { ...init, signal: deadline }).catch(error=>publicTransportFailure(error,deadline));
   const controller = new AbortController();
   // Keep both signals connected through response-body consumption as well as
   // headers. The existing deadline bounds the listener lifetime on success.
@@ -94,7 +100,7 @@ export function fetchWithTimeout(
     caller.addEventListener("abort", cancel, { once: true });
     deadline.addEventListener("abort", cancel, { once: true });
   }
-  return fetch(input, { ...init, signal: controller.signal });
+  return fetch(input, { ...init, signal: controller.signal }).catch(error=>publicTransportFailure(error,controller.signal));
 }
 
 async function expireWebSession(reason: "replaced" | "expired"): Promise<void> {
@@ -225,16 +231,19 @@ class ApiClient {
 
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      let message = "An error occurred";
+      const publicFallback = "No fue posible completar la solicitud.";
+      let message = publicFallback;
       let errors: Record<string, string[]> | undefined;
       let actionUrl: string | undefined;
       try {
         const body = await response.json();
-        message = body.detail || body.message || body.title || message;
+        message = body.detail || body.message || message;
         errors = body.errors;
         actionUrl = body.actionUrl;
       } catch {
-        message = response.statusText || message;
+        // HTTP reason phrases and proxy error pages are technical diagnostics.
+        // Keep the Spanish public message and the original status code.
+        message = publicFallback;
       }
       if (response.status === 402 && actionUrl && typeof window !== "undefined"
           && !window.location.pathname.startsWith("/dashboard/subscription")) {

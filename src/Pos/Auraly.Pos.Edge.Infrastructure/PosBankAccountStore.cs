@@ -24,7 +24,7 @@ public sealed partial class PosCatalogStore
     {
         if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
             ((long)query.Page - 1) * query.PageSize > int.MaxValue || query.Search?.Length > 160 ||
-            query.MethodCode?.Length > 32 || query.Usage != "Sales")
+            query.MethodCode?.Length > 32 || query.ExcludeMethodCode?.Length > 32 || query.Usage != "Sales")
             throw new ArgumentException("Los filtros de formas de pago no son válidos.");
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(ct);
@@ -34,6 +34,7 @@ public sealed partial class PosCatalogStore
             WHERE state.ConfigurationId=1 AND json_extract(entry.value,'$.IsActive')=1
               AND json_extract(entry.value,'$.UseForSales')=1
               AND ($method IS NULL OR json_extract(entry.value,'$.MethodCode')=$method)
+              AND ($excludedMethod IS NULL OR json_extract(entry.value,'$.MethodCode')<>$excludedMethod)
               AND ($search IS NULL OR json_extract(entry.value,'$.Code') LIKE $search
                 OR json_extract(entry.value,'$.Name') LIKE $search)
             """;
@@ -47,6 +48,7 @@ public sealed partial class PosCatalogStore
             LIMIT $take OFFSET $skip;
             """;
         command.Parameters.AddWithValue("$method", (object?)query.MethodCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("$excludedMethod", (object?)query.ExcludeMethodCode ?? DBNull.Value);
         command.Parameters.AddWithValue("$search", string.IsNullOrWhiteSpace(query.Search) ? DBNull.Value : $"%{query.Search.Trim()}%");
         command.Parameters.AddWithValue("$take", query.PageSize);
         command.Parameters.AddWithValue("$skip", checked((query.Page - 1) * query.PageSize));

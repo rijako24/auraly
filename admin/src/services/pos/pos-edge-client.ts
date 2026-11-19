@@ -1,3 +1,4 @@
+import type { OrderInvoicePaymentDetails } from "@/services/orders/commerce-orders-client";
 import type { PaymentMethod, PaymentMethodCatalogSnapshot, PaymentMethodPage, PaymentMethodQuery } from "@/services/api/payment-methods";
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import type { TenantBranding } from "@/services/api/tenants";
@@ -750,7 +751,7 @@ export interface PosClient {
     documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
     bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice?: boolean,
     idempotencyKey?: string, onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    includeCreditAcknowledgement?: boolean, charges?: OrderInvoiceChargeSelection[] | null, paymentForm?: PaymentMethod,
+    includeCreditAcknowledgement?: boolean, charges?: OrderInvoiceChargeSelection[] | null, paymentForm?: PaymentMethod, paymentDetails?: OrderInvoicePaymentDetails,
   ): Promise<InvoiceOrdersResponse>;
   saveCharge(draftId: string, input: AddInvoiceCharge): Promise<PosDraft>;
   removeCharge(draftId: string, appliedChargeId: string): Promise<PosDraft>;
@@ -1264,6 +1265,7 @@ export class PosEdgeClient implements PosClient {
     const parameters = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
     if (query.search) parameters.set("search", query.search);
     if (query.methodCode) parameters.set("methodCode", query.methodCode);
+    if (query.excludeMethodCode) parameters.set("excludeMethodCode", query.excludeMethodCode);
     return this.request<PaymentMethodPage>(`/edge/v1/payment-methods?${parameters}`);
   }
 
@@ -1580,12 +1582,13 @@ export class PosEdgeClient implements PosClient {
     documentType: "SalesInvoice" | "SalesReceipt", paymentReference?: string | null,
     bankAccountId?: string | null, paymentNotes?: string | null, printAfterInvoice = true,
     idempotencyKey = crypto.randomUUID(), onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    includeCreditAcknowledgement = false, charges?: OrderInvoiceChargeSelection[] | null, paymentForm?: PaymentMethod,
+    includeCreditAcknowledgement = false, charges?: OrderInvoiceChargeSelection[] | null, paymentForm?: PaymentMethod, paymentDetails?: OrderInvoicePaymentDetails,
   ): Promise<InvoiceOrdersResponse> {
     const scope = this.requiredOrderScope();
     const invoiceRequest = (requestedOrderIds: string[]) => ({
       workSessionId: scope.workSessionId, warehouseId: scope.warehouseId,
       userId: scope.userId, orderIds: requestedOrderIds, paymentMethodCode,
+      cardFranchiseCode: paymentDetails?.cardFranchiseCode, approvalNumber: paymentDetails?.approvalNumber,
       paymentMethodId: paymentForm?.paymentMethodId, paymentMethodVersion: paymentForm?.version,
       paymentFormCode: paymentForm?.code, paymentFormName: paymentForm?.name, accountId: paymentForm?.accountId,
       paymentReference: paymentReference ?? null, bankAccountId: bankAccountId ?? null,

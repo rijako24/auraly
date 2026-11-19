@@ -166,6 +166,6 @@ public sealed class FiscalDocumentService(
     {
         ArgumentNullException.ThrowIfNull(user);
         if (user.UserId == Guid.Empty || user.BusinessId == Guid.Empty || !user.Permissions.Contains(permission))
-            throw new FiscalForbiddenException($"Permission '{permission}' is required.");
+            throw new FiscalForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }

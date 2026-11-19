@@ -62,19 +62,19 @@ public sealed class WithholdingService(
     {
         Require(user, TaxationPermissionCodes.ManageWithholdingRules);
         if (request.BusinessId != user.BusinessId)
-            throw new TaxationForbiddenException("The rule belongs to another business.");
+            throw new TaxationForbiddenException("La regla pertenece a otra sede.");
         if (!string.Equals(request.Moment, WithholdingRecognitionMoments.Accrual, StringComparison.Ordinal))
             throw new TaxationValidationException(
-                "Only accrual withholding is available in the automated document flows.");
+                "Los documentos automáticos solo admiten retenciones por causación.");
         if (request.RequiredResponsibilities is null)
-            throw new TaxationValidationException("RequiredResponsibilities is required.");
+            throw new TaxationValidationException("Se requieren las responsabilidades tributarias.");
         var responsibilities = await ValidateResponsibilitiesAsync(request.RequiredResponsibilities, ct);
         var proposed = WithholdingRule.Create(
             ruleId ?? Guid.NewGuid(), user.BusinessId, 1, request.Code, request.Name,
-            Parse<WithholdingKind>(request.Kind, nameof(request.Kind)),
-            Parse<WithholdingDirection>(request.Direction, nameof(request.Direction)),
-            Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
-            Parse<WithholdingBaseKind>(request.BaseKind, nameof(request.BaseKind)),
+            Parse<WithholdingKind>(request.Kind, "tipo de retención"),
+            Parse<WithholdingDirection>(request.Direction, "dirección de la retención"),
+            Parse<WithholdingRecognitionMoment>(request.Moment, "momento de reconocimiento"),
+            Parse<WithholdingBaseKind>(request.BaseKind, "base de cálculo"),
             request.ConceptCode, request.JurisdictionCode, request.Rate, request.MinimumBase,
             responsibilities, request.EffectiveFrom, request.EffectiveTo, request.IsActive,
             request.AppliesAutomatically, request.DefaultAccountId);
@@ -91,7 +91,7 @@ public sealed class WithholdingService(
     {
         Require(user, TaxationPermissionCodes.ViewWithholdingRules);
         if (counterpartyId == Guid.Empty)
-            throw new TaxationValidationException("CounterpartyId is required.");
+            throw new TaxationValidationException("Se requiere un tercero válido.");
         return await store.GetProfileAsync(
             user.TenantId, user.BusinessId, counterpartyId, ct);
     }
@@ -102,13 +102,13 @@ public sealed class WithholdingService(
     {
         Require(user, TaxationPermissionCodes.ManageWithholdingRules);
         if (request.BusinessId != user.BusinessId || request.CounterpartyId == Guid.Empty)
-            throw new TaxationForbiddenException("The tax profile belongs to another business.");
+            throw new TaxationForbiddenException("El perfil tributario pertenece a otra sede.");
         if (request.Responsibilities is null)
-            throw new TaxationValidationException("Responsibilities are required.");
+            throw new TaxationValidationException("Selecciona las responsabilidades tributarias.");
         if (request.Responsibilities.Count > 20)
-            throw new TaxationValidationException("At most 20 tax responsibilities are supported.");
+            throw new TaxationValidationException("Se permiten máximo 20 responsabilidades tributarias.");
         if (request.Responsibilities.Any(value => value?.Trim().Length > 32))
-            throw new TaxationValidationException("A tax responsibility cannot exceed 32 characters.");
+            throw new TaxationValidationException("Cada responsabilidad tributaria admite máximo 32 caracteres.");
         var normalized = request with
         {
             Responsibilities = await ValidateResponsibilitiesAsync(request.Responsibilities, ct),
@@ -117,7 +117,7 @@ public sealed class WithholdingService(
         };
         if (normalized.JurisdictionCode?.Length > 16)
             throw new TaxationValidationException(
-                "JurisdictionCode cannot exceed 16 characters.");
+                "El código de jurisdicción admite máximo 16 caracteres.");
         var saved = await store.SaveProfileAsync(
             user.TenantId, user.UserId, normalized, ct);
         await synchronization.DispatchTenantPendingAsync(
@@ -318,7 +318,7 @@ public sealed class WithholdingService(
         WithholdingCalculationPlan plan, WithholdingPreviewRequest request)
     {
         if (request.BusinessId != plan.BusinessId)
-            throw new TaxationForbiddenException("The calculation belongs to another business.");
+            throw new TaxationForbiddenException("El cálculo pertenece a otra sede.");
         plan.Profiles.TryGetValue(request.CounterpartyId, out var profile);
         var responsibilities = request.CounterpartyResponsibilities is { Count: > 0 }
             ? new HashSet<string>(request.CounterpartyResponsibilities
@@ -329,8 +329,8 @@ public sealed class WithholdingService(
             ? profile?.JurisdictionCode
             : request.JurisdictionCode.Trim().ToUpperInvariant();
         return new WithholdingCalculationContext(
-            plan.BusinessId, Parse<WithholdingDirection>(request.Direction, nameof(request.Direction)),
-            Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
+            plan.BusinessId, Parse<WithholdingDirection>(request.Direction, "dirección de la retención"),
+            Parse<WithholdingRecognitionMoment>(request.Moment, "momento de reconocimiento"),
             request.CounterpartyId, request.ConceptCode, jurisdictionCode,
             request.TaxExclusiveAmount, request.VatAmount, request.OccurredAt,
             profile?.AppliesWithholding ?? false, responsibilities,
@@ -353,12 +353,12 @@ public sealed class WithholdingService(
 
     private static T Parse<T>(string value, string field) where T : struct, Enum =>
         Enum.TryParse<T>(value, false, out var parsed) && Enum.IsDefined(parsed)
-            ? parsed : throw new TaxationValidationException($"{field} has an unsupported value.");
+            ? parsed : throw new TaxationValidationException($"El valor indicado para «{field}» no está permitido.");
     private static string Normalize(string value) => value.Trim().ToUpperInvariant();
     private static void Require(TaxationUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
-            throw new TaxationForbiddenException($"Permission '{permission}' is required.");
+            throw new TaxationForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }
 

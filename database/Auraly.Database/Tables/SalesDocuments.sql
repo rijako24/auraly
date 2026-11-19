@@ -48,6 +48,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     [SellerNameSnapshot] NVARCHAR(201) NULL,
     [AttributionSnapshotVersion] SMALLINT NOT NULL CONSTRAINT [DF_SalesDocuments_AttributionSnapshotVersion] DEFAULT (0),
     [WorkSessionId] UNIQUEIDENTIFIER NULL,
+    [CollectionMode] NVARCHAR(16) NOT NULL CONSTRAINT [DF_SalesDocuments_CollectionMode] DEFAULT(N'Session'),
     [RowVersion] ROWVERSION NOT NULL,
     [TableId] UNIQUEIDENTIFIER NULL,
     [TableNameSnapshot] NVARCHAR(140) NULL,
@@ -85,6 +86,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [CK_SalesDocuments_CustomerSitePair] CHECK (
       ([CustomerId] IS NULL AND [CustomerPartySiteId] IS NULL)
       OR ([CustomerId] IS NOT NULL AND [CustomerPartySiteId] IS NOT NULL)),
+    CONSTRAINT [CK_SalesDocuments_CollectionMode] CHECK ([CollectionMode] IN(N'Session',N'Dispatch')),
     CONSTRAINT [CK_SalesDocuments_SourceMode] CHECK ([SourceMode] IN (N'PosEdge', N'Online')),
     CONSTRAINT [CK_SalesDocuments_OperationalShape] CHECK
       (([DocumentType]=N'ServiceInvoice' AND [SourceMode]=N'Online' AND [WarehouseId] IS NULL

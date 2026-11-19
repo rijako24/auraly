@@ -141,7 +141,7 @@ public sealed class AuthenticationService(
             string.IsNullOrWhiteSpace(request.Username) ||
             string.IsNullOrWhiteSpace(request.Password))
             throw new AuthenticationValidationException(
-                "Username and password are required.");
+                "Escribe el usuario y la contraseña.");
         EnsureClient(clientId);
 
         var now = timeProvider.GetUtcNow();
@@ -186,7 +186,7 @@ public sealed class AuthenticationService(
         if (string.IsNullOrWhiteSpace(request.AccessToken) ||
             string.IsNullOrWhiteSpace(request.RefreshToken))
             throw new AuthenticationValidationException(
-                "Access token and refresh token are required.");
+                "Se requieren las credenciales de acceso y renovación de la sesión.");
 
         var parsed = tokenIssuer.ParseExpiredAccessToken(request.AccessToken);
         var identity = new AuthenticationSessionIdentity(
@@ -214,7 +214,7 @@ public sealed class AuthenticationService(
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(refreshToken))
-            throw new AuthenticationValidationException("Refresh token is required.");
+            throw new AuthenticationValidationException("Se requiere la credencial de renovación de la sesión.");
         return store.RevokeAsync(
             identity,
             HashRefreshToken(refreshToken),
@@ -274,7 +274,7 @@ public sealed class AuthenticationService(
     {
         if (clientId == Guid.Empty)
             throw new AuthenticationValidationException(
-                $"Header '{AuthenticationDefaults.ClientIdHeader}' is required.");
+                $"Falta la identificación del dispositivo que realiza la solicitud.");
     }
 
     private static string? Normalize(string? value, int length)

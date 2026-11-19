@@ -34,27 +34,27 @@ public sealed class SalesDebitNoteService(
     {
         Require(user, SalesDebitNotePermissionCodes.Create);
         if (request.BusinessId != user.BusinessId)
-            throw new SalesReturnForbiddenException("The debit note belongs to another business.");
+            throw new SalesReturnForbiddenException("La nota débito pertenece a otra sede.");
         if (request.DebitNoteId == Guid.Empty || request.OriginalDocumentId == Guid.Empty)
-            throw new SalesReturnValidationException("DebitNoteId and OriginalDocumentId are required.");
+            throw new SalesReturnValidationException("Se requiere una nota débito y su documento original.");
         if (request.IssuedAt == default || request.DueAt == default || request.DueAt < request.IssuedAt)
-            throw new SalesReturnValidationException("A valid issue date and due date are required.");
+            throw new SalesReturnValidationException("Indica fechas válidas de emisión y vencimiento.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
-            throw new SalesReturnValidationException("A valid Idempotency-Key is required.");
+            throw new SalesReturnValidationException("No se pudo identificar la operación. Vuelve a intentarlo con la misma solicitud.");
         if (!DianDebitNoteConcepts.All.ContainsKey(request.ConceptCode))
-            throw new SalesReturnValidationException("The DIAN debit-note concept is invalid.");
+            throw new SalesReturnValidationException("El concepto DIAN de la nota débito no es válido.");
         if (string.IsNullOrWhiteSpace(request.ReasonDescription) || request.ReasonDescription.Trim().Length > 300)
-            throw new SalesReturnValidationException("A reason of at most 300 characters is required.");
+            throw new SalesReturnValidationException("Indica un motivo de máximo 300 caracteres.");
         if (request.Notes?.Trim().Length > 1000)
-            throw new SalesReturnValidationException("Notes cannot exceed 1000 characters.");
+            throw new SalesReturnValidationException("Las observaciones admiten máximo 1.000 caracteres.");
         if (request.Lines.Count is < 1 or > 100)
-            throw new SalesReturnValidationException("The debit note requires between one and 100 lines.");
+            throw new SalesReturnValidationException("La nota débito debe contener entre 1 y 100 líneas.");
         foreach (var line in request.Lines)
         {
             if (string.IsNullOrWhiteSpace(line.Description) || line.Description.Trim().Length > 300 ||
                 line.Quantity <= 0 || line.UnitPrice <= 0 || line.TaxRate is < 0 or > 100 ||
                 string.IsNullOrWhiteSpace(line.TaxCode) || line.TaxCode.Trim().Length > 16)
-                throw new SalesReturnValidationException("A debit-note line is invalid.");
+                throw new SalesReturnValidationException("Una línea de la nota débito no es válida.");
         }
 
         var normalized = request with
@@ -83,7 +83,7 @@ public sealed class SalesDebitNoteService(
     {
         Require(user, SalesDebitNotePermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100 || query.From > query.To)
-            throw new SalesReturnValidationException("The debit-note query is invalid.");
+            throw new SalesReturnValidationException("La consulta de notas débito no es válida.");
         return store.ListAsync(user, query, cancellationToken);
     }
 
@@ -94,13 +94,13 @@ public sealed class SalesDebitNoteService(
     {
         Require(user, SalesDebitNotePermissionCodes.Read);
         if (debitNoteId == Guid.Empty)
-            throw new SalesReturnValidationException("DebitNoteId is required.");
+            throw new SalesReturnValidationException("Se requiere una nota débito válida.");
         return store.GetAsync(user, debitNoteId, cancellationToken);
     }
 
     private static void Require(SalesReturnUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
-            throw new SalesReturnForbiddenException($"Permission '{permission}' is required.");
+            throw new SalesReturnForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }

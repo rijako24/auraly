@@ -62,6 +62,6 @@ public sealed class ProductRecipeService(IProductRecipeStore store, TimeProvider
 
     private static void Require(CatalogUserIdentity user, string permission)
     {
-        if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"Permission '{permission}' is required.");
+        if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }

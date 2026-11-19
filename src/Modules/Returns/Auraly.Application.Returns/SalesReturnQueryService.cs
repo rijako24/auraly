@@ -33,7 +33,7 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
     {
         RequireReturnAccess(user);
         if (documentId == Guid.Empty)
-            throw new SalesReturnValidationException("DocumentId is required.");
+            throw new SalesReturnValidationException("Se requiere un documento válido.");
         return store.GetReturnableSaleAsync(user, documentId, cancellationToken);
     }
 
@@ -45,7 +45,9 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
         ValidatePage(query.Page, query.PageSize);
         ValidateDates(query.From, query.To);
         if (query.Status is not null && query.Status is not ("Accepted" or "Processed"))
-            throw new SalesReturnValidationException("The return status is invalid.");
+            throw new SalesReturnValidationException("El estado de la devolución no es válido.");
+        if(query.OriginalDocumentId==Guid.Empty)
+            throw new SalesReturnValidationException("Selecciona una venta válida para consultar sus devoluciones.");
         return store.ListReturnsAsync(
             user, query with { Search = Normalize(query.Search, 160) }, cancellationToken);
     }
@@ -56,7 +58,7 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
     {
         RequireRead(user);
         if (returnId == Guid.Empty)
-            throw new SalesReturnValidationException("ReturnId is required.");
+            throw new SalesReturnValidationException("Se requiere una devolución válida.");
         var detail = await store.GetReturnAsync(user, returnId, cancellationToken);
         return detail is null ? null : detail with { Receipt = SalesReturnReceipt.Create(detail) };
     }
@@ -65,7 +67,7 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
     {
         if (!user.Permissions.Contains(SalesReturnPermissionCodes.Read))
             throw new SalesReturnForbiddenException(
-                $"Permission '{SalesReturnPermissionCodes.Read}' is required.");
+                $"No tienes permiso para consultar devoluciones de venta.");
     }
 
     private static void RequireReturnAccess(SalesReturnUserIdentity user)
@@ -73,19 +75,19 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
         if (!user.Permissions.Contains(SalesReturnPermissionCodes.Read) &&
             !user.Permissions.Contains(SalesReturnPermissionCodes.Create))
             throw new SalesReturnForbiddenException(
-                $"Permission '{SalesReturnPermissionCodes.Create}' is required.");
+                $"No tienes permiso para crear devoluciones de venta.");
     }
 
     private static void ValidatePage(int page, int pageSize)
     {
         if (page < 1 || pageSize is < 1 or > 100)
-            throw new SalesReturnValidationException("Page and PageSize are invalid.");
+            throw new SalesReturnValidationException("La página y la cantidad de registros no son válidas.");
     }
 
     private static void ValidateDates(DateOnly? from, DateOnly? to)
     {
         if (from is not null && to is not null && from > to)
-            throw new SalesReturnValidationException("From cannot be later than To.");
+            throw new SalesReturnValidationException("La fecha inicial no puede ser posterior a la fecha final.");
     }
 
     private static string? Normalize(string? value, int maximumLength)
@@ -93,7 +95,7 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
         if (string.IsNullOrWhiteSpace(value)) return null;
         var normalized = value.Trim();
         if (normalized.Length > maximumLength)
-            throw new SalesReturnValidationException($"The value exceeds {maximumLength} characters.");
+            throw new SalesReturnValidationException($"El valor admite máximo {maximumLength} caracteres.");
         return normalized;
     }
 }

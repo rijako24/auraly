@@ -25,6 +25,10 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { CardPaymentDetailsDialog, TransferPaymentDetailsDialog, type CardPaymentDetails, type TransferPaymentDetails } from "@/components/payments/payment-details-dialogs";
+import { referenceOptionsApi, type ReferenceOption } from "@/services/api/reference-options";
+import type { OrderInvoicePaymentDetails } from "@/services/orders/commerce-orders-client";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,6 +83,7 @@ type OrdersWorkspaceProps = {
   timeZone?: string;
   businessId?: string;
   loadPaymentMethods?: (query: PaymentMethodQuery) => Promise<PaymentMethodPage>;
+  loadReferenceOptions?: (catalog: string) => Promise<ReferenceOption[]>;
   compact?: boolean;
   connected?: boolean;
   showHeader?: boolean;
@@ -97,12 +102,13 @@ type OrdersWorkspaceProps = {
   onInvoiceSelected?: (
     orders: CommerceOrderListItem[],
     documentType: "SalesInvoice" | "SalesReceipt",
-    paymentMethodCode: "Cash" | "Credit",
+    paymentMethodCode: string,
     printAfterInvoice: boolean,
     idempotencyKey: string,
     onProgress: (progress: OrderInvoiceSequenceProgress) => void,
     charges?: OrderInvoiceChargeSelection[] | null,
     paymentForm?: PaymentMethod,
+    paymentDetails?: OrderInvoicePaymentDetails,
   ) => Promise<{
     completedCount: number;
     failedCount: number;
@@ -145,6 +151,7 @@ export function OrdersWorkspace({
   timeZone: workspaceTimeZone,
   businessId: workspaceBusinessId,
   loadPaymentMethods = paymentMethodsApi.list,
+  loadReferenceOptions = referenceOptionsApi.list,
   compact = false,
   connected = true,
   showHeader = true,
@@ -203,9 +210,59 @@ export function OrdersWorkspace({
   const tenantId = useTenantContextStore((state) => state.selectedTenantId);
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const businessId = workspaceBusinessId ?? selectedBusinessId;
-  const [paymentSelection, setPaymentSelection] = useState<{ tenantId: string | null; form: PaymentMethod }>();
-  const paymentForm = paymentSelection?.tenantId === tenantId ? paymentSelection?.form : undefined;
-  const setPaymentForm = (form: PaymentMethod | undefined) => setPaymentSelection(form ? { tenantId, form } : undefined);
+  const [paymentSelection, setPaymentSelection] = useState<{ tenantId: string | null; businessId: string | null | undefined; form: PaymentMethod; details?: OrderInvoicePaymentDetails }>();
+  const paymentForm = paymentSelection?.tenantId === tenantId && paymentSelection?.businessId === businessId ? paymentSelection?.form : undefined;
+  const paymentDetails = paymentForm ? paymentSelection?.details : undefined;
+  const [paymentCapture, setPaymentCapture] = useState<{
+    tenantId: string | null; formId: string; card?: CardPaymentDetails; transfer?: TransferPaymentDetails;
+  } | null>(null);
+  const activeCapture = paymentMethodCode === "Cash" && paymentCapture?.tenantId === tenantId &&
+    paymentCapture?.formId === paymentForm?.paymentMethodId ? paymentCapture : null;
+  const cardFranchises = useQuery({
+    queryKey: ["orders-payment-franchises", tenantId, businessId],
+    queryFn: () => loadReferenceOptions("card-franchise"),
+    enabled: Boolean(activeCapture?.card), staleTime: 5 * 60 * 1000,
+  });
+
+  function openPaymentDetails(form: PaymentMethod, details?: OrderInvoicePaymentDetails) {
+    if (form.methodCode === "DebitCard" || form.methodCode === "CreditCard") {
+      setPaymentCapture({ tenantId, formId: form.paymentMethodId, card: {
+        franchiseCode: details?.cardFranchiseCode ?? "", approvalNumber: details?.approvalNumber ?? "",
+      } });
+    } else if (form.methodCode === "Transfer") {
+      setPaymentCapture({ tenantId, formId: form.paymentMethodId, transfer: {
+        reference: details?.paymentReference ?? "", notes: details?.paymentNotes ?? "",
+      } });
+    } else setPaymentCapture(null);
+  }
+
+  function selectPaymentForm(form: PaymentMethod | undefined) {
+    if (form?.methodCode === "Credit") {
+      setError("Para facturar a plazo, selecciona la opción Crédito.");
+      return;
+    }
+    const details = form?.paymentMethodId === paymentForm?.paymentMethodId ? paymentDetails : undefined;
+    setPaymentSelection(form ? { tenantId, businessId, form, details } : undefined);
+    if (form) openPaymentDetails(form, details);
+    else setPaymentCapture(null);
+  }
+
+  function savePaymentDetails() {
+    if (!activeCapture || !paymentForm) return;
+    let details: OrderInvoicePaymentDetails;
+    if (activeCapture.card) {
+      const { franchiseCode, approvalNumber } = activeCapture.card;
+      if (!cardFranchises.data?.some(value => value.code === franchiseCode) || !approvalNumber.trim()) return;
+      details = { cardFranchiseCode: franchiseCode, approvalNumber: approvalNumber.trim() };
+    } else if (activeCapture.transfer) {
+      if (!activeCapture.transfer.reference.trim() || !paymentForm.bankAccountId) return;
+      details = { paymentReference: activeCapture.transfer.reference.trim(), bankAccountId: paymentForm.bankAccountId,
+        paymentNotes: activeCapture.transfer.notes.trim() || null };
+    } else return;
+    setPaymentSelection({ tenantId, businessId, form: paymentForm, details });
+    setPaymentCapture(null);
+    setError(null);
+  }
   const invoiceAttemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const [creditValidationIssues, setCreditValidationIssues] = useState<OrderCreditValidationIssue[]>([]);
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
@@ -368,6 +425,14 @@ export function OrdersWorkspace({
       setError("Selecciona la forma de pago del lote.");
       return;
     }
+    const selectedDetails = selectedForm ? paymentDetails : undefined;
+    if (selectedForm && ((selectedForm.methodCode === "DebitCard" || selectedForm.methodCode === "CreditCard") &&
+      (!selectedDetails?.cardFranchiseCode || !selectedDetails.approvalNumber?.trim()) ||
+      selectedForm.methodCode === "Transfer" && (!selectedDetails?.paymentReference?.trim() || !selectedForm.bankAccountId))) {
+      openPaymentDetails(selectedForm, selectedDetails);
+      setError("Completa los datos de la forma de pago antes de facturar.");
+      return;
+    }
     if (selectedOrders.length > ORDER_INVOICE_BATCH_LIMIT) {
       setError(`Puedes facturar máximo ${ORDER_INVOICE_BATCH_LIMIT} pedidos por lote.`);
       return;
@@ -388,6 +453,7 @@ export function OrdersWorkspace({
       printAfterInvoice,
       paymentForm: selectedForm?.paymentMethodId,
       paymentFormVersion: selectedForm?.version,
+      paymentDetails: selectedDetails,
       charges: charges ?? null,
     });
     if (invoiceAttemptRef.current?.fingerprint !== fingerprint) {
@@ -448,12 +514,13 @@ export function OrdersWorkspace({
       const result = await onInvoiceSelected(
         available,
         documentType,
-        requestedPaymentMethodCode,
+        selectedForm?.methodCode ?? requestedPaymentMethodCode,
         printAfterInvoice,
         idempotencyKey,
         updateProgress,
         charges,
         selectedForm,
+        selectedDetails,
       );
       invoiceAttemptRef.current = null;
       if (result.creditValidationIssues?.length) {
@@ -733,7 +800,7 @@ export function OrdersWorkspace({
                   <button
                     type="button"
                     aria-pressed={documentType === "SalesInvoice"}
-                    onClick={() => setDocumentType("SalesInvoice")}
+                    onClick={() => {setDocumentType("SalesInvoice");if(paymentForm?.methodCode==="PendingCollection")selectPaymentForm(undefined);}}
                     className={`min-h-8 rounded-lg px-2.5 text-xs font-semibold transition ${
                       documentType === "SalesInvoice"
                         ? "bg-teal-700 text-white shadow-sm"
@@ -780,12 +847,12 @@ export function OrdersWorkspace({
                   </button>
                 </div>
                 {onInvoiceSelected && paymentMethodCode === "Cash" && <PagedEntitySelect<PaymentMethod>
-                  queryKey={["payment-method-choices", tenantId, businessId, "Sales", "Cash"]}
+                  queryKey={["payment-method-choices", tenantId, businessId, documentType === "SalesReceipt" ? "OrderReceipts" : "Sales", "Immediate"]}
                   value={paymentForm?.paymentMethodId ?? ""}
                   selectedOption={paymentForm ? { value: paymentForm.paymentMethodId, label: paymentForm.name } : null}
-                  onChange={(_value, _option, item) => setPaymentForm(item)}
+                  onChange={(_value, _option, item) => selectPaymentForm(item)}
                   loadPage={async (search, page, pageSize) => {
-                    const result = await loadPaymentMethods({ page, pageSize, search, usage: "Sales", methodCode: "Cash" });
+                    const result = await loadPaymentMethods({ page, pageSize, search, usage: documentType === "SalesReceipt" ? "OrderReceipts" : "Sales", excludeMethodCode: "Credit" });
                     return { ...result, totalPages: Math.ceil(result.totalCount / pageSize) };
                   }}
                   getOption={(item) => ({ value: item.paymentMethodId, label: item.name, description: item.code })}
@@ -794,6 +861,9 @@ export function OrdersWorkspace({
                   contentClassName="w-[min(28rem,calc(100vw-2rem))]"
                   searchPlaceholder="Buscar forma de pago…" disabled={working || selectingAll || !connected}
                 />}
+                {paymentMethodCode === "Cash" && paymentForm && ["DebitCard","CreditCard","Transfer"].includes(paymentForm.methodCode) &&
+                  <Button type="button" variant="outline" size="sm" disabled={working || selectingAll || !connected}
+                    onClick={() => openPaymentDetails(paymentForm, paymentDetails)}>Datos del pago</Button>}
 
                 <label className="col-span-2 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 sm:col-span-1">
                   <Checkbox
@@ -1160,6 +1230,18 @@ export function OrdersWorkspace({
         }}
       />}
 
+      {activeCapture?.card && <CardPaymentDetailsDialog
+        value={activeCapture.card} franchises={cardFranchises.data ?? []} catalogFailed={cardFranchises.isError}
+        onChange={card => setPaymentCapture(current => current ? { ...current, card } : null)}
+        onSave={savePaymentDetails} onClose={() => setPaymentCapture(null)}
+        returnHint="Estos datos se aplicarán a los pedidos seleccionados al facturar."
+      />}
+      {activeCapture?.transfer && paymentForm && <TransferPaymentDetailsDialog
+        value={activeCapture.transfer} accountLabel={`${paymentForm.accountCode} · ${paymentForm.accountName}`}
+        canSave={Boolean(paymentForm.bankAccountId)}
+        onChange={transfer => setPaymentCapture(current => current ? { ...current, transfer } : null)}
+        onSave={savePaymentDetails} onClose={() => setPaymentCapture(null)}
+      />}
       {creditValidationIssues.length > 0 && (
         <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
           <section role="alertdialog" aria-modal="true" aria-label="Clientes sin crédito disponible"

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Commerce.Taxation.Contracts;
 
 namespace Auraly.Contracts.Expenses;
@@ -27,6 +28,9 @@ public sealed record SaveExpenseConceptRequest(Guid ConceptId, Guid BusinessId, 
 public sealed record ExpenseConceptView(Guid ConceptId, Guid BusinessId, string Code, string Name,
     Guid ExpenseAccountId, string ExpenseAccountCode, string ExpenseAccountName,
     Guid? DefaultCostCenterId, string? DefaultCostCenterName, string? WithholdingConceptCode, bool IsActive);
+public sealed record ExpenseConceptOption(Guid ConceptId, string Code, string Name);
+public sealed record ExpenseConceptOptionPage(IReadOnlyList<ExpenseConceptOption> Items, int Page, int PageSize, int TotalCount)
+{ public int TotalPages => (int)Math.Ceiling(TotalCount / (decimal)PageSize); }
 
 public sealed record ExpenseWorkspaceOptions(IReadOnlyList<ExpenseConceptView> Concepts,
     IReadOnlyList<ExpenseSupplierOption> Suppliers, IReadOnlyList<ExpenseAccountOption> ExpenseAccounts,
@@ -50,7 +54,11 @@ public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CalculationHash = null,
     Guid? PartySiteId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
+    IReadOnlyList<WithholdingAdjustmentRequest>? WithholdingAdjustments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? DispatchExpenseId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? DispatchId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? DispatchCashPaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? DispatchCashPaymentMethodVersion = null);
 
 public sealed record ExpenseLineInput(Guid? ExpenseAccountId, Guid? ConceptId, Guid? CostCenterId,
     string Description, decimal TaxExclusiveAmount, Guid? TaxProfileId, string TaxTreatment,
@@ -73,10 +81,13 @@ public sealed record ExpenseDocumentPayload(Guid TenantId, Guid BusinessId, Guid
     string? EvidenceUrl, WithholdingCalculationSnapshot Withholding, Guid? SourceInvoiceId = null,
     string PurchaseEvidenceType = "SupplierElectronicInvoice",
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineSnapshot>? Lines = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PaymentTender? Payment = null);
 
 public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string DocumentNumber,
-    string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false);
+    string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DispatchExpenseApproval? DispatchApproval = null);
+public sealed record DispatchExpenseApproval(Guid DispatchId, Guid DispatchExpenseId, decimal ApprovedCash, decimal ExpectedCash);
 
 public sealed record CancelExpenseRequest(Guid CancellationId, string? Reason = null, Guid? ReasonOptionId = null);
 public sealed record ExpenseCancellationPayload(Guid TenantId, Guid BusinessId, Guid CancellationId,
@@ -112,7 +123,8 @@ public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string
     Guid? CancellationId, string? CancellationReason,
     string? AdjustmentFiscalNumber, string? AdjustmentFiscalStatus,
     Guid? SourceInvoiceId, string? SourceInvoiceNumber, bool ChargeReturned,
-    IReadOnlyList<ExpenseLineSnapshot>? Lines = null, WithholdingCalculationSnapshot? Withholding = null);
+    IReadOnlyList<ExpenseLineSnapshot>? Lines = null, WithholdingCalculationSnapshot? Withholding = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? SourceDispatchId = null);
 public sealed record ExpensePage(IReadOnlyList<ExpenseListItem> Items, int Page, int PageSize, int TotalCount,
     decimal GrossTotal, decimal WithholdingTotal, decimal NetPayableTotal)
 { public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize); }

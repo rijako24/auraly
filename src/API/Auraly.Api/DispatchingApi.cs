@@ -2,6 +2,8 @@ using System.Security.Claims;
 using Auraly.Application.Dispatching;
 using Auraly.Contracts.Dispatching;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Application.Time;
+using Auraly.Pos.Printing;
 
 namespace Auraly.Api;
 
@@ -33,10 +35,10 @@ public static class DispatchingApi
             await ExecuteAsync(() => service.ReasonsAsync(principal.ToDispatchIdentity(), type, ct), Results.Ok));
 
         group.MapGet("/candidates", async (ClaimsPrincipal principal, int page, int pageSize,
-            string? search, string? documentType, DateOnly? from, DateOnly? to, Guid? warehouseId,
+            string? search, string? documentType, DateOnly? from, DateOnly? to, Guid? warehouseId, int? dateRangeVersion,
             DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.CandidatesAsync(principal.ToDispatchIdentity(),
-                new(page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, search, documentType, from, to, warehouseId), ct), Results.Ok));
+                new(page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, search, documentType, from, to, warehouseId, dateRangeVersion ?? 1), ct), Results.Ok));
 
         group.MapGet("/{dispatchId:guid}", async (ClaimsPrincipal principal, Guid dispatchId,
             DispatchService service, CancellationToken ct) =>
@@ -96,32 +98,57 @@ public static class DispatchingApi
             await ExecuteAsync(() => service.ReviewExpenseAsync(principal.ToDispatchIdentity(), dispatchId, expenseId, request, ct), Results.Ok));
         group.MapPost("/{dispatchId:guid}/evidence", async (ClaimsPrincipal principal, Guid dispatchId,
             IFormFile file, DispatchDeliveryService service, AzureBlobObjectStorage blobs, CancellationToken ct) =>
+            await ExecuteAsync(async () =>
         {
             var actor = principal.ToDispatchIdentity();
             await service.GetAsync(actor, dispatchId, ct);
             if (file.Length is <= 0 or > 8_388_608 || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-                return Results.Problem("Evidence must be an image of at most 8 MB.", statusCode: 400);
+                throw new DispatchValidationException("El soporte debe ser una imagen de máximo 8 MB.");
             var extension = Path.GetExtension(file.FileName);
             if (extension.Length > 10) extension = ".jpg";
             await using var stream = file.OpenReadStream();
             var url = await blobs.UploadImageAsync(actor.BusinessId, stream, $"dispatch-evidence/{dispatchId:D}/{Guid.NewGuid():N}{extension}", file.ContentType, ct);
-            return Results.Ok(new { url });
-        }).DisableAntiforgery();
+            return new { url };
+        }, Results.Ok)).RequireAuthorization(policy => policy.RequireClaim("permission", DispatchPermissionCodes.ExecuteDeliveries)).DisableAntiforgery();
 
+
+        group.MapPut("/{dispatchId:guid}/payments/{paymentId:guid}/verification", async (ClaimsPrincipal principal,
+            Guid dispatchId, Guid paymentId, VerifyDispatchPaymentRequest request,
+            DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.VerifyPaymentAsync(principal.ToDispatchIdentity(), dispatchId, paymentId, request, ct), Results.Ok));
+
+        group.MapPut("/{dispatchId:guid}/payments/{paymentId:guid}/correction", async (ClaimsPrincipal principal,
+            Guid dispatchId, Guid paymentId, CorrectDispatchPaymentRequest request,
+            DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.CorrectPaymentAsync(principal.ToDispatchIdentity(), dispatchId, paymentId, request, ct), Results.Ok));
 
         group.MapPost("/{dispatchId:guid}/close-route", async (ClaimsPrincipal principal, Guid dispatchId,
             CloseDispatchRouteRequest request, DispatchDeliveryService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.CloseRouteAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+
+        group.MapPost("/{dispatchId:guid}/closure-receipt", async (ClaimsPrincipal principal, Guid dispatchId,
+            DispatchClosureReceiptRequest request, DispatchDeliveryService service, IBusinessClock clock, CancellationToken ct) =>
+            await ExecuteAsync(async () => {
+                if (request.PaperWidthMillimeters is not (58 or 80) || request.CompanyName?.Length > 200)
+                    throw new DispatchValidationException("Revisa el nombre y el ancho de la tirilla (58 u 80 mm).");
+                var actor = principal.ToDispatchIdentity();
+                var dispatch = await service.GetAsync(actor, dispatchId, ct);
+                if (dispatch.Settlement is null) throw new DispatchConflictException("El despacho todavía no está cerrado por el transportador.");
+                var businessClock = await clock.GetSnapshotAsync(actor.BusinessId, ct);
+                return new DispatchClosureReceiptView(DispatchClosureReceiptRenderer.RenderHtml(dispatch,
+                    businessClock.TimeZone, request.CompanyName, request.PaperWidthMillimeters));
+            }, Results.Ok));
 
         group.MapPost("/{dispatchId:guid}/settle", async (ClaimsPrincipal principal, Guid dispatchId,
             SettleDispatchRequest request, DispatchDeliveryService service,
             DispatchSettlementCoordinator coordinator, CancellationToken ct) =>
             await ExecuteAsync(async () =>
             {
-                var result = await service.SettleAsync(principal.ToDispatchIdentity(), dispatchId, request, ct);
+                var actor=principal.ToDispatchIdentity();
+                var result = await service.SettleAsync(actor, dispatchId, request, ct);
                 coordinator.Signal();
                 return result;
-            }, Results.Ok));
+            }, Results.Ok)).RequireAuthorization(policy=>policy.RequireClaim("permission",DispatchPermissionCodes.Settle));
 
         return endpoints;
     }

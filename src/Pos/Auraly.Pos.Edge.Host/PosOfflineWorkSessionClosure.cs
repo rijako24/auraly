@@ -1,6 +1,7 @@
 using System.Data;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Infrastructure;
 using Auraly.Pos.Printing;
@@ -628,9 +629,9 @@ public sealed class PosOfflineWorkSessionClosureService(
         IReadOnlyList<PosLocalPortfolioPayment> portfolio,
         IReadOnlyList<WorkSessionPaymentCount>? counts)
     {
-        var amounts = sales.SelectMany(value => value.Payments)
+        var amounts = sales.Where(value=>value.CollectionMode==SaleCollectionMode.Session).SelectMany(value => value.Payments)
             .GroupBy(value => ClosureMethod(value.MethodCode), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
+            .ToDictionary(group => group.Key, group => group.Sum(value => value.CollectedAmount),
                 StringComparer.OrdinalIgnoreCase);
         var creditAmount = sales.Sum(value => value.CreditAmount);
         if (creditAmount > 0) amounts["Credit"] = creditAmount;

@@ -22,30 +22,30 @@ public sealed class InventoryOperationService(
     public Task<StockCountDraft> StartCountAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Count);
-        Required(request.DocumentId, nameof(request.DocumentId));
-        Required(request.WarehouseId, nameof(request.WarehouseId));
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+        Required(request.DocumentId, "documento");
+        Required(request.WarehouseId, "bodega");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateReason(request.ReasonCode);
         if (request.Lines.Count == 0 || request.Lines.Any(line => line.ProductId == Guid.Empty || line.PreCountQuantity < 0) || request.Lines.Select(line => line.ProductId).Distinct().Count() != request.Lines.Count)
-            throw new InventoryValidationException("A stock count requires distinct products.");
+            throw new InventoryValidationException("El conteo requiere productos válidos, sin repetirlos.");
         return store.StartCountAsync(user, request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) }, cancellationToken);
     }
 
     public async Task<InventoryOperationAcceptance> ConfirmCountAsync(InventoryUserIdentity user, Guid documentId, string idempotencyKey, ConfirmStockCountRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Count);
-        Required(documentId, nameof(documentId));
+        Required(documentId, "documento");
         ValidateKey(idempotencyKey);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         if (request.Lines.Any(line => line.CountedQuantity < 0))
-            throw new InventoryValidationException("Counted quantities cannot be negative.");
+            throw new InventoryValidationException("Las cantidades contadas no pueden ser negativas.");
         return await PublishAsync(await store.ConfirmCountAsync(user, documentId, idempotencyKey.Trim(), request, cancellationToken), request.BusinessId, cancellationToken);
     }
 
     public async Task<InventoryOperationAcceptance> ApplyCountAsync(InventoryUserIdentity user, string idempotencyKey, ApplyStockCountRequest request, CancellationToken cancellationToken = default)
     {
         if (request.Lines.Count == 0 || request.Lines.Any(line => line.InitialQuantity < 0 || line.CountedQuantity < 0))
-            throw new InventoryValidationException("A stock count requires non-negative initial and final quantities.");
+            throw new InventoryValidationException("Las cantidades iniciales y finales del conteo no pueden ser negativas.");
         var started = new StartStockCountRequest(
             request.DocumentId, request.BusinessId, request.WarehouseId, request.OccurredAt,
             request.ReasonCode, request.Notes,
@@ -66,14 +66,14 @@ public sealed class InventoryOperationService(
     public async Task<InventoryOperationAcceptance> ConfirmAdjustmentAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryAdjustmentRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Adjust);
-        Required(request.DocumentId, nameof(request.DocumentId));
-        Required(request.WarehouseId, nameof(request.WarehouseId));
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+        Required(request.DocumentId, "documento");
+        Required(request.WarehouseId, "bodega");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateKey(idempotencyKey);
         ValidateReason(request.ReasonCode);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         if (request.Lines.Any(line => line.QuantityChange == 0 || line.ExplicitUnitCost < 0 || line.QuantityChange < 0 && line.ExplicitUnitCost is not null))
-            throw new InventoryValidationException("Adjustment quantities must be non-zero and explicit costs apply only to inbound adjustments.");
+            throw new InventoryValidationException("Las cantidades del movimiento deben ser distintas de cero; el costo explícito solo aplica a las entradas.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
         return await PublishAsync(await store.ConfirmAdjustmentAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
@@ -81,17 +81,17 @@ public sealed class InventoryOperationService(
     public async Task<InventoryOperationAcceptance> DispatchTransferAsync(InventoryUserIdentity user, string idempotencyKey, DispatchWarehouseTransferRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.DispatchTransfer);
-        Required(request.DocumentId, nameof(request.DocumentId));
-        Required(request.SourceWarehouseId, nameof(request.SourceWarehouseId));
-        Required(request.DestinationWarehouseId, nameof(request.DestinationWarehouseId));
+        Required(request.DocumentId, "documento");
+        Required(request.SourceWarehouseId, "bodega de origen");
+        Required(request.DestinationWarehouseId, "bodega de destino");
         if (request.SourceWarehouseId == request.DestinationWarehouseId)
-            throw new InventoryValidationException("Transfer warehouses must be different.");
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+            throw new InventoryValidationException("Las bodegas de origen y destino deben ser diferentes.");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateKey(idempotencyKey);
         ValidateReason(request.ReasonCode);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         if (request.Lines.Any(line => line.DispatchedQuantity <= 0))
-            throw new InventoryValidationException("Transfer quantities must be positive.");
+            throw new InventoryValidationException("Las cantidades del traslado deben ser mayores que cero.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
         return await PublishAsync(await store.DispatchTransferAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
@@ -99,18 +99,18 @@ public sealed class InventoryOperationService(
     public async Task<InventoryOperationAcceptance> ReceiveTransferAsync(InventoryUserIdentity user, Guid transferId, string idempotencyKey, ReceiveWarehouseTransferRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.ReceiveTransfer);
-        Required(transferId, nameof(transferId));
-        Required(request.ReceiptId, nameof(request.ReceiptId));
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+        Required(transferId, "traslado");
+        Required(request.ReceiptId, "recepción");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateKey(idempotencyKey);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         if (request.Lines.Any(line => line.ReceivedQuantity < 0) ||
             request.Lines.All(line => line.ReceivedQuantity == 0) && string.IsNullOrWhiteSpace(request.DifferenceReasonCode))
-            throw new InventoryValidationException("The receipt requires a positive quantity or a reason that resolves the full shipment as lost.");
+            throw new InventoryValidationException("La recepción requiere una cantidad mayor que cero o un motivo para registrar la pérdida de todo el envío.");
         var version = RowVersion(request.RowVersion);
         var normalizedReason = string.IsNullOrWhiteSpace(request.DifferenceReasonCode) ? null : request.DifferenceReasonCode.Trim().ToUpperInvariant();
         if (normalizedReason?.Length > 40)
-            throw new InventoryValidationException("DifferenceReasonCode is limited to 40 characters.");
+            throw new InventoryValidationException("El código del motivo de la diferencia admite máximo 40 caracteres.");
         var normalized = request with { DifferenceReasonCode = normalizedReason, Notes = Notes(request.Notes) };
         return await PublishAsync(await store.ReceiveTransferAsync(user, transferId, idempotencyKey.Trim(), normalized, version, cancellationToken), request.BusinessId, cancellationToken);
     }
@@ -118,16 +118,16 @@ public sealed class InventoryOperationService(
     public async Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Damage);
-        Required(request.DocumentId, nameof(request.DocumentId));
-        Required(request.WarehouseId, nameof(request.WarehouseId));
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+        Required(request.DocumentId, "documento");
+        Required(request.WarehouseId, "bodega");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateKey(idempotencyKey);
         ValidateReason(request.ReasonCode);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         if (request.Lines.Any(line => line.Quantity <= 0))
-            throw new InventoryValidationException("Damage quantities must be positive.");
+            throw new InventoryValidationException("Las cantidades de la avería deben ser mayores que cero.");
         if (request.Disposition is not null and not "Irreversible")
-            throw new InventoryValidationException("Damage disposition is invalid.");
+            throw new InventoryValidationException("El tratamiento de la avería no es válido.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
         return await PublishAsync(await store.ConfirmDamageAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
@@ -135,25 +135,25 @@ public sealed class InventoryOperationService(
     public async Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Convert);
-        Required(request.DocumentId, nameof(request.DocumentId));
-        Required(request.WarehouseId, nameof(request.WarehouseId));
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+        Required(request.DocumentId, "documento");
+        Required(request.WarehouseId, "bodega");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateKey(idempotencyKey);
         ValidateReason(request.ReasonCode);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         var directions = request.Lines.Select(line => line.Direction.Trim().ToUpperInvariant()).ToArray();
         if (directions.Any(direction => direction is not ("INPUT" or "OUTPUT")) || !directions.Contains("INPUT") || !directions.Contains("OUTPUT"))
-            throw new InventoryValidationException("A conversion requires input and output lines.");
+            throw new InventoryValidationException("La conversión requiere productos de entrada y de salida.");
         if (request.Lines.Any(line => line.Quantity <= 0 || line.AllocationWeight <= 0))
-            throw new InventoryValidationException("Conversion quantities and allocation weights must be positive.");
+            throw new InventoryValidationException("Las cantidades y los porcentajes de distribución de la conversión deben ser mayores que cero.");
         var inputCount = directions.Count(direction => direction == "INPUT");
         var outputCount = directions.Count(direction => direction == "OUTPUT");
         var conversionType = request.ConversionType?.Trim().ToUpperInvariant() ?? string.Empty;
         if (conversionType == "SPLIT" && inputCount != 1 || conversionType == "MERGE" && outputCount != 1 || conversionType is not ("SPLIT" or "MERGE"))
-            throw new InventoryValidationException("ConversionType must be Split (one input) or Merge (one output).");
+            throw new InventoryValidationException("La conversión debe ser una división con una entrada o una combinación con una salida.");
         var weights = request.Lines.Where((_, index) => directions[index] == "OUTPUT").Select(line => line.AllocationWeight).ToArray();
         if (weights.Any(weight => weight is not null) && (weights.Any(weight => weight is null) || decimal.Round(weights.Sum(weight => weight!.Value), 6) != 100m))
-            throw new InventoryValidationException("Output allocation weights must all be omitted or total 100 percent.");
+            throw new InventoryValidationException("Indica todos los porcentajes de distribución de las salidas hasta sumar 100 %, o deja todos vacíos.");
         var lines = request.Lines.Select((line, index) => line with { Direction = directions[index] }).ToArray();
         var normalized = request with { ConversionType = conversionType, ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes), Lines = lines };
         return await PublishAsync(await store.ConfirmConversionAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
@@ -162,10 +162,10 @@ public sealed class InventoryOperationService(
     public async Task<InventoryOperationAcceptance> ConfirmProductionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductionRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Produce);
-        Required(request.DocumentId, nameof(request.DocumentId));
-        Required(request.WarehouseId, nameof(request.WarehouseId));
-        Required(request.ProductId, nameof(request.ProductId));
-        Required(request.OccurredAt, nameof(request.OccurredAt));
+        Required(request.DocumentId, "documento");
+        Required(request.WarehouseId, "bodega");
+        Required(request.ProductId, "producto");
+        Required(request.OccurredAt, "fecha de la operación");
         ValidateKey(idempotencyKey);
         if (request.ExpectedRecipeVersion < 1 || request.Quantity <= 0 || request.Quantity > 9999999999999.999999m)
             throw new InventoryValidationException("La cantidad y la versión de receta deben ser válidas.");
@@ -181,36 +181,36 @@ public sealed class InventoryOperationService(
 
     private static void ValidateIdentity(InventoryUserIdentity user, Guid businessId, string permission)
     {
-        if (user.BusinessId != businessId) throw new InventoryForbiddenException("The document belongs to another business.");
-        if (!user.Permissions.Contains(permission)) throw new InventoryForbiddenException($"Permission '{permission}' is required.");
+        if (user.BusinessId != businessId) throw new InventoryForbiddenException("El documento pertenece a otra sede.");
+        if (!user.Permissions.Contains(permission)) throw new InventoryForbiddenException("No tienes permiso para realizar esta operación de inventario.");
     }
 
     private static void ValidateLines(IEnumerable<(int LineNumber, Guid ProductId)> source)
     {
         var lines = source.ToArray();
         if (lines.Length == 0 || lines.Any(line => line.LineNumber <= 0 || line.ProductId == Guid.Empty) || lines.Select(line => line.LineNumber).Distinct().Count() != lines.Length)
-            throw new InventoryValidationException("The document requires valid, unique line numbers and products.");
+            throw new InventoryValidationException("El documento requiere números de línea y productos válidos, sin repetirlos.");
         if (lines.Select(line => line.ProductId).Distinct().Count() != lines.Length)
-            throw new InventoryValidationException("A product cannot be repeated in this document.");
+            throw new InventoryValidationException("Un producto no puede repetirse en este documento.");
     }
 
     private static void ValidateReason(string value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > 40) throw new InventoryValidationException("ReasonCode is required and limited to 40 characters.");
+        if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > 40) throw new InventoryValidationException("Selecciona un motivo válido cuyo código no supere 40 caracteres.");
     }
 
     private static void ValidateKey(string key)
     {
-        if (string.IsNullOrWhiteSpace(key) || key.Trim().Length > 160) throw new InventoryValidationException("A valid Idempotency-Key is required.");
+        if (string.IsNullOrWhiteSpace(key) || key.Trim().Length > 160) throw new InventoryValidationException("No se pudo identificar la operación. Vuelve a intentarlo con la misma solicitud.");
     }
 
-    private static void Required(Guid value, string name) { if (value == Guid.Empty) throw new InventoryValidationException($"{name} is required."); }
-    private static void Required(DateTimeOffset value, string name) { if (value == default) throw new InventoryValidationException($"{name} is required."); }
-    private static string? Notes(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim().Length <= 1000 ? value.Trim() : throw new InventoryValidationException("Notes are limited to 1000 characters.");
+    private static void Required(Guid value, string name) { if (value == Guid.Empty) throw new InventoryValidationException($"El campo {name} es obligatorio."); }
+    private static void Required(DateTimeOffset value, string name) { if (value == default) throw new InventoryValidationException($"El campo {name} es obligatorio."); }
+    private static string? Notes(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim().Length <= 1000 ? value.Trim() : throw new InventoryValidationException("Las observaciones admiten máximo 1.000 caracteres.");
     private static byte[] RowVersion(string value)
     {
         try { var bytes = Convert.FromBase64String(value); return bytes.Length == 8 ? bytes : throw new FormatException(); }
-        catch (FormatException) { throw new InventoryValidationException("RowVersion is invalid."); }
+        catch (FormatException) { throw new InventoryValidationException("La versión del documento no es válida. Vuelve a abrirlo antes de continuar."); }
     }
 }
 

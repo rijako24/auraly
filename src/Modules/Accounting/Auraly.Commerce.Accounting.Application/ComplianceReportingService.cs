@@ -97,7 +97,7 @@ public sealed class ComplianceReportingService(
     private static void Demand(AccountingUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
-            throw new AccountingForbiddenException($"Missing permission '{permission}'.");
+            throw new AccountingForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 
     private static void ValidateYear(short taxYear)
@@ -112,6 +112,6 @@ public sealed class ComplianceReportingService(
     private static void ValidateCode(string value, int max, string label)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > max)
-            throw new AccountingValidationException($"{label} is required and cannot exceed {max} characters.");
+            throw new AccountingValidationException($"El campo {label} es obligatorio y admite máximo {max} caracteres.");
     }
 }

@@ -1,3 +1,4 @@
+import type { OrderInvoicePaymentDetails } from "@/services/orders/commerce-orders-client";
 import { paymentMethodsApi, type PaymentMethod, type PaymentMethodQuery } from "@/services/api/payment-methods";
 import { createPosStateInvalidationNotifier } from "./pos-state-invalidation";
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
@@ -1432,6 +1433,7 @@ export class OnlinePosClient implements PosClient {
     includeCreditAcknowledgement = false,
     charges?: OrderInvoiceChargeSelection[] | null,
     paymentForm?: PaymentMethod,
+    paymentDetails?: OrderInvoicePaymentDetails,
   ): Promise<InvoiceOrdersResponse> {
     const printRoute = printAfterInvoice
       ? resolvePosOrderPrintRoute(this.edgeSessionToken)
@@ -1448,6 +1450,7 @@ export class OnlinePosClient implements PosClient {
       userId: this.userId,
       orderIds: requestedOrderIds,
       paymentMethodCode,
+      cardFranchiseCode: paymentDetails?.cardFranchiseCode, approvalNumber: paymentDetails?.approvalNumber,
       paymentMethodId: paymentForm?.paymentMethodId, paymentMethodVersion: paymentForm?.version,
       paymentFormCode: paymentForm?.code, paymentFormName: paymentForm?.name, accountId: paymentForm?.accountId,
       paymentReference: paymentReference ?? null,

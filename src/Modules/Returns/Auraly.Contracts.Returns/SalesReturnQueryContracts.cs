@@ -54,7 +54,8 @@ public sealed record ReturnableSalePayment(
     decimal RefundedAmount,
     decimal AvailableAmount,
     string? CardFranchiseCode,
-    string? ApprovalNumber);
+    string? ApprovalNumber,
+    Guid? OriginalDispatchPaymentId = null);
 
 public sealed record ReturnableSaleLine(
     int OriginalLineNumber,
@@ -115,7 +116,8 @@ public sealed record SalesReturnQuery(
     string? Status,
     DateOnly? From,
     DateOnly? To,
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    Guid? OriginalDocumentId = null);
 
 public sealed record SalesReturnListItem(
     Guid ReturnId,

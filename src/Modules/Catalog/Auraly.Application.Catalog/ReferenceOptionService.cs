@@ -29,7 +29,7 @@ public sealed class ReferenceOptionService(IReferenceOptionStore store)
     {
         if (!user.Permissions.Contains(CatalogPermissionCodes.Update))
             throw new CatalogForbiddenException(
-                $"Permission '{CatalogPermissionCodes.Update}' is required.");
+                $"No tienes permiso para modificar opciones del catálogo.");
 
         var normalizedCatalogCode = NormalizeCatalogCode(catalogCode);
         if(normalizedCatalogCode=="payment-method")
@@ -44,7 +44,7 @@ public sealed class ReferenceOptionService(IReferenceOptionStore store)
             description?.Length > 500)
         {
             throw new CatalogValidationException(
-                "Code and label are required and the reference option values must fit their allowed lengths.");
+                "El código y el nombre son obligatorios; los valores del catálogo deben respetar las longitudes permitidas.");
         }
 
         return store.CreateAsync(
@@ -62,7 +62,7 @@ public sealed class ReferenceOptionService(IReferenceOptionStore store)
                 !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_'))
         {
             throw new CatalogValidationException(
-                "The reference catalog code is invalid.");
+                "El código del catálogo no es válido.");
         }
         return normalized;
     }

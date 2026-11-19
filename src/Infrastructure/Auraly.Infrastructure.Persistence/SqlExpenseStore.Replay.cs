@@ -25,13 +25,16 @@ public sealed partial class SqlExpenseStore
         await using var command = new SqlCommand("""
             SELECT e.ExpenseId,e.DocumentNumber,e.Status,e.RequestHash,COALESCE(j.ProcessingSequence,0),
               j.JobId,a.AccountingPostingJobId,COALESCE(s.PayloadJson,p.PayloadJson),
-              CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.FiscalDocuments f WHERE f.DocumentId=e.ExpenseId) THEN 1 ELSE 0 END)
+              CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.FiscalDocuments f WHERE f.DocumentId=e.ExpenseId) THEN 1 ELSE 0 END),
+              report.DispatchId,report.DispatchExpenseId,report.ApprovedAmount,settlement.ExpectedCash
             FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
             LEFT JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=e.ExpenseId AND j.DocumentType=N'Expense'
             LEFT JOIN dbo.DocumentProcessingPayloads p ON p.DocumentId=e.ExpenseId AND p.DocumentType=N'Expense'
             LEFT JOIN dbo.AccountingPostingJobs a ON a.SourceDocumentId=e.ExpenseId AND a.SourceDocumentType=N'Expense'
             LEFT JOIN dbo.AccountingSourceDocuments s ON s.SourceDocumentId=e.ExpenseId AND s.SourceDocumentType=N'Expense'
+            LEFT JOIN dbo.DispatchExpenses report ON report.AcceptedExpenseId=e.ExpenseId AND report.BusinessId=e.BusinessId
+            LEFT JOIN dispatch.Closures settlement ON settlement.DispatchId=report.DispatchId AND settlement.BusinessId=report.BusinessId
             WHERE e.BusinessId=@BusinessId AND (e.ExpenseId=@Id OR e.IdempotencyKey=@Key);
             """, connection, tx);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -54,7 +57,8 @@ public sealed partial class SqlExpenseStore
         }
         var result = new ExpenseAcceptance(reader.GetGuid(0), reader.IsDBNull(5) ? Guid.Empty : reader.GetGuid(5),
             reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true,
-            reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetBoolean(8));
+            reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetBoolean(8), reader.IsDBNull(9) ? null :
+              new DispatchExpenseApproval(reader.GetGuid(9), reader.GetGuid(10), reader.GetDecimal(11), reader.GetDecimal(12)));
         if (await reader.ReadAsync(ct))
             throw new ExpenseConflictException("El identificador y la clave pertenecen a gastos distintos.");
         return result;

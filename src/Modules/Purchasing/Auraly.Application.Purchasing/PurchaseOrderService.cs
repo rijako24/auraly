@@ -44,7 +44,7 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
         if (status is not null && status is not (PurchaseOrderStatuses.Draft or PurchaseOrderStatuses.Open or
             PurchaseOrderStatuses.PartiallyReceived or PurchaseOrderStatuses.Received or
             PurchaseOrderStatuses.Closed or PurchaseOrderStatuses.Cancelled))
-            throw new PurchasingValidationException("Purchase-order status is invalid.");
+            throw new PurchasingValidationException("El estado de la orden de compra no es válido.");
         return store.ListAsync(user, Normalize(search, 160), status, page, pageSize, cancellationToken);
     }
 
@@ -52,7 +52,7 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
         CancellationToken cancellationToken = default)
     {
         Require(user, PurchasingPermissionCodes.ReadPurchaseOrders);
-        if (id == Guid.Empty) throw new PurchasingValidationException("PurchaseOrderId is required.");
+        if (id == Guid.Empty) throw new PurchasingValidationException("Se requiere una orden de compra válida.");
         return store.GetAsync(user, id, cancellationToken);
     }
 
@@ -61,7 +61,7 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
     {
         Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
         Require(user, PurchasingPermissionCodes.ReadPurchaseOrders);
-        if (id == Guid.Empty) throw new PurchasingValidationException("PurchaseOrderId is required.");
+        if (id == Guid.Empty) throw new PurchasingValidationException("Se requiere una orden de compra válida.");
         return store.GetReceiptSourceAsync(user, id, cancellationToken);
     }
 
@@ -88,9 +88,9 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
         Scope(user, request.BusinessId);
         ValidateHeader(request.PurchaseOrderId, request.OrderedAt, request.ExpectedAt, request.CurrencyCode);
         if (request.WarehouseId == Guid.Empty || request.SupplierId == Guid.Empty)
-            throw new PurchasingValidationException("WarehouseId and SupplierId are required.");
+            throw new PurchasingValidationException("Selecciona una bodega y un proveedor.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
-            throw new PurchasingValidationException("A valid Idempotency-Key is required.");
+            throw new PurchasingValidationException("No se pudo identificar la operación. Vuelve a intentarlo con la misma solicitud.");
         var lines = Normalize(request.Lines);
         var calculation = Calculate(lines);
         return store.ConfirmAsync(user, idempotencyKey.Trim(), request with
@@ -106,7 +106,7 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
         Require(user, PurchasingPermissionCodes.ClosePurchaseOrders);
         if (id == Guid.Empty || string.IsNullOrWhiteSpace(request.Reason) ||
             string.IsNullOrWhiteSpace(request.ConcurrencyToken))
-            throw new PurchasingValidationException("A purchase order, reason and concurrency token are required.");
+            throw new PurchasingValidationException("Se requiere una orden de compra, un motivo y una versión de edición válidos.");
         return store.CloseAsync(user, id, request with { Reason = Normalize(request.Reason, 500)! }, cancellationToken);
     }
 
@@ -115,7 +115,7 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
     {
         Require(user, PurchasingPermissionCodes.CreatePurchaseOrders);
         if (id == Guid.Empty || string.IsNullOrWhiteSpace(concurrencyToken))
-            throw new PurchasingValidationException("A purchase-order draft and concurrency token are required.");
+            throw new PurchasingValidationException("Se requiere un borrador de orden de compra y una versión de edición válidos.");
         return store.DeleteDraftAsync(user, id, concurrencyToken, cancellationToken);
     }
 
@@ -133,7 +133,7 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
             request.RestaurantWeekdayPlan && (request.StartDate is null ||
                 request.StartDate < today.AddDays(-1) ||
                 request.StartDate > today.AddDays(365)))
-            throw new PurchasingValidationException("The purchase-order suggestion request is invalid.");
+            throw new PurchasingValidationException("La solicitud de sugeridos de compra no es válida.");
         var snapshot = await store.SuggestionInputsAsync(user, request, cancellationToken);
         var planned = request.RestaurantWeekdayPlan
             ? RestaurantDemandPlanner.Forecast(request.StartDate!.Value,
@@ -198,21 +198,21 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider
 
     private static void ValidateHeader(Guid id, DateTimeOffset orderedAt, DateTimeOffset? expectedAt, string currency)
     {
-        if (id == Guid.Empty || orderedAt == default) throw new PurchasingValidationException("PurchaseOrderId and OrderedAt are required.");
-        if (expectedAt < orderedAt) throw new PurchasingValidationException("ExpectedAt cannot be earlier than OrderedAt.");
-        if (currency.Trim().Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
+        if (id == Guid.Empty || orderedAt == default) throw new PurchasingValidationException("Se requiere una orden de compra y su fecha.");
+        if (expectedAt < orderedAt) throw new PurchasingValidationException("La fecha esperada no puede ser anterior a la fecha de la orden.");
+        if (currency.Trim().Length != 3) throw new PurchasingValidationException("El código de la moneda debe tener tres caracteres.");
     }
     private static void Scope(PurchasingUserIdentity user, Guid businessId)
-    { if (user.BusinessId != businessId) throw new PurchasingForbiddenException("The purchase order belongs to another business."); }
+    { if (user.BusinessId != businessId) throw new PurchasingForbiddenException("La orden de compra pertenece a otra sede."); }
     private static void Require(PurchasingUserIdentity user, string permission)
-    { if (!user.Permissions.Contains(permission)) throw new PurchasingForbiddenException($"Permission '{permission}' is required."); }
+    { if (!user.Permissions.Contains(permission)) throw new PurchasingForbiddenException($"No tienes permiso para realizar esta acción."); }
     private static void ValidatePage(int page, int size)
-    { if (page < 1 || size is < 1 or > 100) throw new PurchasingValidationException("Page and PageSize are invalid."); }
+    { if (page < 1 || size is < 1 or > 100) throw new PurchasingValidationException("La página y la cantidad de registros no son válidas."); }
     private static string? Normalize(string? value, int max)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var result = value.Trim();
-        if (result.Length > max) throw new PurchasingValidationException($"The value exceeds {max} characters.");
+        if (result.Length > max) throw new PurchasingValidationException($"El valor admite máximo {max} caracteres.");
         return result;
     }
 }

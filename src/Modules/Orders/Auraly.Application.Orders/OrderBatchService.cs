@@ -43,7 +43,8 @@ public sealed class OrderBatchService(
         "Credit",
         "DebitCard",
         "CreditCard",
-        "Transfer"
+        "Transfer",
+        "PendingCollection"
     ];
     private const int ProgressCheckpointSize = 5;
 
@@ -203,7 +204,7 @@ public sealed class OrderBatchService(
                 var documentType = request.DocumentType;
                 if (request.DocumentType == PosSaleDocumentTypes.Receipt &&
                     order.CustomerRequiresElectronicInvoice)
-                    documentType = PosSaleDocumentTypes.Invoice;
+                    throw new OrderValidationException("Este cliente requiere factura electrónica. Selecciona ese documento antes de facturar el pedido.");
                 var warehouseId = order.WarehouseId ?? throw new OrderConflictException(
                     "El pedido no tiene una bodega de venta asignada y no puede emitirse.");
                 var source = new OnlineSalesOrderCheckoutSource(
@@ -231,7 +232,7 @@ public sealed class OrderBatchService(
                         line.DocumentUnitCost,
                         order.Currency,
                         line.PriceSource,
-                        line.IsGenericProductSnapshot)).ToArray());
+                        line.IsGenericProductSnapshot)).ToArray(),PaymentAlreadyConfirmed:paidOrder);
                 var productTotal = source.Lines.Sum(line => line.PublicLineTotal);
                 var requestedCharges = request.Charges ?? [];
                 var charges = requestedCharges.Count == 0
@@ -254,6 +255,8 @@ public sealed class OrderBatchService(
                                     paymentMethod,
                                     payableAmount,
                                     paymentReference,
+                                    CardFranchiseCode: paidOrder ? null : request.CardFranchiseCode,
+                                    ApprovalNumber: paidOrder ? null : request.ApprovalNumber,
                                     BankAccountId: request.BankAccountId,
                                     Notes: request.PaymentNotes,
                                     RoundingAdjustment: PosPaymentRoundingPolicy.Adjustment(payableAmount),
@@ -393,10 +396,10 @@ public sealed class OrderBatchService(
         ArgumentNullException.ThrowIfNull(request);
         if (!actor.Permissions.Contains(OrderPermissionCodes.Invoice))
             throw new OrderForbiddenException(
-                $"Permission '{OrderPermissionCodes.Invoice}' is required.");
+                $"No tienes permiso para facturar pedidos.");
         if (!actor.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OrderForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+                $"No tienes permiso para crear ventas.");
         if (request.WorkSessionId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
             request.UserId != actor.UserId ||
@@ -406,12 +409,19 @@ public sealed class OrderBatchService(
             request.DocumentType is not (
                 PosSaleDocumentTypes.Invoice or PosSaleDocumentTypes.Receipt) ||
             request.PaymentReference?.Length > 160 ||
+            request.CardFranchiseCode?.Length > 64 || request.ApprovalNumber?.Length > 100 ||
             request.PaymentNotes?.Length > 500)
             throw new OrderValidationException(
                 "Sesión, usuario, pedidos y medio de pago válidos son obligatorios.");
         if (!PaymentMethodEvidence.IsValidSet([new(request.PaymentMethodId, request.PaymentMethodVersion,
                 request.PaymentFormCode, request.PaymentFormName, request.AccountId)]))
             throw new OrderValidationException("La identidad de la forma de pago no es válida.");
+        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(request.OrderIds.First(),request.DocumentType,
+            request.PaymentMethodCode=="Credit",[new(request.PaymentMethodCode,request.PaymentMethodId is {} formId&&formId!=Guid.Empty,
+                !string.IsNullOrWhiteSpace(request.PaymentReference)||request.BankAccountId is not null||
+                !string.IsNullOrWhiteSpace(request.PaymentNotes)||!string.IsNullOrWhiteSpace(request.CardFranchiseCode)||
+                !string.IsNullOrWhiteSpace(request.ApprovalNumber))],OrderCollectionPaymentPolicy.ForNewSale(request.OrderIds.First()));
+        if(paymentPurposeError is not null)throw new OrderValidationException(paymentPurposeError);
         if (request.PaymentMethodCode == "Transfer" &&
             string.IsNullOrWhiteSpace(request.PaymentReference))
             throw new OrderValidationException(
@@ -461,6 +471,11 @@ public sealed class OrderBatchService(
             value += "|" + System.Text.Json.JsonSerializer.Serialize(new {
                 request.PaymentMethodId, request.PaymentMethodVersion, request.PaymentFormCode,
                 request.PaymentFormName, request.AccountId });
+        // Keep the hash of previously accepted commands unchanged when no card
+        // evidence was supplied. New approvals belong to the command identity.
+        if (request.CardFranchiseCode is not null || request.ApprovalNumber is not null)
+            value += "|" + System.Text.Json.JsonSerializer.Serialize(new {
+                request.CardFranchiseCode, request.ApprovalNumber });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 

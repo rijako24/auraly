@@ -590,3 +590,36 @@ conversion, transfer receipt, production suggestions and POS payment printing.
 These intercepted browser journeys verify presentation and requests; they do
 not substitute for ledger/operational processing certification. The date
 increment changes no inventory balance, source acceptance or ledger writer.
+
+## Operation visibility and permission preservation — 2026-11-17
+
+The inventory view permission covers stocks and the ledger. Each operation's
+existing capability also governs viewing its history, detail and specialized
+product queries: count capture/manage/confirm; adjustment; transfer dispatch,
+receipt or difference resolution; conversion; production; damage. Receipt history
+requires Purchasing's receipt-read capability. Command permissions keep their
+existing separation. No new permission identities, engine or writer are created.
+`InventoryOperationAccess` owns the server visibility policy; query services pass
+its bounded type set to the existing SQL read model. Explicit forbidden filters
+fail before querying, and the general history counts/pages only authorized types.
+The SQL history filters canonical headers before page materialization and loads
+line counts/value aggregates only for that page. Detail lines independently join
+the authorized parent and business; guessed identifiers cannot expose other types.
+Acceptance budget: one history command for first/following pages of 50 among 2,000
+headers and 10,000 lines, p95 below one second, with no concurrent build/diagnostics.
+
+UI navigation shows locked, disabled operation tabs and guards their handlers.
+An editor starts with an allowed operation and never mounts unauthorized forms or
+loads their reasons/products/drafts. Stocks and ledger remain available for readers.
+Count forms own their own reasons query; the generic editor does not duplicate it.
+The roles view uses the permission catalog description as its primary label.
+
+The seed preserves all current role assignments, updates managed Spanish catalog
+descriptions and provisions default grants only for Administrator. Reapplying it
+never regrants operations to a custom inventory-reader role. This is an authorization
+cutover: schema/API/UI must be published together; the new history type parameter
+fails closed for an older caller that omits it. Old grants and documents are not
+removed. Roll forward is preferred; reverting binaries also restores the old broad
+read policy and therefore cannot be presented as preserving the finer access model.
+Public inventory validation messages are Spanish in their existing owners; protocol
+identities, permission codes, document types and persisted status values are unchanged.

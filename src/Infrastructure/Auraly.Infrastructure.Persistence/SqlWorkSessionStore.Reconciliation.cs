@@ -27,13 +27,13 @@ public sealed partial class SqlWorkSessionStore
             Until=SqlBusinessLocalDates.StartOfDay(to.AddDays(1),item.Value) }));
         const string filter = """
             FROM dbo.WorkSessionClosures closure
-            INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
             INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
             INNER JOIN OPENJSON(@Ranges) WITH(BusinessId uniqueidentifier,StartsAt datetimeoffset(7),Until datetimeoffset(7)) calendar
               ON calendar.BusinessId=business.BusinessId
             LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=session.WarehouseId
             INNER JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
-            WHERE business.TenantId=@TenantId AND closure.ClosedAt>=calendar.StartsAt AND closure.ClosedAt<calendar.Until
+            WHERE session.Kind=N'Normal' AND business.TenantId=@TenantId AND closure.ClosedAt>=calendar.StartsAt AND closure.ClosedAt<calendar.Until
               AND (@Status IS NULL OR closure.ReconciliationStatus=@Status)
             """;
         int total;
@@ -245,7 +245,8 @@ public sealed partial class SqlWorkSessionStore
               SourceDocumentType,CustomerName,Status,ReasonName,Notes,
               CorrectedPaymentMethodCode,CorrectedAmount,CorrectionReason,
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
-              CorrectedApprovalNumber,CorrectedReference,CounterpartyName
+              CorrectedApprovalNumber,CorrectedReference,CounterpartyName,
+              CorrectedPaymentMethodId,CorrectedPaymentMethodVersion,CorrectedPaymentMethodName
             FROM #PaymentVerifications
             ORDER BY SortOrder,OccurredAt,VerificationKey;
             SELECT JSON_QUERY(reconciliation.SnapshotJson,N'$.manualMovements')
@@ -310,7 +311,7 @@ public sealed partial class SqlWorkSessionStore
             await using (var scope = new SqlCommand("""
                 SELECT session.BusinessId,closure.ExpectedCash
                 FROM dbo.WorkSessionClosures closure WITH(UPDLOCK,HOLDLOCK)
-                INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+                INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
                 INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
                 WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;
                 """, connection, transaction))
@@ -397,7 +398,7 @@ public sealed partial class SqlWorkSessionStore
                 await using var debtor = new SqlCommand("""
                     SELECT employee.PartyId
                     FROM dbo.WorkSessionClosures closure
-                    JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+                    JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
                     JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
                       AND cashier.TenantId=session.TenantId
                     JOIN dbo.Employees employee ON employee.TenantId=session.TenantId
@@ -542,7 +543,7 @@ public sealed partial class SqlWorkSessionStore
                 identity.UserId,reconciledAt,accountingLines,request.Reclassifications,verification.Corrections,
                 cashShortageClaim);
             var hasFinancialEffects = cashShortageClaim is not null ||
-                verification.Corrections.Any(item => item.Amount != item.OriginalAmount ||
+                verification.Corrections.Any(item => item.PaymentMethodId is not null || item.Amount != item.OriginalAmount ||
                     item.OriginalTenderCategory != item.TenderCategory);
             var accountingRequired = accountingLines.Any(line => line.VerifiedAmount != line.CountedAmount)
                 || differences.Values.Any(value => value != 0) || hasFinancialEffects;
@@ -662,7 +663,7 @@ public sealed partial class SqlWorkSessionStore
         await using var command = new SqlCommand("""
             SELECT COUNT(*)
             FROM dbo.WorkSessionClosures closure
-            INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
             INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
             WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;
             """, connection, transaction);
@@ -681,7 +682,7 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(TRY_CONVERT(int,JSON_VALUE(closure.ReceiptSnapshotJson,'$.receiptTemplateVersion')),1) TemplateVersion
             INTO #ClosureContext
             FROM dbo.WorkSessionClosures closure
-            JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
             WHERE closure.WorkSessionClosureId=@ClosureId;
             SELECT movement.* INTO #ManualTreasury FROM #ClosureContext context
             CROSS APPLY worksessions.ManualTreasuryMovements(context.TenantId,context.BusinessId,context.WorkSessionId) movement;
@@ -762,7 +763,7 @@ public sealed partial class SqlWorkSessionStore
                    document.DocumentType SourceDocumentType,CAST(NULL AS nvarchar(300)) CustomerName,
                    payment.MethodCode TenderMethodCode
                 FROM dbo.SalesPayments payment
-                INNER JOIN dbo.SalesDocuments document ON document.DocumentId=payment.DocumentId
+                INNER JOIN dbo.SalesDocuments document ON document.DocumentId=payment.DocumentId AND document.CollectionMode=N'Session'
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=payment.MethodCode
                 UNION ALL
@@ -869,7 +870,10 @@ public sealed partial class SqlWorkSessionStore
                    JSON_VALUE(value.value,N'$.tenderMethodCode') TenderMethodCode,
                    JSON_VALUE(value.value,N'$.cardFranchiseCode') CardFranchiseCode,
                    JSON_VALUE(value.value,N'$.approvalNumber') ApprovalNumber,
-                   JSON_VALUE(value.value,N'$.reference') Reference
+                   JSON_VALUE(value.value,N'$.reference') Reference,
+                   TRY_CONVERT(uniqueidentifier,JSON_VALUE(value.value,N'$.paymentMethodId')) PaymentMethodId,
+                   TRY_CONVERT(int,JSON_VALUE(value.value,N'$.paymentMethodVersion')) PaymentMethodVersion,
+                   JSON_VALUE(value.value,N'$.paymentMethodName') PaymentMethodName
                 INTO #CorrectionStatuses
                 FROM OPENJSON(@ReconciliationSnapshot,N'$.paymentCorrections') value;
             CREATE INDEX IX_CorrectionStatuses ON #CorrectionStatuses(VerificationKey);
@@ -945,7 +949,10 @@ public sealed partial class SqlWorkSessionStore
               correction.Reference CorrectedReference,
               COALESCE(counterparty.CounterpartyName,
                 NULLIF(manualParty.DisplayName,N''),NULLIF(manualParty.LegalName,N''),NULLIF(manualParty.Identification,N'')) CounterpartyName,
-              movement.SortOrder
+              movement.SortOrder,
+              correction.PaymentMethodId CorrectedPaymentMethodId,
+              correction.PaymentMethodVersion CorrectedPaymentMethodVersion,
+              correction.PaymentMethodName CorrectedPaymentMethodName
             INTO #PaymentVerifications
             FROM
             """;
@@ -988,7 +995,7 @@ public sealed partial class SqlWorkSessionStore
         await using var scope = new SqlCommand("""
             SELECT session.BusinessId
             FROM dbo.WorkSessionClosures closure
-            JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
             JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
             WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId
               AND closure.ReconciliationStatus=N'Pending';
@@ -1004,7 +1011,7 @@ public sealed partial class SqlWorkSessionStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    private static async Task<(Dictionary<string, decimal> VerifiedAmounts, bool HasMissingCreditSale,
+    private async Task<(Dictionary<string, decimal> VerifiedAmounts, bool HasMissingCreditSale,
         IReadOnlyList<WorkSessionAppliedPaymentCorrection> Corrections)>
         ValidatePaymentVerificationsAsync(SqlConnection connection, SqlTransaction transaction,
             Guid closureId, Guid businessId,
@@ -1112,7 +1119,7 @@ public sealed partial class SqlWorkSessionStore
                     THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),manual.AccountId)) END,
                   originalTenderCategory.Category,originalClosureCategory.Category) OriginalTenderCategory,
                 correctedTenderCategory.Category,
-                CAST(0 AS bit) HasUnapplications
+                CAST(0 AS bit) HasRefunds
               FROM #Corrections correction
               JOIN #PaymentVerifications source
                 ON source.VerificationKey COLLATE Latin1_General_100_CI_AS=correction.VerificationKey
@@ -1236,15 +1243,9 @@ public sealed partial class SqlWorkSessionStore
                        THEN supplierPayment.BankAccountId END)),N'BankAccount:'),
                 originalTenderCategory.Category,originalClosureCategory.Category),
               correctedTenderCategory.Category,
-              CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.PayableTransactions original
-                JOIN accounting.SourcePositionIndex reversal WITH(FORCESEEK(IX_SourcePositionIndex_Reversal(BusinessId,SubledgerKind,ReversesTransactionId))) ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Payable'
-                  AND reversal.ReversesTransactionId=original.PayableTransactionId
-                WHERE original.PayableId=supplierPayment.PayableId AND original.SourceDocumentId=supplierPayment.PaymentId AND original.TransactionType=N'Payment')
-                OR EXISTS(SELECT 1 FROM dbo.ReceivableTransactions original
-                JOIN accounting.SourcePositionIndex reversal WITH(FORCESEEK(IX_SourcePositionIndex_Reversal(BusinessId,SubledgerKind,ReversesTransactionId))) ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Receivable'
-                  AND reversal.ReversesTransactionId=original.ReceivableTransactionId
-                WHERE original.ReceivableId=customerPayment.ReceivableId AND original.SourceDocumentId=customerPayment.PaymentId AND original.TransactionType=N'Payment')
-                THEN 1 ELSE 0 END AS bit) HasUnapplications
+              CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturns returned WITH(UPDLOCK,HOLDLOCK)
+                WHERE returned.OriginalDocumentId=sale.DocumentId AND returned.BusinessId=@BusinessId
+                  AND returned.EconomicResolution=N'Refund') THEN 1 ELSE 0 END AS bit) HasRefunds
             FROM #Corrections correction
             LEFT JOIN #PaymentVerifications source ON source.VerificationKey COLLATE Latin1_General_100_CI_AS = correction.VerificationKey
             LEFT JOIN #ManualTreasury manual ON manual.MovementId=source.SourceId AND source.SourceDocumentType=N'ManualAccountingVoucher'
@@ -1363,7 +1364,7 @@ public sealed partial class SqlWorkSessionStore
             hasMissingCreditSale |= reader.GetInt32(2) != 0;
         }
         var applied = new List<WorkSessionAppliedPaymentCorrection>(corrections.Count);
-        var balances = new Dictionary<(string Kind, Guid Id), (decimal Outstanding, decimal Adjustment)>();
+        var requested = corrections.ToDictionary(item => item.VerificationKey.Trim(), StringComparer.OrdinalIgnoreCase);
         if (corrections.Count > 0)
             await reader.NextResultAsync(cancellationToken);
         while (corrections.Count > 0 && await reader.ReadAsync(cancellationToken))
@@ -1373,14 +1374,17 @@ public sealed partial class SqlWorkSessionStore
                 (reader.GetString(4) != "Cash" || reader.GetString(1) is not ("Sale" or "Refund")))
                 throw new WorkSessionValidationException("El comprobante corregido no pertenece al cierre o no fue verificado.");
             var movementType = reader.GetString(1);
+            if (movementType == "Sale" && reader.GetBoolean(38))
+                throw new WorkSessionValidationException("El recaudo tiene reembolsos aceptados. Conserva su medio y resuelve cualquier ajuste desde contabilidad.");
             if (movementType == "CreditSale" || !reader.GetBoolean(18))
                 throw new WorkSessionValidationException("Solo se puede corregir un movimiento de dinero ya procesado.");
             var originalMethod = reader.GetString(4);
+            var native = requested[reader.GetString(0)];
             var originalAmount = reader.GetDecimal(5);
             var method = reader.GetString(6);
             var amount = reader.GetDecimal(7);
-            if (amount != originalAmount && reader.GetBoolean(38))
-                throw new WorkSessionValidationException("No se modificó el pago: tiene desaplicaciones aceptadas. Deben resolverse antes de corregir su importe; el pago original se conserva.");
+            if (amount != originalAmount)
+                throw new WorkSessionValidationException("Corregir el medio de recaudo conserva el importe original. Resuelve las diferencias de valor mediante su ajuste correspondiente.");
             var originalTender = reader.GetString(26);
             var tender = reader.IsDBNull(27)
                 ? (method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) ? originalTender : method)
@@ -1390,7 +1394,7 @@ public sealed partial class SqlWorkSessionStore
             var reference = reader.IsDBNull(30) ? null : reader.GetString(30);
             var originalTenderCategory = reader.IsDBNull(36) ? null : reader.GetString(36);
             var tenderCategory = reader.IsDBNull(37) ? null : reader.GetString(37);
-            if (method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) &&
+            if (native.PaymentMethodId is null && method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) &&
                 tender.Equals(originalTender, StringComparison.OrdinalIgnoreCase))
                 tenderCategory = originalTenderCategory;
             if (reader.IsDBNull(31) || !reader.GetString(31).Equals(method, StringComparison.OrdinalIgnoreCase))
@@ -1416,26 +1420,17 @@ public sealed partial class SqlWorkSessionStore
                  cardFranchise != (reader.IsDBNull(33) ? null : reader.GetString(33)) ||
                  approvalNumber != (reader.IsDBNull(34) ? null : reader.GetString(34)) ||
                  reference != (reader.IsDBNull(35) ? null : reader.GetString(35)));
-            if (Math.Sign(amount) != Math.Sign(originalAmount) ||
-                (method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) &&
-                 amount == originalAmount && !tenderDetailsChanged))
-                throw new WorkSessionValidationException("La corrección debe conservar el sentido del pago y cambiar el medio o valor.");
+            if (method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) &&
+                !tenderDetailsChanged && native.PaymentMethodId is null)
+                throw new WorkSessionValidationException("La corrección debe cambiar el medio de recaudo o su soporte.");
             var manualVoucher = reader.GetString(10) == "ManualAccountingVoucher";
             if (movementType is "CashIn" or "CashOut" && method != "Cash" && !manualVoucher)
                 throw new WorkSessionValidationException("Las entradas y salidas de caja conservan el medio efectivo.");
-            if (!reader.IsDBNull(27) &&
+            if (native.PaymentMethodId is null && !reader.IsDBNull(27) &&
                 (!originalMethod.Equals(method, StringComparison.OrdinalIgnoreCase) ||
                  !tender.Equals(originalTender, StringComparison.OrdinalIgnoreCase)) &&
                 (originalTenderCategory is null || tenderCategory is null))
                 throw new WorkSessionValidationException("Falta la configuración contable del medio de pago corregido.");
-            var delta = amount - originalAmount;
-            if (manualVoucher && delta != 0)
-                throw new WorkSessionValidationException("El valor y las contrapartidas del comprobante manual se corrigen desde contabilidad. El cierre permite verificarlo y corregir su medio o evidencia sin cambiar ese valor.");
-            if (movementType == "Sale" && delta != 0 &&
-                reader.GetString(10) is ("SalesInvoice" or "ServiceInvoice") &&
-                (reader.IsDBNull(25) || reader.GetDecimal(25) == 0))
-                throw new WorkSessionValidationException(
-                    "La factura electrónica se emitió de contado. Corrige el medio desde el cierre, pero resuelve una diferencia de valor mediante el proceso fiscal o de cartera correspondiente.");
             var partyId = reader.IsDBNull(11) ? (Guid?)null : reader.GetGuid(11);
             var customerId = reader.IsDBNull(12) ? (Guid?)null : reader.GetGuid(12);
             var subledgerId = reader.IsDBNull(13) ? (Guid?)null : reader.GetGuid(13);
@@ -1448,42 +1443,20 @@ public sealed partial class SqlWorkSessionStore
                 "CashIn" or "CashOut" => reader.IsDBNull(17) ? null : reader.GetString(17),
                 _ => null
             };
-            if (delta != 0)
-            {
-                if (counterpartCategory is null)
-                    throw new WorkSessionValidationException("Falta la cuenta contraparte para corregir el valor.");
-                if (movementType is "ReceivablePayment" or "PayablePayment" &&
-                    (reader.GetInt32(15) != 1 || reader.GetInt32(16) != 1 || subledgerId is null))
-                    throw new WorkSessionValidationException("El pago tiene varias aplicaciones o medios; corrígelo desde cartera.");
-                if (movementType == "PayablePayment" && reader.GetString(19) != "COP")
-                    throw new WorkSessionValidationException("La corrección de este pago en otra moneda requiere el proceso de cartera.");
-                if (movementType == "Sale" && (customerId is null || reader.IsDBNull(20)))
-                    throw new WorkSessionValidationException("La venta necesita un cliente y sede identificados para ajustar cartera.");
-                if (movementType == "Refund" && (delta < 0 || customerId is null || !reader.IsDBNull(24)))
-                    throw new WorkSessionValidationException("La devolución no admite un reembolso mayor ni un crédito ya aplicado.");
-                if (movementType is "Sale" or "ReceivablePayment" or "PayablePayment")
-                {
-                    if (subledgerId is null && movementType != "Sale")
-                        throw new WorkSessionValidationException("No se encontró la obligación aplicada por el pago.");
-                    if (subledgerId is Guid ledgerId)
-                    {
-                        var kind = movementType == "PayablePayment" ? "Payable" : "Receivable";
-                        var key = (kind, ledgerId);
-                        var adjustment = movementType == "PayablePayment" ? delta : -delta;
-                        var current = balances.GetValueOrDefault(key,
-                            (Outstanding: reader.GetDecimal(14), Adjustment: 0m));
-                        balances[key] = (current.Outstanding, current.Adjustment + adjustment);
-                    }
-                }
-            }
             applied.Add(new WorkSessionAppliedPaymentCorrection(reader.GetString(0), movementType,
                 reader.GetGuid(2), reader.GetInt32(3), originalMethod, originalAmount,
                 method, amount, reader.GetString(8), partyId, customerId,
                 subledgerId, counterpartCategory, originalTender, tender,
-                cardFranchise, approvalNumber, reference, originalTenderCategory, tenderCategory));
+                cardFranchise, approvalNumber, reference, originalTenderCategory, tenderCategory,
+                native.PaymentMethodId, native.PaymentMethodVersion,
+                native.PaymentMethodId is null ? null : ids.NewId(),
+                SourceDocumentType: native.PaymentMethodId is null ? null : reader.GetString(10)));
         }
-        if (applied.Count != corrections.Count || balances.Values.Any(value => value.Outstanding + value.Adjustment < 0))
-            throw new WorkSessionValidationException("La corrección excede el saldo disponible de la factura.");
+        if (applied.Count != corrections.Count)
+            throw new WorkSessionValidationException("No se encontraron todos los recaudos seleccionados para corregir.");
+        await reader.CloseAsync();
+        await ValidateConfiguredClosureCorrectionsAsync(connection, transaction, closureId, businessId,
+            applied, !preview, timeProvider.GetUtcNow(), cancellationToken);
         foreach (var correction in applied)
         {
             if (!correction.OriginalPaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase))
@@ -1552,7 +1525,10 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(21) ? null : reader.GetString(21),
                 reader.IsDBNull(22) ? null : reader.GetString(22),
                 reader.IsDBNull(23) ? null : reader.GetString(23),
-                reader.IsDBNull(24) ? null : reader.GetString(24));
+                reader.IsDBNull(24) ? null : reader.GetString(24),
+                reader.IsDBNull(25) ? null : reader.GetGuid(25),
+                reader.IsDBNull(26) ? null : reader.GetInt32(26),
+                reader.IsDBNull(27) ? null : reader.GetString(27));
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
         string rangesJson, string? status)

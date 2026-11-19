@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.Application.Orders;
 using Auraly.Application.Sales;
+using Auraly.Application.WorkSessions;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Expenses;
@@ -12,6 +14,7 @@ using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
+using PaymentTransactionStatus = Auraly.Platform.Domain.Enums.PaymentTransactionStatus;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -20,25 +23,156 @@ public sealed class OrderBatchInvoiceTests(
     ServerSliceFixture fixture,
     ITestOutputHelper output)
 {
-    [Fact]
-    public async Task Batch_invoice_keeps_the_new_cash_form_and_replay_does_not_duplicate_the_sale()
+    [Theory]
+    [InlineData(900000L,"COP")]
+    [InlineData(1000000L,"USD")]
+    public Task Confirmed_payment_does_not_invent_extra_amount_or_convert_currency(long amountInCents,string currency)
+        =>Conversational_payment_state_uses_the_producer_enum_and_only_confirmed_money_keeps_session_attribution(
+            PaymentTransactionStatus.Confirmed,false,amountInCents,currency);
+
+    [Theory]
+    [InlineData(PaymentTransactionStatus.Created)]
+    [InlineData(PaymentTransactionStatus.Confirmed)]
+    [InlineData(PaymentTransactionStatus.Failed)]
+    [InlineData(PaymentTransactionStatus.Refunded)]
+    [InlineData(PaymentTransactionStatus.Confirmed,true)]
+    public async Task Conversational_payment_state_uses_the_producer_enum_and_only_confirmed_money_keeps_session_attribution(
+        PaymentTransactionStatus status,bool foreignPayment=false,long amountInCents=1000000,string currency="COP")
+    {
+        var userId=Guid.NewGuid();var session=Guid.NewGuid();var order=Guid.NewGuid();
+        await SeedAsync(userId,session,order,Guid.NewGuid());
+        using var admin=fixture.CreateAdminClient(AccountingPermissionCodes.Read,AccountingPermissionCodes.Configure,AccountingPermissionCodes.Activate);
+        using(var defaults=await admin.PutAsync("/api/commerce/v1/accounting/defaults",null))defaults.EnsureSuccessStatusCode();
+        using(var activated=await admin.PostAsJsonAsync("/api/commerce/v1/accounting/activate",new ActivateAccountingRequest(new(2026,1,1),"COP","ZeroDeclared")))activated.EnsureSuccessStatusCode();
+        var bank=Guid.NewGuid();
+        var types=(await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/bank-account-type"))!;
+        using(var created=await admin.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bank}",
+            new SaveBankAccountRequest(bank,null,types.Single(type=>type.Code=="Checking").Id,"Banco del pago confirmado",bank.ToString("N"),"Pago confirmado",false,true,null)))
+            Assert.True(created.IsSuccessStatusCode,await created.Content.ReadAsStringAsync());
+        await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,admin,"1119","Asset","Bank","Debit",bank);
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using(var seed=new SqlCommand("""
+            IF @PaymentBusiness<>@Business
+              INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
+              VALUES(@PaymentBusiness,@Tenant,N'Sede ajena al pedido',N'',N'',N'',N'',N'');
+            INSERT dbo.PaymentTransactions(PaymentTransactionId,BusinessId,PaymentReferenceId,AmountInCents,Currency,Status,Source,ConfirmedAt,CheckoutKind,SubjectType,SubjectId)
+            VALUES(@Payment,@PaymentBusiness,CONVERT(nvarchar(36),@Payment),@Amount,@Currency,@Status,1,
+              CASE WHEN @Status=@Confirmed THEN SYSUTCDATETIME() END,@Kind,N'Order',@Order);
+            UPDATE dbo.Orders SET Source=0,PaymentTransactionId=@Payment,ExternalDocumentNumber=@Number WHERE OrderId=@Order AND BusinessId=@Business;
+            """,connection))
+        {
+            seed.Parameters.AddWithValue("@Payment",Guid.NewGuid());seed.Parameters.AddWithValue("@Business",fixture.BusinessId);
+            seed.Parameters.AddWithValue("@PaymentBusiness",foreignPayment?Guid.NewGuid():fixture.BusinessId);seed.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+            seed.Parameters.AddWithValue("@Status",(int)status);seed.Parameters.AddWithValue("@Confirmed",(int)PaymentTransactionStatus.Confirmed);
+            seed.Parameters.AddWithValue("@Amount",amountInCents);seed.Parameters.AddWithValue("@Currency",currency);
+            seed.Parameters.AddWithValue("@Kind",(int)Auraly.Platform.Domain.Enums.CheckoutKind.Order);seed.Parameters.AddWithValue("@Number",$"PED-PAY-{order:N}");
+            seed.Parameters.AddWithValue("@Order",order);await seed.ExecuteNonQueryAsync();
+        }
+        using var client=fixture.CreateUserClient(userId,CommercePermissionCodes.SalesCreate,OrderPermissionCodes.Read,OrderPermissionCodes.Recover,OrderPermissionCodes.Invoice);
+        var detail=(await client.GetFromJsonAsync<OrderDetail>($"/api/commerce/v1/orders/{order}"))!;
+        Assert.Equal(foreignPayment?null:status.ToString(),detail.PaymentStatus);
+        var confirmed=status==PaymentTransactionStatus.Confirmed&&!foreignPayment;
+        var search=Uri.EscapeDataString(detail.OrderNumber);
+        var matching=(await client.GetFromJsonAsync<OrderPage>($"/api/commerce/v1/orders?page=1&pageSize=10&orderNumber={search}&hasPendingBalance={!confirmed}"))!;
+        Assert.Equal(order,Assert.Single(matching.Items).OrderId);
+        Assert.Empty((await client.GetFromJsonAsync<OrderPage>($"/api/commerce/v1/orders?page=1&pageSize=10&orderNumber={search}&hasPendingBalance={confirmed}"))!.Items);
+        var request=new InvoiceOrdersRequest(session,fixture.WarehouseId,userId,[order],"Transfer","TRANSFER-EXISTENTE",
+            DocumentType:PosSaleDocumentTypes.Receipt,BankAccountId:bank);
+        async Task<(int Entries,int Inventory,int Money)> FinancialCountsAsync()
+        {
+            await using var count=new SqlCommand("""
+                SELECT (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE BusinessId=@Business),
+                  (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE BusinessId=@Business),
+                  (SELECT COUNT(*) FROM dbo.WorkSessionMovements movement JOIN dbo.WorkSessions session ON session.WorkSessionId=movement.WorkSessionId WHERE session.BusinessId=@Business);
+                """,connection);
+            count.Parameters.AddWithValue("@Business",fixture.BusinessId);
+            await using var rows=await count.ExecuteReaderAsync();Assert.True(await rows.ReadAsync());
+            return(rows.GetInt32(0),rows.GetInt32(1),rows.GetInt32(2));
+        }
+        var before=await FinancialCountsAsync();
+        var key=Guid.NewGuid().ToString("N");
+        var issued=await InvoiceAsync(client,request,key);
+        if(foreignPayment || confirmed&&(amountInCents!=1000000||currency!="COP"))
+        {
+            var rejected=Assert.Single(issued.Results);Assert.Null(rejected.DocumentId);
+            Assert.Contains(foreignPayment?"no pertenece a esta sede":"pago confirmado",rejected.Error??"",StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(before,await FinancialCountsAsync());
+            await using var noDocument=new SqlCommand("""
+                SELECT (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks WHERE OrderId=@Order),
+                  (SELECT COUNT(*) FROM dbo.OnlineSalesCheckoutReceipts WHERE SourceOrderId=@Order),
+                  payment.AmountInCents,payment.Currency
+                FROM dbo.Orders source JOIN dbo.PaymentTransactions payment ON payment.PaymentTransactionId=source.PaymentTransactionId
+                WHERE source.OrderId=@Order;
+                """,connection);
+            noDocument.Parameters.AddWithValue("@Order",order);
+            await using var data=await noDocument.ExecuteReaderAsync();Assert.True(await data.ReadAsync());
+            Assert.Equal(0,data.GetInt32(0));Assert.Equal(0,data.GetInt32(1));Assert.Equal(amountInCents,data.GetInt64(2));Assert.Equal(currency,data.GetString(3));
+            return;
+        }
+        var document=Assert.Single(issued.Results).DocumentId!.Value;
+        var replay=await InvoiceAsync(client,request,key);Assert.True(replay.IsReplay);
+        for(var attempt=0;attempt<100;attempt++)
+        {
+            await using var ready=new SqlCommand("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id AND DebitTotal=CreditTotal",connection);
+            ready.Parameters.AddWithValue("@Id",document);
+            if(Convert.ToInt32(await ready.ExecuteScalarAsync())>0)break;
+            await Task.Delay(50);
+        }
+        await using var verify=new SqlCommand("""
+            SELECT sale.CollectionMode,
+              (SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=sale.DocumentId AND WorkSessionId=@Session AND PaymentMethodCode=N'Transfer' AND Amount=10000),
+              (SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=sale.DocumentId AND MethodCode=N'Transfer' AND Amount=10000),
+              (SELECT COUNT(*) FROM dbo.Receivables WHERE SourceDocumentId=sale.DocumentId),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=sale.DocumentId AND MovementType=N'Sale'),sale.ProcessingStatus,
+              (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=sale.DocumentId AND DebitTotal=CreditTotal)
+            FROM dbo.SalesDocuments sale WHERE sale.DocumentId=@Id;
+            """,connection);
+        verify.Parameters.AddWithValue("@Id",document);verify.Parameters.AddWithValue("@Session",session);
+        await using var reader=await verify.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
+        Assert.Equal("Completed",reader.GetString(5));
+        Assert.Equal(confirmed?"Session":"Dispatch",reader.GetString(0));Assert.Equal(confirmed?1:0,reader.GetInt32(1));Assert.Equal(1,reader.GetInt32(2));
+        Assert.Equal(0,reader.GetInt32(3));Assert.Equal(1,reader.GetInt32(4));
+        Assert.Equal(1,reader.GetInt32(6));
+    }
+
+    [Theory]
+    [InlineData("Cash")]
+    [InlineData("DebitCard")]
+    [InlineData("CreditCard")]
+    [InlineData("Transfer")]
+    public async Task Batch_invoice_keeps_the_configured_form_and_evidence_and_replay_does_not_duplicate_the_sale(string method)
     {
         var userId = Guid.NewGuid(); var session = Guid.NewGuid(); var orderId = Guid.NewGuid();
         await SeedAsync(userId, session, orderId, Guid.NewGuid());
         using var admin = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
-        var account = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin);
+        Guid? bankId = null;
+        if (method == "Transfer")
+        {
+            bankId = Guid.NewGuid();
+            var bankTypes = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/bank-account-type"))!;
+            using var bank = await admin.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId}",
+                new SaveBankAccountRequest(bankId.Value, null, bankTypes.Single(type => type.Code == "Checking").Id,
+                    "Banco del lote", bankId.Value.ToString("N"), "Banco del lote", false, true, null));
+            Assert.True(bank.IsSuccessStatusCode, await bank.Content.ReadAsStringAsync());
+        }
+        var account = method == "Cash" ? await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin)
+            : await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, admin,
+                method == "Transfer" ? "1119" : "1399", "Asset", method == "Transfer" ? "Bank" : "CardClearing", "Debit", bankId);
         var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
         var save = new SavePaymentMethodRequest(Guid.NewGuid(), $"BATCH-{Guid.NewGuid():N}", "Caja del lote",
-            types.Single(type => type.Code == "Cash").Id, account.AccountId, true, false, false, false, true, 10);
+            types.Single(type => type.Code == method).Id, account.AccountId, true, false, false, false, true, 10);
         using var created = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}", save);
         Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
         var form = (await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
         using var client = fixture.CreateUserClient(userId, CommercePermissionCodes.SalesCreate,
             OrderPermissionCodes.Read, OrderPermissionCodes.Recover, OrderPermissionCodes.Invoice);
-        var request = new InvoiceOrdersRequest(session, fixture.WarehouseId, userId, [orderId], "Cash", null,
+        var card = method is "DebitCard" or "CreditCard";
+        var franchise = card ? (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/card-franchise"))!.First().Code : null;
+        var request = new InvoiceOrdersRequest(session, fixture.WarehouseId, userId, [orderId], method, method == "Transfer" ? "TRANSFER-123" : null,
             DocumentType: PosSaleDocumentTypes.Receipt, PaymentMethodId: form.PaymentMethodId, PaymentMethodVersion: form.Version,
-            PaymentFormCode: form.Code, PaymentFormName: form.Name, AccountId: form.AccountId);
+            PaymentFormCode: form.Code, PaymentFormName: form.Name, AccountId: form.AccountId,
+            BankAccountId: bankId, CardFranchiseCode: franchise, ApprovalNumber: card ? "APPROVAL-123" : null);
         var key = Guid.NewGuid().ToString("N");
         InvoiceOrdersResponse result;
         fixture.PauseDocumentProcessing();
@@ -54,6 +188,14 @@ public sealed class OrderBatchInvoiceTests(
         var invoice = Assert.Single(result.Results);
         var replay = await InvoiceAsync(client, request, key);
         Assert.True(replay.IsReplay); Assert.Equal(result.OperationId, replay.OperationId);
+        if (card)
+        {
+            using var changed = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/orders/invoice") {
+                Content = JsonContent.Create(request with { ApprovalNumber = "DIFFERENT-APPROVAL" }) };
+            changed.Headers.Add("Idempotency-Key", key);
+            using var conflict = await client.SendAsync(changed);
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, conflict.StatusCode);
+        }
         await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         await using var query = new SqlCommand("""
             SELECT payment.PaymentMethodId,payment.PaymentMethodCode,
@@ -64,7 +206,8 @@ public sealed class OrderBatchInvoiceTests(
               payment.AccountId,
               (SELECT COUNT(*) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
                 WHERE entry.SourceDocumentId=@Document AND entry.DebitTotal=entry.CreditTotal
-                  AND line.AccountId=@Account AND line.Debit=payment.Amount)
+                  AND line.AccountId=@Account AND line.Debit=payment.Amount),
+              payment.CardFranchiseCode,payment.ApprovalNumber,payment.Reference,payment.BankAccountId
             FROM dbo.SalesPayments payment WHERE DocumentId=@Document;
             """, connection);
         query.Parameters.AddWithValue("@Document", invoice.DocumentId); query.Parameters.AddWithValue("@Order", orderId);
@@ -74,7 +217,28 @@ public sealed class OrderBatchInvoiceTests(
         Assert.Equal(1, reader.GetInt32(2)); Assert.Equal(1, reader.GetInt32(3));
         Assert.Equal("Completed", reader.GetString(4)); Assert.Equal(1, reader.GetInt32(5));
         Assert.Equal(form.AccountId,reader.GetGuid(6)); Assert.Equal(1,reader.GetInt32(7));
+        Assert.Equal(franchise, reader.IsDBNull(8) ? null : reader.GetString(8));
+        Assert.Equal(request.ApprovalNumber, reader.IsDBNull(9) ? null : reader.GetString(9));
+        Assert.Equal(request.PaymentReference, reader.IsDBNull(10) ? null : reader.GetString(10));
+        Assert.Equal(bankId, reader.IsDBNull(11) ? (Guid?)null : reader.GetGuid(11));
         Assert.False(await reader.ReadAsync());
+        await reader.CloseAsync();
+        await using var attribution = new SqlCommand("""
+            SELECT CollectionMode,WorkSessionId,
+              (SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Document)
+            FROM dbo.SalesDocuments WHERE DocumentId=@Document;
+            """, connection);
+        attribution.Parameters.AddWithValue("@Document", invoice.DocumentId);
+        await using var attributed = await attribution.ExecuteReaderAsync();
+        Assert.True(await attributed.ReadAsync()); Assert.Equal("Dispatch", attributed.GetString(0));
+        Assert.Equal(session, attributed.GetGuid(1)); Assert.Equal(0, attributed.GetInt32(2));
+        await attributed.CloseAsync();
+        using var scope = fixture.CreateScope();
+        var sessions = scope.ServiceProvider.GetRequiredService<WorkSessionService>();
+        var preview = await sessions.PreviewClosureAsync(new WorkSessionIdentity(userId, fixture.TenantId,
+            new HashSet<string>{WorkSessionPermissionCodes.Read}, fixture.BusinessId), session);
+        Assert.Equal(0m, preview.TotalSales); Assert.Equal(0m, preview.ExpectedCash);
+        Assert.All(preview.PaymentTotals, total => Assert.Equal(0m, total.NetAmount));
     }
 
     [Fact]
@@ -1131,6 +1295,13 @@ public sealed class OrderBatchInvoiceTests(
             "Credit",
             null);
 
+        // A receipt must never be silently promoted to an electronic invoice.
+        var rejectedReceipt = await InvoiceAsync(client, command with { DocumentType = PosSaleDocumentTypes.Receipt },
+            $"required-invoice-{Guid.NewGuid():N}");
+        var rejectedDocument = Assert.Single(rejectedReceipt.Results);
+        Assert.Equal("Failed", rejectedDocument.Status); Assert.Null(rejectedDocument.DocumentId);
+        Assert.Contains("requiere factura electrónica", rejectedDocument.Error);
+
         fixture.PauseDocumentProcessing();
         try
         {
@@ -1493,84 +1664,6 @@ public sealed class OrderBatchInvoiceTests(
         Assert.Equal("Active", reader.GetString(5));
     }
 
-    private async Task SeedAsync(
-        Guid userId,
-        Guid workSessionId,
-        Guid firstOrderId,
-        Guid secondOrderId)
-    {
-        var ordersWarehouseId = Guid.NewGuid();
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT dbo.AppUsers(
-              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
-              FirstName,LastName,IsActive,CreatedAt)
-            VALUES(
-              @UserId,@TenantId,@Username,UPPER(@Username),
-              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
-              N'Lote',N'Pedidos',1,SYSDATETIMEOFFSET());
-
-            INSERT dbo.WorkSessions(
-              WorkSessionId,TenantId,BusinessId,WarehouseId,UserId,DeviceId,
-              OpenedAt,LastActivityAt,Status)
-            VALUES(
-              @WorkSessionId,@TenantId,@BusinessId,@WarehouseId,@UserId,NULL,
-              SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
-
-            INSERT dbo.Warehouses(
-              WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
-              IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
-            VALUES(
-              @OrdersWarehouseId,@BusinessId,@OrdersWarehouseCode,N'Pedidos lote',0,
-              1,0,0,0,1,SYSDATETIMEOFFSET());
-
-            INSERT dbo.InventoryBalances(
-              BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
-              InventoryValue,LastProcessingSequence,UpdatedAt)
-            VALUES(@BusinessId,@OrdersWarehouseId,@ProductId,3,5000,15000,1,SYSDATETIMEOFFSET());
-
-            UPDATE dbo.InventoryBalances
-            SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
-                OriginContextId=NULL,OriginSnapshotSequence=NULL,
-                UpdatedAt=SYSDATETIMEOFFSET()
-            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
-
-            INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,
-              CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
-              Subtotal,DiscountTotal,Total,CustomerConfirmed,
-              ExternalDocumentNumber,OrdersWarehouseId,CreatedAt,CustomAttributesJson)
-            VALUES
-              (@FirstOrderId,@BusinessId,0,0,2,N'Cliente uno',N'1001',N'COP',
-               10000,0,10000,1,N'PED-LOTE-01',@OrdersWarehouseId,DATEADD(day,-2,SYSUTCDATETIME()),
-               CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}')),
-              (@SecondOrderId,@BusinessId,0,0,2,N'Cliente dos',N'1002',N'COP',
-               20000,0,20000,1,N'PED-LOTE-02',@OrdersWarehouseId,DATEADD(day,-1,SYSUTCDATETIME()),
-               CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}'));
-
-            INSERT dbo.OrderItems(
-              OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
-              ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
-              DocumentUnitCost,DiscountAmount,LineTotal,CreatedAt)
-            VALUES
-              (NEWID(),@FirstOrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-               N'Producto lote',N'EA',1,10000,6000,0,10000,DATEADD(day,-2,SYSUTCDATETIME())),
-              (NEWID(),@SecondOrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
-               N'Producto lote',N'EA',2,10000,6000,0,20000,DATEADD(day,-1,SYSUTCDATETIME()));
-            """;
-        command.Parameters.AddWithValue("@UserId", userId);
-        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
-        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
-        command.Parameters.AddWithValue("@OrdersWarehouseId", ordersWarehouseId);
-        command.Parameters.AddWithValue("@OrdersWarehouseCode", $"PED-{ordersWarehouseId:N}"[..32]);
-        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-        command.Parameters.AddWithValue("@Username", $"batch-{userId:N}");
-        command.Parameters.AddWithValue("@FirstOrderId", firstOrderId);
-        command.Parameters.AddWithValue("@SecondOrderId", secondOrderId);
-        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
-        await command.ExecuteNonQueryAsync();
-    }
+    private Task SeedAsync(Guid userId, Guid workSessionId, Guid firstOrderId, Guid secondOrderId) =>
+        fixture.SeedConfirmedOrdersForInvoiceAsync(userId, workSessionId, firstOrderId, secondOrderId);
 }

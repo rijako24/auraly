@@ -16,6 +16,70 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosSaleCompletionServiceTests
 {
+    [Theory]
+    [InlineData("Cash")]
+    [InlineData("Transfer")]
+    [InlineData("DebitCard")]
+    [InlineData("CreditCard")]
+    [InlineData("PendingCollection")]
+    public async Task Recovered_order_receipt_preserves_dispatch_custody_in_local_sale_and_upload(string method)
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            await fixture.Sales.ProvisionDocumentSeriesAsync(new(Guid.NewGuid(), fixture.Scope.DeviceId,
+                PosSaleDocumentTypes.Receipt, "CVI", "03", 8, 100, 99999));
+            var orderId = Guid.NewGuid();
+            var draft = await fixture.Drafts.ImportOrderAsync(fixture.Scope, orderId, "PED-1",
+                Guid.NewGuid(), Guid.NewGuid(), null,
+                [new(new ProductId(Guid.NewGuid()), "PED", "Producto del pedido", "EA", "01", 19m,
+                    1m, 10000m, 10000m, "COP", "BusinessDefault")]);
+            var payment = new OfflineSalePayment(method, draft.PayableAmount,
+                Reference: method == "Transfer" ? "TR-1" : null,
+                CardFranchiseCode: method is "DebitCard" or "CreditCard" ? "Visa" : null,
+                ApprovalNumber: method is "DebitCard" or "CreditCard" ? "AP-1" : null,
+                PaymentMethodId: Guid.NewGuid(), PaymentMethodVersion: 1,
+                PaymentMethodCode: "FORM", PaymentMethodName: "Forma configurada", AccountId: Guid.NewGuid());
+            var issued = await fixture.CompleteAsync(draft.DraftId, [payment], documentType: PosSaleDocumentTypes.Receipt);
+            var snapshot = PosSaleContractSerializer.Deserialize(Assert.Single(await fixture.Sales.GetPendingOutboxAsync()).Payload);
+            Assert.Equal(orderId, snapshot.SourceOrderId);
+            Assert.Equal(SaleCollectionMode.Dispatch, snapshot.CollectionMode);
+            Assert.Equal(SaleCollectionMode.Dispatch, Assert.Single(await fixture.Sales.ReadWorkSessionSalesAsync(snapshot.WorkSessionId)).CollectionMode);
+            Assert.Null(snapshot.FiscalSnapshot);
+            Assert.Null(snapshot.UblSnapshot);
+            Assert.Equal(method, Assert.Single(snapshot.Payments).MethodCode);
+            Assert.Equal(issued.IssuedSale.DocumentId.Value, snapshot.DocumentId);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                fixture.CompleteAsync(draft.DraftId, [payment], documentType: PosSaleDocumentTypes.Receipt));
+            Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+
+            // Old queued order payloads omitted custody. Their exact serialization remains stable.
+            var legacy = snapshot with { CollectionMode = SaleCollectionMode.Session };
+            var oldJson = PosSaleContractSerializer.Serialize(legacy);
+            Assert.DoesNotContain("collectionMode", oldJson, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(SaleCollectionMode.Session, PosSaleContractSerializer.Deserialize(oldJson).CollectionMode);
+            Assert.Equal(oldJson, PosSaleContractSerializer.Serialize(PosSaleContractSerializer.Deserialize(oldJson)));
+        });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task Pending_collection_rejects_direct_receipt_and_electronic_invoice_without_consuming_draft(bool order, bool invoice)
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var draft = order
+                ? await fixture.Drafts.ImportOrderAsync(fixture.Scope, Guid.NewGuid(), "PED-2", Guid.NewGuid(), Guid.NewGuid(), null,
+                    [new(new ProductId(Guid.NewGuid()), "PED", "Producto", "EA", "01", 19m, 1m, 10000m, 10000m, "COP", "BusinessDefault")])
+                : await fixture.AddLineAsync();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.CompleteAsync(draft.DraftId,
+                [new OfflineSalePayment("PendingCollection", draft.PayableAmount, PaymentMethodId: Guid.NewGuid())],
+                documentType: invoice ? PosSaleDocumentTypes.Invoice : PosSaleDocumentTypes.Receipt));
+            Assert.Equal(PosDraftStatus.Active, (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
+            Assert.Empty(await fixture.Sales.GetPendingOutboxAsync());
+        });
+    }
+
     public static IEnumerable<object[]> InvoiceChargeScenarios()
     {
         foreach (var (basis, tariff) in new[] { (79999m, 5000m), (80000m, 5000m), (80000.01m, 5000m), (100000m, 6000m), (400000m, 8000m) })
@@ -249,7 +313,7 @@ public sealed class PosSaleCompletionServiceTests
             var forbidden = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                 fixture.CompleteAsync(draft.DraftId));
 
-            Assert.Contains(CommercePermissionCodes.SalesBelowCost, forbidden.Message);
+            Assert.Contains("permiso para vender por debajo del costo", forbidden.Message);
             Assert.Equal(
                 PosDraftStatus.Active,
                 (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
@@ -499,7 +563,8 @@ public sealed class PosSaleCompletionServiceTests
             DraftId draftId,
             IReadOnlyCollection<OfflineSalePayment>? payments = null,
             PosSaleCreditTerms? credit = null,
-            IReadOnlySet<string>? permissions = null) =>
+            IReadOnlySet<string>? permissions = null,
+            string documentType = PosSaleDocumentTypes.Invoice) =>
             new PosSaleCompletionService(Drafts, Issuance, Sales, Printer).CompleteAsync(
                 draftId,
                 new CompletePosSaleCommand(
@@ -514,7 +579,8 @@ public sealed class PosSaleCompletionServiceTests
                     payments ?? [new OfflineSalePayment("Cash", 10_000m)],
                     80,
                     Permissions: permissions,
-                    Credit: credit));
+                    Credit: credit,
+                    DocumentType: documentType));
     }
 
     private sealed class RecordingPrinter : IPosReceiptPrinter

@@ -1,5 +1,6 @@
 using System.Data;
 using System.Text.Json;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -7,6 +8,94 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 
 public sealed partial class SqlAccountingPostingProcessor
 {
+    private static async Task<SourceEnvelope?> ResolveClosurePaymentMethodsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        DateTimeOffset processedAt, CancellationToken token)
+    {
+        var payload = ReadClosureReconciliation(source);
+        var selected = (payload.PaymentCorrections ?? []).Where(item => item.PaymentMethodId is not null).ToArray();
+        if (selected.Length == 0) return source;
+        if (selected.Any(item => item.CorrectionId is null || source.AccountingEntryRequired &&
+            (item.OriginalTenderCategory is null || !TryParsePostedAccountCategory(item.OriginalTenderCategory, out _))))
+            throw new InvalidOperationException("La corrección no conserva la identidad y cuenta original del pago.");
+        await using var command = new SqlCommand("""
+            DECLARE @Resolved TABLE(CorrectionId uniqueidentifier PRIMARY KEY,PaymentMethodId uniqueidentifier,
+              MethodCode nvarchar(32),Version int,Code nvarchar(64),Name nvarchar(160),AccountId uniqueidentifier,
+              AccountCode nvarchar(32),AccountName nvarchar(200),BankAccountId uniqueidentifier);
+            INSERT @Resolved
+            SELECT input.CorrectionId,form.PaymentMethodId,type.Code,form.Version,form.Code,form.Name,
+              account.AccountId,account.Code,account.Name,CASE WHEN type.Code=N'Transfer' THEN account.BankAccountId END
+            FROM OPENJSON(@Rows) WITH(CorrectionId uniqueidentifier,PaymentMethodId uniqueidentifier,
+              TenderMethodCode nvarchar(32),MovementType nvarchar(32),SourceDocumentType nvarchar(64)) input
+            JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
+            JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId
+              AND type.CatalogCode=N'payment-method' AND type.Code=input.TenderMethodCode AND type.IsActive=1
+            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
+            CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
+            WHERE form.IsActive=1 AND ready.SourceType=CASE
+                WHEN input.MovementType IN(N'PayablePayment',N'CashOut') THEN N'SupplierPaymentMethod'
+                WHEN input.MovementType=N'ReceivablePayment' OR input.SourceDocumentType=N'ManualAccountingVoucher'
+                  THEN N'CustomerPaymentMethod' ELSE N'PosPaymentMethod' END
+              AND ((input.SourceDocumentType=N'ManualAccountingVoucher' AND form.UseForVouchers=1)
+                OR (input.SourceDocumentType<>N'ManualAccountingVoucher' AND
+                  ((input.MovementType=N'PayablePayment' AND form.UseForSupplierPayments=1)
+                    OR (input.MovementType=N'ReceivablePayment' AND form.UseForReceipts=1)
+                    OR (input.MovementType NOT IN(N'PayablePayment',N'ReceivablePayment') AND form.UseForSales=1))));
+            UPDATE account SET ConfigurationLockedAt=@Now FROM dbo.AccountingAccounts account
+            WHERE account.TenantId=@Tenant AND account.ConfigurationLockedAt IS NULL
+              AND EXISTS(SELECT 1 FROM @Resolved resolved WHERE resolved.AccountId=account.AccountId);
+            SELECT CorrectionId,PaymentMethodId,MethodCode,Version,Code,Name,AccountId,AccountCode,AccountName,BankAccountId
+            FROM @Resolved;
+            SELECT Status,ResolvedAccountMappingsJson FROM dbo.AccountingPostingJobs
+            WHERE TenantId=@Tenant AND BusinessId=@Business AND SourceDocumentId=@Closure
+              AND SourceDocumentType=N'WorkSessionCashDifference';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Tenant", source.TenantId);
+        command.Parameters.AddWithValue("@Business", source.BusinessId);
+        command.Parameters.AddWithValue("@Closure", payload.WorkSessionClosureId);
+        command.Parameters.AddWithValue("@Now", processedAt);
+        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(selected);
+        var bindings = new Dictionary<Guid, VoucherAppliedPaymentMethod>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+        {
+            var binding = new VoucherAppliedPaymentMethod(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
+                reader.GetInt32(3), reader.GetString(4), reader.GetString(5), reader.GetGuid(6), reader.GetString(7),
+                reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetGuid(9));
+            bindings.Add(binding.SourceLineId, binding);
+        }
+        if (bindings.Count != selected.Length) return null;
+        // The closure may already have posted its blind-count differences.
+        // Undo their actual auxiliaries, not today's remapped group accounts.
+        var closureAccounts = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        await reader.NextResultAsync(token);
+        if (await reader.ReadAsync(token))
+        {
+            if (reader.GetString(0) is not ("Posted" or "CommercialEffectsApplied")) return null;
+            if (!reader.IsDBNull(1))
+            {
+                using var mappings = JsonDocument.Parse(reader.GetString(1));
+                foreach (var mapping in mappings.RootElement.EnumerateArray())
+                    closureAccounts.Add(mapping.GetProperty("Category").GetString()!, mapping.GetProperty("AccountId").GetGuid());
+            }
+            if (reader.GetString(0) == "Posted" && closureAccounts.Count == 0) return null;
+        }
+        var resolved = payload with
+        {
+            Lines = payload.Lines.Select(line => closureAccounts.TryGetValue(line.AccountingCategory, out var original)
+                ? line with { AccountingCategory = $"PostedAccount:{original:D}" } : line).ToArray(),
+            PaymentCorrections = payload.PaymentCorrections!.Select(item => item.CorrectionId is { } id && bindings.TryGetValue(id, out var binding)
+                ? item with { TenderCategory = $"PostedAccount:{binding.AccountId:D}" } : item).ToArray()
+        };
+        // Only this attempt's in-memory source changes. SQL retains the accepted
+        // payload/hash; successful completion stores these outcome bindings.
+        return source with
+        {
+            PayloadJson = JsonSerializer.Serialize(resolved, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            AppliedPaymentMethods = bindings.Values.ToArray()
+        };
+    }
+
     private async Task ApplyCashShortageClaimAsync(
         SqlConnection connection, SqlTransaction transaction,
         WorkSessionClosureReconciliationPayload payload, WorkSessionCashShortageClaim claim,

@@ -90,7 +90,7 @@ public sealed class PayablesService(
     {
         Require(user, PayablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
-            throw new PayablesValidationException("Invalid pagination.");
+            throw new PayablesValidationException("La paginación no es válida.");
         ValidateLedgerFilters(query.Status,query.From,query.To,query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "name", "invoiceCount", "originalAmount", "paidAmount", "outstandingAmount", "overdueAmount", "supplierCreditAmount"))
             throw new PayablesValidationException("El ordenamiento de proveedores no es válido.");
@@ -119,10 +119,10 @@ public sealed class PayablesService(
         CancellationToken cancellationToken)
     {
         Require(user, permission);
-        if (query.Page < 1) throw new PayablesValidationException("Page must be greater than zero.");
+        if (query.Page < 1) throw new PayablesValidationException("La página debe ser mayor que cero.");
         if (query.PayableId == Guid.Empty) throw new PayablesValidationException("La obligación seleccionada no es válida.");
         if (query.PageSize is < 1 or > 100)
-            throw new PayablesValidationException("PageSize must be between 1 and 100.");
+            throw new PayablesValidationException("La cantidad de registros por página debe estar entre 1 y 100.");
         ValidateLedgerFilters(query.Status,query.From,query.To,query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "documentNumber", "dueDate", "originalAmount", "outstandingAmount", "status"))
             throw new PayablesValidationException("El ordenamiento de facturas no es válido.");
@@ -137,7 +137,7 @@ public sealed class PayablesService(
         CancellationToken cancellationToken = default)
     {
         Require(user, PayablesPermissionCodes.Read);
-        if (payableId == Guid.Empty) throw new PayablesValidationException("PayableId is required.");
+        if (payableId == Guid.Empty) throw new PayablesValidationException("Se requiere una cuenta por pagar válida.");
         return store.GetAsync(user, payableId, cancellationToken);
     }
 
@@ -154,7 +154,7 @@ public sealed class PayablesService(
         SupplierPaymentHistoryQuery query,CancellationToken cancellationToken=default)
     {
         Require(user,PayablesPermissionCodes.Read);
-        if(query.Page<1||query.PageSize is <1 or >100)throw new PayablesValidationException("Invalid pagination.");
+        if(query.Page<1||query.PageSize is <1 or >100)throw new PayablesValidationException("La paginación no es válida.");
         ValidateLedgerFilters(query.Status,query.From,query.To,query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "paidAt", "partyName", "documentNumber", "totalAmount"))
             throw new PayablesValidationException("El ordenamiento de pagos no es válido.");
@@ -164,8 +164,8 @@ public sealed class PayablesService(
     private static void ValidateLedgerFilters(string? status,DateOnly? from,DateOnly? to,int dateRangeVersion)
     {
         if(status is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
-            throw new PayablesValidationException("The payable status is invalid.");
-        if(dateRangeVersion is not (1 or 2)||from>to||to==DateOnly.MaxValue)throw new PayablesValidationException("The date range is invalid.");
+            throw new PayablesValidationException("El estado de la cuenta por pagar no es válido.");
+        if(dateRangeVersion is not (1 or 2)||from>to||to==DateOnly.MaxValue)throw new PayablesValidationException("El rango de fechas no es válido.");
     }
 
     public Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(
@@ -190,27 +190,27 @@ public sealed class PayablesService(
         Require(user, permission);
         if (permission == PayablesPermissionCodes.RegisterPosPayment &&
             (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty))
-            throw new PayablesValidationException("POS payments require an open work session.");
+            throw new PayablesValidationException("Los pagos desde el punto de venta requieren una sesión de caja abierta.");
         if (request.BusinessId != user.BusinessId)
-            throw new PayablesForbiddenException("The payment belongs to another business.");
-        if (request.PaymentId == Guid.Empty) throw new PayablesValidationException("PaymentId is required.");
+            throw new PayablesForbiddenException("El pago pertenece a otra sede.");
+        if (request.PaymentId == Guid.Empty) throw new PayablesValidationException("Se requiere un pago válido.");
         if (request.WorkSessionId == Guid.Empty)
-            throw new PayablesValidationException("WorkSessionId must be null or valid.");
-        if (request.SupplierId == Guid.Empty) throw new PayablesValidationException("SupplierId is required.");
-        if (request.PaidAt == default) throw new PayablesValidationException("PaidAt is required.");
+            throw new PayablesValidationException("La sesión de caja debe estar vacía o tener una identificación válida.");
+        if (request.SupplierId == Guid.Empty) throw new PayablesValidationException("Se requiere un proveedor válido.");
+        if (request.PaidAt == default) throw new PayablesValidationException("Indica la fecha del pago.");
         if (string.IsNullOrWhiteSpace(request.CurrencyCode))
-            throw new PayablesValidationException("CurrencyCode is required.");
+            throw new PayablesValidationException("Selecciona una moneda.");
         if (request.Allocations is null || request.Payments is null)
-            throw new PayablesValidationException("Allocations and payments are required.");
+            throw new PayablesValidationException("Se requieren las aplicaciones a documentos y las formas de pago.");
         if (request.Allocations.Any(item => item is null) || request.Payments.Any(item => item is null))
-            throw new PayablesValidationException("Allocations and payments cannot contain empty rows.");
+            throw new PayablesValidationException("Las aplicaciones y las formas de pago no pueden contener filas vacías.");
         if (string.IsNullOrWhiteSpace(idempotencyKey))
-            throw new PayablesValidationException("Idempotency-Key is required.");
+            throw new PayablesValidationException("No se pudo identificar la operación. Vuelve a intentarlo con la misma solicitud.");
         if (idempotencyKey.Length > 160)
-            throw new PayablesValidationException("Idempotency-Key is too long.");
+            throw new PayablesValidationException("La clave de identificación de la operación supera la longitud permitida.");
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency != "COP")
-            throw new PayablesValidationException("Only COP supplier payments are supported in this slice.");
+            throw new PayablesValidationException("Los pagos a proveedores deben registrarse en pesos colombianos.");
         PayableSettlement settlement;
         try
         {
@@ -262,14 +262,14 @@ public sealed class PayablesService(
         if (string.IsNullOrWhiteSpace(value)) return null;
         var result = value.Trim();
         if (result.Length > maximumLength)
-            throw new PayablesValidationException($"The value exceeds {maximumLength} characters.");
+            throw new PayablesValidationException($"El valor admite máximo {maximumLength} caracteres.");
         return result;
     }
 
     private static void Require(PayablesUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
-            throw new PayablesForbiddenException($"Permission '{permission}' is required.");
+            throw new PayablesForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }
 

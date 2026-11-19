@@ -11,6 +11,10 @@ public static class ExpensesApi
         var group = endpoints.MapGroup("/api/commerce/v1/expenses")
             .RequireAuthorization("expenses.user");
 
+        group.MapGet("/concept-options", (HttpContext context, int? page, int? pageSize, string? search,
+            ExpenseService service, CancellationToken ct) =>
+            Execute(() => service.ConceptOptionsAsync(context.User.ToExpenseIdentity(), page ?? 1, pageSize ?? 10, search, ct)));
+
         group.MapGet("/options", (
             HttpContext context,
             bool? includeDirectories,

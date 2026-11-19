@@ -47,7 +47,7 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     {
         PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
         Validate(request.Code, request.Name);
-        if (request.CountryId == Guid.Empty) throw new PartyValidationException("Country is required.");
+        if (request.CountryId == Guid.Empty) throw new PartyValidationException("Selecciona un país.");
         return store.CreateDivisionAsync(actor, ids.NewId(), request, time.GetUtcNow(), ct);
     }
 
@@ -57,7 +57,7 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
         PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
         Validate(request.Code, request.Name);
         if (request.AdministrativeDivisionId == Guid.Empty)
-            throw new PartyValidationException("Administrative division is required.");
+            throw new PartyValidationException("Selecciona un departamento o división administrativa.");
         return store.CreateCityAsync(actor, ids.NewId(), request, time.GetUtcNow(), ct);
     }
 
@@ -72,7 +72,7 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     {
         PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
         Validate(request.Code, request.Name);
-        if (request.CountryId == Guid.Empty) throw new PartyValidationException("Country is required.");
+        if (request.CountryId == Guid.Empty) throw new PartyValidationException("Selecciona un país.");
         return store.UpdateDivisionAsync(actor, id, request, time.GetUtcNow(), ct);
     }
 
@@ -80,7 +80,7 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     {
         PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
         Validate(request.Code, request.Name);
-        if (request.AdministrativeDivisionId == Guid.Empty) throw new PartyValidationException("Administrative division is required.");
+        if (request.AdministrativeDivisionId == Guid.Empty) throw new PartyValidationException("Selecciona un departamento o división administrativa.");
         return store.UpdateCityAsync(actor, id, request, time.GetUtcNow(), ct);
     }
 
@@ -88,7 +88,7 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     {
         var normalizedCode = code?.Trim().ToUpperInvariant() ?? string.Empty;
         if (normalizedCode.Length != 2 || normalizedCode.Any(character => character is < 'A' or > 'Z'))
-            throw new PartyValidationException("Country code must use the two-letter ISO format, for example CO or VE.");
+            throw new PartyValidationException("El código del país debe tener dos letras, por ejemplo CO o VE.");
 
         Validate(normalizedCode, name);
     }
@@ -104,8 +104,8 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     {
         try
         {
-            PartyValidation.NormalizeCode(code, "Code", 16);
-            PartyValidation.RequireText(name, "Name", 120);
+            PartyValidation.NormalizeCode(code, "Código", 16);
+            PartyValidation.RequireText(name, "Nombre", 120);
         }
         catch (ArgumentException exception)
         {

@@ -65,7 +65,7 @@ public sealed class PosEnrollmentService(
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(CommercePermissionCodes.EnrolledDevicesEnroll))
             throw new PosEnrollmentForbiddenException(
-                $"Permission '{CommercePermissionCodes.EnrolledDevicesEnroll}' is required.");
+                $"No tienes permiso para preparar dispositivos de punto de venta.");
         if (request.BusinessId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.DeviceName))

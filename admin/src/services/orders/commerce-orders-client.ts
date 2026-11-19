@@ -253,6 +253,8 @@ export function invoiceCommerceOrders(request: {
   accountId?: string;
   bankAccountId?: string | null;
   paymentNotes?: string | null;
+  cardFranchiseCode?: string | null;
+  approvalNumber?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
   charge?: OrderInvoiceChargeSelection | null;
   charges?: OrderInvoiceChargeSelection[] | null;
@@ -281,6 +283,8 @@ export function validateCommerceOrderCredit(request: {
   accountId?: string;
   bankAccountId?: string | null;
   paymentNotes?: string | null;
+  cardFranchiseCode?: string | null;
+  approvalNumber?: string | null;
   documentType?: "SalesInvoice" | "SalesReceipt";
   charge?: OrderInvoiceChargeSelection | null;
   charges?: OrderInvoiceChargeSelection[] | null;
@@ -346,3 +350,11 @@ async function orderRequest<T>(
   }
   return (await response.json()) as T;
 }
+
+export type OrderInvoicePaymentDetails = {
+  paymentReference?: string | null;
+  bankAccountId?: string | null;
+  paymentNotes?: string | null;
+  cardFranchiseCode?: string | null;
+  approvalNumber?: string | null;
+};

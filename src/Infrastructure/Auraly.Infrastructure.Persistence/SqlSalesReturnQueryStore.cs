@@ -164,7 +164,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             unroundedOutstanding=reader.GetDecimal(15); remainingRounding=reader.GetDecimal(16);
             isRestaurant=reader.GetBoolean(17);
         }
-        var payments = await LoadPaymentsAsync(connection, documentId, cancellationToken);
+        var payments = await LoadPaymentsAsync(connection, user, documentId, cancellationToken);
         var lines = await LoadLinesAsync(connection, documentId, cancellationToken);
         var charges = await LoadChargesAsync(connection, documentId, cancellationToken);
         return new ReturnableSale(documentId, number, fiscal, cufe, issued, customerId,
@@ -190,6 +190,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
             WHERE r.BusinessId=@BusinessId
               AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
+              AND (@OriginalDocumentId IS NULL OR r.OriginalDocumentId=@OriginalDocumentId)
               AND (@Status IS NULL OR r.Status=@Status)
               AND (@From IS NULL OR r.ReturnedAt>=@From)
               AND (@To IS NULL OR r.ReturnedAt<DATEADD(DAY,1,@To))
@@ -206,6 +207,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var command=new SqlCommand(sql,connection); Scope(command,user);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
+        command.Parameters.AddWithValue("@OriginalDocumentId",(object?)query.OriginalDocumentId??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
         command.Parameters.AddWithValue("@From",(object?)query.From?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
         command.Parameters.AddWithValue("@To",(object?)query.To?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
@@ -296,22 +298,37 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
     }
 
     private static async Task<IReadOnlyList<ReturnableSalePayment>> LoadPaymentsAsync(
-        SqlConnection connection,Guid documentId,CancellationToken cancellationToken)
+        SqlConnection connection,SalesReturnUserIdentity user,Guid documentId,CancellationToken cancellationToken)
     {
         await using var command=new SqlCommand("""
-            SELECT p.PaymentNumber,p.MethodCode,p.Amount+p.RoundingAdjustment,COALESCE(SUM(s.Amount),0),
-                   p.CardFranchiseCode,p.ApprovalNumber
-            FROM dbo.SalesPayments p
-            LEFT JOIN dbo.SalesReturnSettlements s ON s.OriginalDocumentId=p.DocumentId
-              AND s.OriginalPaymentNumber=p.PaymentNumber AND s.SettlementType=N'Refund'
-            WHERE p.DocumentId=@Id
-            GROUP BY p.PaymentNumber,p.MethodCode,p.Amount,p.RoundingAdjustment,p.CardFranchiseCode,p.ApprovalNumber
-            ORDER BY p.PaymentNumber;
+            SELECT p.PaymentNumber,p.EffectiveMethodCode,p.EffectiveAmount,COALESCE(prior.Amount,0),
+                   p.EffectiveCardFranchiseCode,p.EffectiveApprovalNumber,CONVERT(uniqueidentifier,NULL) DispatchPaymentId
+            FROM dbo.SalesDocuments sale
+            CROSS APPLY accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,sale.DocumentId) p
+            OUTER APPLY(SELECT SUM(returned.TotalAmount) Amount FROM dbo.SalesReturns returned
+              WHERE returned.OriginalDocumentId=p.DocumentId AND returned.OriginalPaymentNumber=p.PaymentNumber
+                AND returned.EconomicResolution=N'Refund') prior
+            WHERE sale.DocumentId=@Id AND sale.CollectionMode=N'Session' AND p.EffectivePaymentReady=1
+            UNION ALL
+            SELECT CONVERT(int,ROW_NUMBER() OVER(ORDER BY payment.PaymentId)),payment.MethodCode,payment.Amount,
+              COALESCE(prior.Amount,0),payment.CardFranchiseCode,payment.ApprovalNumber,payment.PaymentId
+            FROM dbo.SalesDocuments sale JOIN dbo.DispatchSourceDocuments source ON source.SourceDocumentId=sale.DocumentId
+            JOIN dispatch.Closures closure ON closure.DispatchId=source.DispatchId AND closure.BusinessId=sale.BusinessId
+            JOIN dbo.AccountingPostingJobs posted ON posted.SourceDocumentId=closure.DispatchSettlementId
+              AND posted.SourceDocumentType=N'DispatchCashDifference' AND posted.BusinessId=sale.BusinessId
+              AND posted.Status IN(N'Posted',N'CommercialEffectsApplied')
+            CROSS APPLY dispatch.EffectivePayments(source.DispatchId) payment
+            OUTER APPLY(SELECT SUM(returned.TotalAmount) Amount FROM dbo.SalesReturns returned
+              WHERE returned.OriginalDispatchPaymentId=payment.PaymentId AND returned.EconomicResolution=N'Refund') prior
+            WHERE sale.DocumentId=@Id AND sale.CollectionMode=N'Dispatch'
+              AND payment.DispatchSourceDocumentId=source.DispatchSourceDocumentId AND payment.ApplicationType=N'InvoicePayment'
+            ORDER BY PaymentNumber;
             """,connection);
+        Scope(command,user);
         command.Parameters.AddWithValue("@Id",documentId);var values=new List<ReturnableSalePayment>();
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
-        {var amount=reader.GetDecimal(2);var refunded=reader.GetDecimal(3);values.Add(new(reader.GetInt32(0),reader.GetString(1),amount,refunded,decimal.Max(0,amount-refunded),reader.IsDBNull(4)?null:reader.GetString(4),reader.IsDBNull(5)?null:reader.GetString(5)));}
+        {var amount=reader.GetDecimal(2);var refunded=reader.GetDecimal(3);values.Add(new(reader.GetInt32(0),reader.GetString(1),amount,refunded,decimal.Max(0,amount-refunded),reader.IsDBNull(4)?null:reader.GetString(4),reader.IsDBNull(5)?null:reader.GetString(5),reader.IsDBNull(6)?null:reader.GetGuid(6)));}
         return values;
     }
 

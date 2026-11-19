@@ -60,7 +60,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
             PartyPermissionCodes.CustomerCreate,
             PartyPermissionCodes.PosCustomerCreate);
         if (request.BusinessId != actor.BusinessId)
-            throw new PartyForbiddenException("The customer business does not match the authenticated identity.");
+            throw new PartyForbiddenException("La empresa del cliente no corresponde al contexto autorizado.");
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
         foreach (var site in request.AdditionalSites ?? []) ValidateSite(site);
@@ -74,7 +74,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
             _ = new CustomerPricingAssignment(request.Pricing?.PriceChannelId));
         if (request.Pricing is not null && !actor.IsDevice) Require(actor, PartyPermissionCodes.ManagePricing);
         if (actor.IsDevice && request.Pricing is { PriceChannelId: not null })
-            throw new PartyForbiddenException("POS quick creation cannot assign commercial pricing.");
+            throw new PartyForbiddenException("La creación rápida de clientes en el punto de venta no permite asignar precios comerciales.");
         var normalized = string.Empty;
         Translate(() =>
             normalized = PartyIdentityNormalizer.Normalize(
@@ -87,11 +87,11 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         PartyActorIdentity actor, CreateCustomerRequest request, string normalized, CancellationToken ct)
     {
         if (request.RequestedCustomerId == Guid.Empty)
-            throw new PartyValidationException("RequestedCustomerId must be null or a valid identifier.");
+            throw new PartyValidationException("La identificación del cliente solicitado debe estar vacía o ser válida.");
         if (request.RequestedPrimarySiteId == Guid.Empty)
-            throw new PartyValidationException("RequestedPrimarySiteId must be null or a valid identifier.");
+            throw new PartyValidationException("La identificación de la sede principal solicitada debe estar vacía o ser válida.");
         if (!actor.IsDevice && (request.RequestedCustomerId is not null || request.RequestedPrimarySiteId is not null))
-            throw new PartyForbiddenException("Only an enrolled POS device can reserve customer identifiers.");
+            throw new PartyForbiddenException("Solo un punto de venta vinculado puede reservar identificaciones de clientes.");
         var customerId = actor.IsDevice && request.RequestedCustomerId is { } requestedCustomerId
             ? requestedCustomerId
             : ids.NewId();
@@ -123,7 +123,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     {
         Require(actor, PartyPermissionCodes.CustomerRead);
         if (page < 1 || request.PageSize is < 1 or > 200)
-            throw new PartyValidationException("Page and PageSize are outside the allowed range.");
+            throw new PartyValidationException("La página o la cantidad de registros supera el rango permitido.");
         return store.PageCustomersAsync(actor.TenantId, actor.BusinessId, page, request, ct);
     }
 
@@ -141,7 +141,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     {
         Require(actor, PartyPermissionCodes.ManageSites);
         if (customerId == Guid.Empty || siteId == Guid.Empty || string.IsNullOrWhiteSpace(request.RowVersion))
-            throw new PartyValidationException("Customer, site and row version are required.");
+            throw new PartyValidationException("Se requiere un cliente, una sede y una versión válidos.");
         ValidateSite(request.Site);
         return store.UpdateSiteAsync(actor, customerId, siteId, request, time.GetUtcNow(), ct);
     }
@@ -150,7 +150,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         PartyActorIdentity actor, Guid partyId, CancellationToken ct)
     {
         Require(actor, PartyPermissionCodes.ManageUserAccounts);
-        if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
+        if (partyId == Guid.Empty) throw new PartyValidationException("Se requiere un tercero válido.");
         return store.GetUserAccountAsync(actor.TenantId, partyId, ct);
     }
 
@@ -159,7 +159,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     {
         Require(actor, PartyPermissionCodes.ManageUserAccounts);
         if (partyId == Guid.Empty || request.UserId == Guid.Empty)
-            throw new PartyValidationException("PartyId and UserId are required.");
+            throw new PartyValidationException("Se requiere un tercero y un usuario válidos.");
         return store.LinkUserAccountAsync(
             actor.TenantId, actor.BusinessId, partyId, request.UserId, actor.ActorId, time.GetUtcNow(), ct);
     }
@@ -168,36 +168,36 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         PartyActorIdentity actor, Guid partyId, CancellationToken ct)
     {
         Require(actor, PartyPermissionCodes.ManageUserAccounts);
-        if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
+        if (partyId == Guid.Empty) throw new PartyValidationException("Se requiere un tercero válido.");
         return store.UnlinkUserAccountAsync(actor.TenantId, partyId, time.GetUtcNow(), ct);
     }
 
     private static void ValidateParty(PartyInput party)
     {
         if (party.IdentificationCountryId == Guid.Empty)
-            throw new PartyValidationException("Identification country is required.");
+            throw new PartyValidationException("Selecciona el país de la identificación.");
         if (party.PartyType is not PartyTypes.NaturalPerson and not PartyTypes.Organization)
-            throw new PartyValidationException("Party type is invalid.");
-        Translate(() => PartyValidation.RequireText(party.DisplayName, "DisplayName", 200));
+            throw new PartyValidationException("El tipo de tercero no es válido.");
+        Translate(() => PartyValidation.RequireText(party.DisplayName, "Nombre del tercero", 200));
         if (party.PartyType == PartyTypes.Organization && string.IsNullOrWhiteSpace(party.LegalName))
-            throw new PartyValidationException("Legal name is required for an organization.");
+            throw new PartyValidationException("La razón social es obligatoria para una organización.");
     }
 
     private static void ValidateSite(PartySiteInput site)
     {
         if (site.CountryId == Guid.Empty || site.AdministrativeDivisionId == Guid.Empty || site.CityId == Guid.Empty)
-            throw new PartyValidationException("Country, administrative division and city are required.");
-        Translate(() => PartyValidation.NormalizeCode(site.Code, "SiteCode", 32));
-        Translate(() => PartyValidation.RequireText(site.Name, "SiteName", 160));
-        Translate(() => PartyValidation.RequireText(site.AddressLine, "AddressLine", 300));
+            throw new PartyValidationException("Selecciona país, departamento o división administrativa y ciudad.");
+        Translate(() => PartyValidation.NormalizeCode(site.Code, "Código de la sede", 32));
+        Translate(() => PartyValidation.RequireText(site.Name, "Nombre de la sede", 160));
+        Translate(() => PartyValidation.RequireText(site.AddressLine, "Dirección", 300));
         if ((site.Latitude is null) != (site.Longitude is null))
-            throw new PartyValidationException("Latitude and longitude must be provided together.");
+            throw new PartyValidationException("La latitud y la longitud deben indicarse juntas.");
         if (site.Latitude is < -90 or > 90 || site.Longitude is < -180 or > 180)
-            throw new PartyValidationException("The site coordinates are outside the valid range.");
+            throw new PartyValidationException("Las coordenadas de la sede están fuera del rango válido.");
         if (site.GoogleMapsUrl?.Length > 1000 || site.GooglePlaceId?.Length > 255)
-            throw new PartyValidationException("The Google Maps location is too long.");
+            throw new PartyValidationException("La ubicación de Google Maps supera la longitud permitida.");
         if (site.Neighborhood?.Length > 120)
-            throw new PartyValidationException("Neighborhood cannot exceed 120 characters.");
+            throw new PartyValidationException("El barrio admite máximo 120 caracteres.");
     }
 
     private static void Translate(Action action)
@@ -209,7 +209,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
     internal static void Require(PartyActorIdentity actor, string permission)
     {
         if (!actor.Permissions.Contains(permission))
-            throw new PartyForbiddenException($"Permission '{permission}' is required.");
+            throw new PartyForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 
     internal static void RequireUserOrEnrolledDevice(

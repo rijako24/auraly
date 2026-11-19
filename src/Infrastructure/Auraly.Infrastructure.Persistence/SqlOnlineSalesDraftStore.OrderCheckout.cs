@@ -9,6 +9,7 @@ using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
+using PaymentTransactionStatus = Auraly.Platform.Domain.Enums.PaymentTransactionStatus;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -19,13 +20,13 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid? CustomerId, Guid? CustomerPartySiteId,
         IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines,
         IReadOnlyList<AppliedInvoiceCharge>? Charges,
-        Guid? SourceOrderId, Guid? TableId)
+        Guid? SourceOrderId, Guid? TableId, bool PaymentAlreadyConfirmed = false)
     {
         public static CapturedCheckoutSource FromOrder(
             OnlineSalesOrderCheckoutSource source) => new(
                 source.BusinessId, source.WarehouseId, source.WorkSessionId,
                 source.CustomerId, source.CustomerPartySiteId, source.Lines,
-                source.Charges, source.OrderId, null);
+                source.Charges, source.OrderId, null, source.PaymentAlreadyConfirmed);
 
         public static CapturedCheckoutSource FromRestaurant(
             OnlineSalesRestaurantCheckoutSource source) => new(
@@ -55,7 +56,7 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON sessionRow.WorkSessionId=@WorkSessionId
              AND sessionRow.BusinessId=orderRow.BusinessId
              AND sessionRow.UserId=@UserId AND sessionRow.TenantId=@TenantId
-             AND sessionRow.Status=N'Open'
+             AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
             JOIN dbo.FiscalSeries series
               ON series.BusinessId=orderRow.BusinessId AND series.DeviceId IS NULL
              AND series.EmitterKind=N'Server'
@@ -137,11 +138,14 @@ public sealed partial class SqlOnlineSalesDraftStore
             return replay;
         }
 
-        await DemandCurrentOrderSourceAsync(connection, transaction, user, source, ct);
+        var confirmedPayment=await DemandCurrentOrderSourceAsync(connection, transaction, user, source, ct);
         var upload = await BuildCapturedSaleUploadAsync(
             connection, transaction, user, CapturedCheckoutSource.FromOrder(source),
             request, fiscalMaterial,
             settlement, ct);
+        if(confirmedPayment is {} paid && (upload.Payments.Sum(payment=>payment.CollectedAmount)!=paid.AmountInCents/100m ||
+            source.Lines.Any(line=>!string.Equals(line.CurrencyCode,paid.Currency,StringComparison.OrdinalIgnoreCase))))
+            throw new OnlineSalesDraftValidationException("El pago confirmado no coincide con el importe y la moneda de esta factura. Revisa el cobro y los valores antes de emitirla.");
         var now = settlement.Context.OccurredAt;
 
         await ExecuteAsync(connection, transaction, """
@@ -308,7 +312,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
                 Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
-                TableId: source.TableId);
+                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed));
         }
         else
         {
@@ -341,7 +345,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
                 Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
-                TableId: source.TableId);
+                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed));
         }
 
         if (upload.FiscalSnapshot is not null)
@@ -473,7 +477,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 user.UserName, source.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
                 request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId);
 
-    private static async Task DemandCurrentOrderSourceAsync(
+    private static async Task<(long AmountInCents,string Currency)?> DemandCurrentOrderSourceAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         OnlineSalesUserIdentity user,
@@ -482,11 +486,14 @@ public sealed partial class SqlOnlineSalesDraftStore
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        command.Parameters.AddWithValue("@ConfirmedPaymentStatus",(int)PaymentTransactionStatus.Confirmed);
         command.CommandText = """
             SELECT orderRow.Status,orderRow.CustomerConfirmed,
                    COALESCE(orderRow.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(orderRow.CustomAttributesJson,'$.WarehouseId'))),
                    orderRow.CustomerId,orderRow.PartySiteId,orderRow.RowVersion,
-                   CASE WHEN link.OrderId IS NULL THEN 0 ELSE 1 END
+                   CASE WHEN link.OrderId IS NULL THEN 0 ELSE 1 END,
+                   CONVERT(bit,CASE WHEN payment.Status=@ConfirmedPaymentStatus THEN 1 ELSE 0 END),payment.AmountInCents,payment.Currency,
+                   CONVERT(bit,CASE WHEN orderRow.PaymentTransactionId IS NOT NULL AND payment.PaymentTransactionId IS NULL THEN 1 ELSE 0 END)
             FROM dbo.Orders orderRow WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses business
               ON business.BusinessId=orderRow.BusinessId
@@ -495,8 +502,10 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON sessionRow.WorkSessionId=@WorkSessionId
              AND sessionRow.BusinessId=orderRow.BusinessId
              AND sessionRow.UserId=@UserId AND sessionRow.TenantId=@TenantId
-             AND sessionRow.Status=N'Open'
+             AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=orderRow.OrderId
+            LEFT JOIN dbo.PaymentTransactions payment ON payment.PaymentTransactionId=orderRow.PaymentTransactionId
+              AND payment.BusinessId=orderRow.BusinessId
             WHERE orderRow.OrderId=@OrderId AND orderRow.BusinessId=@BusinessId;
             """;
         command.Parameters.AddRange([
@@ -513,14 +522,19 @@ public sealed partial class SqlOnlineSalesDraftStore
         var storedCustomer = reader.IsDBNull(3) ? (Guid?)null : reader.GetGuid(3);
         var storedSite = reader.IsDBNull(4) ? (Guid?)null : reader.GetGuid(4);
         var version = (byte[])reader.GetValue(5);
+        if (reader.GetBoolean(10))
+            throw new OnlineSalesDraftConcurrencyException(
+                "El pago vinculado al pedido no pertenece a esta sede o ya no está disponible.");
         if (!reader.GetBoolean(1) || status is not (2 or 4 or 5) ||
             reader.GetInt32(6) != 0 || storedWarehouse != source.WarehouseId ||
-            storedCustomer != source.CustomerId || storedSite != source.CustomerPartySiteId)
+            storedCustomer != source.CustomerId || storedSite != source.CustomerPartySiteId ||
+            reader.GetBoolean(7)!=source.PaymentAlreadyConfirmed)
             throw new OnlineSalesDraftConcurrencyException(
                 "El pedido ya no está disponible o cambió antes de facturarse.");
         if (!version.AsSpan().SequenceEqual(source.SnapshotVersion))
             throw new OnlineSalesDraftConcurrencyException(
                 "El pedido fue editado antes de facturarse. Actualiza la lista e inténtalo nuevamente.");
+        return source.PaymentAlreadyConfirmed?(reader.GetInt64(8),reader.GetString(9)):null;
     }
 
     private static async Task<PreparedOnlineOrderCheckout?> ReadOrderCheckoutReceiptAsync(

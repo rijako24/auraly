@@ -130,7 +130,7 @@ desmarcarse antes de emitir; esta preferencia sólo omite la vista previa o la
 impresora física y nunca cambia checkout, numeración, cartera, inventario ni el
 envío fiscal.
 
-La vista ofrece únicamente `Efectivo` y `Crédito`. `Efectivo` entra directamente al lote. Para `Crédito`, el mismo `POST /api/commerce/v1/orders/invoice` registra primero el recibo idempotente y ejecuta una validación agrupada de todos los clientes y del valor acumulado de sus pedidos; es una sola consulta SQL para la selección completa. Si un cliente no tiene crédito habilitado o el valor agregado supera su cupo disponible, la respuesta identifica los clientes rechazados y el recibo queda finalizado para que un reintento devuelva exactamente la misma decisión, sin repetir lecturas. No crea borrador, liberación de inventario, factura ni cartera. Si todos cumplen, los pedidos se emiten uno por uno con idempotencia independiente.
+La vista distingue `De contado` y `Crédito`. `De contado` exige una forma monetaria activa del catálogo del tenant, habilitada para ventas; el filtro excluye el tipo técnico `Credit` antes de paginar, tanto en SQL Server como en el catálogo SQLite de la instalación. Para `Crédito`, el mismo `POST /api/commerce/v1/orders/invoice` registra primero el recibo idempotente y ejecuta una validación agrupada de todos los clientes y del valor acumulado de sus pedidos; es una sola consulta SQL para la selección completa. Si un cliente no tiene crédito habilitado o el valor agregado supera su cupo disponible, la respuesta identifica los clientes rechazados y el recibo queda finalizado para que un reintento devuelva exactamente la misma decisión, sin repetir lecturas. No crea borrador, liberación de inventario, factura ni cartera. Si todos cumplen, los pedidos se emiten uno por uno con idempotencia independiente.
 
 La prevalidación masiva no reemplaza la validación transaccional. Cada pedido a crédito envía `OnlineSalesCreditTerms` al checkout de ventas existente, que vuelve a validar el saldo bajo bloqueo y genera la cuenta por cobrar por el canal canónico. No existe un writer ni una ruta de cartera específica para pedidos.
 
@@ -195,3 +195,99 @@ snapshot completo; nunca se ejecuta al buscar o abrir el selector en línea.
 Los cambios tributarios dentro del pedido continúan fuera de esta rebanada:
 pertenecen deliberadamente a la factura y deben entrar por el motor fiscal
 canónico, no como campos o contratos paralelos en pedidos.
+
+### Evidencia del pago de contado (2026-11-17)
+
+Seleccionar una forma de tarjeta débito o crédito abre la captura compartida con
+pagos de ventas y cartera: franquicia del catálogo vigente y número de aprobación.
+Transferencia abre esa misma superficie de soporte para referencia y nota opcional;
+la cuenta bancaria proviene de la forma seleccionada. Efectivo no abre un modal.
+Guardar o cancelar datos sólo modifica el borrador de la vista: no crea pagos,
+partidas ni facturas. Cancelar sin completar exige capturar los datos antes de emitir.
+`Datos del pago` permite revisar el soporte sin cambiar la forma. Cambiar de forma
+elimina el soporte anterior; crédito a plazo no envía un tender monetario.
+
+`OrdersWorkspace` sirve dashboard y ambas vistas del POS. Transmite el tipo real,
+la identidad nativa y el soporte a `PosClient.invoiceOrders`; online y Edge envían
+el mismo `InvoiceOrdersRequest`. `OrderBatchService` entrega la evidencia a
+`OnlineSalesPayment` y el checkout canónico conserva la validación y persistencia.
+El pedido previamente confirmado como pagado conserva su origen y no recibe los
+datos de tarjeta seleccionados para el lote. Esta condición preexistente corresponde
+al checkout conversacional: `PrepareCommerceCheckoutOperation` vincula un
+`PaymentTransaction`, `OrderPaidCheckoutFulfillmentHandler` confirma el pedido y
+`SqlOrderStore` consulta el estado de esa transacción. No significa que la captura
+operativa de pedidos cobre al cliente ni autoriza añadirle un paso de pago. En el
+flujo operativo de despacho el pedido no recibe dinero: el transportador registra
+el recaudo al entregar. No hay motor ni writer nuevo.
+
+Al emitir desde el lote, `PaymentAlreadyConfirmed` transporta ese hecho existente
+desde la lectura autoritativa del pedido hasta la política compartida de
+atribución. El store lo contrasta con la transacción de pago de la misma sede en
+su consulta y transacción habituales. Si existe un vínculo de pago pero la
+transacción no pertenece a esa sede, se rechaza la emisión; no se interpreta la
+inconsistencia como un pedido sin cobro. Un pago ya confirmado conserva `Session`;
+un pedido operativo sin pago conserva `Dispatch`. No se copian cuentas ni se
+crea un segundo cobro, y los documentos ya preparados se repiten con su fuente
+inmutable.
+
+Decisión final del usuario del 18 de noviembre: conservar la recuperación y
+facturación habituales de Pedidos, tanto desde POS como desde Pedidos. Se retiró
+la propuesta de bloquear la recuperación por un pago registrado en el bot y su
+implementación provisional, antes de publicar. `OrderRecoveryService` y la
+importación recuperaron su comportamiento anterior; no se cambia la integración
+del bot ni se eliminan vínculos históricos ni se altera su tratamiento económico
+como parte de esta decisión. No se añade otro lector, estado o ruta de emisión.
+
+La revisión del productor detectó que el adaptador de Pedidos interpretaba `2`
+como confirmado y `3` como fallido. La autoridad es
+`Auraly.Platform.Domain.Enums.PaymentTransactionStatus`, persistido por EF como
+entero: confirmado es `1`, fallido `2` y reembolsado `3`, desde su versión inicial.
+La lectura del detalle/lote usa ese enum, y los filtros de pendiente y la
+validación de crédito reciben su valor canónico como parámetro. No se mantienen
+otra numeración ni condiciones por versión, tenant o fecha. Un estado desconocido
+falla explícitamente, no se convierte silenciosamente en un pedido impagado.
+Esta corrección de lectura no renumera transacciones ni modifica documentos,
+pagos, inventario, cartera o asientos históricos. Los documentos emitidos antes
+del cambio conservan sus fuentes; una revisión histórica debe identificar casos
+concretos antes de proponer cualquier ajuste, sin reintentos ni reparaciones
+automáticas.
+
+Reconocer el estado confirmado tampoco autoriza inventar el importe recibido.
+La misma consulta transaccional devuelve importe en centavos y moneda del pago
+de la sede. Antes de guardar la emisión se contrastan con los medios preparados
+y la moneda de las líneas. Una diferencia rechaza la emisión sin abrir cartera,
+registrar un ingreso mayor, convertir moneda ni crear un anticipo. Requiere
+revisar el cobro o los valores pactados, sin un proceso económico nuevo.
+
+Evidencia del 18 de noviembre en `work/release-preparation-current`:
+`confirmed-order-amount-verified.trx` aprueba doce casos de estado canónico,
+aislamiento por sede, cuatro formas configuradas, venta a crédito, repetición
+sin duplicados y rechazo de un pago insuficiente o de otra moneda. Los dos
+rechazos conservan el pago original y no crean emisión, asiento, movimiento de
+inventario ni movimiento de dinero. El build de backend terminó sin errores ni
+advertencias. La lectura de estado, importe y moneda amplía la consulta de
+origen existente: no agrega viajes SQL ni consultas por línea. Este resultado
+no certifica la recuperación editable de un pedido con pago confirmado ni el
+despliegue de este corte.
+
+La auditoría posterior reforzó el rechazo de un vínculo de pago ajeno a la sede.
+`confirmed-order-ownership-verified.trx` aprueba siete casos focalizados: los
+cinco estados/alcances del pago, la emisión independiente de dos pedidos con
+reintento y el total cerrado de una cantidad fraccionaria. El vínculo ajeno se
+rechaza sin emisión ni efectos financieros o de inventario. El nuevo control
+usa el mismo resultset; el build conservó cero errores y advertencias. Esta
+ejecución se solapa con la anterior y no se suma como casos distintos.
+
+Las propiedades opcionales `CardFranchiseCode` y `ApprovalNumber` integran la huella
+sólo cuando están presentes. Los comandos históricos sin esos campos conservan
+su huella; cambiar la aprobación bajo la misma clave es un conflicto y repetir
+un comando terminado devuelve su resultado sin nuevos efectos.
+
+Presupuesto: una página de diez formas por apertura/búsqueda/página (conteo y
+filtrado dentro del mismo comando); una consulta de franquicias al abrir tarjeta,
+con caché por tenant/sede de cinco minutos. No hay consulta por pedido, polling
+ni escritura al guardar el modal. Se mantiene el límite de 50 facturas con
+transacciones independientes y la frontera existente entre emisión e impresión.
+API, Edge y administración deben publicarse con el contrato ampliado antes de
+habilitar esta captura. El rollback usa binarios compatibles con las solicitudes
+y recibos ya aceptados; no borra soportes ni pagos para volver atrás.

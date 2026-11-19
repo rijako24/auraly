@@ -35,6 +35,7 @@ export function PagedEntitySelect<T>({
   emptyMessage = "No hay resultados.",
   disabled = false,
   preload = false,
+  autoSelectSingle = false,
   openOnTyping = false,
   pageSize = 10,
   className,
@@ -58,6 +59,7 @@ export function PagedEntitySelect<T>({
   emptyMessage?: string;
   disabled?: boolean;
   preload?: boolean;
+  autoSelectSingle?: boolean;
   openOnTyping?: boolean;
   pageSize?: number;
   className?: string;
@@ -87,6 +89,12 @@ export function PagedEntitySelect<T>({
     staleTime: 5 * 60 * 1000,
   });
   const loading = query.isLoading || (openOnTyping && waitingForSearch);
+  useEffect(() => {
+    const firstPage = query.data?.pages[0];
+    if (!autoSelectSingle || disabled || value || search.trim() || debouncedSearch || !query.isSuccess || firstPage?.totalCount !== 1 || firstPage.items.length !== 1) return;
+    const item = firstPage.items[0], option = getOption(item);
+    if (option) onChange(option.value, option, item);
+  }, [autoSelectSingle, disabled, value, search, debouncedSearch, query.isSuccess, query.data, getOption, onChange]);
   const entries = useMemo(() => {
     const values = new Map<string, { option: PagedEntityOption; item?: T }>();
     for (const item of query.data?.pages.flatMap(page => page.items) ?? []) {
@@ -121,7 +129,7 @@ export function PagedEntitySelect<T>({
           setOpen(true);
         }}
         className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", wrapLabels && "h-auto min-h-9 whitespace-normal", className)}>
-        <span className={cn("min-w-0 text-left", wrapLabels ? "flex-1 whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{values ? (values.length ? `${values.length} seleccionados` : placeholder) : selected?.label ?? placeholder}</span>
+        <span className={cn("min-w-0 text-left", wrapLabels ? "flex-1 whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{values ? (values.length ? `${values.length} ${values.length===1?"seleccionado":"seleccionados"}` : placeholder) : selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50"/>
       </Button>
     </PopoverTrigger>

@@ -16,14 +16,14 @@ public static class PaymentMethodsApi
             catch (CatalogValidationException error) { return Results.Problem(error.Message, statusCode: 400); }
         });
         group.MapPut("/{paymentMethodId:guid}", async (HttpContext context, Guid paymentMethodId,
-            SavePaymentMethodRequest request, int? page,int? pageSize,string? search,bool? isActive,string? usage,string? methodCode,
+            SavePaymentMethodRequest request, int? page,int? pageSize,string? search,bool? isActive,string? usage,string? methodCode,string? excludeMethodCode,
             PaymentMethodService service, CancellationToken cancellationToken) =>
         {
             if (paymentMethodId != request.PaymentMethodId) return Results.Problem("La identidad no coincide.", statusCode: 400);
             try
             {
                 var user = context.User.ToCatalogUserIdentity();
-                var query=service.ValidateQuery(user,new(page??1,pageSize??50,search,isActive,usage,MethodCode:methodCode));
+                var query=service.ValidateQuery(user,new(page??1,pageSize??50,search,isActive,usage,MethodCode:methodCode,ExcludeMethodCode:excludeMethodCode));
                 var method = await service.SaveAsync(user, request, cancellationToken);
                 // Return the canonical filtered page: changing order, activation or
                 // membership can move records across page boundaries.

@@ -226,7 +226,7 @@ public sealed class OrderService(
         ArgumentNullException.ThrowIfNull(actor);
         if (!actor.Permissions.Contains(permission))
             throw new OrderForbiddenException(
-                $"Permission '{permission}' is required.");
+                $"No tienes permiso para realizar esta acción.");
     }
 
     private static void ValidateText(string? value, int maximum)

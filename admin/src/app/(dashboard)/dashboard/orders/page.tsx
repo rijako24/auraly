@@ -44,15 +44,14 @@ export default function OrdersPage() {
   const [printerOpen, setPrinterOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<CommerceOrderDetail | null>(null);
   const [ordersRevision, setOrdersRevision] = useState(0);
-  const [printerClient] = useState(() => {
-    const token = readEdgeTokenFromLaunch();
-    return token ? new PosEdgeClient(token, readEdgeUserSession()) : null;
-  });
-  const [preparedPrintBranding, setPreparedPrintBranding] = useState<boolean | null>(
-    printerClient ? null : false,
-  );
+  const [printerClient, setPrinterClient] = useState<PosEdgeClient | null>();
   useEffect(() => {
-    if (!businessId || !userId) return;
+    const token = readEdgeTokenFromLaunch();
+    setPrinterClient(token ? new PosEdgeClient(token, readEdgeUserSession()) : null);
+  }, []);
+  const [preparedPrintBranding, setPreparedPrintBranding] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!businessId || !userId || printerClient === undefined) return;
     let active = true;
     setPreparedPrintBranding(printerClient ? null : false);
     const prepare = async () => {
@@ -183,7 +182,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user && preparedPrintBranding !== null
-            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm) => {
+            ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm, paymentDetails) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
@@ -198,15 +197,16 @@ export default function OrdersPage() {
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
                   documentType,
-                  null,
-                  null,
-                  null,
+                  paymentDetails?.paymentReference,
+                  paymentDetails?.bankAccountId,
+                  paymentDetails?.paymentNotes,
                   printAfterInvoice,
                   idempotencyKey,
                   onProgress,
                   false,
                   charges,
                   paymentForm,
+                  paymentDetails,
                 );
                 return {
                   completedCount: response.completedCount,
@@ -234,7 +234,7 @@ export default function OrdersPage() {
         onConfigurePrinting={() => setPrinterOpen(true)}
       />
       {printerOpen && (
-        <PosPrinterDialog client={printerClient} onClose={() => setPrinterOpen(false)} />
+        <PosPrinterDialog client={printerClient ?? null} onClose={() => setPrinterOpen(false)} />
       )}
       {editingOrder?.customerId && editingOrder.partySiteId && (editingOrder.warehouseId || editingWorkspace?.warehouseId) && (
         <SellerOrderCaptureDialog

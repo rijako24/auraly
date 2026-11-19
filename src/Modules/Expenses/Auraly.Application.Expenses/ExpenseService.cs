@@ -2,6 +2,7 @@ using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Taxation.Application;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Dispatching;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Expenses;
 using System.Security.Cryptography;
@@ -18,6 +19,7 @@ public interface IExpenseStore
     Task<ExpenseConceptView?> GetConceptAsync(ExpenseUserIdentity user, Guid conceptId, CancellationToken ct);
     Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct, bool includeDirectories = true);
     Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive, CancellationToken ct);
+    Task<ExpenseConceptOptionPage> ConceptOptionsAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, CancellationToken ct);
     Task<ExpenseConceptView> SaveConceptAsync(ExpenseUserIdentity user, SaveExpenseConceptRequest request, CancellationToken ct);
     Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, Guid? conceptId,
         Guid? supplierId, DateOnly? from, DateOnly? to, string? status, string? payableStatus, CancellationToken ct);
@@ -38,6 +40,15 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
     public Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive,
         CancellationToken ct = default)
     { Demand(user, ExpensePermissionCodes.Read); return store.ListConceptsAsync(user, includeInactive, ct); }
+
+    public Task<ExpenseConceptOptionPage> ConceptOptionsAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, CancellationToken ct = default)
+    {
+        if (!user.Permissions.Contains(ExpensePermissionCodes.Read) && !user.Permissions.Contains(DispatchPermissionCodes.ExecuteDeliveries))
+            throw new ExpenseForbiddenException("No tienes permiso para consultar los conceptos del recorrido.");
+        if (page < 1 || pageSize is < 1 or > 50 || (long)(page-1)*pageSize > int.MaxValue)
+            throw new ExpenseValidationException("La página de conceptos no es válida.");
+        return store.ConceptOptionsAsync(user, page, pageSize, Optional(search, 120), ct);
+    }
 
     public Task<ExpenseConceptView> SaveConceptAsync(ExpenseUserIdentity user, SaveExpenseConceptRequest request,
         CancellationToken ct = default)
@@ -98,6 +109,14 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
         ConfirmExpenseRequest request, CancellationToken ct = default)
     {
         Demand(user, ExpensePermissionCodes.Create);
+        if (request.DispatchExpenseId is not null)
+        {
+            if (!user.Permissions.Contains(DispatchPermissionCodes.Settle)) throw new ExpenseForbiddenException("No tienes permiso para aprobar gastos de un despacho.");
+            if (request.DispatchExpenseId == Guid.Empty || request.DispatchId is null || request.DispatchId == Guid.Empty || request.DispatchCashPaymentMethodId is null || request.DispatchCashPaymentMethodId == Guid.Empty || request.DispatchCashPaymentMethodVersion is null or <= 0)
+                throw new ExpenseValidationException("Selecciona el gasto del despacho y la forma de efectivo de la que se pagó.");
+        }
+        else if (request.DispatchId is not null || request.DispatchCashPaymentMethodId is not null || request.DispatchCashPaymentMethodVersion is not null)
+            throw new ExpenseValidationException("La forma de efectivo del despacho requiere su reporte de gasto.");
         if (request.BusinessId != user.BusinessId) throw new ExpenseForbiddenException("El gasto pertenece a otra empresa.");
         if (request.ExpenseId == Guid.Empty || request.SupplierId == Guid.Empty ||
             (request.Lines is null && (request.ConceptId is null || request.ConceptId == Guid.Empty)))

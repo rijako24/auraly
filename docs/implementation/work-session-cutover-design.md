@@ -105,3 +105,25 @@ DacFx completa el modelo sin desactivar la protección.
   propias dependencias. Si una instalación anterior dejó un documento físicamente
   después de su cierre, el ordenador restablece el orden semántico documento-cierre.
 - Online y offline comparten el flujo comercial, fiscal y de procesamiento documental.
+
+
+## Recaudo de pedidos y despacho (acuerdo 18 de noviembre, en validación)
+
+La sesión de emisión de la venta permanece en `SalesDocuments.WorkSessionId`.
+La atribución monetaria es una decisión persistida al aceptar la venta:
+`CollectionMode=Session` para la venta directa y `Dispatch` para una nueva venta
+originada en un pedido, incluyendo su recuperación desde POS. No se calcula por
+la incorporación posterior a un despacho. El default Session conserva los
+históricos y los comandos antiguos ya aceptados; la migración no los reclasifica.
+El handler valida el pedido canónico y su vínculo `OrderInvoiceLinks` igual que
+antes. Los asientos de venta e inventario conservan sus motores, cuentas y efectos.
+
+El aplicador financiero no escribe un SalePayment en la sesión del emisor para
+CollectionMode=Dispatch. Los totales y verificaciones de dinero del cierre normal
+usan esa misma decisión, incluso antes de completar un documento aceptado. Las
+cantidades de documentos y ventas a crédito conservan su dimensión operativa.
+El dinero efectivamente entregado se consulta desde DispatchDeliveryPayments por
+el vínculo único WorkSessions.DispatchId, sin duplicarlo en otra tabla de dinero.
+La sesión de recaudo del despacho es independiente de la sesión normal del
+transportador. La conciliación administrativa y devoluciones deben certificarse
+junto a esta atribución antes de desplegar.

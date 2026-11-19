@@ -13,10 +13,21 @@ public sealed partial class SqlAccountingPostingProcessor
     private static async Task<SourceEnvelope?> ResolveConfiguredPaymentMethodsAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source, DateTimeOffset processedAt, CancellationToken token)
     {
+        if (source.DocumentType == Auraly.Contracts.Dispatching.DispatchAccountingDocumentTypes.CashDifference)
+            return await ResolveDispatchCollectionsAsync(connection, transaction, source, processedAt, token);
+        if (source.DocumentType == Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.ClosureReconciliation)
+            return await ResolveClosurePaymentMethodsAsync(connection, transaction, source, processedAt, token);
         if (source.DocumentType == AccountingManualDocumentTypes.ManualVoucher)
             return await ResolveManualPaymentMethodsAsync(connection, transaction, source, processedAt, token);
         if (source.DocumentType is "RestaurantTip" or "RestaurantTipSettlement")
             return await ResolveRestaurantTipPaymentMethodAsync(connection, transaction, source, processedAt, token);
+        if (source.DocumentType == Auraly.Contracts.Expenses.ExpenseDocumentTypes.Expense)
+        {
+            var expense = ReadExpenseSource(source);
+            return expense.Payment?.PaymentMethodId is {} formId
+                ? await ResolveSinglePaymentMethodAsync(connection,transaction,source,formId,expense.Payment.MethodCode,true,processedAt,token)
+                : source;
+        }
         var target = source.DocumentType switch
         {
             "SalesInvoice" or "SalesReceipt" or "ServiceInvoice" =>
@@ -103,6 +114,13 @@ public sealed partial class SqlAccountingPostingProcessor
         var formId = isSettlement ? settlement?.PaymentMethodId : tip?.Payment.PaymentMethodId;
         if (formId is not { } id) return source;
         var methodCode = isSettlement ? settlement!.PaymentMethodCode : tip!.Payment.MethodCode;
+        return await ResolveSinglePaymentMethodAsync(connection,transaction,source,id,methodCode,isSettlement,processedAt,token);
+    }
+
+    private static async Task<SourceEnvelope?> ResolveSinglePaymentMethodAsync(SqlConnection connection,
+        SqlTransaction transaction,SourceEnvelope source,Guid id,string methodCode,bool isSupplierPayment,
+        DateTimeOffset processedAt,CancellationToken token)
+    {
         await using var command = new SqlCommand("""
             DECLARE @Resolved table(Version int,FormCode nvarchar(64),FormName nvarchar(160),
               AccountId uniqueidentifier PRIMARY KEY,AccountCode nvarchar(32),AccountName nvarchar(200),BankAccountId uniqueidentifier);
@@ -124,7 +142,7 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@Tenant", source.TenantId);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@Method", methodCode);
-        command.Parameters.AddWithValue("@Settlement", isSettlement);
+        command.Parameters.AddWithValue("@Settlement", isSupplierPayment);
         command.Parameters.AddWithValue("@Now", processedAt);
         await using var reader = await command.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token)) return null;

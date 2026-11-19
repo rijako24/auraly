@@ -938,7 +938,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
              AND s.TenantId=@TenantId
              AND s.UserId=@UserId
              AND (@DeviceId IS NULL OR s.DeviceId=@DeviceId)
-             AND s.Status=N'Open'
+             AND s.Status=N'Open' AND s.Kind=N'Normal'
             WHERE b.TenantId=@TenantId
               AND b.BusinessId=@BusinessId
               AND b.IsActive=1;

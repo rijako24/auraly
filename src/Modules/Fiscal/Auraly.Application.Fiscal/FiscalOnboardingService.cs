@@ -424,7 +424,7 @@ public sealed class FiscalOnboardingService(
     {
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(permission))
-            throw new FiscalConfigurationForbiddenException($"Permission '{permission}' is required.");
+            throw new FiscalConfigurationForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 
     private sealed record ValidatedCertificate(

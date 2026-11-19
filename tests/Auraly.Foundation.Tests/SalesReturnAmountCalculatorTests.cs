@@ -5,6 +5,18 @@ namespace Auraly.Foundation.Tests;
 public sealed class SalesReturnAmountCalculatorTests
 {
     [Fact]
+    public void Uncollected_reversal_preserves_tender_order_and_exact_remaining_budget()
+    {
+        var result = SalesReturnAmountCalculator.AllocateUncollectedReversal(
+            new Dictionary<int,decimal>{{2,20m},{1,3.3333m},{3,0m}},10m);
+        Assert.Equal(3.3333m,result[1]);
+        Assert.Equal(6.6667m,result[2]);
+        Assert.Equal(10m,result.Values.Sum());
+        Assert.Throws<ArgumentException>(() => SalesReturnAmountCalculator.AllocateUncollectedReversal(
+            new Dictionary<int,decimal>{{1,2m}},2.0001m));
+    }
+
+    [Fact]
     public void Final_partial_return_uses_the_exact_original_remainder()
     {
         var result = SalesReturnAmountCalculator.Calculate(

@@ -126,7 +126,7 @@ public sealed class ReceivePosSaleService(
                 SaleSourceModes.PosEdge,
                 StringComparison.Ordinal))
             throw new PosSaleInvalidException(
-                "The POS upload endpoint only accepts PosEdge documents.");
+                "Esta recepción de ventas solo admite documentos de una caja instalada.");
         if (HasRestaurantMetadata(request))
             throw new PosSaleInvalidException(
                 "Los datos de mesa solo pueden proceder de una cuenta preparada en el servidor.");
@@ -194,7 +194,7 @@ public sealed class ReceivePosSaleService(
         catch (Exception exception) when (exception is ArgumentException or System.Text.Json.JsonException)
         {
             throw new PosSaleInvalidException(
-                $"The stored fiscal snapshot cannot be recovered: {exception.Message}");
+                $"No se puede recuperar la información fiscal guardada: {exception.Message}");
         }
 
         if (request.BusinessId != businessId || request.DocumentId != documentId)
@@ -268,9 +268,9 @@ public sealed class ReceivePosSaleService(
             SaleSourceModes.PosEdge => true,
             SaleSourceModes.Online when request.DeviceId == Guid.Empty => false,
             SaleSourceModes.Online => throw new PosSaleInvalidException(
-                "An online fiscal recovery cannot be associated with a POS device."),
+                "Una recuperación fiscal en línea no puede asociarse a un dispositivo de caja."),
             _ => throw new PosSaleInvalidException(
-                $"Unsupported sale source mode '{request.SourceMode}'.")
+                $"El origen de la venta no está permitido.")
         };
 
     private async Task<PosSaleUploadResponse> ReceiveCoreAsync(
@@ -367,7 +367,7 @@ public sealed class ReceivePosSaleService(
     {
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128)
             throw new PosSaleInvalidException(
-                "A valid Idempotency-Key header is required.");
+                "Se requiere una clave válida para identificar la operación.");
     }
 
     private static bool HasRestaurantMetadata(PosSaleUploadRequest request) =>
@@ -426,19 +426,19 @@ public sealed class ReceivePosSaleService(
                 request.CommercialSnapshot.UntaxedAmount +
                 request.CommercialSnapshot.TaxAmount + rounding)
             throw new PosSaleInvalidException(
-                "The immutable adjustment-to-peso totals do not reconcile.");
+                "Los totales del ajuste al peso no concilian con el documento original.");
         if (request.Lines.Any(line =>
                 line.PromotionDiscountAmount < 0 ||
                 line.PromotionDiscountAmount > line.DiscountAmount))
             throw new PosSaleInvalidException(
-                "The promotion discount snapshot must be a non-negative part of the line discount.");
+                "El descuento de promoción no puede ser negativo ni superar el descuento de la línea.");
         if (withholding is not null &&
             (withholding.GrossAmount != request.CommercialSnapshot.PayableAmount -
                  request.CommercialSnapshot.PayableRoundingAmount ||
              withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
              withholding.NetAmount + withholding.WithholdingTotal != withholding.GrossAmount))
             throw new PosSaleInvalidException(
-                "The immutable sale withholding snapshot does not reconcile.");
+                "Las retenciones no concilian con la venta original.");
         if (!PaymentMethodEvidence.IsValidSale(request.Payments.Select(payment => new PaymentMethodEvidence(
                 payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
                 payment.PaymentMethodName, payment.AccountId)), request.Credit is { } financed ?
@@ -464,18 +464,18 @@ public sealed class ReceivePosSaleService(
                 (payment.MethodCode != "Transfer" && (payment.BankAccountId is not null || payment.Notes is not null))) ||
             paid + credit != request.CommercialSnapshot.NetPayableAmount)
             throw new PosSaleInvalidException(
-                "Actual payments plus financed balance must equal the net sale settlement.");
+                "La suma de los pagos y el saldo financiado debe coincidir con el total neto de la venta.");
         if (request.Credit is null) return;
         if (request.Credit.CustomerId == Guid.Empty || request.CustomerId != request.Credit.CustomerId)
             throw new PosSaleInvalidException(
                 "A credit sale requires the selected customer as debtor.");
         if (request.Credit.Amount <= 0)
-            throw new PosSaleInvalidException("The financed balance is invalid.");
+            throw new PosSaleInvalidException("El saldo financiado no es válido.");
         if (request.FiscalSnapshot is not null &&
             (request.UblSnapshot is null || request.UblSnapshot.PaymentFormCode != "2" ||
              request.UblSnapshot.DueDate != DateOnly.FromDateTime(request.Credit.DueDate.Date)))
             throw new PosSaleInvalidException(
-                "The immutable UBL snapshot must identify the credit terms.");
+                "El documento fiscal debe identificar las condiciones del crédito.");
     }
 
     private static void ValidateDocumentNumber(PosSaleUploadRequest request)
@@ -487,7 +487,7 @@ public sealed class ReceivePosSaleService(
                 number.DocumentType, request.FiscalSnapshot.DocumentType,
                 StringComparison.Ordinal)))
             throw new PosSaleInvalidException(
-                "The Auraly document type and fiscal document type must match.");
+                "El tipo de documento de Auraly debe coincidir con el tipo de documento fiscal.");
 
         AuralyDocumentNumberAssignment expected;
         try
@@ -510,7 +510,7 @@ public sealed class ReceivePosSaleService(
                 number.FullNumber,
                 StringComparison.Ordinal))
             throw new PosSaleInvalidException(
-                "The Auraly document number does not match its components.");
+                "El número de documento de Auraly no coincide con su prefijo y consecutivo.");
     }
 
     private static void EnsureSameRequest(
@@ -529,7 +529,7 @@ public sealed class ReceivePosSaleService(
                 existing.PayloadHash,
                 payloadHash))
             throw new PosSaleIdempotencyConflictException(
-                "The document ID or idempotency key was already used with different content.");
+                "La identificación del documento o de la operación ya se usó con un contenido diferente.");
     }
 
     private static PosSaleUploadResponse ToResponse(

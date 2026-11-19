@@ -15,19 +15,19 @@ public sealed partial class SqlPosSaleDocumentHandler
             processing, request, cancellationToken);
         if (session is null)
             throw new InvalidOperationException(
-                "The sale references a work session that does not exist.");
+                "La venta referencia una sesión de trabajo que no existe.");
 
         if (session.UserId != request.SoldByUserId ||
             session.BusinessId != request.BusinessId)
         {
             throw new InvalidOperationException(
-                "The sale work session does not match its user or business.");
+                "La sesión de la venta no corresponde a su usuario o sede.");
         }
 
         if (!string.Equals(session.Status, "Open", StringComparison.Ordinal) &&
             !string.Equals(session.Status, "Closed", StringComparison.Ordinal))
             throw new DBConcurrencyException(
-                "The sale references an invalid historical work session.");
+                "La venta referencia una sesión histórica no válida.");
 
         var now = _timeProvider.GetUtcNow();
         if (string.Equals(session.Status, "Open", StringComparison.Ordinal))
@@ -45,7 +45,7 @@ public sealed partial class SqlPosSaleDocumentHandler
             touch.Parameters.AddWithValue("@Now", now);
             if (await touch.ExecuteNonQueryAsync(cancellationToken) != 1)
                 throw new DBConcurrencyException(
-                    "The work session changed while the sale was being processed.");
+                    "La sesión cambió mientras se procesaba la venta.");
         }
 
         await using var link = new SqlCommand("""
@@ -61,7 +61,7 @@ public sealed partial class SqlPosSaleDocumentHandler
         link.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
         if (await link.ExecuteNonQueryAsync(cancellationToken) != 1)
             throw new DBConcurrencyException(
-                "The sale could not be linked to its work session.");
+                "No fue posible vincular la venta a su sesión.");
     }
 
     private static async Task<WorkSessionState?> FindWorkSessionAsync(
@@ -74,7 +74,7 @@ public sealed partial class SqlPosSaleDocumentHandler
             FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
             WHERE WorkSessionId=@WorkSessionId
               AND TenantId=@TenantId AND UserId=@UserId
-              AND BusinessId=@BusinessId;
+              AND BusinessId=@BusinessId AND Kind=N'Normal';
             """, processing.Connection, processing.Transaction);
         command.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
         command.Parameters.AddWithValue("@TenantId", request.TenantId);

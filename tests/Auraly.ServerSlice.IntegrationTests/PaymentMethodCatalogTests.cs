@@ -200,6 +200,13 @@ public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.
         var first=(await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!;
         Assert.Single(first.Page.Items);Assert.Equal(1,first.Page.TotalCount);
         Assert.Equal(accountId,first.Method.AccountId);
+        var excluded = (await client.GetFromJsonAsync<PaymentMethodPage>(
+            $"/api/commerce/v1/payment-methods/?usage=Sales&excludeMethodCode=Cash&search={code}&pageSize=1"))!;
+        Assert.Empty(excluded.Items); Assert.Equal(0, excluded.TotalCount);
+        var included = (await client.GetFromJsonAsync<PaymentMethodPage>(
+            $"/api/commerce/v1/payment-methods/?usage=Sales&excludeMethodCode=Credit&search={code}&pageSize=1"))!;
+        Assert.Equal(first.Method.PaymentMethodId, Assert.Single(included.Items).PaymentMethodId);
+        Assert.Equal(1, included.TotalCount);
         var changed=request with {Name="Caja renombrada",RowVersion=first.Method.RowVersion};
         using var updated=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{request.PaymentMethodId}?page=1&pageSize=1",changed);
         Assert.Equal(HttpStatusCode.OK,updated.StatusCode);

@@ -268,7 +268,7 @@ después de procesar el `StockCount`.
 
 ## Seguridad y concurrencia
 
-- `inventory.read`: consultar inventarios y borradores.
+- `inventory.read`: consultar existencias y kárdex. El acceso a documentos y borradores de conteo requiere además captura, administración o confirmación de conteos.
 - `inventory.physical-counts.capture`: crear y editar borradores propios.
 - `inventory.physical-counts.manage`: crear inventarios, seleccionar borradores,
   guardar resultados y aplicar conciliaciones.

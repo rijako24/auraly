@@ -8,6 +8,26 @@ public sealed record SalesReturnAmounts(
 
 public static class SalesReturnAmountCalculator
 {
+    // A reversal of an uncollected sale cancels its logical tenders in their
+    // original order. This does not allocate money received from the customer.
+    public static IReadOnlyDictionary<int, decimal> AllocateUncollectedReversal(
+        IReadOnlyDictionary<int, decimal> availablePayments, decimal amount)
+    {
+        if (amount <= 0 || availablePayments.Any(item => item.Key <= 0 || item.Value < 0) ||
+            availablePayments.Values.Sum() < amount)
+            throw new ArgumentException("El valor supera los recaudos pendientes de la venta.");
+        var remaining = amount;
+        var result = new Dictionary<int, decimal>();
+        foreach (var payment in availablePayments.OrderBy(item => item.Key))
+        {
+            var reversed = decimal.Min(remaining, payment.Value);
+            if (reversed > 0) result.Add(payment.Key, reversed);
+            remaining -= reversed;
+            if (remaining == 0) break;
+        }
+        return result;
+    }
+
     public static decimal AllocatePaymentRounding(
         decimal originalUnrounded,
         decimal originalRounding,

@@ -3732,6 +3732,14 @@ proyecta `Businesses.TimeZone` en las consultas existentes de opciones/selecció
 y en su caché actual. Sin zona disponible no se consulta una página con los días
 del computador. No cambia la captura de pagos ni la operación sin conexión del POS.
 
+Pedidos distingue contado de financiación. Su selector monetario aplica
+`ExcludeMethodCode=Credit` antes de contar/paginar en SQL Server y SQLite.
+Débito/crédito conservan franquicia y aprobación; transferencia conserva referencia
+y banco de la forma. La captura visual es la misma de ventas y abonos, y el soporte
+recorre `InvoiceOrdersRequest` → `OnlineSalesPayment` → checkout existente.
+Cancelar o guardar el modal no acepta una fuente ni registra dinero. El detalle,
+la compatibilidad de huellas y el presupuesto están en `orders-slice-design.md`.
+
 La primera aceptación nativa registra `PaymentMethods.TypeLockedAt` dentro de la
 transacción existente. Es evidencia de uso para proteger el tipo técnico aun si
 el cobro parcial todavía no produjo factura; no crea un estado financiero ni un

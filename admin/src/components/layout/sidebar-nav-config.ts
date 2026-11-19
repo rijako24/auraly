@@ -111,7 +111,7 @@ export const navigation: NavEntry[] = [
   { name: "Recibos de caja", href: "/dashboard/cash-receipts", icon: ReceiptText, permission: "accounting.read" },
   { name: "Notas crédito de venta", href: "/dashboard/sales-returns", icon: Undo2, permission: "sales.returns.read" },
   { name: "Notas débito de venta", href: "/dashboard/sales-debit-notes", icon: ReceiptText, permission: "sales.debit-notes.read" },
-  { name: "Cierres de sesión", href: "/dashboard/cash-differences", icon: Scale, permission: "work-sessions.differences.read" },
+  { name: "Cierres de caja", href: "/dashboard/cash-differences", icon: Scale, anyPermissions: ["work-sessions.differences.read", "dispatches.settle"] },
   { name: "Suscripción", href: "/dashboard/subscription", icon: Gem, permission: "dashboard.read" },
   { name: "Pagos", href: "/dashboard/payments", icon: CreditCard, permission: "payments.read" },
   { name: "Cuentas por pagar", href: "/dashboard/payables", icon: Landmark, permission: "payables.read" },

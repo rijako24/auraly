@@ -786,6 +786,10 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         SalesReportingSqlSession session, SalesReturnDocumentPayload value,
         DateOnly localDate, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        var appliedAmount=value.EconomicResolution==ReturnEconomicResolutions.ReverseUncollected
+            ? value.ReceivableReversalAmount??0 : value.TotalAmount;
+        if (appliedAmount==0)
+            return Task.CompletedTask;
         const string sql = """
             INSERT reporting.SalesReportPaymentFacts
               (SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
@@ -797,7 +801,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
             SalesReturnDocumentTypes.SalesReturn, 1, value.TenantId, value.BusinessId,
             localDate,
             value.EconomicResolution == ReturnEconomicResolutions.Refund ? "Refund" : "CreditApplication",
-            value.RefundMethodCode ?? "CustomerCredit", -value.TotalAmount, value.DocumentNumber,
+            value.RefundMethodCode ?? "CustomerCredit", -appliedAmount, value.DocumentNumber,
             value.WorkSessionId, now, cancellationToken);
     }
 

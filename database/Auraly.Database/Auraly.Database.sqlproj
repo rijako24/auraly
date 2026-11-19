@@ -30,6 +30,9 @@
   <ItemGroup>
     <Build Include="Tables\PayrollProfiles.sql" />
     <Build Include="Schemas\WorkSessions.sql" />
+    <Build Include="StoredProcedures\WorkSessionClosureAccept.sql" />
+    <Build Include="StoredProcedures\WorkSessionDispatchEnsure.sql" />
+    <Build Include="Views\DispatchClosures.sql" />
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Functions\TenantDianQuotaSnapshot.sql" />
     <Build Include="Functions\ProductCompositionCost.sql" />
@@ -65,6 +68,7 @@
     <Build Include="Functions\BankPostingAccount.sql" />
     <Build Include="Functions\ConfiguredPostingAccount.sql" />
     <Build Include="Functions\PaymentPostingCategory.sql" />
+    <Build Include="Functions\SalePaymentPostingFacts.sql" />
     <Build Include="Functions\PaymentMethodAccountReadiness.sql" />
     <Build Include="Functions\AccountingBankReferences.sql" />
     <Build Include="StoredProcedures\AccountingBankAccountsResolve.sql" />
@@ -130,9 +134,11 @@
     <Build Include="StoredProcedures\FiscalInvoiceDeliveryRecipientGet.sql" />
     <Build Include="StoredProcedures\FiscalInvoiceDeliveryArtifactSave.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationClaimGet.sql" />
-    <Build Include="StoredProcedures\DispatchSettlementOperationClaimMark.sql" />
     <Build Include="StoredProcedures\DispatchSettlementReturnsGet.sql" />
     <Build Include="StoredProcedures\DispatchSettlementPaymentsGet.sql" />
+    <Build Include="Functions\DispatchEffectivePayments.sql" />
+    <Build Include="Functions\DispatchPaymentTotals.sql" />
+    <Build Include="Functions\DispatchSettlementDocuments.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationReschedule.sql" />
     <Build Include="StoredProcedures\DispatchSettlementCashDifferenceGet.sql" />
     <Build Include="StoredProcedures\DocumentProcessingJobByDocumentGet.sql" />

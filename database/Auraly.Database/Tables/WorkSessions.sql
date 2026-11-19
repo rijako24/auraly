@@ -9,6 +9,8 @@ CREATE TABLE [dbo].[WorkSessions]
     [WarehouseId] UNIQUEIDENTIFIER NULL,
     [UserId] UNIQUEIDENTIFIER NOT NULL,
     [DeviceId] UNIQUEIDENTIFIER NULL,
+    [Kind] NVARCHAR(16) NOT NULL CONSTRAINT [DF_WorkSessions_Kind] DEFAULT(N'Normal'),
+    [DispatchId] UNIQUEIDENTIFIER NULL,
     [OpenedAt] DATETIMEOFFSET(7) NOT NULL,
     [LastActivityAt] DATETIMEOFFSET(7) NOT NULL,
     [ClosedAt] DATETIMEOFFSET(7) NULL,
@@ -33,6 +35,9 @@ CREATE TABLE [dbo].[WorkSessions]
         REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
     CONSTRAINT [FK_WorkSessions_DeviceTenant] FOREIGN KEY ([DeviceId],[TenantId])
         REFERENCES [dbo].[EnrolledDevices] ([DeviceId],[TenantId]),
+    CONSTRAINT [FK_WorkSessions_Dispatch] FOREIGN KEY ([DispatchId]) REFERENCES dbo.Dispatches(DispatchId),
+    CONSTRAINT [CK_WorkSessions_Kind] CHECK ((Kind=N'Normal' AND DispatchId IS NULL)
+        OR (Kind=N'Dispatch' AND DispatchId IS NOT NULL AND DeviceId IS NULL AND WarehouseId IS NULL)),
     CONSTRAINT [UQ_WorkSessions_Session_Business] UNIQUE ([WorkSessionId],[BusinessId]),
     CONSTRAINT [CK_WorkSessions_Status] CHECK (
         ([Status]=N'Open' AND [ClosedAt] IS NULL)
@@ -42,7 +47,7 @@ GO
 
 CREATE UNIQUE INDEX [UX_WorkSessions_Web_User_Open]
     ON [dbo].[WorkSessions] ([TenantId],[BusinessId],[UserId])
-    WHERE [Status]=N'Open' AND [DeviceId] IS NULL;
+    WHERE [Status]=N'Open' AND [DeviceId] IS NULL AND [Kind]=N'Normal';
 GO
 
 CREATE UNIQUE INDEX [UX_WorkSessions_Device_User_Open]
@@ -52,4 +57,7 @@ GO
 
 CREATE INDEX [IX_WorkSessions_Business_Opened]
     ON [dbo].[WorkSessions] ([TenantId],[BusinessId],[OpenedAt] DESC);
+GO
+
+CREATE UNIQUE INDEX [UX_WorkSessions_Dispatch] ON dbo.WorkSessions(DispatchId) WHERE DispatchId IS NOT NULL;
 GO

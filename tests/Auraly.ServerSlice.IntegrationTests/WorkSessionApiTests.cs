@@ -1793,7 +1793,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
     }
 
     [Fact]
-    public async Task Closure_correction_keeps_the_original_cash_receipt_and_posts_its_amount_delta()
+    public async Task Closure_correction_rejects_changes_to_the_cash_movement_amount()
     {
         var userId = await CreateUserAsync("work-session-correct-cash");
         using var client = fixture.CreateUserClient(userId,
@@ -1839,40 +1839,26 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         };
         reconciliationRequest.Headers.Add("Idempotency-Key", $"correct-{Guid.NewGuid():N}");
         using var accepted = await client.SendAsync(reconciliationRequest);
-        accepted.EnsureSuccessStatusCode();
-        var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
-        Assert.NotNull(reconciliation);
-        Assert.Equal("Reconciled", reconciliation.Status);
-        Assert.Equal("Pending", reconciliation.AccountingStatus);
-
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var persisted = connection.CreateCommand();
-        persisted.CommandText = """
-            SELECT document.Amount,job.Status
-            FROM dbo.CashMovementDocuments document
-            JOIN dbo.AccountingPostingJobs job
-              ON job.SourceDocumentId=@ReconciliationId
-                AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
-            WHERE document.DocumentId=@DocumentId;
+        Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+        Assert.Contains("importe original", await accepted.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT Amount FROM dbo.CashMovementDocuments WHERE DocumentId=@Source;
+            SELECT COUNT(*) FROM dbo.WorkSessionClosureReconciliations WHERE WorkSessionClosureId=@Closure;
             """;
-        persisted.Parameters.AddWithValue("@DocumentId", documentId);
-        persisted.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
-        await using var reader = await persisted.ExecuteReaderAsync();
-        Assert.True(await reader.ReadAsync());
-        Assert.Equal(5_000m, reader.GetDecimal(0));
-        Assert.Equal("Posted", reader.GetString(1));
-        await reader.CloseAsync();
-        var revised = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
-            $"{path}/payment-verifications");
-        var corrected = Assert.Single(revised!, item => item.VerificationKey == cash.VerificationKey);
-        Assert.Equal(7_000m, corrected.CorrectedAmount);
-        Assert.Equal("Cash", corrected.CorrectedPaymentMethodCode);
-        Assert.Equal("Se recibieron dos mil más", corrected.CorrectionReason);
+        verify.Parameters.AddWithValue("@Source", documentId);
+        verify.Parameters.AddWithValue("@Closure", closure.WorkSessionClosureId);
+        await using var row = await verify.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal(5_000m, row.GetDecimal(0));
+        await row.NextResultAsync(); Assert.True(await row.ReadAsync());
+        Assert.Equal(0, row.GetInt32(0));
     }
 
     [Fact]
-    public async Task Closure_correction_of_a_collection_updates_the_customer_balance_once()
+    public async Task Closure_correction_keeps_the_customer_payment_and_balance_amounts()
     {
         var userId = await CreateUserAsync("work-session-correct-receivable");
         using var client = fixture.CreateUserClient(userId,
@@ -1970,12 +1956,12 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
                        "Importe superior al saldo") }))
         {
             Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
-            Assert.Contains("saldo", await invalid.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("importe", await invalid.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
         }
         using (var valid = await client.PostAsJsonAsync($"{path}/payment-corrections/validate",
                    new[] { new WorkSessionPaymentCorrection(collection.VerificationKey, "Cash", 7_000m,
                        "Cobro real corregido") }))
-            Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, valid.StatusCode);
         var beforeReconciliation = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"{path}/payment-verifications");
         Assert.Null(Assert.Single(beforeReconciliation!, item => item.VerificationKey == collection.VerificationKey)
@@ -1993,45 +1979,28 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         };
         message.Headers.Add("Idempotency-Key", $"correct-{Guid.NewGuid():N}");
         using var accepted = await client.SendAsync(message);
-        Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
-        var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
-        Assert.NotNull(reconciliation);
-        Assert.Equal("Reconciled", reconciliation.Status);
-        var correctedPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
-            $"{path}/payment-verifications/page?movementType=ReceivablePayment&page=1&pageSize=10");
-        var correctedGroup = Assert.Single(correctedPage!.Groups);
-        Assert.Equal(5_000m, correctedGroup.TotalAmount);
-        Assert.Equal(7_000m, correctedGroup.EffectiveTotalAmount);
+        Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+        Assert.Contains("importe original", await accepted.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
         await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
         await verifyConnection.OpenAsync();
         await using var verify = verifyConnection.CreateCommand();
         verify.CommandText = """
-            SELECT balance.OutstandingAmount,payment.TotalAmount,job.Status,
-              (SELECT COUNT(*) FROM dbo.ReceivableTransactions trans
-               WHERE trans.ReceivableId=balance.ReceivableId
-                 AND trans.SourceDocumentId=@ReconciliationId
-                 AND trans.TransactionType=N'Adjustment')
-            FROM dbo.Receivables balance
-            JOIN dbo.CustomerPayments payment ON payment.PaymentId=@PaymentId
-            JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=@ReconciliationId
-              AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
-            WHERE balance.ReceivableId=@ReceivableId;
+            SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Source;
+            SELECT COUNT(*) FROM dbo.WorkSessionClosureReconciliations WHERE WorkSessionClosureId=@Closure;
             """;
-        verify.Parameters.AddWithValue("@PaymentId", paymentId);
-        verify.Parameters.AddWithValue("@ReceivableId", receivableId);
-        verify.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
-        await using var checkedRow = await verify.ExecuteReaderAsync();
-        Assert.True(await checkedRow.ReadAsync());
-        Assert.Equal(3_000m, checkedRow.GetDecimal(0));
-        Assert.Equal(5_000m, checkedRow.GetDecimal(1));
-        Assert.Equal("Posted", checkedRow.GetString(2));
-        Assert.Equal(1, checkedRow.GetInt32(3));
+        verify.Parameters.AddWithValue("@Source", receivableId);
+        verify.Parameters.AddWithValue("@Closure", closure.WorkSessionClosureId);
+        await using var row = await verify.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal(5_000m, row.GetDecimal(0));
+        await row.NextResultAsync(); Assert.True(await row.ReadAsync());
+        Assert.Equal(0, row.GetInt32(0));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Closure_correction_of_a_supplier_payment_restores_the_supplier_balance(bool frozenAccount)
+    public async Task Closure_correction_keeps_the_supplier_payment_and_balance_amounts(bool frozenAccount)
     {
         Guid? acceptedAccount = null;
         if (frozenAccount)
@@ -2153,42 +2122,22 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         };
         message.Headers.Add("Idempotency-Key", $"correct-{Guid.NewGuid():N}");
         using var accepted = await client.SendAsync(message);
-        Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
-        var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
-        Assert.NotNull(reconciliation);
-        Assert.Equal("Reconciled", reconciliation.Status);
+        Assert.Equal(HttpStatusCode.BadRequest, accepted.StatusCode);
+        Assert.Contains("importe original", await accepted.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
         await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
         await verifyConnection.OpenAsync();
         await using var verify = verifyConnection.CreateCommand();
         verify.CommandText = """
-            SELECT balance.OutstandingAmount,payment.TotalAmount,job.Status,
-              (SELECT COUNT(*) FROM dbo.PayableTransactions trans
-               WHERE trans.PayableId=balance.PayableId
-                 AND trans.SourceDocumentId=@ReconciliationId
-                 AND trans.TransactionType=N'Adjustment'),
-              (SELECT COALESCE(SUM(line.Debit),0) FROM dbo.AccountingEntries entry
-               JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
-               WHERE entry.SourceDocumentId=@ReconciliationId AND line.AccountId=@AcceptedAccount AND line.PartyId=@PartyId)
-            FROM dbo.Payables balance
-            JOIN dbo.SupplierPayments payment ON payment.PaymentId=@PaymentId
-            JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=@ReconciliationId
-              AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
-            WHERE balance.PayableId=@PayableId;
+            SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Source;
+            SELECT COUNT(*) FROM dbo.WorkSessionClosureReconciliations WHERE WorkSessionClosureId=@Closure;
             """;
-        verify.Parameters.AddWithValue("@PaymentId", paymentId);
-        verify.Parameters.AddWithValue("@PayableId", payableId);
-        verify.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
-        verify.Parameters.Add("@AcceptedAccount", SqlDbType.UniqueIdentifier).Value = (object?)acceptedAccount ?? DBNull.Value;
-        verify.Parameters.AddWithValue("@PartyId", fixture.SupplierPartyId);
+        verify.Parameters.AddWithValue("@Source", payableId);
+        verify.Parameters.AddWithValue("@Closure", closure.WorkSessionClosureId);
         await using var row = await verify.ExecuteReaderAsync();
         Assert.True(await row.ReadAsync());
-        Assert.Equal(7_000m, row.GetDecimal(0));
-        Assert.Equal(5_000m, row.GetDecimal(1));
-        Assert.Equal("Posted", row.GetString(2));
-        Assert.Equal(1, row.GetInt32(3));
-        // Paying 3,000 instead of 5,000 restores 2,000 to the original cash
-        // auxiliary and keeps its supplier, regardless of the aggregate mapping.
-        if (frozenAccount) Assert.Equal(2_000m, row.GetDecimal(4));
+        Assert.Equal(5_000m, row.GetDecimal(0));
+        await row.NextResultAsync(); Assert.True(await row.ReadAsync());
+        Assert.Equal(0, row.GetInt32(0));
     }
 
     private async Task AssertBoundedVerificationPagesAsync(HttpClient client, string path, string kind)

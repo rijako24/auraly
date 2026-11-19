@@ -98,7 +98,7 @@ public sealed class SalesWorkspaceService(
     {
         if (!user.Permissions.Contains(CommercePermissionCodes.PosWorkspaceChange))
             throw new SalesWorkspaceForbiddenException(
-                $"Permission '{CommercePermissionCodes.PosWorkspaceChange}' is required.");
+                $"No tienes permiso para cambiar el contexto del punto de venta.");
         return SelectAsync(user, selection, cancellationToken);
     }
 
@@ -107,7 +107,7 @@ public sealed class SalesWorkspaceService(
         ArgumentNullException.ThrowIfNull(user);
         if (!HasDirectSalesPermission(user))
             throw new SalesWorkspaceForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' or '{SellerOrderCreatePermission}' is required.");
+                $"No tienes permiso para crear ventas o pedidos de vendedor.");
     }
 
     private static void DemandWorkspacePermission(SalesWorkspaceUserIdentity user)

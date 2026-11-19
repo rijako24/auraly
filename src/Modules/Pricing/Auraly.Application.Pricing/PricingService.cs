@@ -70,9 +70,9 @@ public sealed class PricingService(
         Require(user, PricingPermissionCodes.Read);
         Require(user, PricingPermissionCodes.ReadCostBasis);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
-            throw new PricingValidationException("Page and PageSize are invalid.");
+            throw new PricingValidationException("La página y la cantidad de registros no son válidas.");
         if (query.Status is not null && query.Status is not ("Pending" or "PendingReview" or "Approved" or "Published" or "Rejected" or "Superseded"))
-            throw new PricingValidationException("The proposal status is invalid.");
+            throw new PricingValidationException("El estado de la propuesta de precio no es válido.");
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, ct);
     }
 
@@ -151,7 +151,7 @@ public sealed class PricingService(
         Require(user, PricingPermissionCodes.Read);
         Require(user, PricingPermissionCodes.ReadCostBasis);
         return await store.GetProductContextAsync(user, productId, timeProvider.GetUtcNow(), ct)
-            ?? throw new PricingNotFoundException("Product was not found.");
+            ?? throw new PricingNotFoundException("No se encontró el producto.");
     }
 
     public async Task<PreparedProductPrice> SavePreparedProductAsync(
@@ -160,9 +160,9 @@ public sealed class PricingService(
         Require(user, PricingPermissionCodes.PreparePrices);
         Require(user, PricingPermissionCodes.ReadCostBasis);
         var context = await store.GetProductContextAsync(user, productId, timeProvider.GetUtcNow(), ct)
-            ?? throw new PricingNotFoundException("Product was not found.");
+            ?? throw new PricingNotFoundException("No se encontró el producto.");
         if (!context.IsCostLinked && request.CostBasisAmount is <= 0m)
-            throw new PricingValidationException("The manual cost must be greater than zero.");
+            throw new PricingValidationException("El costo manual debe ser mayor que cero.");
         if (context.IsCostLinked && request.CostBasisAmount is { } requestedCost
             && requestedCost != context.CostBasisAmount)
             throw new PricingValidationException(
@@ -172,7 +172,7 @@ public sealed class PricingService(
             ? context.CostBasisAmount
             : request.CostBasisAmount ?? context.CostBasisAmount;
         if (costBasis is null && request.InputMode == PriceInputModes.Margin)
-            throw new PricingValidationException("A cost is required to calculate a margin.");
+            throw new PricingValidationException("Se requiere un costo para calcular el margen.");
 
         var costBasisType = context.IsCostLinked ||
             (context.CostBasisOrigin == "Composition" && costBasis == context.CostBasisAmount)
@@ -200,9 +200,9 @@ public sealed class PricingService(
     {
         Require(user, PricingPermissionCodes.ReadHistory);
         if (page < 1 || pageSize is < 1 or > 100)
-            throw new PricingValidationException("Page and PageSize are outside the allowed range.");
+            throw new PricingValidationException("La página o la cantidad de registros supera el rango permitido.");
         if (activityType is not null && activityType is not ("Preparation" or "Publication"))
-            throw new PricingValidationException("ActivityType must be Preparation or Publication.");
+            throw new PricingValidationException("Selecciona preparación o publicación para consultar la actividad.");
         return store.HistoryAsync(user, productId, page, pageSize, activityType, ct);
     }
 
@@ -249,11 +249,11 @@ public sealed class PricingService(
 
     private static PriceCalculationResult CalculateCore(PriceCalculationRequest request)
     {
-        if (request.CostBasisAmount <= 0) throw new PricingValidationException("Cost basis must be greater than zero.");
-        if (request.SalesTaxRate is < 0 or > 100) throw new PricingValidationException("SalesTaxRate is invalid.");
-        if (!PriceInputModes.IsSupported(request.InputMode)) throw new PricingValidationException("InputMode is invalid.");
-        if (!PricingRoundingModes.IsSupported(request.RoundingMode)) throw new PricingValidationException("RoundingMode is invalid.");
-        if (request.RoundingIncrement <= 0) throw new PricingValidationException("RoundingIncrement must be positive.");
+        if (request.CostBasisAmount <= 0) throw new PricingValidationException("El costo base debe ser mayor que cero.");
+        if (request.SalesTaxRate is < 0 or > 100) throw new PricingValidationException("La tarifa del impuesto de venta no es válida.");
+        if (!PriceInputModes.IsSupported(request.InputMode)) throw new PricingValidationException("El modo de cálculo del precio no es válido.");
+        if (!PricingRoundingModes.IsSupported(request.RoundingMode)) throw new PricingValidationException("El modo de redondeo no es válido.");
+        if (request.RoundingIncrement <= 0) throw new PricingValidationException("El incremento de redondeo debe ser mayor que cero.");
         decimal raw;
         decimal? target;
         try
@@ -261,13 +261,13 @@ public sealed class PricingService(
             if (request.InputMode == PriceInputModes.Margin)
             {
                 if (request.TargetMarginPercent is null or < 0 or >= 100)
-                    throw new PricingValidationException("TargetMarginPercent must be between zero and less than 100.");
+                    throw new PricingValidationException("El margen objetivo debe estar entre 0 % y menos de 100 %.");
                 target = request.TargetMarginPercent;
                 raw = PriceMargin.CalculateGrossSalePrice(request.CostBasisAmount, target.Value, request.SalesTaxRate);
             }
             else
             {
-                if (request.SalePrice is null or <= 0) throw new PricingValidationException("SalePrice must be greater than zero.");
+                if (request.SalePrice is null or <= 0) throw new PricingValidationException("El precio de venta debe ser mayor que cero.");
                 raw = request.SalePrice.Value;
                 target = PriceMargin.CalculateMarginPercentFromGross(request.CostBasisAmount, raw, request.SalesTaxRate);
             }
@@ -302,23 +302,23 @@ public sealed class PricingService(
 
         if (inputMode != PriceInputModes.SalePrice || salePrice is null)
             throw new PricingValidationException(
-                "A product without a cost basis must define its sale price directly.");
+                "Un producto sin costo base debe tener un precio de venta definido directamente.");
         if (salePrice <= 0)
-            throw new PricingValidationException("SalePrice must be greater than zero.");
+            throw new PricingValidationException("El precio de venta debe ser mayor que cero.");
         if (!PricingRoundingModes.IsSupported(roundingMode) || roundingIncrement <= 0)
-            throw new PricingValidationException("The rounding configuration is invalid.");
+            throw new PricingValidationException("La configuración de redondeo no es válida.");
 
         var rounded = PriceMargin.RoundPrice(salePrice.Value, roundingIncrement, roundingMode);
         return new(0m, PriceInputModes.SalePrice, null, salePrice.Value, rounded,
             null, roundingIncrement, roundingMode);
     }
     private async Task<PriceProposalSource> RequiredProposalAsync(PricingUserIdentity user, Guid proposalId, CancellationToken ct) =>
-        await store.GetProposalAsync(user, proposalId, ct) ?? throw new PricingNotFoundException("Price proposal was not found.");
+        await store.GetProposalAsync(user, proposalId, ct) ?? throw new PricingNotFoundException("No se encontró la propuesta de precio.");
 
     private static void EnsureReviewable(PriceProposalSource source)
     {
         if (source.Status is not ("PendingReview" or "Approved"))
-            throw new PricingConflictException("Only pending or approved proposals can be changed.");
+            throw new PricingConflictException("Solo se pueden modificar propuestas pendientes o aprobadas.");
     }
 
     private static byte[] DecodeToken(string token)
@@ -328,20 +328,20 @@ public sealed class PricingService(
             var value = Convert.FromBase64String(token);
             return value.Length == 8 ? value : throw new FormatException();
         }
-        catch (FormatException) { throw new PricingValidationException("ConcurrencyToken is invalid."); }
+        catch (FormatException) { throw new PricingValidationException("La versión de edición no es válida. Vuelve a abrir el documento antes de continuar."); }
     }
 
     private static string? Normalize(string? value, int maximum)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var normalized = value.Trim();
-        if (normalized.Length > maximum) throw new PricingValidationException($"The value exceeds {maximum} characters.");
+        if (normalized.Length > maximum) throw new PricingValidationException($"El valor admite máximo {maximum} caracteres.");
         return normalized;
     }
 
     private static void Require(PricingUserIdentity user, string permission)
     {
-        if (!user.Permissions.Contains(permission)) throw new PricingForbiddenException($"Permission '{permission}' is required.");
+        if (!user.Permissions.Contains(permission)) throw new PricingForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }
 

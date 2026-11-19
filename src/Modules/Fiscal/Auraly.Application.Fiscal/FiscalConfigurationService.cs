@@ -122,7 +122,7 @@ public sealed class FiscalDeviceSeriesService(IFiscalDeviceSeriesStore store)
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(permission))
             throw new FiscalConfigurationForbiddenException(
-                $"Permission '{permission}' is required.");
+                $"No tienes permiso para realizar esta acción.");
     }
 }
 
@@ -164,6 +164,6 @@ public sealed class FiscalConfigurationService(IFiscalConfigurationStore store)
     {
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(permission))
-            throw new FiscalConfigurationForbiddenException($"Permission '{permission}' is required.");
+            throw new FiscalConfigurationForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }

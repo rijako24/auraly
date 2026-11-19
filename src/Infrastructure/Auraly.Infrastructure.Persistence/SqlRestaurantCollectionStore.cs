@@ -82,7 +82,7 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
                  AND sessionRow.BusinessId=account.BusinessId
                  AND sessionRow.TenantId=account.TenantId
                  AND sessionRow.UserId=@UserId
-                 AND sessionRow.Status=N'Open'
+                 AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
                  AND sessionRow.DeviceId IS NULL
                 WHERE account.AccountId=@AccountId
                   AND account.BusinessId=@BusinessId
@@ -310,7 +310,7 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
              AND collection.Status=N'Captured'
             JOIN dbo.WorkSessions sessionRow
               ON sessionRow.WorkSessionId=collection.WorkSessionId
-             AND sessionRow.Status=N'Open'
+             AND sessionRow.Status=N'Open' AND sessionRow.Kind=N'Normal'
              AND sessionRow.UserId=@UserId
             WHERE account.AccountId=@AccountId
               AND account.BusinessId=@BusinessId

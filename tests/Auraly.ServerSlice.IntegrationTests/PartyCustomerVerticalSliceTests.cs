@@ -10,6 +10,22 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData("", "País de prueba", "El campo Código es obligatorio.")]
+    [InlineData("@", "País de prueba", "El campo Código contiene caracteres no permitidos.")]
+    [InlineData("ES", "", "El campo Nombre es obligatorio.")]
+    [InlineData("CODIGO-DEMASIADO-LARGO", "País", "El campo Código admite máximo 16 caracteres.")]
+    public async Task Public_master_validation_keeps_field_labels_and_framework_suffixes_in_spanish(
+        string code, string name, string expected)
+    {
+        using var admin=fixture.CreateAdminClient(PartyPermissionCodes.GeographyManage);
+        using var response=await admin.PostAsJsonAsync("/api/commerce/v1/masters/geography/divisions",
+            new SaveAdministrativeDivisionRequest(Guid.NewGuid(),code,name));
+        Assert.Equal(HttpStatusCode.BadRequest,response.StatusCode);
+        using var problem=System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(expected,problem.RootElement.GetProperty("detail").GetString());
+    }
+
     [Fact]
     public async Task Geography_customer_identity_sites_and_pricing_are_connected_end_to_end()
     {

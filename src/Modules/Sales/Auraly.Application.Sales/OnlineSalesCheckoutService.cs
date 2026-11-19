@@ -48,7 +48,8 @@ public sealed record OnlineSalesOrderCheckoutSource(
     byte[] SnapshotVersion,
     IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines,
     IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
-    Guid? TableId = null);
+    Guid? TableId = null,
+    bool PaymentAlreadyConfirmed = false);
 
 public sealed record OnlineSalesRestaurantCheckoutSource(
     Guid AccountId,
@@ -251,7 +252,8 @@ public sealed class OnlineSalesCheckoutService(
         "Cash",
         "DebitCard",
         "CreditCard",
-        "Transfer"
+        "Transfer",
+        "PendingCollection"
     ];
 
     public Task WarmSettlementBatchAsync(
@@ -355,7 +357,7 @@ public sealed class OnlineSalesCheckoutService(
         if (context.HasBelowCostLine &&
             !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
+                $"No tienes permiso para vender por debajo del costo.");
 
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
@@ -480,7 +482,7 @@ public sealed class OnlineSalesCheckoutService(
             if (settlement.Context.HasBelowCostLine &&
                 !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
                 throw new OnlineSalesDraftForbiddenException(
-                    $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
+                    $"No tienes permiso para vender por debajo del costo.");
             FiscalVerificationMaterial? material = null;
             if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
             {
@@ -578,7 +580,7 @@ public sealed class OnlineSalesCheckoutService(
         if (settlement.Context.HasBelowCostLine &&
             !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
+                $"No tienes permiso para vender por debajo del costo.");
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {
@@ -661,7 +663,7 @@ public sealed class OnlineSalesCheckoutService(
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+                $"No tienes permiso para crear ventas.");
     }
 
     private static void Validate(

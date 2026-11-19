@@ -16,6 +16,13 @@ test("expone el precio efectivamente comprado desde el snapshot", () => {
   assert.equal(salesReturnPurchasedUnitPrice(lines[0]), 11_900);
 });
 
+test("conserva cuatro decimales y el remanente real de la última devolución", () => {
+  const first=calculateSalesReturnSelection([{originalLineNumber:1,soldQuantity:3,availableQuantity:3,lineTotal:11.9,returnedLineTotal:0}],{1:1});
+  assert.equal(first.estimatedTotal,3.9667);
+  const last=calculateSalesReturnSelection([{originalLineNumber:1,soldQuantity:3,availableQuantity:1,lineTotal:11.9,returnedLineTotal:7.9334}],{1:1});
+  assert.ok(Math.abs(last.estimatedTotal-3.9666)<1e-8);
+});
+
 test("estima una devolución parcial conservando la proporción del snapshot", () => {
   assert.deepEqual(calculateSalesReturnSelection(lines, { 1: .5, 2: 1 }), {
     selectedLineNumbers: [1, 2],

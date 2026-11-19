@@ -20,6 +20,16 @@ CREATE TABLE [dbo].[WorkSessionClosures]
     [ReceiptSnapshotJson] NVARCHAR(MAX) NOT NULL,
     [ReceiptHash] VARBINARY(32) NOT NULL,
     [ClosedAt] DATETIMEOFFSET(7) NOT NULL,
+    [DispatchStatus] NVARCHAR(32) NULL,
+    [DispatchExpectedCash] DECIMAL(19,4) NULL,
+    [DispatchTransferTotal] DECIMAL(19,4) NULL,
+    [DispatchCreditDocumentTotal] DECIMAL(19,4) NULL,
+    [DispatchCreditAdvanceTotal] DECIMAL(19,4) NULL,
+    [DispatchReturnTotal] DECIMAL(19,4) NULL,
+    [ReceivedCash] DECIMAL(19,4) NULL,
+    [ReceivedByUserId] UNIQUEIDENTIFIER NULL REFERENCES dbo.AppUsers(UserId),
+    [ReceivedAt] DATETIMEOFFSET(7) NULL,
+    [DispatchReviewNotes] NVARCHAR(500) NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_WorkSessionClosures]
         PRIMARY KEY CLUSTERED ([WorkSessionClosureId]),
@@ -32,6 +42,15 @@ CREATE TABLE [dbo].[WorkSessionClosures]
         UNIQUE ([ClosedByUserId],[IdempotencyKey]),
     CONSTRAINT [CK_WorkSessionClosures_CountedCash]
         CHECK ([CountedCash] IS NULL OR [CountedCash] >= 0),
+    CONSTRAINT [CK_WorkSessionClosures_DispatchStatus] CHECK (DispatchStatus IS NULL
+      OR DispatchStatus IN(N'PendingReview',N'Processing',N'Completed',N'Attention')),
+    CONSTRAINT [CK_WorkSessionClosures_DispatchAmounts] CHECK (
+      (DispatchExpectedCash IS NULL OR DispatchExpectedCash>=0)
+      AND (DispatchTransferTotal IS NULL OR DispatchTransferTotal>=0)
+      AND (DispatchCreditDocumentTotal IS NULL OR DispatchCreditDocumentTotal>=0)
+      AND (DispatchCreditAdvanceTotal IS NULL OR DispatchCreditAdvanceTotal>=0)
+      AND (DispatchReturnTotal IS NULL OR DispatchReturnTotal>=0)
+      AND (ReceivedCash IS NULL OR ReceivedCash>=0)),
     CONSTRAINT [CK_WorkSessionClosures_Difference]
         CHECK (([CountedCash] IS NULL AND [CashDifference] IS NULL)
             OR ([CountedCash] IS NOT NULL

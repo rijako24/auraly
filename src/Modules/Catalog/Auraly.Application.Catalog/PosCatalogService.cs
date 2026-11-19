@@ -35,7 +35,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         CancellationToken ct)
     {
         ValidateEnrolledScope(device);
-        if (cursor < 0) throw new CatalogValidationException("The catalog cursor cannot be negative.");
+        if (cursor < 0) throw new CatalogValidationException("La posición de sincronización del catálogo no puede ser negativa.");
         ValidatePageSize(pageSize);
         return store.ChangesAsync(device.DeviceId, device.TenantId, device.BusinessId,
             device.WarehouseId, cursor, pageSize, ct);
@@ -67,7 +67,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         CatalogDeviceIdentity device, long cursor, int pageSize, CancellationToken ct)
     {
         ValidateEnrolledScope(device);
-        if (cursor < 0) throw new CatalogValidationException("The customer cursor cannot be negative.");
+        if (cursor < 0) throw new CatalogValidationException("La posición de sincronización de clientes no puede ser negativa.");
         ValidatePageSize(pageSize);
         return store.CustomerChangesAsync(
             device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
@@ -79,9 +79,9 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
     {
         ValidateEnrolledScope(device);
         if (request.WarehouseId != device.WarehouseId)
-            throw new CatalogForbiddenException("The requested warehouse is not available in this operational context.");
+            throw new CatalogForbiddenException("La bodega solicitada no está disponible en este contexto operativo.");
         if (request.ProductId == Guid.Empty || request.OperationId == Guid.Empty || request.Quantity <= 0)
-            throw new CatalogValidationException("Product, operation and a positive quantity are required.");
+            throw new CatalogValidationException("Selecciona un producto, una operación y una cantidad mayor que cero.");
         return store.AvailabilityAsync(
             device.DeviceId,
             device.TenantId,
@@ -97,11 +97,11 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
     {
         ValidateEnrolledScope(device);
         if (request.WarehouseId != device.WarehouseId)
-            throw new CatalogForbiddenException("The requested warehouse is not available in this operational context.");
+            throw new CatalogForbiddenException("La bodega solicitada no está disponible en este contexto operativo.");
         if (request.OperationId == Guid.Empty || request.Items is null or { Count: < 1 or > 500 } ||
             request.Items.Any(item => item is null || item.ProductId == Guid.Empty || item.Quantity <= 0) ||
             request.Items.Select(item => item.ProductId).Distinct().Count() != request.Items.Count)
-            throw new CatalogValidationException("Provide 1 to 500 distinct products with positive quantities and an operation.");
+            throw new CatalogValidationException("Selecciona entre 1 y 500 productos distintos con cantidades mayores que cero y una operación.");
         return store.AvailabilityBatchAsync(
             device.DeviceId, device.TenantId, device.BusinessId, request, ct);
     }
@@ -114,7 +114,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
     {
         ValidateEnrolledScope(device);
         if (productId == Guid.Empty)
-            throw new CatalogValidationException("ProductId is required.");
+            throw new CatalogValidationException("Se requiere un producto válido.");
         return store.WarehouseAvailabilityAsync(
             device.DeviceId, device.TenantId, device.BusinessId, productId,
             includeOtherBusinesses, ct);
@@ -132,6 +132,6 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
     private static void ValidatePageSize(int pageSize)
     {
         if (pageSize is < 1 or > 2000)
-            throw new CatalogValidationException("PageSize must be between 1 and 2000.");
+            throw new CatalogValidationException("La cantidad de registros por página debe estar entre 1 y 2.000.");
     }
 }

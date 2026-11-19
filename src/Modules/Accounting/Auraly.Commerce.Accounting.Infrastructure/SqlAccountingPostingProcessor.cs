@@ -9,6 +9,7 @@ using Auraly.Commerce.Accounting.Domain;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Dispatching;
+using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Receivables;
@@ -119,7 +120,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             {
                 await MarkPendingConfigurationAsync(connection, transaction, source,
                     "OpenPeriodMissing",
-                    "No open accounting period contains the document date.",
+                    "No hay un período contable abierto que incluya la fecha del documento.",
                     cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return;
@@ -131,7 +132,11 @@ public sealed partial class SqlAccountingPostingProcessor(
             {
                 transaction.Rollback("BeforeFinancialEffects");
                 await MarkPendingConfigurationAsync(connection, transaction, source,
-                    "PaymentMethodConfigurationMissing", "La forma de pago no tiene una cuenta vigente válida para esta operación.", cancellationToken);
+                    "PaymentMethodConfigurationMissing", source.DocumentType == WorkSessionAccountingDocumentTypes.ClosureReconciliation
+                        ? "No se aplicó la conciliación. Revisa las formas de pago y la contabilización del cierre original."
+                        : source.DocumentType == DispatchAccountingDocumentTypes.CashDifference
+                            ? "No se aplicó la conciliación del despacho. Revisa sus formas de pago y la contabilización de las ventas y devoluciones originales."
+                        : "La forma de pago no tiene una cuenta vigente válida para esta operación.", cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return;
             }
@@ -247,6 +252,18 @@ public sealed partial class SqlAccountingPostingProcessor(
             }
 
             var proposedLines = facts.BuildLines(accountIds, costCenterId).ToArray();
+            if ((source.DocumentType is WorkSessionAccountingDocumentTypes.ClosureReconciliation or DispatchAccountingDocumentTypes.CashDifference) && proposedLines.Length == 0)
+            {
+                // Evidence-only corrections, including another form using the
+                // same account, have no journal. Still complete their one job
+                // and retain the actual form binding for audit and replay.
+                await CompletePostingAsync(connection, transaction, source,
+                    AccountingPostingStatuses.CommercialEffectsApplied, timeProvider.GetUtcNow(), cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await synchronization.DispatchPendingAsync(
+                    source.TenantId, source.BusinessId, CancellationToken.None);
+                return;
+            }
             // A free receipt can move physical units without a monetary effect.
             // Complete its existing job; never fabricate zero-valued journal lines.
             if ((source.DocumentType is PurchasingDocumentTypes.GoodsReceipt or
@@ -423,21 +440,35 @@ public sealed partial class SqlAccountingPostingProcessor(
             source.PayloadJson,
             new JsonSerializerOptions(JsonSerializerDefaults.Web))
             ?? throw new InvalidOperationException(
-                "The dispatch cash-difference payload is invalid.");
+                "La fuente de conciliación del despacho no es válida.");
         if (payload.DispatchSettlementId != source.DocumentId ||
             payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
-            payload.DispatchId == Guid.Empty || payload.Difference == 0 ||
+            payload.DispatchId == Guid.Empty || (payload.Difference == 0 && payload.Collections is null) ||
             decimal.Round(payload.CashReceived - payload.ExpectedCash, 4) !=
             decimal.Round(payload.Difference, 4))
             throw new InvalidOperationException(
-                "The dispatch cash-difference payload is inconsistent.");
-        var surplus = payload.Difference > 0;
-        return FinancialFacts.CashDifference(
-            $"{(surplus ? "Sobrante" : "Faltante")} de efectivo en despacho {payload.DispatchNumber} · {payload.TransporterName}",
-            surplus,
-            Math.Abs(payload.Difference),
-            AccountingCategories.DispatchCashOverageIncome,
-            AccountingCategories.DispatchCashShortageExpense);
+                "Los valores de la conciliación del despacho no son consistentes.");
+        var description = $"Conciliación del recaudo del despacho {payload.DispatchNumber} · {payload.TransporterName}";
+        if (payload.Collections is null)
+        {
+            return FinancialFacts.CashDifference(description, payload.Difference > 0, Math.Abs(payload.Difference),
+                AccountingCategories.DispatchCashOverageIncome, AccountingCategories.DispatchCashShortageExpense);
+        }
+        var lines = new List<CategoryLineSpec>(source.DispatchCollectionLines ?? []);
+        if (payload.Difference != 0)
+        {
+            var surplus = payload.Difference > 0;
+            var amount = Math.Abs(payload.Difference);
+            var cashAccount=source.DispatchCashDifferenceAccountId??throw new InvalidOperationException("Falta el auxiliar de efectivo de la diferencia del despacho.");
+            lines.Add(new($"PostedAccount:{cashAccount:D}", surplus ? amount : 0, surplus ? 0 : amount, null, description));
+            lines.Add(new(surplus ? AccountingCategories.DispatchCashOverageIncome : AccountingCategories.DispatchCashShortageExpense,
+                surplus ? 0 : amount, surplus ? amount : 0, null, description));
+        }
+        var net = lines.GroupBy(line => line.Category, StringComparer.Ordinal).Select(group => {
+            var balance = group.Sum(line => line.Debit - line.Credit);
+            return new CategoryLineSpec(group.Key, Math.Max(balance, 0), Math.Max(-balance, 0), null, description);
+        }).Where(line => line.Debit != 0 || line.Credit != 0).ToArray();
+        return new FinancialFacts(description, null, 0, 0, 0, 0, [], false, false, false, false, DirectCategoryLines: net);
     }
 
     private static FinancialFacts LoadWorkSessionClosureReconciliationFacts(SourceEnvelope source)
@@ -852,6 +883,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         string reasonCode;
         decimal receivableApplication; decimal customerCredit;
         Guid? originalPositionAccountId; string? originalPositionIssue;
+        int? originalPaymentNumber;Guid? originalDispatchPaymentId;
         await using (var command = new SqlCommand("""
                 SELECT r.DocumentNumber,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,
                        r.EconomicResolution,r.RefundMethodCode,r.BankAccountId,c.PartyId,
@@ -860,7 +892,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                          WHERE a.ReturnId=r.ReturnId),0),
                        COALESCE((SELECT SUM(cc.OriginalAmount)
                          FROM dbo.CustomerCredits cc
-                         WHERE cc.SourceReturnId=r.ReturnId),0),r.ReasonCode,opening.AccountId,opening.Issue
+                         WHERE cc.SourceReturnId=r.ReturnId),0),r.ReasonCode,opening.AccountId,opening.Issue,
+                       r.OriginalPaymentNumber,r.OriginalDispatchPaymentId
                 FROM dbo.SalesReturns r
                 LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId AND c.TenantId=@TenantId
                 LEFT JOIN dbo.SalesDocuments originalSale ON originalSale.DocumentId=r.OriginalDocumentId AND originalSale.BusinessId=r.BusinessId
@@ -887,12 +920,46 @@ public sealed partial class SqlAccountingPostingProcessor(
             reasonCode=reader.GetString(10);
             originalPositionAccountId=reader.IsDBNull(11)?null:reader.GetGuid(11);
             originalPositionIssue=reader.IsDBNull(12)?null:reader.GetString(12);
+            originalPaymentNumber=reader.IsDBNull(13)?null:reader.GetInt32(13);
+            originalDispatchPaymentId=reader.IsDBNull(14)?null:reader.GetGuid(14);
         }
         if (receivableApplication>0 && (originalPositionAccountId is null || originalPositionIssue is not null))
             return FinancialFactsResult.Pending("OriginalPositionAccountMissing",
                 $"No se aplicó la devolución a cartera. {originalPositionIssue ?? "Falta identificar el auxiliar original."}");
         var settlements = new List<(string Category, decimal Amount)>();
-        if (resolution == "Refund")
+        if (resolution == "ReverseUncollected")
+        {
+            await using var originalPayments = new SqlCommand("""
+                SELECT settlement.Amount,original.AccountId,original.PostingStatus,original.AccountingEntryRequired
+                FROM dbo.SalesReturnSettlements settlement
+                JOIN dbo.SalesReturns returned ON returned.ReturnId=settlement.ReturnId AND returned.BusinessId=@Business
+                CROSS APPLY accounting.SalePaymentPostingFacts(@Tenant,@Business,settlement.OriginalDocumentId) original
+                WHERE settlement.ReturnId=@Return AND settlement.SettlementType=N'ReverseUncollected'
+                  AND original.PaymentNumber=settlement.OriginalPaymentNumber;
+                """, connection, transaction);
+            originalPayments.Parameters.AddWithValue("@Return", source.DocumentId);
+            originalPayments.Parameters.AddWithValue("@Tenant", source.TenantId);
+            originalPayments.Parameters.AddWithValue("@Business", source.BusinessId);
+            await using var reader = await originalPayments.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (reader.IsDBNull(1) || reader.IsDBNull(2) || reader.GetString(2) != "Posted" ||
+                    reader.IsDBNull(3) || !reader.GetBoolean(3))
+                    return FinancialFactsResult.Pending("OriginalPaymentAccountMissing",
+                        "La devolución requiere los auxiliares realmente contabilizados de la venta original.");
+                settlements.Add(($"PostedAccount:{reader.GetGuid(1):D}", reader.GetDecimal(0)));
+            }
+            if(receivableApplication>0) settlements.Add((AccountingCategories.AccountsReceivable,receivableApplication));
+        }
+        else if (resolution == "Refund" && refundMethod is "DebitCard" or "CreditCard")
+        {
+            var originalAccount=await ReadOriginalCardRefundAccountAsync(connection,transaction,source,
+                originalPaymentNumber,originalDispatchPaymentId,cancellationToken);
+            if(originalAccount is null) return FinancialFactsResult.Pending("OriginalPaymentAccountMissing",
+                "La reversión de tarjeta requiere el auxiliar realmente aplicado al recaudo original.");
+            settlements.Add(($"PostedAccount:{originalAccount:D}",total));
+        }
+        else if (resolution == "Refund")
             settlements.Add((refundMethod == "Transfer" && bankAccountId is { } bankId
                 ? BankAccountCategory(bankId)
                 : await ResolveSourceCategoryAsync(connection, transaction,
@@ -1623,9 +1690,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         CancellationToken cancellationToken)
     {
-        var expense = Auraly.Contracts.Expenses.ExpenseContractSerializer.Deserialize(source.PayloadJson);
-        if (expense.ExpenseId != source.DocumentId || expense.BusinessId != source.BusinessId)
-            throw new InvalidOperationException("The expense snapshot does not match its accounting source.");
+        var expense = ReadExpenseSource(source);
         // Account selection is automatic only when a concept is present. Read
         // all current concept accounts with the supplier in the existing trip.
         var concepts = (expense.Lines is { Count: > 0 }
@@ -1679,9 +1744,29 @@ public sealed partial class SqlAccountingPostingProcessor(
         var settlements = await LoadPurchaseWithholdingSettlementsAsync(connection, transaction,
             source, expense.GrossAmount, cancellationToken);
         if(settlements.Issue is { } issue) return FinancialFactsResult.Pending("AccountMappingMissing",issue);
+        ManualLineSpec? paidCash = null;
+        if (expense.Payment is {} payment)
+        {
+            var applied = source.AppliedPaymentMethods is {Count:1} methods ? methods[0] : null;
+            if (applied is null || applied.PaymentMethodId != payment.PaymentMethodId || applied.MethodCode != payment.MethodCode)
+                return FinancialFactsResult.Pending("AccountMappingMissing","No fue posible resolver la forma de efectivo del gasto pagado.");
+            paidCash = new(applied.AccountId,0,payment.Amount,party,expense.CostCenterId,$"Pago de gasto {expense.DocumentNumber}");
+        }
         return FinancialFactsResult.Ready(FinancialFacts.Expense(expense.DocumentNumber, party,
             expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
-            settlements.Categories, accountId, lines, settlements.Manual));
+            paidCash is null ? settlements.Categories : settlements.Categories.Where(item=>item.Category!=AccountingCategories.AccountsPayable).ToArray(),
+            accountId, lines, settlements.Manual,paidCash));
+    }
+
+    private static ExpenseDocumentPayload ReadExpenseSource(SourceEnvelope source)
+    {
+        var expense=ExpenseContractSerializer.Deserialize(source.PayloadJson);
+        if(expense.ExpenseId!=source.DocumentId||expense.BusinessId!=source.BusinessId||expense.TenantId!=source.TenantId)
+            throw new InvalidOperationException("El gasto no coincide con su fuente contable.");
+        if(expense.Payment is {} payment && (payment.MethodCode!="Cash"||payment.Amount<=0||payment.Amount!=expense.Withholding.NetAmount
+            ||payment.PaymentMethodId is null||payment.PaymentMethodId==Guid.Empty||payment.PaymentMethodVersion is null or <=0||payment.AccountId is not null))
+            throw new InvalidOperationException("El pago de efectivo del gasto no coincide con su valor neto y forma configurada.");
+        return expense;
     }
 
     private static async Task<FinancialFactsResult> LoadExpenseCancellationFactsAsync(
@@ -2558,6 +2643,18 @@ public sealed partial class SqlAccountingPostingProcessor(
             WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
               AND TenantId=@TenantId AND BusinessId=@BusinessId
               AND Status IN(N'Pending',N'AccountingPendingConfiguration');
+            DECLARE @Completed int=@@ROWCOUNT;
+            IF @Completed=1 AND @DocumentType=N'DispatchCashDifference'
+            BEGIN
+              DECLARE @Operation uniqueidentifier,@Dispatch uniqueidentifier,@Actor uniqueidentifier;
+              SELECT @Operation=operation.DispatchSettlementOperationId,@Dispatch=operation.DispatchId,@Actor=operation.RequestedBy
+              FROM dbo.DispatchSettlementOperations operation
+              JOIN dispatch.Closures closure ON closure.DispatchId=operation.DispatchId AND closure.BusinessId=operation.BusinessId
+              WHERE closure.DispatchSettlementId=@DocumentId AND operation.BusinessId=@BusinessId;
+              IF @Operation IS NULL THROW 51607,N'La conciliación no tiene una operación de despacho válida.',1;
+              EXEC dbo.DispatchSettlementOperationComplete @Operation,@Dispatch,@Actor;
+            END;
+            SELECT @Completed;
             """, connection, transaction);
         complete.Parameters.AddWithValue("@Now", now);
         complete.Parameters.AddWithValue("@Status", status);
@@ -2575,7 +2672,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         complete.Parameters.Add("@AppliedBanks", SqlDbType.NVarChar, -1).Value = lines is null
             ? DBNull.Value : JsonSerializer.Serialize(appliedBanks);
         AddSource(complete, source);
-        if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1)
+        if (Convert.ToInt32(await complete.ExecuteScalarAsync(cancellationToken)) != 1)
             throw new DBConcurrencyException("The accounting posting could not be completed.");
     }
 
@@ -2598,8 +2695,21 @@ public sealed partial class SqlAccountingPostingProcessor(
             UPDATE dbo.AccountingPostingJobs
             SET Status=N'AccountingPendingConfiguration',AttemptCount=AttemptCount+1,
                 LastAttemptAt=SYSDATETIMEOFFSET(),LastErrorCode=@Code,LastErrorMessage=@Message
-            WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType;
+            WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
+              AND TenantId=@TenantId AND BusinessId=@BusinessId;
+            IF @DocumentType=N'DispatchCashDifference'
+            BEGIN
+              DECLARE @Operation uniqueidentifier,@Dispatch uniqueidentifier;
+              SELECT @Operation=operation.DispatchSettlementOperationId,@Dispatch=operation.DispatchId
+              FROM dbo.DispatchSettlementOperations operation
+              JOIN dispatch.Closures closure ON closure.DispatchId=operation.DispatchId AND closure.BusinessId=operation.BusinessId
+              WHERE closure.DispatchSettlementId=@DocumentId AND operation.BusinessId=@BusinessId;
+              IF @Operation IS NOT NULL
+                EXEC dbo.DispatchSettlementOperationReschedule @Operation,@Dispatch,N'NeedsAttention',N'SettlementAttention',N'Attention',@Message;
+            END;
             """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
         command.Parameters.AddWithValue("@Code", code); command.Parameters.AddWithValue("@Message", message);
         command.Parameters.AddWithValue("@DocumentId", source.DocumentId); command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
         await command.ExecuteNonQueryAsync(token);
@@ -2688,7 +2798,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         bool HasBankReferences,
         string PostingStatus,
         string? ResolvedBankAccountsJson = null,
-        IReadOnlyList<VoucherAppliedPaymentMethod>? AppliedPaymentMethods = null)
+        IReadOnlyList<VoucherAppliedPaymentMethod>? AppliedPaymentMethods = null,
+        IReadOnlyList<CategoryLineSpec>? DispatchCollectionLines = null, Guid? DispatchCashDifferenceAccountId = null)
     {
         // Attempt-local evidence shared by record copies; persisted only with a successful journal.
         public Dictionary<string, Guid> AppliedAccountMappings { get; } = new(StringComparer.Ordinal);
@@ -2722,7 +2833,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         IReadOnlyList<(Guid AccountId, decimal Amount)>? ManualWithholdingCredits = null,
         decimal RestaurantLossCost = 0m, Guid? SupplierCreditOpeningDocumentId = null,
         Guid? CustomerCreditOpeningDocumentId = null, Guid? OriginalPositionAccountId = null,
-        decimal SupplierDiscountAdjustment = 0m, Guid? OriginalInputVatAccountId = null)
+        decimal SupplierDiscountAdjustment = 0m, Guid? OriginalInputVatAccountId = null,
+        ManualLineSpec? ExpenseCashPayment = null)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -2781,6 +2893,12 @@ public sealed partial class SqlAccountingPostingProcessor(
             }
         }
         public IEnumerable<JournalLine> BuildLines(IReadOnlyDictionary<string, Guid> accounts, Guid? costCenter)
+        {
+            foreach(var line in BuildCoreLines(accounts,costCenter)) yield return line;
+            if (ExpenseCashPayment is {} paid)
+                yield return new(paid.AccountId,paid.Debit,paid.Credit,paid.PartyId,paid.CostCenterId??costCenter,paid.Description);
+        }
+        private IEnumerable<JournalLine> BuildCoreLines(IReadOnlyDictionary<string, Guid> accounts, Guid? costCenter)
         {
             if (ExpenseLines is not null)
             {
@@ -3019,10 +3137,10 @@ public sealed partial class SqlAccountingPostingProcessor(
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
             Guid accountId, IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? lines = null,
-            IReadOnlyList<(Guid AccountId, decimal Amount)>? manualWithholdingCredits = null) =>
+            IReadOnlyList<(Guid AccountId, decimal Amount)>? manualWithholdingCredits = null,ManualLineSpec? cashPayment = null) =>
                 new($"Gasto {number}", party, untaxed, vat,
                     total, 0, settlements, false, true, false, false, false, false, accountId,
-                    ExpenseLines: lines, ManualWithholdingCredits: manualWithholdingCredits);
+                    ExpenseLines: lines, ManualWithholdingCredits: manualWithholdingCredits,ExpenseCashPayment:cashPayment);
         public static FinancialFacts ExpenseCancellation(string number, Guid party,
             IReadOnlyList<ManualLineSpec> lines) =>
             new($"Anulación gasto {number}", party, 0, 0, 0, 0,

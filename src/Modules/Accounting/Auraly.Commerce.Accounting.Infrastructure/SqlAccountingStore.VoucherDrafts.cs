@@ -112,7 +112,7 @@ public sealed partial class SqlAccountingStore
             IF EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id)
                 THROW 51001, N'El documento ya fue aceptado y no admite una captura nueva.', 1;
             IF @SessionId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.WorkSessions
-                WHERE WorkSessionId=@SessionId AND TenantId=@TenantId AND BusinessId=@BusinessId AND UserId=@UserId)
+                WHERE WorkSessionId=@SessionId AND TenantId=@TenantId AND BusinessId=@BusinessId AND UserId=@UserId AND Kind=N'Normal')
                 THROW 51002,N'La sesión no pertenece al usuario y sede del comprobante.',1;
             IF @VoucherType IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options
                 WHERE CatalogCode=N'accounting-voucher-type' AND Code=@VoucherType AND IsActive=1)

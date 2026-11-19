@@ -1,6 +1,7 @@
 using Auraly.Application.DocumentProcessing;
 using Auraly.Domain.WorkSessions;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Contracts.Dispatching;
 using Auraly.Pos.Printing;
 using Auraly.Commerce.Accounting.Application;
 
@@ -60,6 +61,9 @@ public interface IWorkSessionStore
     Task<WorkSessionClosurePage> ListClosuresAsync(
         WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
         int page, int pageSize, CancellationToken cancellationToken);
+    Task<CashClosureInboxPage> ListClosureInboxAsync(
+        WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
+        int page, int pageSize, CancellationToken cancellationToken);
     Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
         WorkSessionIdentity identity, Guid closureId, CancellationToken cancellationToken);
     Task<WorkSessionPaymentVerificationPage> ListClosurePaymentVerificationPageAsync(
@@ -109,7 +113,7 @@ public sealed class WorkSessionService(
         Demand(identity, WorkSessionPermissionCodes.Read);
         if (identity.BusinessId is not { } businessId || businessId == Guid.Empty)
             throw new WorkSessionForbiddenException(
-                "The authenticated web context lacks a valid business.");
+                "El contexto de trabajo no tiene una sede válida. Vuelve a seleccionar la sede.");
         return store.CurrentAsync(identity, cancellationToken);
     }
 
@@ -148,7 +152,7 @@ public sealed class WorkSessionService(
         ValidateOpen(request);
         if (identity.BusinessId != request.BusinessId)
             throw new WorkSessionForbiddenException(
-                "The requested business does not match the authenticated context.");
+                "La empresa solicitada no corresponde al contexto autorizado.");
         return await store.OpenOrResumeAsync(
             identity,
             request with { WarehouseId = null, DeviceId = null },
@@ -164,11 +168,11 @@ public sealed class WorkSessionService(
         ValidateDeviceIdentity(identity);
         if (request.UserId == Guid.Empty || request.UserId != identity.UserId)
             throw new WorkSessionForbiddenException(
-                "The local user does not match the requested work session.");
+                "El usuario local no corresponde a la sesión de caja solicitada.");
         if (request.WorkSessionId == Guid.Empty || request.BusinessId == Guid.Empty ||
             request.OpenedAt == default || deviceId == Guid.Empty)
             throw new WorkSessionValidationException(
-                "WorkSessionId, BusinessId, OpenedAt and DeviceId are required.");
+                "Se requiere una sesión de caja, una sede, una fecha de apertura y un dispositivo válidos.");
         return store.RegisterDeviceOpenAsync(
             identity, request, deviceId, cancellationToken);
     }
@@ -177,13 +181,13 @@ public sealed class WorkSessionService(
     {
         if (request.BusinessId == Guid.Empty)
             throw new WorkSessionValidationException(
-                "BusinessId is required.");
+                "Se requiere una sede válida.");
         if (request.DeviceId == Guid.Empty)
             throw new WorkSessionValidationException(
-                "DeviceId must be null or a valid identifier.");
+                "El dispositivo debe estar vacío o tener una identificación válida.");
         if (request.OpeningCash < 0)
             throw new WorkSessionValidationException(
-                "Opening cash cannot be negative.");
+                "El efectivo de apertura no puede ser negativo.");
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -205,7 +209,7 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         if (workSessionId == Guid.Empty)
-            throw new WorkSessionValidationException("WorkSessionId is required.");
+            throw new WorkSessionValidationException("Se requiere una sesión de caja válida.");
         return await store.HasPausedSalesAsync(identity, workSessionId, cancellationToken)
             ? WorkSessionPermissionCodes.CloseWithPausedSales
             : WorkSessionPermissionCodes.Close;
@@ -228,13 +232,13 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken)
     {
         if (workSessionId == Guid.Empty)
-            throw new WorkSessionValidationException("WorkSessionId is required.");
+            throw new WorkSessionValidationException("Se requiere una sesión de caja válida.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128)
             throw new WorkSessionValidationException(
-                "A valid Idempotency-Key header is required.");
+                "Se requiere una clave válida para identificar la operación.");
         if (request.CountedCash < 0)
             throw new WorkSessionValidationException(
-                "Counted cash cannot be negative.");
+                "El efectivo contado no puede ser negativo.");
         if (request.PaymentCounts is not null &&
             (request.PaymentCounts.Any(value =>
                 string.IsNullOrWhiteSpace(value.PaymentMethodCode) ||
@@ -243,13 +247,13 @@ public sealed class WorkSessionService(
              request.PaymentCounts.Select(value => value.PaymentMethodCode.Trim())
                  .Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.PaymentCounts.Count))
             throw new WorkSessionValidationException(
-                "Each payment method requires one valid non-negative counted amount.");
+                "Cada forma de pago requiere un único valor contado válido, mayor o igual que cero.");
         if (request.ClosedByUserId == Guid.Empty)
             throw new WorkSessionValidationException(
-                "The supervisor identifier is invalid.");
+                "La identificación del supervisor no es válida.");
         if (request.Note?.Trim().Length > 500)
             throw new WorkSessionValidationException(
-                "The closure note cannot exceed 500 characters.");
+                "La observación de cierre admite máximo 500 caracteres.");
         var closure = await store.CloseAsync(
             identity,
             workSessionId,
@@ -277,7 +281,7 @@ public sealed class WorkSessionService(
         if (!identity.Permissions.Contains(WorkSessionPermissionCodes.ReadCashDifferences))
             Demand(identity, WorkSessionPermissionCodes.Read);
         if (workSessionId == Guid.Empty)
-            throw new WorkSessionValidationException("WorkSessionId is required.");
+            throw new WorkSessionValidationException("Se requiere una sesión de caja válida.");
         return store.GetClosureAsync(identity, workSessionId, cancellationToken);
     }
 
@@ -287,7 +291,7 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         if (workSessionId == Guid.Empty)
-            throw new WorkSessionValidationException("WorkSessionId is required.");
+            throw new WorkSessionValidationException("Se requiere una sesión de caja válida.");
         return store.GetClosureAsync(deviceIdentity, workSessionId, cancellationToken);
     }
 
@@ -301,7 +305,7 @@ public sealed class WorkSessionService(
         // final close, where the sensitive state transition actually occurs.
         Demand(identity, WorkSessionPermissionCodes.Read);
         if (workSessionId == Guid.Empty)
-            throw new WorkSessionValidationException("WorkSessionId is required.");
+            throw new WorkSessionValidationException("Se requiere una sesión de caja válida.");
         return store.PreviewClosureAsync(identity, workSessionId, cancellationToken);
     }
 
@@ -311,7 +315,7 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken = default)
     {
         if (workSessionId == Guid.Empty)
-            throw new WorkSessionValidationException("WorkSessionId is required.");
+            throw new WorkSessionValidationException("Se requiere una sesión de caja válida.");
         return store.PreviewClosureAsync(
             deviceIdentity, workSessionId, cancellationToken);
     }
@@ -325,7 +329,7 @@ public sealed class WorkSessionService(
         Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
         if (from == default || to == default || from > to || to.DayNumber - from.DayNumber > 366)
             throw new WorkSessionValidationException(
-                "The cash-difference date range must contain at most 367 days.");
+                "El rango de diferencias de caja admite máximo 367 días.");
         return store.ListCashDifferencesAsync(identity, from, to, cancellationToken);
     }
 
@@ -334,13 +338,30 @@ public sealed class WorkSessionService(
         int page, int pageSize, CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
-        if (from==default || to==default || from>to || to.DayNumber-from.DayNumber>366)
+        ValidateClosureSearch(from, to, status, page, pageSize);
+        return store.ListClosuresAsync(identity,from,to,status,page,pageSize,cancellationToken);
+    }
+
+    public Task<CashClosureInboxPage> ListClosureInboxAsync(
+        WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
+        int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        if (!identity.Permissions.Contains(WorkSessionPermissionCodes.ReadCashDifferences)
+            && !identity.Permissions.Contains(DispatchPermissionCodes.Settle))
+            throw new WorkSessionForbiddenException("No tienes permiso para consultar cierres.");
+        ValidateClosureSearch(from, to, status, page, pageSize);
+        return store.ListClosureInboxAsync(identity, from, to, status, page, pageSize, cancellationToken);
+    }
+
+    private static void ValidateClosureSearch(DateOnly from, DateOnly to, string? status, int page, int pageSize)
+    {
+        if (from == default || to == default || from > to || to.DayNumber - from.DayNumber > 366
+            || to == DateOnly.MaxValue)
             throw new WorkSessionValidationException("El rango de cierres debe contener máximo 367 días.");
-        if (page<1 || pageSize is < 1 or > 100)
+        if (page < 1 || pageSize is < 1 or > 100 || page > int.MaxValue / pageSize)
             throw new WorkSessionValidationException("La paginación de cierres no es válida.");
         if (status is not null && status is not ("Pending" or "Partial" or "Reconciled" or "ReconciledWithDifferences"))
             throw new WorkSessionValidationException("El estado de conciliación no es válido.");
-        return store.ListClosuresAsync(identity,from,to,status,page,pageSize,cancellationToken);
     }
 
     public Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
@@ -429,7 +450,7 @@ public sealed class WorkSessionService(
 
     private static void ValidatePaymentCorrections(IReadOnlyList<WorkSessionPaymentCorrection> corrections)
     {
-        if (corrections.Any(item =>
+        if (corrections.Count(item => item.PaymentMethodId is not null) > 500 || corrections.Any(item =>
                 string.IsNullOrWhiteSpace(item.VerificationKey) || item.VerificationKey.Length > 200 ||
                 string.IsNullOrWhiteSpace(item.PaymentMethodCode) || item.PaymentMethodCode.Length > 32 ||
                 item.PaymentMethodCode.Any(character => !char.IsLetterOrDigit(character)) ||
@@ -438,7 +459,11 @@ public sealed class WorkSessionService(
                 item.TenderMethodCode?.Length > 32 ||
                 item.CardFranchiseCode?.Length > 64 ||
                 item.ApprovalNumber?.Length > 100 ||
-                item.Reference?.Length > 160))
+                item.Reference?.Length > 160 ||
+                item.PaymentMethodId == Guid.Empty ||
+                (item.PaymentMethodId is null) != (item.PaymentMethodVersion is null) ||
+                item.PaymentMethodVersion is <= 0 ||
+                (item.PaymentMethodId is not null && string.IsNullOrWhiteSpace(item.TenderMethodCode))))
             throw new WorkSessionValidationException("La corrección del comprobante requiere medio, valor y motivo válidos.");
     }
 
@@ -471,12 +496,12 @@ public sealed class WorkSessionService(
         CancellationToken cancellationToken)
     {
         if (businessId == Guid.Empty)
-            throw new WorkSessionValidationException("BusinessId is required.");
+            throw new WorkSessionValidationException("Se requiere una sede válida.");
         var normalizedDirection = NullIfWhiteSpace(direction);
         if (normalizedDirection is not null &&
             !CashMovementDirections.IsSupported(normalizedDirection))
             throw new WorkSessionValidationException(
-                "Direction must be In or Out.");
+                "Selecciona una entrada o una salida de dinero.");
         return store.ListCashReasonsAsync(
             identity, businessId, normalizedDirection, cancellationToken);
     }
@@ -490,7 +515,7 @@ public sealed class WorkSessionService(
         if (!Enum.TryParse<CashMovementDirection>(
                 request.Direction, ignoreCase: false, out var direction))
             throw new WorkSessionValidationException(
-                "Direction must be In or Out.");
+                "Selecciona una entrada o una salida de dinero.");
         try
         {
             var reason = CashMovementReasonDefinition.Create(
@@ -543,14 +568,14 @@ public sealed class WorkSessionService(
         if (string.IsNullOrWhiteSpace(idempotencyKey) ||
             idempotencyKey.Trim().Length > 160)
             throw new WorkSessionValidationException(
-                "A valid Idempotency-Key header is required.");
+                "Se requiere una clave válida para identificar la operación.");
         var reason = await store.FindCashReasonAsync(
             identity,
             request.BusinessId,
             request.ReasonId,
             cancellationToken)
             ?? throw new WorkSessionValidationException(
-                "The selected cash movement reason does not exist or is inactive.");
+                "El motivo del movimiento de caja no existe o está inactivo.");
         CashMovement movement;
         try
         {
@@ -590,7 +615,7 @@ public sealed class WorkSessionService(
         ValidateUserIdentity(identity);
         if (!identity.Permissions.Contains(permission))
             throw new WorkSessionForbiddenException(
-                $"Permission '{permission}' is required.");
+                $"No tienes permiso para realizar esta acción.");
     }
 
     private static void ValidateUserIdentity(WorkSessionIdentity identity)

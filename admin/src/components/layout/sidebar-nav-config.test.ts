@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { authorizedNavigationGroups, authorizedNavigationItems } from "./sidebar-nav-config";
 
+test("closure inbox is visible to cash reviewers and dispatch receivers, never to a driver alone", () => {
+  for (const permission of ["work-sessions.differences.read", "dispatches.settle"])
+    assert.equal(authorizedNavigationItems([permission]).some(item => item.href === "/dashboard/cash-differences"), true);
+  assert.equal(authorizedNavigationItems(["dispatches.delivery.execute"]).some(item => item.href === "/dashboard/cash-differences"), false);
+});
+
 test("login permissions are the single visibility source for every navigation surface", () => {
   const items = authorizedNavigationItems(["catalog.read"]);
 

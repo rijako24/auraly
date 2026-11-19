@@ -30,7 +30,7 @@ export async function login(
   await page.locator("#password").fill(credentials.password);
 
   const loginResponse = page.waitForResponse((response) =>
-    response.request().method() === "POST" && response.url().includes("/api/auth/login"),
+    response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/auth/login"),
   );
   await page.getByRole("button", { name: /Iniciar sesi.n/ }).click();
   const response = await loginResponse;

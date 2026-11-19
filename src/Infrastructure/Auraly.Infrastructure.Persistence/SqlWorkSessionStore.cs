@@ -383,12 +383,9 @@ public sealed partial class SqlWorkSessionStore(
 
             await InsertClosureAsync(
                 connection, transaction,
-                request.ClosedByUserId ?? identity.UserId,
+                request.ClosedByUserId ?? identity.UserId, identity.TenantId,
                 closure, idempotencyKey,
                 snapshot, hash, cancellationToken);
-            await InsertTotalsAsync(
-                connection, transaction, closure.WorkSessionClosureId,
-                totals, cancellationToken);
             var differenceLines = await LoadClosureDifferenceLinesAsync(
                 connection, transaction, totals, cancellationToken);
             if (differenceLines.Count > 0)
@@ -413,19 +410,6 @@ public sealed partial class SqlWorkSessionStore(
                     accountingPayload,
                     cancellationToken);
             }
-            await using var close = new SqlCommand("""
-                UPDATE dbo.WorkSessions
-                SET Status=N'Closed',ClosedAt=@ClosedAt,LastActivityAt=@ClosedAt
-                WHERE WorkSessionId=@WorkSessionId
-                  AND TenantId=@TenantId AND UserId=@UserId
-                  AND Status=N'Open';
-                """, connection, transaction);
-            close.Parameters.AddWithValue("@ClosedAt", closedAt);
-            close.Parameters.AddWithValue("@WorkSessionId", workSessionId);
-            close.Parameters.AddWithValue("@TenantId", identity.TenantId);
-            close.Parameters.AddWithValue("@UserId", identity.UserId);
-            if (await close.ExecuteNonQueryAsync(cancellationToken) != 1)
-                throw new DBConcurrencyException("The work session changed concurrently.");
             await transaction.CommitAsync(cancellationToken);
             return closure;
         }
@@ -648,7 +632,7 @@ public sealed partial class SqlWorkSessionStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId AND b.IsActive=1
             LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId AND u.IsActive=1
-            WHERE s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open'
+            WHERE s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open' AND s.Kind=N'Normal'
               AND s.BusinessId=@BusinessId
               AND ((@DeviceId IS NULL AND s.DeviceId IS NULL)
                 OR (@DeviceId IS NOT NULL AND s.DeviceId=@DeviceId));
@@ -677,7 +661,7 @@ public sealed partial class SqlWorkSessionStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
             LEFT JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
-            WHERE s.WorkSessionId=@WorkSessionId
+            WHERE s.WorkSessionId=@WorkSessionId AND s.Kind=N'Normal'
               AND s.TenantId=@TenantId AND s.UserId=@UserId
               AND b.TenantId=s.TenantId;
             """, connection, transaction);
@@ -755,7 +739,7 @@ public sealed partial class SqlWorkSessionStore(
                   ) payment
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=payment.MethodCode
-                WHERE d.WorkSessionId=@WorkSessionId
+                WHERE d.WorkSessionId=@WorkSessionId AND d.CollectionMode=N'Session'
                 UNION ALL
                 SELECT COALESCE(mapping.ClosureMethodCode,p.MethodCode),
                        N'SalePayment',p.Amount+p.RoundingAdjustment
@@ -766,7 +750,7 @@ public sealed partial class SqlWorkSessionStore(
                  AND session.BusinessId=d.BusinessId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=p.MethodCode
-                WHERE d.WorkSessionId=@WorkSessionId
+                WHERE d.WorkSessionId=@WorkSessionId AND d.CollectionMode=N'Session'
                   AND NOT EXISTS
                   (
                     SELECT 1 FROM dbo.DocumentProcessingPayloads payload
@@ -1151,7 +1135,7 @@ public sealed partial class SqlWorkSessionStore(
             LEFT JOIN dbo.AccountingEntries e
               ON e.SourceDocumentId=j.SourceDocumentId
              AND e.SourceDocumentType=j.SourceDocumentType
-            WHERE b.TenantId=@TenantId AND c.CashDifference<>0
+            WHERE s.Kind=N'Normal' AND b.TenantId=@TenantId AND c.CashDifference<>0
               AND c.ClosedAt>=@From AND c.ClosedAt<@Until
             ORDER BY c.ClosedAt DESC,c.WorkSessionClosureId DESC;
             """, connection);
@@ -1178,25 +1162,18 @@ public sealed partial class SqlWorkSessionStore(
     private static async Task InsertClosureAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        Guid closedByUserId,
+        Guid closedByUserId, Guid tenantId,
         WorkSessionClosureView closure,
         string idempotencyKey,
         string snapshot,
         byte[] hash,
         CancellationToken cancellationToken)
     {
-        await using var command = new SqlCommand("""
-            INSERT dbo.WorkSessionClosures
-              (WorkSessionClosureId,WorkSessionId,ClosedByUserId,IdempotencyKey,
-               TotalSales,TotalRefunds,TotalOther,NetAmount,ExpectedCash,
-               CountedCash,CashDifference,SalesCount,CreditSalesCount,CreditSalesAmount,ReturnCount,
-               Note,ReceiptSnapshotJson,ReceiptHash,ClosedAt)
-            VALUES
-              (@ClosureId,@SessionId,@UserId,@IdempotencyKey,
-               @TotalSales,@TotalRefunds,@TotalOther,@NetAmount,@ExpectedCash,
-               @CountedCash,@Difference,@SalesCount,@CreditSalesCount,@CreditSalesAmount,@ReturnCount,
-               @Note,@Snapshot,@Hash,@ClosedAt);
-            """, connection, transaction);
+        await using var command = new SqlCommand("worksessions.ClosureAccept", connection, transaction)
+            { CommandType = CommandType.StoredProcedure };
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", closure.BusinessId);
+        command.Parameters.Add("@Totals", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(closure.PaymentTotals, Json);
         command.Parameters.AddWithValue("@ClosureId", closure.WorkSessionClosureId);
         command.Parameters.AddWithValue("@SessionId", closure.WorkSessionId);
         command.Parameters.AddWithValue("@UserId", closedByUserId);
@@ -1208,8 +1185,6 @@ public sealed partial class SqlWorkSessionStore(
         AddMoney(command, "@ExpectedCash", closure.ExpectedCash);
         command.Parameters.Add(new SqlParameter("@CountedCash", SqlDbType.Decimal)
         { Precision = 19, Scale = 4, Value = (object?)closure.CountedCash ?? DBNull.Value });
-        command.Parameters.Add(new SqlParameter("@Difference", SqlDbType.Decimal)
-        { Precision = 19, Scale = 4, Value = (object?)closure.CashDifference ?? DBNull.Value });
         command.Parameters.AddWithValue("@SalesCount", closure.SalesCount);
         command.Parameters.AddWithValue("@CreditSalesCount", closure.CreditSalesCount);
         AddMoney(command, "@CreditSalesAmount", closure.CreditSalesAmount);
@@ -1218,41 +1193,6 @@ public sealed partial class SqlWorkSessionStore(
         command.Parameters.AddWithValue("@Snapshot", snapshot);
         command.Parameters.Add("@Hash", SqlDbType.VarBinary, 32).Value = hash;
         command.Parameters.AddWithValue("@ClosedAt", closure.ClosedAt);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async Task InsertTotalsAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        Guid closureId,
-        IReadOnlyList<WorkSessionPaymentTotal> totals,
-        CancellationToken cancellationToken)
-    {
-        if (totals.Count == 0) return;
-        var sql = new StringBuilder("""
-            INSERT dbo.WorkSessionClosurePaymentTotals
-              (WorkSessionClosureId,PaymentMethodCode,SalesAmount,
-               RefundAmount,OtherAmount,NetAmount,CountedAmount,Difference)
-            VALUES
-            """);
-        await using var command = new SqlCommand { Connection = connection, Transaction = transaction };
-        command.Parameters.AddWithValue("@ClosureId", closureId);
-        for (var index = 0; index < totals.Count; index++)
-        {
-            if (index > 0) sql.Append(',');
-            sql.Append($"(@ClosureId,@Method{index},@Sales{index},@Refund{index},@Other{index},@Net{index},@Counted{index},@Difference{index})");
-            var total = totals[index];
-            command.Parameters.AddWithValue($"@Method{index}", total.PaymentMethodCode);
-            AddMoney(command, $"@Sales{index}", total.SalesAmount);
-            AddMoney(command, $"@Refund{index}", total.RefundAmount);
-            AddMoney(command, $"@Other{index}", total.OtherAmount);
-            AddMoney(command, $"@Net{index}", total.NetAmount);
-            command.Parameters.Add(new SqlParameter($"@Counted{index}", SqlDbType.Decimal)
-            { Precision = 19, Scale = 4, Value = (object?)total.CountedAmount ?? DBNull.Value });
-            command.Parameters.Add(new SqlParameter($"@Difference{index}", SqlDbType.Decimal)
-            { Precision = 19, Scale = 4, Value = (object?)total.Difference ?? DBNull.Value });
-        }
-        command.CommandText = sql.Append(';').ToString();
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -1410,7 +1350,7 @@ public sealed partial class SqlWorkSessionStore(
             FROM dbo.WorkSessionClosures c
             INNER JOIN dbo.WorkSessions s ON s.WorkSessionId=c.WorkSessionId
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
-            WHERE c.WorkSessionId=@WorkSessionId AND (@AllowTenantRead=1 OR s.UserId=@UserId)
+            WHERE c.WorkSessionId=@WorkSessionId AND s.Kind=N'Normal' AND (@AllowTenantRead=1 OR s.UserId=@UserId)
               AND b.TenantId=@TenantId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);

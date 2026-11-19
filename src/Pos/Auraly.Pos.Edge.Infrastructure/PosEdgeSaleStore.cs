@@ -157,7 +157,7 @@ public sealed record PosLocalWorkSessionSale(
     decimal CreditAmount,
     string CustomerName,
     string DocumentNumber,
-    IReadOnlyList<Auraly.Contracts.WorkSessions.WorkSessionInvoiceCharge>? InvoiceCharges = null);
+    IReadOnlyList<Auraly.Contracts.WorkSessions.WorkSessionInvoiceCharge>? InvoiceCharges = null, SaleCollectionMode CollectionMode=SaleCollectionMode.Session);
 
 public sealed record PosSaleOutboxStatus(
     int PendingCount,
@@ -691,7 +691,7 @@ public sealed class PosEdgeSaleStore
                     ?? value.UblSnapshot?.Customer.RegistrationName
                     ?? value.CommercialSnapshot.CustomerIdentification,
                 value.DocumentNumber.FullNumber,
-                Auraly.Application.Sales.InvoiceChargeClosureProjection.FromSale(value)))
+                Auraly.Application.Sales.InvoiceChargeClosureProjection.FromSale(value),value.CollectionMode))
             .ToArray();
     }
 
@@ -1177,7 +1177,7 @@ public sealed class PosEdgeSaleStore
             SourceOrderId: command.SourceOrderId,
             Credit: command.Credit,
             CustomerPartySiteId: command.CustomerPartySiteId,
-            Charges: command.Charges is { Count: > 0 } ? command.Charges : null);
+            Charges: command.Charges is { Count: > 0 } ? command.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(command.SourceOrderId));
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

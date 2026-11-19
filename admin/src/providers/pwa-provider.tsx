@@ -13,6 +13,7 @@ import { PwaInstallPrompt } from "@/components/pwa/pwa-install-prompt";
 import { shouldOfferPwaInstall } from "@/lib/pwa-install-visibility";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { ensurePosApprovalPushSubscription } from "@/lib/pos-approval-push";
 import { SELLER_ORDER_SYNC_COMPLETED_EVENT, SELLER_ORDER_SYNC_REQUEST_EVENT } from "@/services/orders/seller-order-reliability";
 import { shouldRunCloudBackgroundSynchronization } from "@/lib/auth-session";
@@ -25,16 +26,42 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const userId=useAuthStore(state=>state.user?.userId??"");
   const permissions=useAuthStore(state=>state.user?.permissions??[]);
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
+  const tenantId=useTenantContextStore(state=>state.selectedTenantId);
   const synchronizing=useRef(false);
   useEffect(()=>{
     let active=true;
-    const synchronize=async()=>{if(!cloudWorkspaceActive||!navigator.onLine||synchronizing.current)return;synchronizing.current=true;setSyncing(true);try{await flushDispatchOutbox();if(userId){const orders=await flushSellerOrderOutbox(userId,sellerOrdersApi.create,(routeId,request)=>routesApi.recordVisit(routeId,request));if(orders.reviews.length)toast.warning(`${orders.reviews.length} ${orders.reviews.length===1?"pedido requiere":"pedidos requieren"} ajustar inventario`,{description:"Ábrelos en Mi ruta, cambia las cantidades o elimina los productos sin existencia."});await flushPendingRouteVisits(userId,(routeId,request)=>routesApi.recordVisit(routeId,request));if(orders.uploaded)window.dispatchEvent(new Event(SELLER_ORDER_SYNC_COMPLETED_EVENT))}}finally{synchronizing.current=false;if(active)setSyncing(false)}};
+    const synchronize=async()=>{
+      if(!active||!cloudWorkspaceActive||!isAuthenticated||!tenantId||!businessId||!navigator.onLine||synchronizing.current)return;
+      synchronizing.current=true;
+      setSyncing(true);
+      try {
+        const dispatches=await flushDispatchOutbox();
+        if(!active)return;
+        if(dispatches.lastError)toast.error(dispatches.lastError,{id:"dispatch-sync-error"});
+        if(dispatches.pending)toast.info(`Quedan ${dispatches.pending} cambios de despacho por enviar.`,{
+          id:"dispatch-outbox-pending",action:{label:"Continuar",onClick:()=>void synchronize()}});
+        if(dispatches.unattributed)toast.warning("Hay entregas sin conexión de una versión anterior que requieren revisión antes de enviarse.",{
+          id:"dispatch-unattributed-outbox",description:"Se conservaron sin cambios; no se enviarán desde otra identidad."});
+        if(userId) {
+          const orders=await flushSellerOrderOutbox(userId,sellerOrdersApi.create,(routeId,request)=>routesApi.recordVisit(routeId,request));
+          if(orders.reviews.length)toast.warning(`${orders.reviews.length} ${orders.reviews.length===1?"pedido requiere":"pedidos requieren"} ajustar inventario`,{
+            description:"Ábrelos en Mi ruta, cambia las cantidades o elimina los productos sin existencia."});
+          await flushPendingRouteVisits(userId,(routeId,request)=>routesApi.recordVisit(routeId,request));
+          if(orders.uploaded)window.dispatchEvent(new Event(SELLER_ORDER_SYNC_COMPLETED_EVENT));
+        }
+      } catch(error) {
+        if(active)toast.error(error instanceof Error?error.message:"No fue posible sincronizar los cambios pendientes.");
+      } finally {
+        synchronizing.current=false;
+        setSyncing(false);
+      }
+    };
     const connected=()=>{setOnline(true);void synchronize()};const disconnected=()=>setOnline(false);const visible=()=>{if(document.visibilityState==="visible")void synchronize()};
     setOnline(navigator.onLine);window.addEventListener("online",connected);window.addEventListener("offline",disconnected);window.addEventListener("focus",synchronize);window.addEventListener(SELLER_ORDER_SYNC_REQUEST_EVENT,synchronize);document.addEventListener("visibilitychange",visible);
     if("serviceWorker" in navigator&&process.env.NODE_ENV==="production")void navigator.serviceWorker.register("/app-sw.js",{scope:"/",updateViaCache:"none"}).then(registration=>registration.update());
     void synchronize();
     return()=>{active=false;window.removeEventListener("online",connected);window.removeEventListener("offline",disconnected);window.removeEventListener("focus",synchronize);window.removeEventListener(SELLER_ORDER_SYNC_REQUEST_EVENT,synchronize);document.removeEventListener("visibilitychange",visible)};
-  },[cloudWorkspaceActive,userId]);
+  },[cloudWorkspaceActive,isAuthenticated,userId,tenantId,businessId]);
   useEffect(()=>{
     if(!cloudWorkspaceActive||!isAuthenticated||!businessId||!permissions.includes("pos.approvals.read")||!permissions.includes("pos.approvals.authorize")||typeof Notification==="undefined"||Notification.permission!=="granted")return;
     void ensurePosApprovalPushSubscription().catch(()=>undefined);

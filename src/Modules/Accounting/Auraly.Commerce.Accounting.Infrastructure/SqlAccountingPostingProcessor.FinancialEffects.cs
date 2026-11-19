@@ -305,7 +305,7 @@ public sealed partial class SqlAccountingPostingProcessor
             case "Expense":
                 await ApplyExpenseFinancialEffectsAsync(
                     connection, transaction,
-                    ExpenseContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                    ReadExpenseSource(source), cancellationToken);
                 break;
             case "ExpenseCancellation":
                 await ApplyExpenseCancellationFinancialEffectsAsync(connection, transaction,
@@ -484,6 +484,10 @@ public sealed partial class SqlAccountingPostingProcessor
         if (sale.Payments.Count > 0)
         {
             await using var movement = new SqlCommand("""
+                -- The persisted attribution is frozen at acceptance. An old
+                -- order-origin sale keeps its historical session on upgrade.
+                IF EXISTS(SELECT 1 FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId AND CollectionMode=N'Session')
+                BEGIN
                 INSERT dbo.WorkSessionMovements
                   (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
                    BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,SourceKey,
@@ -493,6 +497,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 FROM OPENJSON(@Payments) WITH(Id uniqueidentifier,PaymentNumber int,
                   MethodCode nvarchar(32),Amount decimal(19,4),Reference nvarchar(max),SourceKey nvarchar(160)) p;
                 IF @@ROWCOUNT<>@Count THROW 51607,'The sale payments were not recorded atomically.',1;
+                END;
                 """, connection, transaction);
             movement.Parameters.AddWithValue("@SessionId", canonicalWorkSessionId);
             movement.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
@@ -512,12 +517,42 @@ public sealed partial class SqlAccountingPostingProcessor
         SqlConnection connection, SqlTransaction transaction,
         SalesReturnDocumentPayload value, CancellationToken token)
     {
+        if (value.EconomicResolution == ReturnEconomicResolutions.ReverseUncollected)
+        {
+            var reversals = value.UncollectedPaymentReversals;
+            if (value.DispatchId is null || value.WorkSessionId is not null ||
+                value.ReceivableReversalAmount is null or < 0 || reversals is null ||
+                reversals.Sum(item => item.Amount)+value.ReceivableReversalAmount != value.TotalAmount ||
+                reversals.Any(item => item.Amount <= 0 || item.OriginalPaymentNumber <= 0) ||
+                reversals.Select(item => item.OriginalPaymentNumber).Distinct().Count() != reversals.Count)
+                throw new InvalidOperationException("La devolución no conserva su reversión de recaudo pendiente.");
+            await using var reverse = new SqlCommand("""
+                INSERT dbo.SalesReturnSettlements(ReturnId,SettlementNumber,SettlementType,OriginalDocumentId,
+                  OriginalPaymentNumber,Amount,Reference,OccurredAt)
+                SELECT @ReturnId,ROW_NUMBER() OVER(ORDER BY input.OriginalPaymentNumber),N'ReverseUncollected',
+                  @OriginalId,input.OriginalPaymentNumber,input.Amount,@Number,@At
+                FROM OPENJSON(@Rows) WITH(OriginalPaymentNumber int,Amount decimal(19,4)) input;
+                INSERT dbo.SalesReturnSettlements(ReturnId,SettlementNumber,SettlementType,OriginalDocumentId,
+                  Amount,Reference,OccurredAt)
+                SELECT @ReturnId,@Count+1,N'CustomerCredit',@OriginalId,@Credit,@Number,@At WHERE @Credit>0;
+                """, connection, transaction);
+            reverse.Parameters.AddWithValue("@ReturnId", value.ReturnId);
+            reverse.Parameters.AddWithValue("@OriginalId", value.OriginalDocumentId);
+            reverse.Parameters.AddWithValue("@Number", value.DocumentNumber);
+            reverse.Parameters.AddWithValue("@At", value.ReturnedAt);
+            reverse.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(reversals);
+            reverse.Parameters.AddWithValue("@Count",reversals.Count);
+            AddMoney(reverse,"@Credit",value.ReceivableReversalAmount.Value);
+            if (await reverse.ExecuteNonQueryAsync(token) != reversals.Count+(value.ReceivableReversalAmount>0?1:0))
+                throw new DBConcurrencyException("No se conservó la reversión completa del recaudo pendiente.");
+        }
+        else
         await using (var settlement = new SqlCommand("""
             INSERT dbo.SalesReturnSettlements
               (ReturnId,SettlementNumber,SettlementType,MethodCode,OriginalDocumentId,
-               OriginalPaymentNumber,Amount,Reference,Notes,CardFranchiseCode,ApprovalNumber,BankAccountId,OccurredAt)
+               OriginalPaymentNumber,Amount,Reference,Notes,CardFranchiseCode,ApprovalNumber,BankAccountId,OccurredAt,OriginalDispatchPaymentId)
             VALUES(@ReturnId,1,@Type,@Method,@OriginalId,@PaymentNumber,@Amount,@Reference,
-               @Notes,@CardFranchiseCode,@ApprovalNumber,@BankAccountId,@At);
+               @Notes,@CardFranchiseCode,@ApprovalNumber,@BankAccountId,@At,@DispatchPayment);
             """, connection, transaction))
         {
             settlement.Parameters.AddWithValue("@ReturnId", value.ReturnId);
@@ -525,6 +560,7 @@ public sealed partial class SqlAccountingPostingProcessor
             settlement.Parameters.AddWithValue("@Method", (object?)value.RefundMethodCode ?? DBNull.Value);
             settlement.Parameters.AddWithValue("@OriginalId", value.OriginalDocumentId);
             settlement.Parameters.AddWithValue("@PaymentNumber", (object?)value.OriginalPaymentNumber ?? DBNull.Value);
+            settlement.Parameters.AddWithValue("@DispatchPayment",(object?)value.OriginalDispatchPaymentId??DBNull.Value);
             AddMoney(settlement, "@Amount", value.TotalAmount);
             settlement.Parameters.AddWithValue("@Reference",
                 (object?)value.SettlementReference ?? value.DocumentNumber);
@@ -538,6 +574,9 @@ public sealed partial class SqlAccountingPostingProcessor
 
         await ApplySalesReturnChargeFinancialEffectsAsync(
             connection, transaction, value, token);
+        var creditApplicationAmount=value.EconomicResolution==ReturnEconomicResolutions.ReverseUncollected
+            ? value.ReceivableReversalAmount!.Value : value.TotalAmount;
+        if(value.EconomicResolution==ReturnEconomicResolutions.ReverseUncollected && creditApplicationAmount==0) return;
 
         if (value.EconomicResolution == ReturnEconomicResolutions.Refund)
         {
@@ -577,7 +616,7 @@ public sealed partial class SqlAccountingPostingProcessor
              AND sale.BusinessId=receivable.BusinessId
              AND sale.DocumentType=receivable.SourceDocumentType
             CROSS APPLY accounting.ObligationAvailability(receivable.BusinessId,N'Receivable',receivable.ReceivableId,
-              receivable.OutstandingAmount,NULL) available
+              receivable.OutstandingAmount,@ReturnId) available
             WHERE receivable.BusinessId=@BusinessId AND receivable.CustomerId=@CustomerId
               AND receivable.SourceDocumentId=@OriginalId
               AND receivable.Status IN(N'Open',N'PartiallyPaid')
@@ -587,6 +626,7 @@ public sealed partial class SqlAccountingPostingProcessor
             load.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             load.Parameters.AddWithValue("@CustomerId", value.CustomerId.Value);
             load.Parameters.AddWithValue("@OriginalId", value.OriginalDocumentId);
+            load.Parameters.AddWithValue("@ReturnId",value.ReturnId);
             await using var reader = await load.ExecuteReaderAsync(token);
             if (await reader.ReadAsync(token))
             {
@@ -596,8 +636,10 @@ public sealed partial class SqlAccountingPostingProcessor
         }
         if (availableAmount < 0)
             throw new InvalidOperationException("La cartera y sus reservas requieren conciliación antes de aplicar la devolución.");
-        var applied = decimal.Min(value.TotalAmount, availableAmount);
-        var credit = value.TotalAmount - applied;
+        var applied = decimal.Min(creditApplicationAmount, availableAmount);
+        if(value.EconomicResolution==ReturnEconomicResolutions.ReverseUncollected && applied!=creditApplicationAmount)
+            throw new DBConcurrencyException("La cuenta por cobrar cambió después de aceptar la devolución del despacho.");
+        var credit = creditApplicationAmount - applied;
         var now = timeProvider.GetUtcNow();
         if (receivableId is not null && applied > 0)
         {
@@ -819,7 +861,7 @@ public sealed partial class SqlAccountingPostingProcessor
         SqlConnection connection, SqlTransaction transaction,
         ExpenseDocumentPayload value, CancellationToken token)
     {
-        if (value.Withholding.NetAmount > 0)
+        if (value.Payment is null && value.Withholding.NetAmount > 0)
             await OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
                 value.ExpenseId, "Expense", value.DocumentNumber, value.CurrencyCode,
                 value.Withholding.NetAmount, value.DueDate, value.IssuedAt, token,

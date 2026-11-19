@@ -56,7 +56,7 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON ws.WorkSessionId=d.WorkSessionId AND ws.BusinessId=d.BusinessId
              AND ws.UserId=d.UserId
              AND ws.TenantId=b.TenantId
-             AND ws.Status=N'Open'
+             AND ws.Status=N'Open' AND ws.Kind=N'Normal'
             JOIN dbo.FiscalSeries s
               ON s.BusinessId=d.BusinessId AND s.DeviceId IS NULL
              AND s.EmitterKind=N'Server'
@@ -380,7 +380,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     state.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
                     request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
-            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null);
+            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(state.SourceOrderId));
 
         DemandValidPreparedFiscalSnapshot(upload, fiscalMaterial);
 

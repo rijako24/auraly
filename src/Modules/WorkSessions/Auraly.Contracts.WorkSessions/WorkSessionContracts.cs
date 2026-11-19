@@ -275,6 +275,19 @@ public sealed record WorkSessionClosurePage(
     int PageSize,
     int TotalItems);
 
+// The inbox combines existing closures; each origin retains its own identity and commands.
+public sealed record CashClosureInboxItem(
+    Guid ClosureId, string Type, WorkSessionClosureListItem? CashClosure,
+    DispatchClosureInboxItem? DispatchClosure);
+
+public sealed record DispatchClosureInboxItem(
+    Guid DispatchId, string DispatchNumber, Guid BusinessId, string BusinessName,
+    string DriverName, DateTimeOffset ClosedAt, string Status,
+    decimal ExpectedCash, decimal DeclaredCash, decimal? CashReceived, decimal Difference);
+
+public sealed record CashClosureInboxPage(
+    IReadOnlyList<CashClosureInboxItem> Items, int Page, int PageSize, int TotalItems);
+
 public sealed record WorkSessionPaymentVerificationItem(
     string VerificationKey,
     string PaymentMethodCode,
@@ -300,7 +313,10 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? CorrectedCardFranchiseCode = null,
     string? CorrectedApprovalNumber = null,
     string? CorrectedReference = null,
-    string? CounterpartyName = null);
+    string? CounterpartyName = null,
+    Guid? CorrectedPaymentMethodId = null,
+    int? CorrectedPaymentMethodVersion = null,
+    string? CorrectedPaymentMethodName = null);
 
 public sealed record WorkSessionPaymentVerificationGroup(
     string PaymentMethodCode,
@@ -357,7 +373,9 @@ public sealed record WorkSessionPaymentCorrection(
     string? TenderMethodCode = null,
     string? CardFranchiseCode = null,
     string? ApprovalNumber = null,
-    string? Reference = null);
+    string? Reference = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null);
 
 public sealed record WorkSessionAppliedPaymentCorrection(
     string VerificationKey,
@@ -379,7 +397,12 @@ public sealed record WorkSessionAppliedPaymentCorrection(
     string? ApprovalNumber = null,
     string? Reference = null,
     string? OriginalTenderCategory = null,
-    string? TenderCategory = null);
+    string? TenderCategory = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? CorrectionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceDocumentType = null);
 
 public sealed record ReconcileWorkSessionClosureRequest(
     IReadOnlyList<ReconcileWorkSessionClosureLine> Lines,

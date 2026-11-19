@@ -7,6 +7,6 @@ AS RETURN
 (
     SELECT WorkSessionId,DeviceId FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
     WHERE WorkSessionId=@SessionId AND TenantId=@TenantId AND BusinessId=@BusinessId
-      AND UserId=@UserId AND Status=N'Open'
+      AND UserId=@UserId AND Status=N'Open' AND Kind=N'Normal'
 );
 GO

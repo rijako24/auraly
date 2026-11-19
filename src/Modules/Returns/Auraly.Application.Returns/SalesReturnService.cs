@@ -1,5 +1,6 @@
 using Auraly.Application.DocumentProcessing;
 using Auraly.Contracts.Returns;
+using Auraly.Contracts.Dispatching;
 
 namespace Auraly.Application.Returns;
 
@@ -25,38 +26,50 @@ public sealed class SalesReturnService(
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(request);
         if (request.BusinessId != user.BusinessId)
-            throw new SalesReturnForbiddenException("The return belongs to another business.");
+            throw new SalesReturnForbiddenException("La devolución pertenece a otra sede.");
         Require(user, SalesReturnPermissionCodes.Create);
         if (request.ReturnId == Guid.Empty || request.OriginalDocumentId == Guid.Empty ||
             request.WarehouseId == Guid.Empty)
-            throw new SalesReturnValidationException("ReturnId, OriginalDocumentId and WarehouseId are required.");
+            throw new SalesReturnValidationException("Se requiere una devolución, el documento original y una bodega válidos.");
         if (request.ReturnedAt == default)
-            throw new SalesReturnValidationException("ReturnedAt is required.");
+            throw new SalesReturnValidationException("Indica la fecha de devolución.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
-            throw new SalesReturnValidationException("A valid Idempotency-Key is required.");
+            throw new SalesReturnValidationException("No se pudo identificar la operación. Vuelve a intentarlo con la misma solicitud.");
         if (!ReturnEconomicResolutions.All.Contains(request.EconomicResolution))
-            throw new SalesReturnValidationException("The economic resolution is invalid.");
+            throw new SalesReturnValidationException("La resolución económica no es válida.");
+        if (request.EconomicResolution == ReturnEconomicResolutions.ReverseUncollected ||
+            request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit && request.DispatchId is not null)
+        {
+            if (!user.Permissions.Contains(DispatchPermissionCodes.Settle))
+                throw new SalesReturnForbiddenException("No tienes permiso para conciliar este despacho.");
+            if (request.DispatchId is null || request.DispatchId == Guid.Empty ||
+                request.WorkSessionId is not null || request.RefundMethodCode is not null)
+                throw new SalesReturnValidationException("La devolución del despacho requiere su vínculo y no registra un reembolso de caja.");
+        }
+        else if (request.DispatchId is not null)
+            throw new SalesReturnValidationException("El vínculo de despacho solo aplica a una devolución pendiente de conciliación.");
         if (!SalesReturnScopes.All.Contains(request.ReturnScopeCode))
-            throw new SalesReturnValidationException("The sales return scope is invalid.");
+            throw new SalesReturnValidationException("El alcance de la devolución de venta no es válido.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             string.IsNullOrWhiteSpace(request.RefundMethodCode))
-            throw new SalesReturnValidationException("A refund method is required for a refund.");
+            throw new SalesReturnValidationException("Selecciona una forma de pago para realizar el reembolso.");
         if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
             !string.IsNullOrWhiteSpace(request.RefundMethodCode))
-            throw new SalesReturnValidationException("Customer credit cannot include a refund method.");
+            throw new SalesReturnValidationException("Un saldo a favor del cliente no puede incluir una forma de reembolso.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             !SalesReturnRefundMethods.All.Contains(request.RefundMethodCode!))
-            throw new SalesReturnValidationException("The refund method is invalid.");
+            throw new SalesReturnValidationException("La forma de reembolso no es válida.");
         if (request.WorkSessionId == Guid.Empty)
-            throw new SalesReturnValidationException("WorkSessionId must be null or a valid identifier.");
+            throw new SalesReturnValidationException("La sesión de caja debe estar vacía o tener una identificación válida.");
         var cardRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             request.RefundMethodCode is SalesReturnRefundMethods.DebitCard or SalesReturnRefundMethods.CreditCard;
         var transferRefund = request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             request.RefundMethodCode == SalesReturnRefundMethods.Transfer;
-        if (cardRefund && request.OriginalPaymentNumber is null)
+        if (request.OriginalDispatchPaymentId == Guid.Empty ||
+            cardRefund && request.OriginalPaymentNumber.HasValue == request.OriginalDispatchPaymentId.HasValue)
             throw new SalesReturnValidationException(
                 "La reversión por tarjeta debe identificar el pago original.");
-        if (!cardRefund && request.OriginalPaymentNumber is not null)
+        if (!cardRefund && (request.OriginalPaymentNumber is not null || request.OriginalDispatchPaymentId is not null))
             throw new SalesReturnValidationException(
                 "Solo una reversión por tarjeta puede enlazar un pago original.");
         if (!transferRefund && request.BankAccountId is not null)
@@ -72,20 +85,20 @@ public sealed class SalesReturnService(
             throw new SalesReturnValidationException(
                 "La referencia admite 160 caracteres y la nota bancaria 500.");
         if (string.IsNullOrWhiteSpace(request.ReasonCode) || request.ReasonCode.Trim().Length > 40)
-            throw new SalesReturnValidationException("The return reason code is required.");
+            throw new SalesReturnValidationException("Selecciona un motivo de devolución.");
         if (request.Notes?.Trim().Length > 1000)
-            throw new SalesReturnValidationException("Return notes cannot exceed 1000 characters.");
+            throw new SalesReturnValidationException("Las observaciones de la devolución admiten máximo 1.000 caracteres.");
         if (string.IsNullOrWhiteSpace(request.ReasonDescription) ||
             request.ReasonDescription.Trim().Length > 300)
-            throw new SalesReturnValidationException("A return reason of at most 300 characters is required.");
+            throw new SalesReturnValidationException("Indica un motivo de devolución de máximo 300 caracteres.");
         if (request.Lines.Count == 0 || request.Lines.Count > 500)
-            throw new SalesReturnValidationException("The return requires between one and 500 lines.");
+            throw new SalesReturnValidationException("La devolución debe contener entre 1 y 500 líneas.");
         if (request.Lines.Select(line => line.OriginalLineNumber).Distinct().Count() != request.Lines.Count)
-            throw new SalesReturnValidationException("An original sale line can appear only once.");
+            throw new SalesReturnValidationException("Una línea de la venta original no puede repetirse.");
         foreach (var line in request.Lines)
         {
             if (line.OriginalLineNumber <= 0 || line.Quantity <= 0)
-                throw new SalesReturnValidationException("Return line and quantity must be positive.");
+                throw new SalesReturnValidationException("La línea original y la cantidad devuelta deben ser mayores que cero.");
             if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable &&
                 !(request.ReasonCode == SalesReturnReasonCodes.RestaurantPreparedCancellation &&
                   line.InventoryDisposition == ReturnInventoryDispositions.NotReturned))
@@ -124,7 +137,7 @@ public sealed class SalesReturnService(
     private static void Require(SalesReturnUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
-            throw new SalesReturnForbiddenException($"Permission '{permission}' is required.");
+            throw new SalesReturnForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }
 

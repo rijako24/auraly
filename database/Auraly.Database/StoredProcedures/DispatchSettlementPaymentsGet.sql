@@ -4,30 +4,26 @@ CREATE PROCEDURE dbo.DispatchSettlementPaymentsGet
 AS
 BEGIN
     SET NOCOUNT ON;
-    DECLARE @PrimaryBankAccountId UNIQUEIDENTIFIER;
-    SELECT @PrimaryBankAccountId = bank.BankAccountId
-    FROM dbo.Businesses business
-    INNER JOIN accounting.BankAccounts bank ON bank.TenantId = business.TenantId
-        AND bank.IsPrimary = 1 AND bank.IsActive = 1
-    WHERE business.BusinessId = @BusinessId;
-    SELECT source.SourceDocumentId,
-           sale.CustomerId,
-           receivable.ReceivableId,
-           payment.PaymentMethod,
-           SUM(payment.Amount),
-           MAX(payment.Reference),
-           CASE WHEN payment.PaymentMethod = N'Deposit' THEN @PrimaryBankAccountId ELSE NULL END
-    FROM dbo.DispatchDeliveryPayments payment
+    -- Paid obligations remain visible so retry returns the same accepted payment.
+    SELECT source.SourceDocumentId,sale.CustomerId,receivable.ReceivableId,
+           payment.MethodCode,payment.Amount,payment.Reference,payment.BankAccountId,
+           payment.PaymentMethodId,payment.PaymentMethodVersion,
+           payment.CardFranchiseCode,payment.ApprovalNumber,
+           payment.OriginalMethod PaymentKeyMethod
+    FROM dispatch.EffectivePayments(@DispatchId) payment
     INNER JOIN dbo.DispatchSourceDocuments source
         ON source.DispatchSourceDocumentId = payment.DispatchSourceDocumentId
-    INNER JOIN dbo.SalesDocuments sale ON sale.DocumentId = source.SourceDocumentId
+    INNER JOIN dbo.SalesDocuments sale ON sale.DocumentId = source.SourceDocumentId AND sale.BusinessId=@BusinessId
     INNER JOIN dbo.Receivables receivable
         ON receivable.SourceDocumentId = source.SourceDocumentId
        AND receivable.BusinessId = @BusinessId
-       AND receivable.Status IN (N'Open', N'PartiallyPaid')
+       AND receivable.SourceDocumentType = source.SourceDocumentType
+       AND receivable.SourceLineId IS NULL
     WHERE payment.DispatchId = @DispatchId
       AND payment.ApplicationType IN (N'InvoicePayment', N'CreditAdvance')
-      AND payment.PaymentMethod IN (N'Cash', N'Deposit')
+      AND (payment.ApplicationType=N'CreditAdvance' OR sale.CollectionMode=N'Session')
+      AND payment.BusinessId=@BusinessId
+      AND payment.MethodCode IN (N'Cash', N'Transfer', N'DebitCard', N'CreditCard')
       AND sale.CustomerId IS NOT NULL
-    GROUP BY source.SourceDocumentId, sale.CustomerId, receivable.ReceivableId, payment.PaymentMethod;
+    ORDER BY source.SourceDocumentId,PaymentKeyMethod,payment.PaymentId;
 END

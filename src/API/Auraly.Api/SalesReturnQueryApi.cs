@@ -33,11 +33,11 @@ public static class SalesReturnQueryApi
 
         endpoints.MapGet("/api/commerce/v1/sales-returns", async (
                 HttpContext context, Guid? businessId, Guid? customerId, int page, int pageSize, string? search,
-                string? status, DateOnly? from, DateOnly? to,
+                string? status, DateOnly? from, DateOnly? to, Guid? originalDocumentId,
                 SalesReturnQueryService service, CancellationToken token) =>
             await Execute(() => service.ListReturnsAsync(
                 context.User.ToSalesReturnQueryIdentity(businessId),
-                new(page, pageSize, search, status, from, to, customerId), token), Results.Ok))
+                new(page, pageSize, search, status, from, to, customerId, originalDocumentId), token), Results.Ok))
             .RequireAuthorization("returns.user");
 
         endpoints.MapGet("/api/commerce/v1/sales-returns/{returnId:guid}",

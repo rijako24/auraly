@@ -265,3 +265,105 @@ local y la devolución incrustada reutiliza la preparación propietaria del POS.
 Un fallo de preparación se informa al imprimir y permite usar el nombre disponible.
 Se retiró el mapeo duplicado de recibos en el host para conservar referencia,
 estado, ajuste al peso y metadata a través del mapeo compartido.
+
+## Despacho antes del recaudo — ampliación del 18 de noviembre
+
+La decisión de recaudo/cierre único del documento propietario de Despachos añade
+`ReverseUncollected` al mismo contrato de devolución. No es una opción general
+del editor ni un reembolso: exige permiso de conciliación, despacho en proceso,
+solicitud del administrativo de esa operación, venta atribuida al despacho y
+coincidencia exacta con la mercancía declarada. Una venta ya recaudada no puede
+utilizar esa resolución. El replay conserva su recibo original y no revalida la
+configuración ni repite efectos.
+
+Las devoluciones internas que aplican únicamente al crédito también conservan
+`DispatchId` con la resolución existente `CustomerCredit`. El vínculo exige el
+mismo permiso y valida la operación aceptada, el solicitante y las cantidades
+de entrega; no convierte esa resolución en una devolución pública sin controles.
+Permite devolver completamente una venta a crédito sin producir dinero recibido.
+El replay usa el mismo comando aceptado, incluido ese vínculo.
+
+La aceptación conserva las porciones de los pagos lógicos originales cancelados,
+reservando también las devoluciones aceptadas aún sin contabilizar. Su asignación
+por número de pago es determinista; no pretende distribuir dinero recibido por
+factura. El motor documental y el ledger siguen siendo los únicos escritores de
+la devolución física. El processor financiero existente conserva las partidas de
+liquidación en SalesReturnSettlements y revierte los auxiliares realmente usados
+por la venta, leídos mediante accounting.SalePaymentPostingFacts. No crea dinero
+de caja, CxC ni saldo a favor. En una venta mixta aplica primero a la deuda
+existente, conservando ReceivableReversalAmount; sólo el remanente cancela pagos
+lógicos. Esa porción de deuda queda reservada en ObligationAvailability desde
+la aceptación, excluyendo el propio retorno al aplicar su efecto. Reporting
+conserva la devolución comercial y sólo el CreditApplication real; no inventa
+un Refund ni una aplicación por la parte nunca recaudada. La nota fiscal y la impresión siguen
+sus contratos existentes, sin editar plantillas publicadas ni reenviar la venta.
+
+La captura del despacho usa SalesReturnAmountCalculator, incluidos cuatro
+decimales y el ajuste de pago acumulado. El evento aceptado conserva ReturnTotal;
+el cierre no repite otra fórmula. Una entrega fallida devuelve todos los cargos
+por el contrato canónico. La devolución financiera vuelve a comprobar el importe
+aceptado y falla si otra operación alteró el saldo retornable. Los datos anteriores
+conservan su valoración durante el cutover versionado; no hay fórmula histórica
+condicional en runtime.
+
+Evidencia inicial: dispatch-uncollected-vertical.trx, nueve casos aprobados de
+venta/pedido/despacho/conciliación. Incluye devolución parcial de comprobante y FE,
+entrega fallida, mismos/distintos auxiliares, cuatro medios y configuración inválida
+seguida de reintento. La regresión dispatch-uncollected-regression.trx aprueba 33
+casos, incluidos permisos, replay, errores de inventario, devolución/redondeo
+existente, cierre normal y ALTER/backfill desde las tablas comunes anteriores.
+La ampliación de crédito tiene 14 escenarios de negocio aprobados en
+ dispatch-partial-credit.trx; el decimoquinto falló por el texto esperado de un
+mensaje, conservado y vuelto a verificar en dispatch-credit-reservations.trx.
+return-reservation-audit.trx prueba además el rechazo de un pago que consumía
+una devolución pendiente, aplicación posterior y replay sin repetir efectos.
+Los fallos iniciales de preparación de esa prueba se conservan en sus logs.
+`dispatch-collected-refund.trx` aprueba 17 escenarios y comprueba también ese
+CreditApplication. El reembolso posterior por tarjeta usa OriginalDispatchPaymentId:
+identifica el recaudo real, su franquicia/aprobación y el auxiliar congelado en el
+resultado de contabilización del cierre. El número del pago original continúa
+identificando sólo pagos de ventas recaudadas en sesión normal. No se admite
+reembolsar por ese número un pago lógico de pedido. La reserva incluye devoluciones
+aceptadas; dos reembolsos concurrentes no pueden gastar dos veces la disponibilidad.
+La prueba cambia efectivo lógico por tarjeta real y acredita exactamente ese
+auxiliar, conserva el asiento de venta y agota el presupuesto con dos devoluciones.
+No consulta el catálogo actual para inventar la cuenta histórica del reembolso.
+La consulta retornable y el editor reutilizan el mismo contrato con un identificador
+opcional; los documentos antiguos no cambian de identidad ni de hash.
+Esto no acredita todavía todo el release y no se ha desplegado este incremento.
+
+### Recaudo corregido en cierre normal (18 de noviembre de 2026)
+
+La venta y su XML permanecen inmutables. Para una devolución posterior al cierre,
+la consulta y el processor usan los campos efectivos de
+`accounting.SalePaymentPostingFacts`: medio, importe, franquicia, aprobación y
+auxiliar realmente aplicado por la conciliación. Los campos originales siguen
+siendo la evidencia de origen para otras reversiones. No se obtiene el datáfono
+original o corregido desde la configuración actual al reembolsar.
+
+La aceptación reserva la tarjeta desde el encabezado `SalesReturns`, incluida
+una devolución todavía sin settlements. No se puede reembolsar mientras la
+corrección no haya terminado, ni corregir nuevamente un recaudo con reembolsos
+aceptados. La venta original conserva el bloqueo común para ambas aceptaciones.
+No se añaden tablas, estados, jobs ni otro motor financiero.
+
+El modo comercial sin contabilidad conserva su contrato, con y sin forma nativa:
+no exige un asiento de origen que nunca existió ni fabrica una reclasificación.
+Cuando se requiere asiento, el auxiliar histórico sigue siendo obligatorio. La
+fuente aceptada y los movimientos anteriores no se reparan ni se recalculan.
+
+La captura vigente de `CustomerCredit` exige deuda suficiente de la factura;
+esto sustituye la propuesta anterior de crear automáticamente un saldo a favor
+por cualquier excedente. Las fuentes ya aceptadas conservan su snapshot. Una
+venta histórica ya cobrada no puede resolverse suponiendo un nuevo reembolso:
+ese caso del despacho sigue siendo una compuerta de diseño explícita.
+
+Verificación focalizada: `closure-effective-refund-final.trx` (11 aprobados),
+`effective-tender-return-regression-final.trx` (19 aprobados) y
+`native-commercial-final.trx` (8 aprobados; incluye revalidaciones de los casos
+afectados, no ocho casos adicionales independientes). Incluyen cambio entre
+datáfonos, efectivo a tarjeta, cambio posterior de configuración, reserva antes
+del procesamiento, replay, modo comercial y devoluciones canónicas. La consulta
+del detalle conserva cuatro comandos SQL. Se conservan las ejecuciones fallidas
+que identificaron los problemas y las posteriores que los corrigen. El detalle
+de aceptación, despliegue y rollback está en `cash-session-and-count-design.md`.

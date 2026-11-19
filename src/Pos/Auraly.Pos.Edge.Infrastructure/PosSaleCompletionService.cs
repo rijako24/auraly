@@ -214,7 +214,7 @@ public sealed class PosDraftIssuanceStore(
         command.Parameters.AddWithValue("@DocumentId", documentId.Value.ToString("D"));
         var affected = await command.ExecuteNonQueryAsync(ct);
         if (affected != 1)
-            throw new InvalidOperationException("The issued sale could not lock its source draft.");
+            throw new InvalidOperationException("No fue posible bloquear el borrador de la venta emitida.");
         await transaction.CommitAsync(ct);
     }
 }
@@ -233,16 +233,22 @@ public sealed class PosSaleCompletionService(
         CancellationToken ct = default)
     {
         if (command.PaperWidthMillimeters is not (58 or 80))
-            throw new ArgumentOutOfRangeException(nameof(command), "Receipt width must be 58 or 80 mm.");
+            throw new ArgumentOutOfRangeException(nameof(command), "El ancho del recibo debe ser de 58 u 80 mm.");
         var draft = await drafts.GetAsync(draftId, ct)
-            ?? throw new KeyNotFoundException("The active sale does not exist.");
+            ?? throw new KeyNotFoundException("La venta activa no existe.");
+        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(draft.SourceOrderId,command.DocumentType,
+            command.Credit is not null,command.Payments.Select(payment=>new SalePaymentPurpose(payment.MethodCode,
+                payment.PaymentMethodId is {} form && form!=Guid.Empty,!string.IsNullOrWhiteSpace(payment.Reference)||
+                payment.TenderedAmount is not null||payment.BankAccountId is not null||!string.IsNullOrWhiteSpace(payment.Notes)||
+                !string.IsNullOrWhiteSpace(payment.CardFranchiseCode)||!string.IsNullOrWhiteSpace(payment.ApprovalNumber))).ToArray(),OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId));
+        if(paymentPurposeError is not null) throw new InvalidOperationException(paymentPurposeError);
         if (draft.Status != PosDraftStatus.Active || draft.Lines.Count == 0)
-            throw new InvalidOperationException("Only a non-empty active sale can be completed.");
+            throw new InvalidOperationException("Sólo se puede finalizar una venta activa con productos.");
         if (draft.Lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
                 line.Quantity, line.Net, line.DocumentUnitCost)) &&
             command.Permissions?.Contains(CommercePermissionCodes.SalesBelowCost) != true)
             throw new UnauthorizedAccessException(
-                $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
+                "No tienes permiso para vender por debajo del costo.");
         var withholding = await CalculateWithholdingAsync(draft, command.IssuedAt, ct);
         if ((command.Payments.Count == 0 && command.Credit is null) ||
             command.Payments.Sum(payment => payment.CollectedAmount) +
@@ -345,12 +351,12 @@ public sealed class PosSaleCompletionService(
         await issuance.CompleteAsync(draftId, issued.DocumentId, ct);
         var nextDraft = await drafts.GetOrCreateActiveAsync(draft.Scope, ct);
         var nextDocumentNumber = await sales.PreviewNextDocumentNumberAsync(
-            command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
+            command.Context.DeviceId ?? throw new InvalidOperationException("La venta local requiere identificar el dispositivo."),
             command.DocumentType,
             ct);
         var nextFiscalNumber = PosSaleDocumentTypes.IsFiscal(command.DocumentType)
             ? await sales.PreviewNextFiscalNumberAsync(
-                command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
+                command.Context.DeviceId ?? throw new InvalidOperationException("La venta local requiere identificar el dispositivo."),
                 command.IssuedAt,
                 ct)
             : null;
@@ -371,9 +377,9 @@ public sealed class PosSaleCompletionService(
     {
         if (paperWidthMillimeters is not (58 or 80))
             throw new ArgumentOutOfRangeException(
-                nameof(paperWidthMillimeters), "Receipt width must be 58 or 80 mm.");
+                nameof(paperWidthMillimeters), "El ancho del recibo debe ser de 58 u 80 mm.");
         var immutable = await sales.GetIssuedUploadAsync(documentId, ct)
-            ?? throw new KeyNotFoundException("The issued sale does not exist locally.");
+            ?? throw new KeyNotFoundException("La venta emitida no existe en este equipo.");
         var payload = SalesInvoicePresentationMapper.From(immutable, null)
             .ToPosReceipt(Guid.NewGuid(), paperWidthMillimeters);
 
@@ -390,7 +396,7 @@ public sealed class PosSaleCompletionService(
         CancellationToken ct = default)
     {
         var draft = await drafts.GetAsync(draftId, ct)
-            ?? throw new KeyNotFoundException("The active sale does not exist.");
+            ?? throw new KeyNotFoundException("La venta activa no existe.");
         return await CalculateWithholdingAsync(
             draft, timeProvider?.GetUtcNow() ?? DateTimeOffset.UtcNow, ct);
     }

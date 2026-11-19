@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
 
 namespace Auraly.Contracts.Returns;
@@ -34,8 +35,9 @@ public static class ReturnEconomicResolutions
 {
     public const string Refund = "Refund";
     public const string CustomerCredit = "CustomerCredit";
+    public const string ReverseUncollected = "ReverseUncollected";
     public static readonly IReadOnlySet<string> All = new HashSet<string>(
-        [Refund, CustomerCredit], StringComparer.Ordinal);
+        [Refund, CustomerCredit, ReverseUncollected], StringComparer.Ordinal);
 }
 
 public static class SalesReturnScopes
@@ -69,7 +71,11 @@ public sealed record ConfirmSalesReturnRequest(
     Guid? BankAccountId = null,
     string? SettlementReference = null,
     string? SettlementNotes = null,
-    IReadOnlyCollection<Guid>? ReturnedChargeIds = null);
+    IReadOnlyCollection<Guid>? ReturnedChargeIds = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? DispatchId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? OriginalDispatchPaymentId = null);
+
+public sealed record UncollectedPaymentReversal(int OriginalPaymentNumber, decimal Amount);
 
 public sealed record SalesReturnChargeSnapshot(
     Guid AppliedChargeId,
@@ -139,7 +145,12 @@ public sealed record SalesReturnDocumentPayload(
     string? SettlementReference = null,
     string? SettlementNotes = null,
     IReadOnlyList<SalesReturnChargeSnapshot>? Charges = null,
-    int PrintTemplateVersion = 1);
+    int PrintTemplateVersion = 1,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? DispatchId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<UncollectedPaymentReversal>? UncollectedPaymentReversals = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? ReceivableReversalAmount = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? OriginalDispatchPaymentId = null);
 
 public sealed record SalesReturnAcceptance(
     Guid ReturnId,

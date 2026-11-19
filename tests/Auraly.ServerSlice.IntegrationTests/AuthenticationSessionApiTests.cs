@@ -18,6 +18,17 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     private const string Password = "Auraly-Test-Password-2026!";
 
     [Fact]
+    public async Task Missing_login_credentials_return_a_Spanish_validation_message()
+    {
+        using var client = fixture.CreateClient();
+        using var request = CreateLoginRequest("", "", Guid.NewGuid());
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Equal("Escribe el usuario y la contraseña.", problem!.Detail);
+    }
+
+    [Fact]
     public async Task Correct_credentials_enter_even_after_previous_failures_and_clear_the_lockout()
     {
         var user = await CreatePasswordUserAsync("auth-valid-after-failures");

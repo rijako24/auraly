@@ -50,10 +50,10 @@ public sealed class PartyWorkspaceService(
     {
         Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
         if (page < 1 || query.PageSize is < 1 or > 100)
-            throw new PartyValidationException("Page and PageSize are outside the allowed range.");
+            throw new PartyValidationException("La página o la cantidad de registros supera el rango permitido.");
         var role = query.Role?.Trim();
         if (role is not null && role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
-            throw new PartyValidationException("Role must be Customer, Supplier, Seller, Carrier, Employee, User or Waiter.");
+            throw new PartyValidationException("Selecciona un rol válido: cliente, proveedor, vendedor, transportador, empleado, usuario o mesero.");
         return store.PageAsync(actor, page, query with { Search = query.Search?.Trim(), Role = role }, ct);
     }
 
@@ -83,10 +83,10 @@ public sealed class PartyWorkspaceService(
             query.RoleIds.Any(id => id == Guid.Empty) || query.RoleIds.Distinct().Count() != query.RoleIds.Count))
             throw new PartyValidationException("Indica roles distintos y válidos para la consulta.");
         if (page < 1 || query.PageSize < 1 || query.PageSize > maximumPageSize || ((long)page-1)*query.PageSize>int.MaxValue)
-            throw new PartyValidationException("Page and PageSize are outside the allowed range.");
+            throw new PartyValidationException("La página o la cantidad de registros supera el rango permitido.");
         var role = query.Role?.Trim();
         if (role is not ("Any" or "Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
-            throw new PartyValidationException("Role must be Any, Customer, Supplier, Seller, Carrier, Employee, User or Waiter.");
+            throw new PartyValidationException("Selecciona todos los terceros o un rol válido: cliente, proveedor, vendedor, transportador, empleado, usuario o mesero.");
         if(query.PartyType is not (null or "Organization" or "NaturalPerson"))
             throw new PartyValidationException("El tipo de tercero no es válido.");
         return store.RoleOptionsAsync(
@@ -129,12 +129,12 @@ public sealed class PartyWorkspaceService(
             PartyWorkspacePermissionCodes.WaiterCreate,
             PartyWorkspacePermissionCodes.UserCreate);
         if (countryId == Guid.Empty)
-            throw new PartyValidationException("Identification country is required.");
+            throw new PartyValidationException("Selecciona el país de la identificación.");
         var role = requestedRole?.Trim();
         if (role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
-            throw new PartyValidationException("Requested role is invalid.");
+            throw new PartyValidationException("El rol solicitado no es válido.");
         if (string.IsNullOrWhiteSpace(identificationTypeCode))
-            throw new PartyValidationException("Identification type is required.");
+            throw new PartyValidationException("Selecciona un tipo de identificación.");
         var type = identificationTypeCode.Trim().ToUpperInvariant();
         var normalized = Translate(() =>
             PartyIdentityNormalizer.Normalize(type, identification));
@@ -151,10 +151,10 @@ public sealed class PartyWorkspaceService(
     {
         Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
         if (partyId == Guid.Empty)
-            throw new PartyValidationException("PartyId is required.");
+            throw new PartyValidationException("Se requiere un tercero válido.");
         return await store.GetDetailAsync(actor, partyId, ct)
             ?? throw new PartyForbiddenException(
-                "Party is outside the authenticated business.");
+                "El tercero no pertenece a la sede autorizada.");
     }
 
     public Task<PartyIdentityAcceptance> CreateIdentityAsync(
@@ -164,11 +164,11 @@ public sealed class PartyWorkspaceService(
         {
             "Employee" => PartyWorkspacePermissionCodes.EmployeeCreate,
             "User" => PartyWorkspacePermissionCodes.UserCreate,
-            _ => throw new PartyValidationException("Target role must be Employee or User.")
+            _ => throw new PartyValidationException("El rol de destino debe ser empleado o usuario.")
         };
         Require(actor, permission);
         if (request.BusinessId != actor.BusinessId)
-            throw new PartyForbiddenException("The Party business does not match the authenticated identity.");
+            throw new PartyForbiddenException("La empresa del tercero no corresponde al contexto autorizado.");
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
         var normalized = Translate(() => PartyIdentityNormalizer.Normalize(
@@ -181,12 +181,12 @@ public sealed class PartyWorkspaceService(
     {
         Require(actor, PartyWorkspacePermissionCodes.SupplierCreate);
         if (request.BusinessId != actor.BusinessId)
-            throw new PartyForbiddenException("The supplier business does not match the authenticated identity.");
+            throw new PartyForbiddenException("La empresa del proveedor no corresponde al contexto autorizado.");
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
         ValidatePurchaseEvidencePolicy(request.PurchaseEvidencePolicy);
         if (request.DefaultPaymentDueDays is < 0 or > 3650)
-            throw new PartyValidationException("DefaultPaymentDueDays must be between 0 and 3650.");
+            throw new PartyValidationException("El plazo de pago predeterminado debe estar entre 0 y 3.650 días.");
         var normalized = Translate(() => PartyIdentityNormalizer.Normalize(
             request.Party.IdentificationTypeCode, request.Party.Identification));
         return store.CreateSupplierAsync(
@@ -197,25 +197,25 @@ public sealed class PartyWorkspaceService(
         PartyActorIdentity actor, Guid partyId, UpdatePartyRequest request, CancellationToken ct)
     {
         Require(actor, PartyWorkspacePermissionCodes.Update);
-        if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
+        if (partyId == Guid.Empty) throw new PartyValidationException("Se requiere un tercero válido.");
         if (request.PartyType is not PartyTypes.NaturalPerson and not PartyTypes.Organization)
-            throw new PartyValidationException("Party type is invalid.");
-        Translate(() => { PartyValidation.RequireText(request.DisplayName, "DisplayName", 200); return true; });
+            throw new PartyValidationException("El tipo de tercero no es válido.");
+        Translate(() => { PartyValidation.RequireText(request.DisplayName, "Nombre del tercero", 200); return true; });
         if (request.PartyType == PartyTypes.Organization && string.IsNullOrWhiteSpace(request.LegalName))
-            throw new PartyValidationException("Legal name is required for an organization.");
+            throw new PartyValidationException("La razón social es obligatoria para una organización.");
         if (request.LegalName?.Length > 200 || request.FirstName?.Length > 100 || request.LastName?.Length > 100 ||
             request.Email?.Length > 254 || request.Phone?.Length > 254 || request.VerificationDigit?.Length > 4)
-            throw new PartyValidationException("Party name or contact exceeds its allowed length.");
+            throw new PartyValidationException("El nombre o los datos de contacto del tercero superan la longitud permitida.");
         if (request.Sites is not null)
         {
             Require(actor, PartyPermissionCodes.ManageSites);
-            if (request.Sites.Count == 0) throw new PartyValidationException("A third party must keep at least one site.");
+            if (request.Sites.Count == 0) throw new PartyValidationException("Un tercero debe conservar al menos una sede.");
             if (request.Sites.Count(site => site.Site.IsPrimary) != 1)
-                throw new PartyValidationException("Exactly one third-party site must be primary.");
+                throw new PartyValidationException("El tercero debe tener exactamente una sede principal.");
             foreach (var site in request.Sites) ValidateSite(site.Site);
         }
         if (request.Customer?.PriceChannelId == Guid.Empty)
-            throw new PartyValidationException("PriceChannelId must be null or a valid identifier.");
+            throw new PartyValidationException("El canal de precios debe estar vacío o tener una identificación válida.");
         if (request.Customer?.ValidUntil is { } validUntil &&
             request.Customer.ValidFrom is { } validFrom && validUntil <= validFrom)
             throw new PartyValidationException("La fecha final del canal debe ser posterior a la fecha inicial.");
@@ -225,29 +225,29 @@ public sealed class PartyWorkspaceService(
         {
             ValidatePurchaseEvidencePolicy(request.Supplier.PurchaseEvidencePolicy);
             if (request.Supplier.DefaultPaymentDueDays is < 0 or > 3650)
-                throw new PartyValidationException("DefaultPaymentDueDays must be between 0 and 3650.");
+                throw new PartyValidationException("El plazo de pago predeterminado debe estar entre 0 y 3.650 días.");
         }
         if (request.Seller is not null)
         {
-            Translate(() => PartyValidation.NormalizeCode(request.Seller.Code, "SellerCode", 32));
+            Translate(() => PartyValidation.NormalizeCode(request.Seller.Code, "Código del vendedor", 32));
             if (request.Seller.DefaultCommissionPercent is < 0 or > 100)
-                throw new PartyValidationException("Default commission must be between 0 and 100.");
+                throw new PartyValidationException("La comisión predeterminada debe estar entre 0 % y 100 %.");
             if (request.Seller.CommissionBasis is not "SaleBeforeTax" and not "SaleAfterTax" and not "GrossMargin")
-                throw new PartyValidationException("Commission basis is invalid.");
+                throw new PartyValidationException("La base de cálculo de la comisión no es válida.");
             if (request.Seller.CommissionTrigger is not "Sale" and not "Collection")
-                throw new PartyValidationException("Commission trigger is invalid.");
+                throw new PartyValidationException("El momento de causación de la comisión no es válido.");
         }
         if (request.Carrier is not null)
         {
-            Translate(() => PartyValidation.NormalizeCode(request.Carrier.Code, "CarrierCode", 32));
+            Translate(() => PartyValidation.NormalizeCode(request.Carrier.Code, "Código del transportador", 32));
             if (request.Carrier.TransportationMode is not "Road" and not "Air" and not "Maritime" and not "Other")
-                throw new PartyValidationException("Transportation mode is invalid.");
+                throw new PartyValidationException("El modo de transporte no es válido.");
         }
         if (request.Waiter is not null)
         {
             Require(actor, PartyWorkspacePermissionCodes.WaiterConfigure);
             if (request.Waiter.ShortName?.Trim().Length > 80)
-                throw new PartyValidationException("ShortName cannot exceed 80 characters.");
+                throw new PartyValidationException("El nombre corto admite máximo 80 caracteres.");
         }
         var updated = await store.UpdateAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
         await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
@@ -258,7 +258,7 @@ public sealed class PartyWorkspaceService(
         PartyActorIdentity actor, Guid partyId, SetPartyBusinessStatusRequest request, CancellationToken ct)
     {
         Require(actor, PartyWorkspacePermissionCodes.Deactivate);
-        if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
+        if (partyId == Guid.Empty) throw new PartyValidationException("Se requiere un tercero válido.");
         var updated = await store.SetStatusAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
         await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
         return updated;
@@ -267,40 +267,40 @@ public sealed class PartyWorkspaceService(
     private static void ValidateParty(PartyInput party)
     {
         if (party.IdentificationCountryId == Guid.Empty)
-            throw new PartyValidationException("Identification country is required.");
+            throw new PartyValidationException("Selecciona el país de la identificación.");
         if (party.PartyType is not PartyTypes.NaturalPerson and not PartyTypes.Organization)
-            throw new PartyValidationException("Party type is invalid.");
-        Translate(() => { PartyValidation.RequireText(party.DisplayName, "DisplayName", 200); return true; });
+            throw new PartyValidationException("El tipo de tercero no es válido.");
+        Translate(() => { PartyValidation.RequireText(party.DisplayName, "Nombre del tercero", 200); return true; });
         if (party.PartyType == PartyTypes.Organization && string.IsNullOrWhiteSpace(party.LegalName))
-            throw new PartyValidationException("Legal name is required for an organization.");
+            throw new PartyValidationException("La razón social es obligatoria para una organización.");
     }
 
     private static void ValidateSite(PartySiteInput site)
     {
         if (site.CountryId == Guid.Empty || site.AdministrativeDivisionId == Guid.Empty || site.CityId == Guid.Empty)
-            throw new PartyValidationException("Country, administrative division and city are required.");
-        Translate(() => PartyValidation.NormalizeCode(site.Code, "SiteCode", 32));
-        Translate(() => { PartyValidation.RequireText(site.Name, "SiteName", 160); return true; });
-        Translate(() => { PartyValidation.RequireText(site.AddressLine, "AddressLine", 300); return true; });
+            throw new PartyValidationException("Selecciona país, departamento o división administrativa y ciudad.");
+        Translate(() => PartyValidation.NormalizeCode(site.Code, "Código de la sede", 32));
+        Translate(() => { PartyValidation.RequireText(site.Name, "Nombre de la sede", 160); return true; });
+        Translate(() => { PartyValidation.RequireText(site.AddressLine, "Dirección", 300); return true; });
         if ((site.Latitude is null) != (site.Longitude is null))
-            throw new PartyValidationException("Latitude and longitude must be provided together.");
+            throw new PartyValidationException("La latitud y la longitud deben indicarse juntas.");
         if (site.Latitude is < -90 or > 90 || site.Longitude is < -180 or > 180)
-            throw new PartyValidationException("The site coordinates are outside the valid range.");
+            throw new PartyValidationException("Las coordenadas de la sede están fuera del rango válido.");
         if (site.GoogleMapsUrl?.Length > 1000 || site.GooglePlaceId?.Length > 255)
-            throw new PartyValidationException("The Google Maps location is too long.");
+            throw new PartyValidationException("La ubicación de Google Maps supera la longitud permitida.");
     }
 
     private static void ValidatePurchaseEvidencePolicy(string? value)
     {
         if (value is not null && value is not
             ("SupplierElectronicInvoice" or "BuyerElectronicSupportDocument" or "InternalReceiptVoucher"))
-            throw new PartyValidationException("PurchaseEvidencePolicy is invalid.");
+            throw new PartyValidationException("La política de soporte de compras no es válida.");
     }
 
     private static byte[] RowVersion(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-            throw new PartyValidationException("RowVersion is required.");
+            throw new PartyValidationException("Se requiere la versión del documento. Vuelve a abrirlo antes de continuar.");
         try
         {
             var bytes = Convert.FromBase64String(value);
@@ -309,7 +309,7 @@ public sealed class PartyWorkspaceService(
         }
         catch (FormatException)
         {
-            throw new PartyValidationException("RowVersion is invalid.");
+            throw new PartyValidationException("La versión del documento no es válida. Vuelve a abrirlo antes de continuar.");
         }
     }
 
@@ -322,7 +322,7 @@ public sealed class PartyWorkspaceService(
     private static void Require(PartyActorIdentity actor, params string[] permissions)
     {
         if (!permissions.Any(actor.Permissions.Contains))
-            throw new PartyForbiddenException($"One of these permissions is required: {string.Join(", ", permissions)}.");
+            throw new PartyForbiddenException("No tienes permiso para realizar esta acción sobre terceros.");
     }
 }
 

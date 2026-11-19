@@ -5,6 +5,7 @@ using Auraly.Contracts.Orders;
 using Auraly.Domain.Orders;
 using Microsoft.Data.SqlClient;
 using System.Text.Json;
+using PaymentTransactionStatus = Auraly.Platform.Domain.Enums.PaymentTransactionStatus;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -75,9 +76,11 @@ public sealed class SqlOrderStore(
             parameters.Add(P("@CreatedTo", request.CreatedTo.Value.UtcDateTime));
         }
         if (request.HasPendingBalance is true)
-            filters.Add("(o.PaymentTransactionId IS NULL OR ISNULL(pt.Status,-1)<>2)");
+            filters.Add("(o.PaymentTransactionId IS NULL OR ISNULL(pt.Status,-1)<>@ConfirmedPaymentStatus)");
         else if (request.HasPendingBalance is false)
-            filters.Add("(o.PaymentTransactionId IS NOT NULL AND pt.Status=2)");
+            filters.Add("(o.PaymentTransactionId IS NOT NULL AND pt.Status=@ConfirmedPaymentStatus)");
+        if(request.HasPendingBalance.HasValue)
+            parameters.Add(P("@ConfirmedPaymentStatus",(int)PaymentTransactionStatus.Confirmed));
 
         if (request.WarehouseId is not null)
         {
@@ -126,7 +129,7 @@ public sealed class SqlOrderStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=o.PartySiteId
             LEFT JOIN dbo.PaymentTransactions pt
-              ON pt.PaymentTransactionId=o.PaymentTransactionId
+              ON pt.PaymentTransactionId=o.PaymentTransactionId AND pt.BusinessId=o.BusinessId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
             LEFT JOIN dbo.DocumentProcessingJobs processingJob
@@ -230,8 +233,7 @@ public sealed class SqlOrderStore(
               o.CustomerPhoneSnapshot,o.CustomerEmailSnapshot,o.DeliveryAddressSnapshot,
               o.Notes,o.Currency,o.Subtotal,o.DiscountTotal,o.Total,
               o.PaymentTransactionId,
-              CASE pt.Status WHEN 2 THEN N'Confirmed' WHEN 3 THEN N'Failed'
-                   WHEN 1 THEN N'Pending' ELSE NULL END,
+              pt.Status,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
@@ -242,7 +244,7 @@ public sealed class SqlOrderStore(
             LEFT JOIN dbo.Customers customer
               ON customer.CustomerId=o.CustomerId AND customer.TenantId=b.TenantId
             LEFT JOIN dbo.PaymentTransactions pt
-              ON pt.PaymentTransactionId=o.PaymentTransactionId
+              ON pt.PaymentTransactionId=o.PaymentTransactionId AND pt.BusinessId=o.BusinessId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
             LEFT JOIN dbo.DocumentProcessingJobs processingJob
@@ -291,7 +293,7 @@ public sealed class SqlOrderStore(
             Discount = header.GetDecimal(14),
             Total = header.GetDecimal(15),
             PaymentId = header.IsDBNull(16) ? (Guid?)null : header.GetGuid(16),
-            PaymentStatus = NullableString(header, 17),
+            PaymentStatus = ReadPaymentStatus(header, 17),
             CreatedAt = DateTime.SpecifyKind(header.GetDateTime(18), DateTimeKind.Utc),
             Confirmed = header.GetBoolean(19),
             DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null,
@@ -394,8 +396,7 @@ public sealed class SqlOrderStore(
               o.CustomerPhoneSnapshot,o.CustomerEmailSnapshot,o.DeliveryAddressSnapshot,
               o.Notes,o.Currency,o.Subtotal,o.DiscountTotal,o.Total,
               o.PaymentTransactionId,
-              CASE pt.Status WHEN 2 THEN N'Confirmed' WHEN 3 THEN N'Failed'
-                   WHEN 1 THEN N'Pending' ELSE NULL END,
+              pt.Status,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
@@ -406,7 +407,7 @@ public sealed class SqlOrderStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.Customers customer
               ON customer.CustomerId=o.CustomerId AND customer.TenantId=b.TenantId
-            LEFT JOIN dbo.PaymentTransactions pt ON pt.PaymentTransactionId=o.PaymentTransactionId
+            LEFT JOIN dbo.PaymentTransactions pt ON pt.PaymentTransactionId=o.PaymentTransactionId AND pt.BusinessId=o.BusinessId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
             LEFT JOIN dbo.DocumentProcessingJobs processingJob
@@ -489,7 +490,7 @@ public sealed class SqlOrderStore(
                 reader.GetDecimal(14),
                 reader.GetDecimal(15),
                 reader.IsDBNull(16) ? null : reader.GetGuid(16),
-                NullableString(reader, 17),
+                ReadPaymentStatus(reader, 17),
                 DateTime.SpecifyKind(reader.GetDateTime(18), DateTimeKind.Utc),
                 reader.GetBoolean(19),
                 hasInvoice ? reader.GetGuid(20) : null,
@@ -661,7 +662,7 @@ public sealed class SqlOrderStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.WorkSessions ws
               ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=o.BusinessId
-             AND ws.TenantId=@TenantId AND ws.UserId=@UserId AND ws.Status=N'Open'
+             AND ws.TenantId=@TenantId AND ws.UserId=@UserId AND ws.Status=N'Open' AND ws.Kind=N'Normal'
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId;
 
@@ -1012,6 +1013,14 @@ public sealed class SqlOrderStore(
         value.Replace("[", "[[]", StringComparison.Ordinal)
             .Replace("%", "[%]", StringComparison.Ordinal)
             .Replace("_", "[_]", StringComparison.Ordinal);
+
+    private static string? ReadPaymentStatus(SqlDataReader reader,int ordinal)
+    {
+        if(reader.IsDBNull(ordinal))return null;
+        var status=(PaymentTransactionStatus)reader.GetInt32(ordinal);
+        if(!Enum.IsDefined(status))throw new InvalidDataException("El estado almacenado del pago del pedido no es válido.");
+        return status.ToString();
+    }
 
     private static string? NullableString(SqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

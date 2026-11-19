@@ -49,3 +49,34 @@ test("GET forwards caller cancellation through response-body consumption", {time
   caller.abort();
   await assert.rejects(pending, (error: Error) => error.name === "AbortError");
 });
+
+
+for (const body of ["proxy error", JSON.stringify({title:"Internal Server Error"}), JSON.stringify({detail:"Revisa el documento."})]) {
+  test(`API public error keeps its status and Spanish message: ${body}`,async context=>{
+    context.mock.method(globalThis,"fetch",async()=>new Response(body,{status:500,statusText:"Internal Server Error"}));
+    await assert.rejects(apiClient.get("/test-error"),(error:Error&{statusCode:number})=>{
+      assert.equal(error.statusCode,500);
+      assert.equal(error.message,body.includes("detail")?"Revisa el documento.":"No fue posible completar la solicitud.");
+      return true;
+    });
+  });
+}
+
+
+test("API network failure stays a transport error with its original diagnostic cause",async context=>{
+  const cause=new TypeError("Failed to fetch");
+  context.mock.method(globalThis,"fetch",async()=>{throw cause;});
+  await assert.rejects(fetchWithTimeout("/test-offline",{}),(error:TypeError)=>{
+    assert.ok(error instanceof TypeError);
+    assert.equal(error.message,"No fue posible conectar con el servidor. Revisa la conexión.");
+    assert.equal(error.cause,cause);
+    return true;
+  });
+});
+
+test("API keeps a caller's TypeError cancellation reason unchanged",async context=>{
+  const caller=new AbortController(),reason=new TypeError("Cancelled by caller");
+  caller.abort(reason);
+  context.mock.method(globalThis,"fetch",async()=>{throw reason;});
+  await assert.rejects(fetchWithTimeout("/test-cancelled",{signal:caller.signal}),(error:Error)=>error===reason);
+});

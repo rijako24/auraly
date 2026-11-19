@@ -323,7 +323,7 @@ public sealed class SalesReceiptHtmlRenderer
 
     private static string PaymentName(string code) => code switch
     {
-        "Cash" => "Efectivo",
+        "Cash" => "Efectivo", "PendingCollection" => "Por recaudar",
         "DebitCard" => "Tarjeta débito",
         "CreditCard" => "Tarjeta crédito",
         "Transfer" => "Transferencia",

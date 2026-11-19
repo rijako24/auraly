@@ -14,19 +14,25 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
-import { workSessionDifferencesApi, type ClosureManualMovement, type ClosurePaymentCorrection, type ClosurePaymentTotal, type ClosurePaymentVerification, type WorkSessionClosure } from "@/services/api/work-session-differences";
+import { PaymentMethodSelect } from "@/components/payments/payment-method-select";
+import type { PaymentMethod, PaymentMethodQuery } from "@/services/api/payment-methods";
+import { workSessionDifferencesApi, type DispatchClosureInboxItem, type ClosureManualMovement, type ClosurePaymentCorrection, type ClosurePaymentTotal, type ClosurePaymentVerification, type WorkSessionClosure } from "@/services/api/work-session-differences";
 import { tenantsApi } from "@/services/api/tenants";
 import { InvoiceChargeSummary } from "@/app/(pos)/pos/pos-invoice-charge-summary";
 import { PosCashClosureDialog } from "@/app/(pos)/pos/pos-cash-closure-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession, type PosAuthorizedClosurePreview, type PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
 import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, printWorkSessionClosure, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
 import { cashClosurePaymentGroups, cashClosureVerificationDecisions, correctedCashClosureAmount, isCashClosureMethodConfirmed, requiresIndividualCashClosureVerification } from "@/services/pos/cash-closure-reconciliation";
+import { useBusinessDates } from "@/hooks/use-business-dates";
+import { DispatchSettlementDialog } from "@/components/dispatching/dispatch-settlement-dialog";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const isoDate = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 const result = (difference: number | null) => difference == null ? "Sin conteo" : difference > 0 ? `Sobrante ${money.format(difference)}` : difference < 0 ? `Faltante ${money.format(Math.abs(difference))}` : "Cuadra";
-const accountingStatusLabels: Record<string, string> = { AccountingDisabled: "No requiere asiento", AccountingPendingConfiguration: "Falta configuración contable", NotRequired: "No requiere asiento", Pending: "Pendiente de contabilizar", Processing: "Contabilizando", Posted: "Contabilizado", Failed: "Error contable" };
+const accountingStatusLabels: Record<string, string> = { CommercialEffectsApplied: "Aplicado sin asiento", AccountingDisabled: "No requiere asiento", AccountingPendingConfiguration: "Falta configuración contable", NotRequired: "No requiere asiento", Pending: "Pendiente de contabilizar", Processing: "Contabilizando", Posted: "Contabilizado", Failed: "Error contable" };
 const accountingStatusName = (value: string) => accountingStatusLabels[value] ?? "Pendiente de contabilizar";
 export default function CashClosuresPage() {
   const canReadOwnSession = useAuthStore(state => state.user?.permissions.includes("work-sessions.read") ?? false);
@@ -38,20 +44,41 @@ export default function CashClosuresPage() {
   const [status, setStatus] = useState("Pending");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<WorkSessionClosure | null>(null);
-  const closures = useQuery({ queryKey: ["work-session-closures", from, to, status, page], queryFn: () => workSessionDifferencesApi.listClosures(from, to, status === "all" ? undefined : status, page, 50), enabled: Boolean(from && to && from <= to) });
+  const [selectedDispatch, setSelectedDispatch] = useState<string | null>(null);
+  const dispatchDates = useBusinessDates();
+  const tenant = useTenantContextStore(state => state.selectedTenantId);
+  const business = useBusinessContextStore(state => state.selectedBusinessId);
+  const closures = useQuery({ queryKey: ["work-session-closures", "inbox", tenant, business, from, to, status, page], queryFn: () => workSessionDifferencesApi.closureInbox(from, to, status === "all" ? undefined : status, page, 50), enabled: Boolean(tenant && business && from && to && from <= to && !selectedDispatch && !selected), refetchOnWindowFocus: false });
   const rows = closures.data?.items ?? [];
-  const pending = rows.filter(row => row.reconciliationStatus === "Pending").length;
+  const pending = rows.filter(row => row.cashClosure?.reconciliationStatus === "Pending" || row.dispatchClosure?.status !== undefined && row.dispatchClosure.status !== "Completed").length;
 
   return <div className="space-y-5">
-    <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-700 p-6 text-white shadow-lg"><p className="text-xs font-bold uppercase tracking-[.2em] text-teal-200">Control y conciliación</p><h1 className="mt-2 text-3xl font-black">Cierres de sesión</h1><p className="mt-2 max-w-3xl text-sm text-teal-50/80">Revisa las ventas y devoluciones, confirma los demás movimientos y cuadra el efectivo antes de conciliar.</p></header>
+    <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-700 p-6 text-white shadow-lg"><p className="text-xs font-bold uppercase tracking-[.2em] text-teal-200">Control y conciliación</p><h1 className="mt-2 text-3xl font-black">Cierres de caja</h1><p className="mt-2 max-w-3xl text-sm text-teal-50/80">Revisa las ventas y devoluciones, confirma los demás movimientos y cuadra el efectivo antes de conciliar.</p></header>
     {canReadOwnSession && <ActiveWorkSessionPanel />}
     <div className="grid gap-4 sm:grid-cols-3"><Summary title="Cierres encontrados" value={closures.isError ? "—" : String(closures.data?.totalItems ?? 0)} icon={<Scale className="h-5 w-5" />} /><Summary title="Pendientes en esta página" value={closures.isError ? "—" : String(pending)} icon={<Clock3 className="h-5 w-5 text-amber-600" />} /><Summary title="Otros estados en esta página" value={closures.isError ? "—" : String(rows.length - pending)} icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />} /></div>
     <Card className="overflow-hidden rounded-3xl"><CardHeader className="gap-5 border-b"><div><CardTitle>Historial de cierres</CardTitle><p className="mt-1 text-sm text-muted-foreground">Cada cierre conserva el cuadre y su resultado contable.</p></div><div className="grid w-full max-w-4xl gap-3 md:grid-cols-3"><div className="min-w-0 space-y-1.5"><Label htmlFor="closure-from">Desde</Label><DatePicker id="closure-from" value={from} onChange={value => { setFrom(value); setPage(1); }} /></div><div className="min-w-0 space-y-1.5"><Label htmlFor="closure-to">Hasta</Label><DatePicker id="closure-to" value={to} onChange={value => { setTo(value); setPage(1); }} /></div><div className="min-w-0 space-y-1.5"><Label htmlFor="closure-status">Estado</Label><Select value={status} onValueChange={value => { setStatus(value); setPage(1); }}><SelectTrigger id="closure-status" aria-label="Estado del cierre" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Pending">Pendientes</SelectItem><SelectItem value="Partial">Parciales</SelectItem><SelectItem value="Reconciled">Conciliados</SelectItem><SelectItem value="ReconciledWithDifferences">Conciliados con diferencias</SelectItem><SelectItem value="all">Todos</SelectItem></SelectContent></Select></div></div></CardHeader><CardContent className="p-0">
       {closures.isLoading && <div className="flex items-center justify-center gap-2 p-10 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Consultando cierres…</div>}{closures.isError && <div className="flex items-center justify-between gap-4 p-8 text-sm text-destructive"><span>No fue posible consultar los cierres.</span><Button variant="outline" onClick={() => void closures.refetch()}>Reintentar</Button></div>}{!closures.isLoading && !closures.isError && !rows.length && <p className="p-10 text-center text-sm text-muted-foreground">No hay cierres en el periodo.</p>}
-      {!!rows.length && <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-sm"><thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-5 py-4 text-left">Cierre / inicio</th><th className="px-4 py-4 text-left">Responsable / sede</th><th className="px-4 py-4 text-right">Ventas</th><th className="px-4 py-4 text-right">Devoluciones</th><th className="px-4 py-4 text-left">Resultado</th><th className="px-4 py-4 text-left">Estado</th><th className="px-5 py-4 text-center">Acción</th></tr></thead><tbody>{rows.map(row => <tr key={row.workSessionClosureId} className="border-t align-middle hover:bg-muted/20"><td className="whitespace-nowrap px-5 py-4 font-medium">{new Date(row.closedAt).toLocaleString("es-CO")}<small className="mt-1 block font-normal text-muted-foreground">Inició {new Date(row.openedAt).toLocaleString("es-CO")}</small></td><td className="px-4 py-4"><strong>{row.userName}</strong><small className="mt-1 block text-muted-foreground">{row.businessName} · {row.warehouseName}</small></td><td className="px-4 py-4 text-right font-semibold">{money.format(row.totalSales)}<small className="mt-1 block font-normal text-muted-foreground">{row.salesCount} ventas · {row.creditSalesCount} a crédito</small></td><td className="px-4 py-4 text-right font-semibold">{money.format(row.totalRefunds)}<small className="mt-1 block font-normal text-muted-foreground">{row.returnCount} devoluciones</small></td><td className="px-4 py-4">{row.paymentTotals.filter(item => item.requiresCount).map(item => { const difference = item.reconciledDifference ?? item.difference; return <small key={item.paymentMethodCode} className={`block font-semibold ${difference && difference < 0 ? "text-red-700" : difference && difference > 0 ? "text-emerald-700" : "text-slate-600"}`}>{workSessionPaymentMethodName(item.paymentMethodCode)}: {result(difference)}</small>; })}</td><td className="px-4 py-4"><Status value={row.reconciliationStatus} /><small className="mt-2 block text-muted-foreground">{accountingStatusName(row.accountingStatus)}</small></td><td className="px-5 py-4 text-center"><Button size="sm" variant={row.reconciliationStatus === "Pending" && canReconcile ? "default" : "outline"} onClick={() => setSelected(row)}>{row.reconciliationStatus === "Pending" && canReconcile ? "Conciliar" : "Ver cierre"}</Button></td></tr>)}</tbody></table></div>}
+      {!!rows.length && <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-sm"><thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-4 text-left">Tipo</th><th className="px-5 py-4 text-left">Cierre / inicio</th><th className="px-4 py-4 text-left">Responsable / sede</th><th colSpan={2} className="px-4 py-4 text-right">Importes del cierre</th><th className="px-4 py-4 text-left">Resultado</th><th className="px-4 py-4 text-left">Estado</th><th className="px-5 py-4 text-center">Acción</th></tr></thead><tbody>{rows.map(entry => { const row = entry.cashClosure; if (!row) return <DispatchClosureRow key={entry.closureId} value={entry.dispatchClosure} closedAt={dispatchDates.timeZone ? dispatchDates.formatDateTime(entry.dispatchClosure.closedAt) : entry.dispatchClosure.closedAt} onOpen={() => setSelectedDispatch(entry.dispatchClosure.dispatchId)}/>; return <tr key={row.workSessionClosureId} className="border-t align-middle hover:bg-muted/20"><td className="px-4 py-4"><Badge variant="outline">Caja</Badge></td><td className="whitespace-nowrap px-5 py-4 font-medium">{new Date(row.closedAt).toLocaleString("es-CO")}<small className="mt-1 block font-normal text-muted-foreground">Inició {new Date(row.openedAt).toLocaleString("es-CO")}</small></td><td className="px-4 py-4"><strong>{row.userName}</strong><small className="mt-1 block text-muted-foreground">{row.businessName} · {row.warehouseName}</small></td><td className="px-4 py-4 text-right font-semibold"><small className="block font-normal text-muted-foreground">Ventas</small>{money.format(row.totalSales)}<small className="mt-1 block font-normal text-muted-foreground">{row.salesCount} ventas · {row.creditSalesCount} a crédito</small></td><td className="px-4 py-4 text-right font-semibold"><small className="block font-normal text-muted-foreground">Devoluciones</small>{money.format(row.totalRefunds)}<small className="mt-1 block font-normal text-muted-foreground">{row.returnCount} devoluciones</small></td><td className="px-4 py-4">{row.paymentTotals.filter(item => item.requiresCount).map(item => { const difference = item.reconciledDifference ?? item.difference; return <small key={item.paymentMethodCode} className={`block font-semibold ${difference && difference < 0 ? "text-red-700" : difference && difference > 0 ? "text-emerald-700" : "text-slate-600"}`}>{workSessionPaymentMethodName(item.paymentMethodCode)}: {result(difference)}</small>; })}</td><td className="px-4 py-4"><Status value={row.reconciliationStatus} /><small className="mt-2 block text-muted-foreground">{accountingStatusName(row.accountingStatus)}</small></td><td className="px-5 py-4 text-center"><Button size="sm" variant={row.reconciliationStatus === "Pending" && canReconcile ? "default" : "outline"} onClick={() => setSelected(row)}>{row.reconciliationStatus === "Pending" && canReconcile ? "Conciliar" : "Ver cierre"}</Button></td></tr>;})}</tbody></table></div>}
       {!!closures.data && <div className="flex items-center justify-between border-t p-4"><small className="text-muted-foreground">{closures.data.totalItems} cierres</small><div className="flex gap-2"><Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(value => value - 1)}>Anterior</Button><Button variant="outline" size="sm" disabled={page * 50 >= closures.data.totalItems} onClick={() => setPage(value => value + 1)}>Siguiente</Button></div></div>}
-    </CardContent></Card>{selected && <ReconciliationDialog closure={selected} canReconcile={canReconcile} onClose={() => setSelected(null)} />}
+    </CardContent></Card>{selected && <ReconciliationDialog closure={selected} canReconcile={canReconcile} onClose={() => setSelected(null)} />}{selectedDispatch && <DispatchSettlementDialog id={selectedDispatch} onClose={() => setSelectedDispatch(null)} />}
   </div>;
+}
+
+function DispatchClosureRow({ value, closedAt, onOpen }: {
+  value: DispatchClosureInboxItem; closedAt: string; onOpen: () => void;
+}) {
+  const status = value.status === "Completed" ? "Liquidado" : value.status === "Processing" ? "Procesando"
+    : value.status === "Attention" ? "Requiere atención" : "Pendiente de validar";
+  return <tr className="border-t align-middle hover:bg-muted/20">
+    <td className="px-4 py-4"><Badge variant="outline">Despacho</Badge></td>
+    <td className="px-5 py-4"><strong>{value.dispatchNumber}</strong><small className="mt-1 block text-muted-foreground">{closedAt}</small></td>
+    <td className="px-4 py-4"><strong>{value.driverName}</strong><small className="mt-1 block text-muted-foreground">{value.businessName}</small></td>
+    <td className="px-4 py-4 text-right"><small className="text-muted-foreground">Efectivo declarado</small><strong className="block">{money.format(value.declaredCash)}</strong></td>
+    <td className="px-4 py-4 text-right"><small className="text-muted-foreground">Efectivo recibido</small><strong className="block">{value.cashReceived == null ? "Por recibir" : money.format(value.cashReceived)}</strong></td>
+    <td className="px-4 py-4 font-semibold">{result(value.difference)}</td>
+    <td className="px-4 py-4"><Badge variant={value.status === "Attention" ? "destructive" : "secondary"}>{status}</Badge></td>
+    <td className="px-5 py-4 text-center"><Button size="sm" variant="outline" onClick={onOpen}>Ver despacho</Button></td>
+  </tr>;
 }
 
 function ActiveWorkSessionPanel() {
@@ -202,6 +229,8 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
         tenderMethodCode: item.correctedTenderMethodCode,
         cardFranchiseCode: item.correctedCardFranchiseCode,
         approvalNumber: item.correctedApprovalNumber, reference: item.correctedReference,
+    paymentMethodId: item.correctedPaymentMethodId, paymentMethodVersion: item.correctedPaymentMethodVersion,
+    paymentMethodName: item.correctedPaymentMethodName,
       }])),
     ...paymentCorrections,
   }), [verificationItems, paymentCorrections]);
@@ -378,7 +407,7 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
     {!editable && verificationQuery.data?.cashShortageClaim &&
       <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">Cuenta por cobrar al empleado: <strong>{money.format(verificationQuery.data.cashShortageClaim.amount)}</strong></p>}
     <div className="space-y-2"><Label>Observación</Label><Textarea disabled={!editable} value={editable ? note : verificationQuery.data?.reconciliationNote ?? ""} onChange={event => setNote(event.target.value)} maxLength={500} placeholder="Explica el faltante, el sobrante o cualquier ajuste de la conciliación." /></div>{mutation.isError && <p className="rounded-xl bg-red-50 p-3 text-sm text-destructive">{mutation.error instanceof Error ? mutation.error.message : "No fue posible conciliar. Revisa los comprobantes, diferencias y motivos."}</p>}
-  </div><footer className="flex shrink-0 items-center justify-end gap-3 border-t bg-slate-50 p-5"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable && <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Conciliando…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Confirmar conciliación</>}</Button>}</footer></DialogContent>{editingCorrection && <CorrectionEditor item={editingCorrection} methods={countable.map(item => item.paymentMethodCode)} current={paymentCorrections[editingCorrection.verificationKey]} onClose={() => setEditingCorrection(null)} onRemove={() => { setPaymentCorrections(current => { const next = { ...current }; delete next[editingCorrection.verificationKey]; return next; }); setEditingCorrection(null); }} onApply={async correction => { await workSessionDifferencesApi.validatePaymentCorrections(closure.workSessionClosureId, [...Object.values(paymentCorrections).filter(value => value.verificationKey !== correction.verificationKey), correction]); setPaymentCorrections(current => ({ ...current, [correction.verificationKey]: correction })); if (requiresIndividualCashClosureVerification(editingCorrection)) changeVerificationStatus(editingCorrection.verificationKey, "Verified"); setExpandedMethods(current => ({ ...current, [`${correction.paymentMethodCode}:${editingCorrection.movementType}`]: true })); setEditingCorrection(null); }} />}{addingToGroup && <ManualMovementEditor group={addingToGroup} onClose={() => setAddingToGroup(null)} onApply={movement => { setManualMovements(current => [...current, movement]); setAddingToGroup(null); }} />}</Dialog>;
+  </div><footer className="flex shrink-0 items-center justify-end gap-3 border-t bg-slate-50 p-5"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable && <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Conciliando…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Confirmar conciliación</>}</Button>}</footer></DialogContent>{editingCorrection && <CorrectionEditor businessId={closure.businessId} item={editingCorrection} methods={countable.map(item => item.paymentMethodCode)} current={paymentCorrections[editingCorrection.verificationKey]} onClose={() => setEditingCorrection(null)} onRemove={() => { setPaymentCorrections(current => { const next = { ...current }; delete next[editingCorrection.verificationKey]; return next; }); setEditingCorrection(null); }} onApply={async correction => { await workSessionDifferencesApi.validatePaymentCorrections(closure.workSessionClosureId, [...Object.values(paymentCorrections).filter(value => value.verificationKey !== correction.verificationKey), correction]); setPaymentCorrections(current => ({ ...current, [correction.verificationKey]: correction })); if (requiresIndividualCashClosureVerification(editingCorrection)) changeVerificationStatus(editingCorrection.verificationKey, "Verified"); setExpandedMethods(current => ({ ...current, [`${correction.paymentMethodCode}:${editingCorrection.movementType}`]: true })); setEditingCorrection(null); }} />}{addingToGroup && <ManualMovementEditor group={addingToGroup} onClose={() => setAddingToGroup(null)} onApply={movement => { setManualMovements(current => [...current, movement]); setAddingToGroup(null); }} />}</Dialog>;
 }
 
 function ManualMovementEditor({ group, onClose, onApply }: {
@@ -393,51 +422,114 @@ function ManualMovementEditor({ group, onClose, onApply }: {
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Agregar movimiento omitido</DialogTitle><DialogDescription>{workSessionPaymentMethodName(group.paymentMethodCode)} · {group.movementType === "CashIn" ? "Entrada" : group.movementType === "CashOut" ? "Salida" : group.movementType === "Sale" ? "Factura o comprobante" : group.movementType === "Refund" ? "Devolución" : group.movementType === "ReceivablePayment" ? "Abono a cartera" : "Pago a proveedor"}. Documenta lo que no se reportó al cerrar; esto no crea una venta ni un pago nuevo.</DialogDescription></DialogHeader><div className="space-y-4"><div className="space-y-1.5"><Label htmlFor="manual-closure-amount">Valor</Label><Input id="manual-closure-amount" inputMode="decimal" value={formatWorkSessionCountInput(amount)} onChange={event => setAmount(normalizeWorkSessionCountInput(event.target.value))} /></div><div className="space-y-1.5"><Label htmlFor="manual-closure-observation">Observación</Label><Textarea id="manual-closure-observation" value={observation} maxLength={500} onChange={event => setObservation(event.target.value)} placeholder="Indica qué movimiento se omitió y cómo se comprobó" /></div></div><div className="flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!valid} onClick={() => onApply({ movementId: crypto.randomUUID(), ...group, amount: value, observation: observation.trim() })}>Agregar</Button></div></DialogContent></Dialog>;
 }
 
-function CorrectionEditor({ item, methods, current, onClose, onRemove, onApply }: {
-  item: ClosurePaymentVerification; methods: string[]; current?: ClosurePaymentCorrection;
+function CorrectionEditor({ item, businessId, methods, current, onClose, onRemove, onApply }: {
+  item: ClosurePaymentVerification; businessId: string; methods: string[]; current?: ClosurePaymentCorrection;
   onClose: () => void; onRemove: () => void; onApply: (value: ClosurePaymentCorrection) => Promise<void>;
 }) {
-  const paymentMethods = useReferenceOptions("payment-method");
-  const cardFranchises = useReferenceOptions("card-franchise");
+  const tenant = useTenantContextStore(state => state.selectedTenantId);
+  const paymentTypes = useReferenceOptions("payment-method");
   const originalTender = item.tenderMethodCode ?? item.paymentMethodCode;
   const [tender, setTender] = useState(current?.tenderMethodCode ?? (originalTender === "Card" ? "" : originalTender));
+  const [form, setForm] = useState<{ id: string; version: number; name: string; account?: string } | null>(
+    current?.paymentMethodId && current.paymentMethodVersion ? {
+      id: current.paymentMethodId, version: current.paymentMethodVersion, name: current.paymentMethodName ?? "Forma seleccionada",
+    } : null);
   const [franchise, setFranchise] = useState(current?.cardFranchiseCode ?? item.cardFranchiseCode ?? "");
   const [approval, setApproval] = useState(current?.approvalNumber ?? item.approvalNumber ?? "");
   const [reference, setReference] = useState(current?.reference ?? item.reference ?? "");
-  const [amountInput, setAmountInput] = useState(String(Math.abs(current?.amount ?? item.amount)));
   const [reason, setReason] = useState(current?.reason ?? "");
   const [validating, setValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const amount = Number(amountInput) * Math.sign(item.amount);
+  const amount = item.amount;
   const method = tender === "DebitCard" || tender === "CreditCard" ? "Card" : tender;
   const isCard = tender === "DebitCard" || tender === "CreditCard";
+  const cardFranchises = useReferenceOptions("card-franchise", isCard);
   const manualVoucher = item.sourceDocumentType === "ManualAccountingVoucher";
+  const electronic = item.sourceDocumentType === "SalesInvoice" || item.sourceDocumentType === "ServiceInvoice";
+  const usage: NonNullable<PaymentMethodQuery["usage"]> = manualVoucher
+    ? item.movementType === "CashOut" ? "VoucherPayments" : "VoucherReceipts"
+    : item.movementType === "PayablePayment" ? "SupplierPayments"
+      : item.movementType === "ReceivablePayment" ? "Receipts" : "Sales";
   const available = (item.movementType === "CashIn" || item.movementType === "CashOut") && !manualVoucher
-    ? (paymentMethods.data ?? []).filter(option => option.code === "Cash")
-    : (paymentMethods.data ?? []).filter(option =>
+    ? (paymentTypes.data ?? []).filter(option => option.code === "Cash")
+    : (paymentTypes.data ?? []).filter(option =>
         ["Cash", "DebitCard", "CreditCard", "Transfer"].includes(option.code) &&
         methods.includes(option.code === "DebitCard" || option.code === "CreditCard" ? "Card" : option.code));
-  const valid = Number.isFinite(amount) && amount !== 0 && reason.trim().length > 0 &&
+  const valid = Number.isFinite(amount) && amount !== 0 && reason.trim().length > 0 && form !== null &&
     available.some(option => option.code === tender) &&
     (!isCard || (franchise.length > 0 && approval.trim().length > 0)) &&
     (tender !== "Transfer" || reference.trim().length > 0) &&
-    (method !== item.paymentMethodCode || amount !== item.amount || tender !== originalTender ||
-      (isCard && (franchise !== (item.cardFranchiseCode ?? "") || approval.trim() !== (item.approvalNumber ?? ""))) ||
-      (tender === "Transfer" && reference.trim() !== (item.reference ?? ""))) &&
     (item.movementType !== "Refund" || Math.abs(amount) <= Math.abs(item.amount));
+  const changeType = (value: string) => {
+    setTender(value); setForm(null); setFranchise(""); setApproval(""); setReference(""); setValidationError(null);
+  };
+  const chooseForm = (value: PaymentMethod) => {
+    if (form?.id !== value.paymentMethodId) {
+      setFranchise(""); setApproval(""); setReference("");
+    }
+    setForm({ id: value.paymentMethodId, version: value.version, name: value.name,
+      account: `${value.accountCode} · ${value.accountName}` });
+  };
   const apply = async () => {
-    setValidating(true);
-    setValidationError(null);
+    if (!valid || !form) return;
+    setValidating(true); setValidationError(null);
     try {
       await onApply({ verificationKey: item.verificationKey, paymentMethodCode: method,
-        tenderMethodCode: tender, cardFranchiseCode: isCard ? franchise : null,
-        approvalNumber: isCard ? approval.trim() : null,
+        tenderMethodCode: tender, paymentMethodId: form.id, paymentMethodVersion: form.version, paymentMethodName: form.name,
+        cardFranchiseCode: isCard ? franchise : null, approvalNumber: isCard ? approval.trim() : null,
         reference: tender === "Transfer" ? reference.trim() : null, amount, reason: reason.trim() });
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "No fue posible validar esta corrección.");
     } finally { setValidating(false); }
   };
-  return <Dialog open onOpenChange={open => !open && !validating && onClose()}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Corregir comprobante</DialogTitle><DialogDescription>{item.documentNumber} · {verificationMovementName(item)}. El cambio se aplicará al confirmar la conciliación.</DialogDescription></DialogHeader><div className="space-y-4 py-2"><p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{workSessionPaymentMethodName(originalTender)} · {money.format(Math.abs(item.amount))}</strong></p><div className="space-y-1.5"><Label>Medio real</Label><Select value={tender} onValueChange={setTender}><SelectTrigger><SelectValue placeholder="Selecciona el medio real" /></SelectTrigger><SelectContent>{available.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div>{isCard && <><div className="space-y-1.5"><Label>Tipo de tarjeta</Label><Select value={franchise} onValueChange={setFranchise}><SelectTrigger><SelectValue placeholder="Selecciona la franquicia" /></SelectTrigger><SelectContent>{(cardFranchises.data ?? []).map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-approval">Número de aprobación o referencia</Label><Input id="closure-correction-approval" value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} /></div></>}{tender === "Transfer" && <div className="space-y-1.5"><Label htmlFor="closure-correction-reference">Referencia de transferencia</Label><Input id="closure-correction-reference" value={reference} onChange={event => setReference(event.target.value)} maxLength={160} /></div>}<div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor real</Label><Input id="closure-correction-amount" disabled={manualVoucher} inputMode="decimal" value={formatWorkSessionCountInput(amountInput)} onChange={event => setAmountInput(normalizeWorkSessionCountInput(event.target.value))} /></div><div className="space-y-1.5">{manualVoucher && <p className="text-xs text-muted-foreground">El valor y las contrapartidas se corrigen desde contabilidad. Aquí puedes corregir el medio o su evidencia.</p>}<Label htmlFor="closure-correction-reason">Motivo de la corrección</Label><Textarea id="closure-correction-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={500} /></div></div>{validationError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{validationError}</p>}<div className="flex justify-end gap-2">{current && <Button variant="ghost" className="mr-auto" disabled={validating} onClick={onRemove}>Quitar corrección</Button>}<Button variant="outline" disabled={validating} onClick={onClose}>Cerrar</Button><Button disabled={!valid || validating} onClick={() => void apply()}>{validating ? "Validando…" : "Aplicar"}</Button></div></DialogContent></Dialog>;
+  return <Dialog open onOpenChange={open => !open && !validating && onClose()}>
+    <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Corregir medio de recaudo</DialogTitle>
+      <DialogDescription>{item.documentNumber} · {verificationMovementName(item)}. Se aplicará al confirmar la conciliación.
+        {electronic && " La factura electrónica emitida se conserva; esta es una corrección interna del recaudo."}
+      </DialogDescription></DialogHeader>
+      <div className="space-y-4 py-2">
+        {(paymentTypes.isError || (isCard && cardFranchises.isError)) && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          No fue posible consultar los tipos de pago o las franquicias.
+          <Button variant="link" disabled={validating} onClick={() => {
+            if (paymentTypes.isError) void paymentTypes.refetch();
+            if (isCard && cardFranchises.isError) void cardFranchises.refetch();
+          }}>Reintentar</Button>
+        </div>}
+        <p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{workSessionPaymentMethodName(originalTender)} · {money.format(Math.abs(item.amount))}</strong></p>
+        <div className="space-y-1.5"><Label>Tipo de pago real</Label>
+          <Select value={tender} onValueChange={changeType} disabled={validating}><SelectTrigger aria-label="Tipo de pago real"><SelectValue placeholder="Selecciona el tipo" /></SelectTrigger>
+            <SelectContent>{available.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        {tender && <div className="space-y-1.5"><Label>Forma de pago</Label>
+          <PaymentMethodSelect key={tender} tenantId={tenant} businessId={businessId} usage={usage} methodCode={tender}
+            value={form?.id ?? ""} name={form?.name} accountLabel={form?.account} disabled={validating}
+            ariaLabel="Forma de pago del recaudo" autoSelectSingle wrapLabels onChange={chooseForm} />
+        </div>}
+        {isCard && <><div className="space-y-1.5"><Label>Franquicia</Label>
+          <Select value={franchise} onValueChange={setFranchise} disabled={validating}><SelectTrigger aria-label="Franquicia"><SelectValue placeholder="Selecciona la franquicia" /></SelectTrigger>
+            <SelectContent>{(cardFranchises.data ?? []).map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent>
+          </Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-approval">Número de aprobación</Label>
+          <Input id="closure-correction-approval" disabled={validating} value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} />
+        </div></>}
+        {tender === "Transfer" && <div className="space-y-1.5"><Label htmlFor="closure-correction-reference">Referencia de transferencia</Label>
+          <Input id="closure-correction-reference" disabled={validating} value={reference} onChange={event => setReference(event.target.value)} maxLength={160} />
+        </div>}
+        <div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor del recaudo</Label>
+          <Input id="closure-correction-amount" readOnly disabled value={money.format(Math.abs(amount))} />
+          <p className="text-xs text-muted-foreground">La corrección del medio conserva el importe del recaudo.</p>
+        </div>
+        <div className="space-y-1.5"><Label htmlFor="closure-correction-reason">Motivo de la corrección</Label>
+          <Textarea id="closure-correction-reason" disabled={validating} value={reason} onChange={event => setReason(event.target.value)} maxLength={500} />
+        </div>
+      </div>
+      {validationError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{validationError}</p>}
+      <div className="flex justify-end gap-2">{current && <Button variant="ghost" className="mr-auto" disabled={validating} onClick={onRemove}>Quitar corrección</Button>}
+        <Button variant="outline" disabled={validating} onClick={onClose}>Cerrar</Button>
+        <Button disabled={!valid || validating} onClick={() => void apply()}>{validating ? "Validando…" : "Aplicar"}</Button>
+      </div>
+    </DialogContent>
+  </Dialog>;
 }
 
 function PagedVerificationRows({ closureId, paymentMethodCode, movementType, informational = false, disabled,
@@ -500,6 +592,8 @@ function VerificationRow({ item, status, disabled, informational = false, correc
     cardFranchiseCode: item.correctedCardFranchiseCode,
     approvalNumber: item.correctedApprovalNumber,
     reference: item.correctedReference,
+    paymentMethodId: item.correctedPaymentMethodId, paymentMethodVersion: item.correctedPaymentMethodVersion,
+    paymentMethodName: item.correctedPaymentMethodName,
   } : undefined);
   const title = isCreditSale ? item.customerName ?? "Cliente"
     : isCashMovement ? item.reasonName?.trim() || "Motivo no registrado"
@@ -517,7 +611,7 @@ function VerificationRow({ item, status, disabled, informational = false, correc
       {isCashMovement && item.notes?.trim() && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{item.notes}</p>}
       {item.sourceDocumentType === "ManualAccountingVoucher" && <p className="mt-1 break-words text-xs text-muted-foreground">Comprobante: {item.documentNumber} · Referencia: {item.approvalNumber || item.reference || "Sin referencia"} · {item.counterpartyName || "Sin tercero"}</p>}
       {!isCashMovement && !isCreditSale && <p className="mt-1 text-xs text-muted-foreground">{isThirdPartyPayment && item.documentNumber && <>Comprobante: {item.documentNumber} · </>}Referencia: {item.approvalNumber || item.reference || "Sin referencia"} · {new Date(item.occurredAt).toLocaleString("es-CO")}</p>}
-      {displayedCorrection && <p className="mt-1 text-xs font-semibold text-teal-800">Corregido: {workSessionPaymentMethodName(displayedCorrection.tenderMethodCode ?? displayedCorrection.paymentMethodCode)} · {money.format(Math.abs(displayedCorrection.amount))}{displayedCorrection.cardFranchiseCode && ` · ${displayedCorrection.cardFranchiseCode}`}{(displayedCorrection.approvalNumber || displayedCorrection.reference) && ` · ${displayedCorrection.approvalNumber || displayedCorrection.reference}`} · {displayedCorrection.reason}</p>}
+      {displayedCorrection && <p className="mt-1 text-xs font-semibold text-teal-800">Corregido: {(displayedCorrection.paymentMethodName ?? workSessionPaymentMethodName(displayedCorrection.tenderMethodCode ?? displayedCorrection.paymentMethodCode))} · {money.format(Math.abs(displayedCorrection.amount))}{displayedCorrection.cardFranchiseCode && ` · ${displayedCorrection.cardFranchiseCode}`}{(displayedCorrection.approvalNumber || displayedCorrection.reference) && ` · ${displayedCorrection.approvalNumber || displayedCorrection.reference}`} · {displayedCorrection.reason}</p>}
     </div>
     <span className="text-left sm:text-right"><strong className={(displayedCorrection?.amount ?? item.amount) < 0 ? "text-red-700" : "text-slate-950"}>{money.format(Math.abs(displayedCorrection?.amount ?? item.amount))}</strong>{displayedCorrection && <small className="block text-xs text-muted-foreground">Antes {money.format(Math.abs(item.amount))}</small>}</span>
     <div className="flex flex-wrap gap-2">{!isInformational && <><Button type="button" size="sm" variant={status === "Verified" ? "default" : "outline"} disabled={disabled} onClick={() => onChange("Verified")}><Check className="mr-1 h-4 w-4" />Verificado</Button><Button type="button" size="sm" variant={status === "Missing" ? "destructive" : "outline"} disabled={disabled} onClick={() => onChange("Missing")}><X className="mr-1 h-4 w-4" />No encontrado</Button></>}{!disabled && !isCreditSale && onCorrect && <Button type="button" size="sm" variant="outline" onClick={onCorrect}><Pencil className="mr-1 h-4 w-4" />Corregir</Button>}</div>

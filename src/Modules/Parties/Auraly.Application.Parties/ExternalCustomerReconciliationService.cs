@@ -49,13 +49,13 @@ public sealed class ExternalCustomerReconciliationService(
     {
         Require(actor, ExternalCustomerReconciliationPermissionCodes.Read);
         if (page < 1 || query.PageSize is < 1 or > 100)
-            throw new PartyValidationException("Page and PageSize are outside the allowed range.");
+            throw new PartyValidationException("La página o la cantidad de registros supera el rango permitido.");
         var status = string.IsNullOrWhiteSpace(query.Status) ? null : query.Status.Trim();
         if (status is not null && status is not (
                 ExternalCustomerReconciliationStatuses.Pending or
                 ExternalCustomerReconciliationStatuses.Linked or
                 ExternalCustomerReconciliationStatuses.Conflict))
-            throw new PartyValidationException("Reconciliation status is invalid.");
+            throw new PartyValidationException("El estado de conciliación no es válido.");
         return store.PageAsync(
             actor,
             page,
@@ -70,7 +70,7 @@ public sealed class ExternalCustomerReconciliationService(
     {
         Require(actor, ExternalCustomerReconciliationPermissionCodes.Reconcile);
         if (externalCommerceCustomerId == Guid.Empty)
-            throw new PartyValidationException("ExternalCommerceCustomerId is required.");
+            throw new PartyValidationException("Se requiere la identificación del cliente en el sistema externo.");
         var result = await ReconcileCoreAsync(actor, externalCommerceCustomerId, cancellationToken);
         if (result.Status == ExternalCustomerReconciliationStatuses.Linked && !result.IdempotentReplay)
             await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
@@ -102,7 +102,7 @@ public sealed class ExternalCustomerReconciliationService(
     {
         Require(actor, ExternalCustomerReconciliationPermissionCodes.Reconcile);
         if (request.MaximumItems is < 1 or > 100)
-            throw new PartyValidationException("MaximumItems must be between 1 and 100.");
+            throw new PartyValidationException("La cantidad máxima debe estar entre 1 y 100 registros.");
         var pending = await store.PendingIdsAsync(actor, request.MaximumItems, cancellationToken);
         var linked = 0;
         var conflicts = 0;
@@ -126,6 +126,6 @@ public sealed class ExternalCustomerReconciliationService(
     private static void Require(PartyActorIdentity actor, string permission)
     {
         if (!actor.Permissions.Contains(permission))
-            throw new PartyForbiddenException($"Permission '{permission}' is required.");
+            throw new PartyForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }

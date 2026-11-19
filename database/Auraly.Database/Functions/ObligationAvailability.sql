@@ -97,6 +97,26 @@ AS RETURN
           AND applied.SourceDocumentId=target.SourceDocumentId AND applied.SourceDocumentType=target.SourceDocumentType
           AND applied.TransactionType=N'Application')
       UNION ALL
+      -- Native returns reserve their accepted credit application before the
+      -- document worker reaches financial posting. They already own this state;
+      -- no second position index or balance is introduced for them.
+      SELECT CASE WHEN returned.EconomicResolution=N'CustomerCredit' THEN returned.TotalAmount
+          ELSE returned.ReceivableReversalAmount END,N'CreditApplication'
+      FROM dbo.Receivables receivable
+      JOIN dbo.SalesDocuments original ON original.DocumentId=receivable.SourceDocumentId
+        AND original.DocumentType=receivable.SourceDocumentType AND original.BusinessId=receivable.BusinessId
+      JOIN dbo.SalesReturns returned ON returned.OriginalDocumentId=original.DocumentId
+        AND returned.BusinessId=receivable.BusinessId
+      WHERE @SubledgerKind=N'Receivable' AND receivable.ReceivableId=@SubledgerId AND receivable.BusinessId=@BusinessId
+        AND returned.EconomicResolution IN(N'CustomerCredit',N'ReverseUncollected')
+        AND (returned.EconomicResolution=N'CustomerCredit' OR returned.ReceivableReversalAmount>0)
+        AND (@ExcludedAdjustmentId IS NULL OR returned.ReturnId<>@ExcludedAdjustmentId)
+        AND NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs posting WHERE posting.SourceDocumentId=returned.ReturnId
+          AND posting.SourceDocumentType=N'SalesReturn' AND posting.BusinessId=@BusinessId
+          AND posting.Status IN(N'Posted',N'CommercialEffectsApplied'))
+        AND NOT EXISTS(SELECT 1 FROM dbo.SalesReturnReceivableApplications applied
+          WHERE applied.ReturnId=returned.ReturnId AND applied.ReceivableId=receivable.ReceivableId)
+      UNION ALL
       -- Native expense cancellation already owns its durable state. Reserve
       -- its entire outstanding obligation here, alongside manual cancellation,
       -- until the same accounting processor applies it. No second balance/index.

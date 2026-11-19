@@ -384,6 +384,48 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.Equal(-1000m,card.NetAmount);
     }
 
+    [Theory]
+    [InlineData("Cash")]
+    [InlineData("DebitCard")]
+    [InlineData("CreditCard")]
+    [InlineData("Transfer")]
+    public async Task Local_closure_excludes_dispatch_collection_and_preserves_legacy_order_money(string method)
+    {
+        using var opened = await Client.PostAsync("/edge/v1/work-sessions/current", null);
+        opened.EnsureSuccessStatusCode();
+        var session = (await opened.Content.ReadFromJsonAsync<PosLocalUserSession>())!;
+        using var capture = await Client.PostAsJsonAsync("/edge/v1/capture", new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var draft = (await capture.Content.ReadFromJsonAsync<PosCaptureResult>())!.Draft!;
+        using var completed = await Client.PostAsJsonAsync($"/edge/v1/drafts/{draft.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(null,
+                [new CompletePaymentRequest(method, draft.PayableAmount, method == "Transfer" ? "TR-LOCAL" : null,
+                    method is "DebitCard" or "CreditCard" ? "Visa" : null,
+                    method is "DebitCard" or "CreditCard" ? "AP-LOCAL" : null)],
+                DocumentType: PosSaleDocumentTypes.Receipt));
+        Assert.True(completed.IsSuccessStatusCode, await completed.Content.ReadAsStringAsync());
+        var sale = (await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>())!.IssuedSale;
+        var original = PosSaleContractSerializer.Deserialize(Assert.Single(await _factory!.Services
+            .GetRequiredService<PosEdgeSaleStore>().GetPendingOutboxAsync()).Payload);
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE IssuedSales SET FiscalSnapshotJson=$payload WHERE UPPER(DocumentId)=UPPER($id)";
+        command.Parameters.AddWithValue("$id", sale.DocumentId.Value.ToString());
+        var payload = command.Parameters.AddWithValue("$payload", "");
+        var closure = _factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureService>();
+        foreach (var mode in new[] { SaleCollectionMode.Dispatch, SaleCollectionMode.Session })
+        {
+            payload.Value = PosSaleContractSerializer.Serialize(original with { SourceOrderId = Guid.NewGuid(), CollectionMode = mode });
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            var preview = await closure.PreviewAsync(session, CancellationToken.None);
+            Assert.Equal(draft.PayableAmount, preview.TotalSales);
+            var money = Assert.Single(preview.PaymentTotals.Where(value => value.PaymentMethodCode ==
+                (method is "DebitCard" or "CreditCard" ? "Card" : method)));
+            Assert.Equal(mode == SaleCollectionMode.Session ? draft.PayableAmount : 0m, money.NetAmount);
+        }
+    }
+
     [Fact]
     public async Task Lost_enrollment_package_recovers_the_single_durable_device_identity()
     {

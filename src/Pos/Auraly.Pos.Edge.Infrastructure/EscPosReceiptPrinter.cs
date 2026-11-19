@@ -236,7 +236,7 @@ public sealed class EscPosReceiptRenderer
 
     private static string PaymentName(string code) => code switch
     {
-        "Cash" => "Efectivo",
+        "Cash" => "Efectivo", "PendingCollection" => "Por recaudar",
         "Card" => "Tarjeta",
         "DebitCard" => "Tarjeta debito",
         "CreditCard" => "Tarjeta credito",

@@ -24,6 +24,15 @@ public sealed class SqlAccountingProcessingSignalGate(
                 (job.SourceDocumentId=@DocumentId AND job.SourceDocumentType=@DocumentType)
                 OR
                 (
+                  @DocumentType=N'DispatchCashDifference'
+                  AND EXISTS(
+                    SELECT 1 FROM dispatch.Closures closure
+                    CROSS APPLY dispatch.SettlementDocuments(closure.DispatchId,@BusinessId) dependency
+                    WHERE closure.DispatchSettlementId=@DocumentId AND closure.BusinessId=@BusinessId
+                      AND job.SourceDocumentType=dependency.DocumentType AND job.SourceDocumentId=dependency.DocumentId)
+                )
+                OR
+                (
                   @DocumentType IN(N'SalesInvoice',N'SalesReceipt')
                   AND job.SourceDocumentType=N'Expense'
                   AND EXISTS(SELECT 1 FROM dbo.Expenses e WHERE e.BusinessId=@BusinessId
@@ -46,7 +55,8 @@ public sealed class SqlAccountingProcessingSignalGate(
                   )
                 )
               )
-            ORDER BY CASE WHEN job.SourceDocumentId=@DocumentId THEN 0 ELSE 1 END,
+            ORDER BY CASE WHEN @DocumentType=N'DispatchCashDifference' AND job.SourceDocumentId=@DocumentId THEN 2
+                          WHEN job.SourceDocumentId=@DocumentId THEN 0 ELSE 1 END,
                      job.SourceDocumentId;
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);

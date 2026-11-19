@@ -1,5 +1,7 @@
 "use client";
 
+import type { OrderInvoicePaymentDetails } from "@/services/orders/commerce-orders-client";
+
 import type { PaymentMethod, PaymentMethodQuery } from "@/services/api/payment-methods";
 
 import {
@@ -638,6 +640,11 @@ export default function PosPage() {
 
   const loadOrderPaymentMethods = useCallback(
     async (query: PaymentMethodQuery) => (await getOrderClient()).paymentMethods(query),
+    [getOrderClient],
+  );
+
+  const loadOrderReferenceOptions = useCallback(
+    async (catalog: string) => (await getOrderClient()).referenceOptions(catalog),
     [getOrderClient],
   );
 
@@ -1975,7 +1982,7 @@ export default function PosPage() {
         ? caught.message
         : "No fue posible preparar el cierre de la sesión de venta.";
       setError(detail);
-      setMessage("No se pudo iniciar el cierre de sesión");
+      setMessage("No se pudo iniciar el cierre de caja");
     } finally {
       setBusy(false);
     }
@@ -2900,7 +2907,7 @@ export default function PosPage() {
     printAfterInvoice: boolean,
     idempotencyKey: string,
     onProgress?: (progress: OrderInvoiceSequenceProgress) => void,
-    transfer?: { bankAccountId: string | null; reference: string; notes: string | null },
+    paymentDetails?: OrderInvoicePaymentDetails,
     charges?: OrderInvoiceChargeSelection[] | null,
     paymentForm?: PaymentMethod,
   ) {
@@ -2910,15 +2917,16 @@ export default function PosPage() {
         orderIds,
         paymentMethodCode,
         documentType,
-        transfer?.reference,
-        transfer?.bankAccountId,
-        transfer?.notes,
+        paymentDetails?.paymentReference,
+        paymentDetails?.bankAccountId,
+        paymentDetails?.paymentNotes,
         printAfterInvoice,
         idempotencyKey,
         onProgress,
         true,
         charges,
         paymentForm,
+        paymentDetails,
       );
     });
     setMessage(
@@ -3406,6 +3414,7 @@ export default function PosPage() {
                 timeZone={orderTimeZone}
                 businessId={workstation.businessId}
                 loadPaymentMethods={loadOrderPaymentMethods}
+                loadReferenceOptions={loadOrderReferenceOptions}
                 key={isStore || isRestaurantOrder ? "drawer-orders" : `compact-orders-${ordersRefreshVersion}`}
                 compact
                 initialStatus="Available"
@@ -3416,7 +3425,7 @@ export default function PosPage() {
                 onRecover={(order) => recoverPosOrder(order.orderId)}
                 onPrintSelected={async (orders) =>
                   printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm) =>
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm, paymentDetails) =>
                   invoicePosOrders(
                     orders.map((order) => order.orderId),
                     paymentMethodCode,
@@ -3424,7 +3433,7 @@ export default function PosPage() {
                     printAfterInvoice,
                     idempotencyKey,
                     onProgress,
-                    undefined,
+                    paymentDetails,
                     charges,
                     paymentForm,
                   )
@@ -4045,6 +4054,7 @@ export default function PosPage() {
               timeZone={orderTimeZone}
               businessId={workstation.businessId}
               loadPaymentMethods={loadOrderPaymentMethods}
+              loadReferenceOptions={loadOrderReferenceOptions}
               key={`expanded-orders-${ordersRefreshVersion}`}
               initialStatus="Available"
               activeOrderId={draft?.sourceOrderId}
@@ -4054,7 +4064,7 @@ export default function PosPage() {
               onRecover={(order) => recoverPosOrder(order.orderId)}
               onPrintSelected={async (orders) =>
                 printOrdersOnline(orders.map((order) => order.orderId))}
-              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm) =>
+              onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges, paymentForm, paymentDetails) =>
                 invoicePosOrders(
                   orders.map((order) => order.orderId),
                   paymentMethodCode,
@@ -4062,7 +4072,7 @@ export default function PosPage() {
                   printAfterInvoice,
                   idempotencyKey,
                   onProgress,
-                  undefined,
+                  paymentDetails,
                   charges,
                   paymentForm,
                 )
@@ -4203,6 +4213,7 @@ export default function PosPage() {
       {paymentOpen && draft && saleSettlement && (
         <PosPaymentDialog
           client={client}
+          allowPendingCollection={Boolean(draft?.sourceOrderId)}
           total={saleSettlement.netAmount}
           grossTotal={saleSettlement.grossAmount}
           withholdingTotal={saleSettlement.withholdingTotal}

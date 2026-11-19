@@ -261,7 +261,7 @@ public sealed partial class SqlAccountingStore(
                 [new(user.TenantId, user.BusinessId, documentId, documentType, json, occurredAt, ids.NewId())],
                 now, AccountingJobRequirement.ManualBookEntry, cancellationToken);
             if (acceptance.QueuedCount == 0)
-                throw new AccountingConflictException("Accounting must be active for the manual document date.");
+                throw new AccountingConflictException("La contabilidad debe estar activa para la fecha del comprobante manual.");
             if (draftWasSent && acceptance.NewSourceCount != 0)
                 throw new AccountingConflictException("El comprobante enviado perdió su fuente aceptada y requiere revisión; no se vuelve a aceptar.");
             if (draftExists && !draftWasSent && acceptance.NewSourceCount == 0)

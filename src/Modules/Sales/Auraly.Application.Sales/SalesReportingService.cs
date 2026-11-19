@@ -75,7 +75,7 @@ public sealed class SalesReportingService(ISalesReportingStore store)
     {
         Demand(user); Validate(filter);
         if (comparisonFrom.HasValue != comparisonTo.HasValue || comparisonTo < comparisonFrom)
-            throw new SalesReportingValidationException("The comparison range is invalid.");
+            throw new SalesReportingValidationException("El rango de comparación no es válido.");
         return store.GetSummaryAsync(user, filter, comparisonFrom, comparisonTo, cancellationToken,includeBreakdowns);
     }
 
@@ -85,9 +85,9 @@ public sealed class SalesReportingService(ISalesReportingStore store)
     {
         Demand(user); Validate(filter);
         if (!SalesReportingDimensions.IsSupported(dimension))
-            throw new SalesReportingValidationException("The reporting dimension is invalid.");
+            throw new SalesReportingValidationException("La dimensión del reporte no es válida.");
         if (limit is < 1 or > 500)
-            throw new SalesReportingValidationException("Limit must be between 1 and 500.");
+            throw new SalesReportingValidationException("El límite de registros debe estar entre 1 y 500.");
         return store.GetBreakdownAsync(user, filter, dimension, limit, cancellationToken);
     }
 
@@ -97,7 +97,7 @@ public sealed class SalesReportingService(ISalesReportingStore store)
     {
         Demand(user); Validate(filter);
         if (page < 1 || pageSize is < 1 or > 200)
-            throw new SalesReportingValidationException("Page and pageSize are invalid.");
+            throw new SalesReportingValidationException("La página y la cantidad de registros no son válidas.");
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
         if (search?.Length > 160)
             throw new SalesReportingValidationException("Search is limited to 160 characters.");
@@ -109,7 +109,7 @@ public sealed class SalesReportingService(ISalesReportingStore store)
     {
         Demand(user);
         if (documentId == Guid.Empty)
-            throw new SalesReportingValidationException("DocumentId is required.");
+            throw new SalesReportingValidationException("Se requiere un documento válido.");
         if(page<1||pageSize is <1 or >200)throw new SalesReportingValidationException("La página del detalle no es válida.");
         return store.GetDocumentAsync(user, documentId, cancellationToken,page,pageSize);
     }
@@ -126,7 +126,7 @@ public sealed class SalesReportingService(ISalesReportingStore store)
     {
         if (!user.Permissions.Contains(SalesReportingPermissionCodes.Read))
             throw new SalesReportingForbiddenException(
-                $"Permission '{SalesReportingPermissionCodes.Read}' is required.");
+                $"No tienes permiso para consultar reportes de ventas.");
     }
 
     private static void Validate(SalesReportFilter filter)
@@ -137,14 +137,14 @@ public sealed class SalesReportingService(ISalesReportingStore store)
             if (selection is { Count: > 100 } || selection?.Any(id => id == Guid.Empty) == true)
                 throw new SalesReportingValidationException("Cada filtro admite hasta 100 selecciones válidas.");
         if (filter.From == default || filter.To < filter.From || filter.To.DayNumber-filter.From.DayNumber > 1827)
-            throw new SalesReportingValidationException("The date range is invalid or exceeds five years.");
+            throw new SalesReportingValidationException("El rango de fechas no es válido o supera cinco años.");
         if (filter.DocumentType is not null && filter.DocumentType is not ("SalesInvoice" or "SalesReceipt" or "ServiceInvoice"))
-            throw new SalesReportingValidationException("The document type is invalid.");
+            throw new SalesReportingValidationException("El tipo de documento no es válido.");
     }
 
     private static void ValidateRange(DateOnly from,DateOnly to)
     {
         if(from==default||to<from||to.DayNumber-from.DayNumber>1827)
-            throw new SalesReportingValidationException("The report range is invalid or exceeds five years.");
+            throw new SalesReportingValidationException("El rango del reporte no es válido o supera cinco años.");
     }
 }

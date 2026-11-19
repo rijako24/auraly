@@ -168,7 +168,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND (input.AddedByUserId IS NULL OR addedBy.UserId IS NOT NULL);
             IF @@ROWCOUNT<>@LineCount
-                THROW 51024,'The immutable attribution for every sale line could not be captured.',1;
+                THROW 51024,N'No fue posible conservar la atribución original de todas las líneas de la venta.',1;
             """;
         var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
@@ -288,7 +288,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                     AND business.BusinessId=@BusinessId AND bank.IsActive=1
                     AND account.AccountId IS NOT NULL));
             IF @@ROWCOUNT<>@PaymentCount
-                THROW 51000,N'The transfer bank account must be active for this tenant and have exactly one configured posting auxiliary for this business.',1;
+                THROW 51000,N'La cuenta bancaria de la transferencia debe estar activa en esta empresa y tener un único auxiliar contable configurado para la sede.',1;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);

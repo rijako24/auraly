@@ -276,6 +276,9 @@ public sealed class PosConfigurationTests
             }).ToArray();
             await store.ApplySettlementConfigurationAsync(new(true, [],
                 new Auraly.Contracts.Catalog.PaymentMethodCatalogSnapshot(2, [form, ..cashForms])));
+            var noTransfers = await reopened.PaymentMethodsPageAsync(new(1, 100, Usage: "Sales", ExcludeMethodCode: "Transfer"));
+            Assert.Equal(213, noTransfers.TotalCount);
+            Assert.All(noTransfers.Items, item => Assert.NotEqual("Transfer", item.MethodCode));
             var first = await reopened.PaymentMethodsPageAsync(new(1, 100, Usage: "Sales", MethodCode: "Cash"));
             var second = await reopened.PaymentMethodsPageAsync(new(2, 100, Usage: "Sales", MethodCode: "Cash"));
             var last = await reopened.PaymentMethodsPageAsync(new(3, 100, Usage: "Sales", MethodCode: "Cash"));

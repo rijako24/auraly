@@ -109,7 +109,7 @@ export function SalesReturnHistory({ active, businessId, runtime }: {
       {detail && <div className="space-y-4">
         <p>{detail.customerName} · {detail.customerIdentification}<br />{formatDateTime(detail.returnedAt)} · {detail.warehouseName}</p>
         <p><strong>Motivo:</strong> {detail.reasonDescription}</p>
-        <p>{detail.economicResolution === "CustomerCredit" ? "Aplicación a cartera / saldo a favor" : "Reembolso"} · Estado fiscal: {fiscalStatusLabel(detail.fiscalStatus)}</p>
+        <p>{detail.economicResolution === "CustomerCredit" ? "Aplicación a cartera / saldo a favor" : detail.economicResolution === "ReverseUncollected" ? "Reversión de recaudo pendiente" : "Reembolso"} · Estado fiscal: {fiscalStatusLabel(detail.fiscalStatus)}</p>
         <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Producto / cargo</th><th>Cantidad</th><th className="text-right">Total</th></tr></thead><tbody>{detail.receipt.lines.map((line, index) => <tr key={index} className="border-b"><td className="py-2">{line.description}</td><td>{line.quantity}</td><td className="text-right tabular-nums">{formatCurrency(line.total)}</td></tr>)}</tbody></table></div>
         <p className="text-right">Base {formatCurrency(detail.untaxedAmount)} · Impuestos {formatCurrency(detail.taxAmount)}<br />Ajuste al peso {formatCurrency(detail.roundingAmount)}<br /><strong>Total devuelto {formatCurrency(detail.totalAmount)}</strong></p>
         {detail.notes && <p>{detail.notes}</p>}

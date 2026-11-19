@@ -11,9 +11,9 @@ public static class PartyIdentityNormalizer
     public static string Normalize(string identificationTypeCode, string identification)
     {
         if (string.IsNullOrWhiteSpace(identificationTypeCode))
-            throw new ArgumentException("Identification type is required.", nameof(identificationTypeCode));
+            throw new ArgumentException("Selecciona el tipo de identificación.");
         if (string.IsNullOrWhiteSpace(identification))
-            throw new ArgumentException("Identification is required.", nameof(identification));
+            throw new ArgumentException("Escribe la identificación.");
 
         var value = identification.Trim().Normalize(NormalizationForm.FormKC).ToUpperInvariant();
         value = CompactDocumentTypes.Contains(identificationTypeCode.Trim())
@@ -21,7 +21,7 @@ public static class PartyIdentityNormalizer
             : string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         if (value.Length is < 3 or > 64)
             throw new ArgumentOutOfRangeException(
-                nameof(identification), "Normalized identification must contain between 3 and 64 characters.");
+                null, "La identificación normalizada debe tener entre 3 y 64 caracteres.");
         return value;
     }
 }
@@ -31,7 +31,7 @@ public sealed class CustomerPricingAssignment
     public CustomerPricingAssignment(Guid? priceChannelId)
     {
         if (priceChannelId == Guid.Empty)
-            throw new ArgumentException("Pricing identifiers cannot be empty.");
+            throw new ArgumentException("La identificación del canal de precios no puede estar vacía.");
         PriceChannelId = priceChannelId;
     }
 
@@ -43,9 +43,9 @@ public static class PartyValidation
     public static void RequireText(string? value, string field, int maximumLength)
     {
         if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException($"{field} is required.", field);
+            throw new ArgumentException($"El campo {field} es obligatorio.");
         if (value.Trim().Length > maximumLength)
-            throw new ArgumentOutOfRangeException(field, $"{field} cannot exceed {maximumLength} characters.");
+            throw new ArgumentOutOfRangeException(null, $"El campo {field} admite máximo {maximumLength} caracteres.");
     }
 
     public static string NormalizeCode(string value, string field, int maximumLength)
@@ -57,7 +57,7 @@ public static class PartyValidation
                 CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark))
             .ToUpperInvariant();
         if (normalized.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
-            throw new ArgumentException($"{field} contains unsupported characters.", field);
+            throw new ArgumentException($"El campo {field} contiene caracteres no permitidos.");
         return normalized;
     }
 }

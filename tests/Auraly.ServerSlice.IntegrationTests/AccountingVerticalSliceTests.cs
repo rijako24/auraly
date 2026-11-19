@@ -1014,11 +1014,13 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await settlementWorker.StartAsync(CancellationToken.None);
         try
         {
-            var webSessionId = await fixture.OpenWebWorkSessionAsync();
+            var availableCash=(await accounting.GetFromJsonAsync<PaymentMethodPage>(
+                "/api/commerce/v1/payment-methods/?usage=Receipts&methodCode=Cash&search=110505&page=1&pageSize=10"))!;
+            var cashForm=Assert.Single(availableCash.Items.Where(form=>form.AccountCode=="110505"));
             var request = new SettleDispatchRequest(
                 invoice.CommercialSnapshot.PayableAmount - 1_000m,
                 "Faltante entregado por el transportador", $"settle-{dispatchId:N}",
-                webSessionId);
+                CashDifferencePaymentMethodId:cashForm.PaymentMethodId);
             using var settle = await accounting.PostAsJsonAsync(
                 $"/api/commerce/v1/dispatches/{dispatchId:D}/settle", request);
             Assert.True(settle.IsSuccessStatusCode,
@@ -4073,23 +4075,25 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             INSERT dbo.DispatchSourceDocuments(
               DispatchSourceDocumentId,DispatchId,SourceDocumentId,SourceDocumentType,
               DocumentNumberSnapshot,CustomerNameSnapshot,SellerNameSnapshot,
-              DocumentTotalSnapshot,Status,CreatedAt)
+              DocumentTotalSnapshot,CreditAmountSnapshot,Status,CreatedAt)
             VALUES(
               @SourceId,@DispatchId,@SalesDocumentId,N'SalesInvoice',N'FACTURA-PRUEBA',
-              N'Cliente prueba',N'Vendedor prueba',@Expected,N'Delivered',SYSUTCDATETIME());
+              N'Cliente prueba',N'Vendedor prueba',@Expected,0,N'Delivered',SYSUTCDATETIME());
             INSERT dbo.DispatchDeliveryPayments(
               DispatchDeliveryPaymentId,BusinessId,DispatchId,DispatchSourceDocumentId,
               ApplicationType,PaymentMethod,Amount,RecordedBy,OccurredAt,CreatedAt)
             VALUES(
               NEWID(),@BusinessId,@DispatchId,@SourceId,N'InvoicePayment',N'Cash',
               @Expected,@UserId,SYSUTCDATETIME(),SYSUTCDATETIME());
-            INSERT dbo.DispatchSettlements(
-              DispatchSettlementId,BusinessId,DispatchId,ExpectedCash,DeclaredCash,
-              DepositTotal,CreditDocumentTotal,CreditAdvanceTotal,ReturnTotal,
-              TransporterClosedBy,TransporterClosedAt,Status,IdempotencyKey)
-            VALUES(
-              @SettlementId,@BusinessId,@DispatchId,@Expected,@Expected,0,0,0,0,
-              @UserId,SYSUTCDATETIME(),N'PendingReview',@CloseKey);
+            DECLARE @Session uniqueidentifier=NEWID(),@ClosedAt datetimeoffset(7)=SYSUTCDATETIME();
+            INSERT dbo.WorkSessions(WorkSessionId,TenantId,BusinessId,UserId,Kind,DispatchId,OpenedAt,LastActivityAt,Status)
+              VALUES(@Session,@TenantId,@BusinessId,@UserId,N'Dispatch',@DispatchId,@ClosedAt,@ClosedAt,N'Open');
+            DECLARE @Totals nvarchar(max)=(SELECT N'Cash' paymentMethodCode,@Expected salesAmount,
+              CONVERT(decimal(19,4),0) refundAmount,CONVERT(decimal(19,4),0) otherAmount,@Expected netAmount,
+              @Expected countedAmount,CONVERT(decimal(19,4),0) difference FOR JSON PATH);
+            DECLARE @Hash varbinary(32)=HASHBYTES('SHA2_256','{}');
+            EXEC worksessions.ClosureAccept @SettlementId,@Session,@TenantId,@BusinessId,@UserId,@CloseKey,
+              @Expected,0,0,@Expected,@Expected,@Expected,1,0,0,0,NULL,N'{}',@Hash,@ClosedAt,@Totals,0,0;
             UPDATE mapping
             SET AccountId=custom.AccountId
             FROM dbo.AccountingAccountMappings mapping
@@ -4172,7 +4176,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                    processing.Status,processing.LastError,
                    posting.Status,posting.LastErrorCode,posting.LastErrorMessage
             FROM dbo.DispatchSettlementOperations operation
-            INNER JOIN dbo.DispatchSettlements settlement ON settlement.DispatchId=operation.DispatchId
+            INNER JOIN dispatch.Closures settlement ON settlement.DispatchId=operation.DispatchId
             INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=operation.DispatchId
             LEFT JOIN dbo.DocumentProcessingJobs processing
               ON processing.DocumentId=settlement.DispatchSettlementId

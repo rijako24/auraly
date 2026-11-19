@@ -106,6 +106,7 @@ VALUES
 ('10000000-0000-0000-0000-000000000003',N'payment-method',N'CreditCard',N'Tarjeta crédito',NULL,30),
 ('10000000-0000-0000-0000-000000000004',N'payment-method',N'Transfer',N'Transferencia',NULL,40),
 ('10000000-0000-0000-0000-000000000005',N'payment-method',N'Credit',N'Crédito cliente',NULL,50),
+('10000000-0000-0000-0000-000000000006',N'payment-method',N'PendingCollection',N'Por recaudar',N'Sólo para comprobantes de pedidos pendientes de recaudo.',60),
 ('10100000-0000-0000-0000-000000000001',N'cash-closure-method',N'Cash',N'Efectivo',NULL,10),
 ('10100000-0000-0000-0000-000000000002',N'cash-closure-method',N'Card',N'Tarjeta',NULL,20),
 ('10100000-0000-0000-0000-000000000003',N'cash-closure-method',N'Transfer',N'Transferencia',NULL,30),

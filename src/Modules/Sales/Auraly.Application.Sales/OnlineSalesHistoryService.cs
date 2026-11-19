@@ -135,7 +135,7 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+                $"No tienes permiso para crear ventas.");
     }
 
     private static void DemandReprintPermission(OnlineSalesUserIdentity user)
@@ -143,7 +143,7 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesReprint))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesReprint}' is required.");
+                $"No tienes permiso para reimprimir ventas.");
     }
 
     private static void ValidateHistoryOptions(

@@ -98,7 +98,7 @@ public sealed class PayrollService(
             request.Mappings.Any(value=>value is null || value.MappingId==Guid.Empty || value.EffectiveTo<value.EffectiveFrom ||
                 value.BeneficiaryPartyId==Guid.Empty || value.DebitAccountId is null && value.CreditAccountId is null && value.BeneficiaryPartyId is null) ||
             request.Mappings.Select(value=>value.MappingId).Distinct().Count()!=request.Mappings.Count)
-            throw new PayrollValidationException("Revisa el código, nombre y hasta 500 mappings de cuenta con vigencia e identidades distintas.");
+            throw new PayrollValidationException("Revisa el código, el nombre y hasta 500 asignaciones contables con vigencias e identificadores distintos.");
         return store.SaveProfileAsync(user,request with{Code=request.Code.Trim().ToUpperInvariant(),Name=request.Name.Trim()},ct);
     }
     public Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user,

@@ -433,7 +433,8 @@ function Publish-Database {
             '20261113_PreflightSharedPucAccounts.sql',
             '20261113_ShareAccountingCostCenters.sql',
             '20261113_RetireAcceptedAccountConfiguration.sql',
-            '20261116_RetireTenantPaymentContractSwitch.sql')
+            '20261116_RetireTenantPaymentContractSwitch.sql',
+            '20261118_UnifyDispatchWorkSessionClosures.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `

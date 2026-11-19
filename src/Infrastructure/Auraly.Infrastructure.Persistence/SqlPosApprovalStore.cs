@@ -285,7 +285,7 @@ public sealed class SqlPosApprovalStore(
             JOIN dbo.EnrolledDevices d ON d.DeviceId=ws.DeviceId
             JOIN dbo.AppUsers u ON u.UserId=ws.UserId
             WHERE ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=@BusinessId
-              AND ws.UserId=@UserId AND ws.DeviceId=@DeviceId AND ws.Status=N'Open'
+              AND ws.UserId=@UserId AND ws.DeviceId=@DeviceId AND ws.Status=N'Open' AND ws.Kind=N'Normal'
               AND b.TenantId=@TenantId AND d.TenantId=@TenantId AND d.IsActive=1
               AND u.TenantId=@TenantId AND u.IsActive=1;
             """;

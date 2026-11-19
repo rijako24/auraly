@@ -1,6 +1,6 @@
 import { apiClient, withPagedDefaults } from "./client";
 
-export type SalesReturnResolution = "Refund" | "CustomerCredit";
+export type SalesReturnResolution = "Refund" | "CustomerCredit" | "ReverseUncollected";
 export type SalesReturnRefundMethod = "Cash" | "Transfer" | "DebitCard" | "CreditCard";
 export type SalesReturnScope = "FullCancellation" | "Partial";
 
@@ -57,6 +57,7 @@ export interface ReturnableSale {
     availableAmount: number;
     cardFranchiseCode: string | null;
     approvalNumber: string | null;
+    originalDispatchPaymentId?: string | null;
   }>;
   lines: Array<{
     originalLineNumber: number;
@@ -106,6 +107,7 @@ export interface ConfirmSalesReturnRequest {
   }>;
   workSessionId: string | null;
   originalPaymentNumber: number | null;
+  originalDispatchPaymentId?: string | null;
   bankAccountId: string | null;
   settlementReference: string | null;
   settlementNotes: string | null;
@@ -144,6 +146,7 @@ export interface WorkSessionView {
 
 export interface SalesReturnHistoryQuery {
   page: number; pageSize: number; search?: string; customerId?: string; from?: string; to?: string;
+  originalDocumentId?:string; status?:"Accepted"|"Processed";
 }
 export interface SalesReturnListItem {
   returnId: string; documentNumber: string; originalDocumentId: string; originalDocumentNumber: string;

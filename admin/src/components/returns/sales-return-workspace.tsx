@@ -34,7 +34,7 @@ const DEFAULT_VISIBLE_PRODUCT_LINES = 10;
 const PRODUCT_GRID_HEADER_HEIGHT_REM = 3;
 const PRODUCT_GRID_LINE_HEIGHT_REM = 4.25;
 
-export function SalesReturnWorkspace({ embedded = false, businessId, workSessionId, posClient, permissions: permissionOverride, onCashRefundConfirmed }: { embedded?: boolean; businessId?: string; workSessionId?: string | null; posClient?: PosClient; permissions?: string[]; onCashRefundConfirmed?: () => void | Promise<void> }) {
+export function SalesReturnWorkspace({ initialSearch = "", embedded = false, businessId, workSessionId, posClient, permissions: permissionOverride, onCashRefundConfirmed }: { initialSearch?: string; embedded?: boolean; businessId?: string; workSessionId?: string | null; posClient?: PosClient; permissions?: string[]; onCashRefundConfirmed?: () => void | Promise<void> }) {
   const storedPermissions = useAuthStore((state) => state.user?.permissions ?? []);
   const permissions = new Set(permissionOverride ?? storedPermissions);
   const canCreate = permissions.has("sales.returns.create");
@@ -46,7 +46,7 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
   const resolvedBusinessId = businessId || selectedBusinessId;
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch);
   const [customer, setCustomer] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -165,6 +165,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
   const principalBankAccountId = bankAccounts.find(account => account.isPrimary)?.bankAccountId ?? "";
   const cardPayments = sale.payments.filter(payment =>
     payment.methodCode === resolutionMethod && payment.availableAmount > 0);
+  const selectedCardPayment=cardPayments.find(payment=>(payment.originalDispatchPaymentId??String(payment.paymentNumber))===originalPaymentNumber);
   const normalizedLineSearch = lineSearch.trim().toLocaleLowerCase("es-CO");
   const visibleLines = normalizedLineSearch
     ? sale.lines.filter((line) => [line.description, line.productCode, line.reference ?? "", line.barcodes]
@@ -210,8 +211,8 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
     if (!selection.isValid) { toast.error("Una cantidad supera el saldo disponible."); return; }
     if (economicResolution === "CustomerCredit" && (!sale.customerId || sale.receivableOutstanding <= 0 || estimated > sale.receivableOutstanding)) { toast.error("El abono no puede superar el saldo pendiente de la cuenta por cobrar."); return; }
     const workSessionId: string | null = runtime?.context.workSessionId ?? null;
-    if (cardRefund && !originalPaymentNumber) { toast.error("Selecciona la transacción de tarjeta que se va a reversar."); return; }
-    if (cardRefund && estimated > (cardPayments.find(payment => payment.paymentNumber === Number(originalPaymentNumber))?.availableAmount ?? 0)) { toast.error("El valor supera el saldo de la transacción seleccionada."); return; }
+    if (cardRefund && !selectedCardPayment) { toast.error("Selecciona la transacción de tarjeta que se va a reversar."); return; }
+    if (cardRefund && estimated > (selectedCardPayment?.availableAmount ?? 0)) { toast.error("El valor supera el saldo de la transacción seleccionada."); return; }
     const selectedBankAccountId = bankAccountId || principalBankAccountId;
     if (transferRefund && !settlementReference.trim()) { toast.error("Registra la referencia de la transferencia."); setTransferDialogOpen(true); return; }
     if (transferRefund && accountingEnabled && !selectedBankAccountId) { toast.error("Configura o selecciona la cuenta bancaria de salida."); return; }
@@ -224,7 +225,8 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
         localRefundAmount: runtime?.client.mode === "edge" ? estimated : undefined,
         reasonDescription: configuredReasons?.find(reason => reason.code === reasonCode)?.name ?? reasonCode,
         reasonCode, notes: notes.trim() || null,
-        workSessionId, originalPaymentNumber: cardRefund ? Number(originalPaymentNumber) : null,
+        workSessionId, originalPaymentNumber: cardRefund && !selectedCardPayment?.originalDispatchPaymentId ? selectedCardPayment?.paymentNumber ?? null : null,
+        originalDispatchPaymentId: cardRefund ? selectedCardPayment?.originalDispatchPaymentId ?? null : null,
         bankAccountId: transferRefund && accountingEnabled ? selectedBankAccountId : null,
         settlementReference: transferRefund ? settlementReference.trim() : null,
         settlementNotes: transferRefund ? settlementNotes.trim() || null : null,
@@ -265,7 +267,7 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
           <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{visibleReasons.map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
           <Field label="Cómo devolver el valor"><Select value={resolutionMethod} onValueChange={changeResolutionMethod}><SelectTrigger><SelectValue placeholder={resolutionMethodsLoading ? "Cargando opciones…" : "Selecciona"} /></SelectTrigger><SelectContent>{availableMethods.map(method => <SelectItem key={method.id} value={method.code} disabled={method.code === "CustomerCredit" && sale.receivableOutstanding <= 0}>{method.label}{method.code === "CustomerCredit" && sale.receivableOutstanding <= 0 ? " · sin saldo" : ""}</SelectItem>)}</SelectContent></Select>{resolutionMethod === "CustomerCredit" && <p className="text-xs text-muted-foreground">Máximo disponible para abonar: {formatCurrency(sale.receivableOutstanding)}. Si la devolución es mayor, registra operaciones separadas.</p>}</Field>
-          {cardRefund && <Field label="Pago de tarjeta por reversar"><Select value={originalPaymentNumber} onValueChange={setOriginalPaymentNumber}><SelectTrigger><SelectValue placeholder="Selecciona la transacción original" /></SelectTrigger><SelectContent>{cardPayments.map(payment => <SelectItem key={payment.paymentNumber} value={String(payment.paymentNumber)}>{payment.cardFranchiseCode ?? payment.methodCode} · {payment.approvalNumber ?? `pago ${payment.paymentNumber}`} · disponible {formatCurrency(payment.availableAmount)}</SelectItem>)}</SelectContent></Select></Field>}
+          {cardRefund && <Field label="Pago de tarjeta por reversar"><Select value={originalPaymentNumber} onValueChange={setOriginalPaymentNumber}><SelectTrigger><SelectValue placeholder="Selecciona la transacción original" /></SelectTrigger><SelectContent>{cardPayments.map(payment => <SelectItem key={payment.originalDispatchPaymentId??payment.paymentNumber} value={payment.originalDispatchPaymentId??String(payment.paymentNumber)}>{payment.cardFranchiseCode ?? payment.methodCode} · {payment.approvalNumber ?? `pago ${payment.paymentNumber}`} · disponible {formatCurrency(payment.availableAmount)}</SelectItem>)}</SelectContent></Select></Field>}
           {transferRefund && <Field label="Transferencia"><Button type="button" variant="outline" className="w-full justify-start" onClick={() => setTransferDialogOpen(true)}><Landmark className="mr-2 h-4 w-4"/>{settlementReference ? `${accountingEnabled ? `${bankAccounts.find(account => account.bankAccountId === (bankAccountId || principalBankAccountId))?.displayName ?? "Cuenta"} · ` : ""}${settlementReference}` : "Registrar cuenta y soporte"}</Button></Field>}
           <Field label="Alcance"><Select value={returnScopeCode} onValueChange={changeReturnScope}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(configuredScopes ?? []).map((scope) => <SelectItem key={scope.id} value={scope.code}>{scope.label}</SelectItem>)}</SelectContent></Select></Field>
         </section>

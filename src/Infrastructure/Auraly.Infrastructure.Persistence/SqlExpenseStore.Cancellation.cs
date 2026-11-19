@@ -86,6 +86,8 @@ public sealed partial class SqlExpenseStore
             }
             if (status != "Processed")
                 throw new ExpenseValidationException("Solo se puede anular un gasto procesado.");
+            if (original.Payment is not null)
+                throw new ExpenseConflictException("El gasto ya fue pagado con el efectivo de un despacho. No se puede anular como si estuviera pendiente de pago.");
             if (returnedWithSale)
                 throw new ExpenseConflictException("El cargo de esta factura ya fue devuelto; su gasto no se puede anular otra vez.");
             var reason = request.Reason;

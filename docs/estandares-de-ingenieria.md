@@ -182,6 +182,7 @@ Las reglas concretas del motor conversacional viven exclusivamente en `docs/agen
 - No usar `catch` vacios, excepciones para flujo normal ni mensajes de error vagos. Capturar solo cuando se pueda agregar contexto, compensar o traducir.
 - Conservar la excepcion original y registrar con logging estructurado, correlation/trace ID, tenant/business seguro, operacion y outcome.
 - Distinguir errores esperados de dominio, input invalido, conflicto, no autorizado, transitorio y fallo interno.
+- Los mensajes de validación y autorización visibles al usuario se redactan en español en su propietario de dominio o aplicación. Los códigos de permisos, estados e identidades de protocolo conservan su valor; no se traducen comparaciones ni se ocultan errores con un reemplazo global en la interfaz.
 - Exponer metricas para throughput, latencia, errores, reintentos, dead letters e idempotencia en caminos criticos.
 - Medir antes de optimizar. Evitar caches sin politica de invalidez, scope de tenant, limite de memoria y comportamiento ante stale data.
 - No resolver latencia introduciendo ejecucion duplicada o consistencia eventual no modelada.

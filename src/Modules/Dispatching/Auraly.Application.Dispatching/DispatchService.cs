@@ -26,7 +26,7 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
         Require(actor, DispatchPermissionCodes.Read);
         Page(query.Page, query.PageSize);
         Status(query.Status);
-        if (query.From.HasValue && query.To < query.From) throw new DispatchValidationException("The date range is invalid.");
+        if (query.From.HasValue && query.To < query.From) throw new DispatchValidationException("El rango de fechas no es válido.");
         return store.PageAsync(actor, query with { Search = Text(query.Search, 160) }, ct);
     }
 
@@ -49,26 +49,30 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
         Require(actor, DispatchPermissionCodes.AttachDocuments);
         Page(query.Page, query.PageSize);
         if (query.DocumentType is not null && query.DocumentType is not ("SalesInvoice" or "SalesReceipt"))
-            throw new DispatchValidationException("Only sales invoices and sales receipts can be dispatched.");
+            throw new DispatchValidationException("Solo se pueden despachar facturas y comprobantes de venta.");
+        if (query.DateRangeVersion is not (1 or 2) || query.To < query.From ||
+            query.DateRangeVersion == 2 && (!query.From.HasValue || !query.To.HasValue))
+            throw new DispatchValidationException("Selecciona un rango de fechas válido para los documentos.");
         return store.CandidatesAsync(actor, query with { Search = Text(query.Search, 160) }, ct);
     }
 
     public async Task<DispatchDetail> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct)
     {
         Require(actor, DispatchPermissionCodes.Read); Required(dispatchId, "DispatchId");
-        return await store.GetAsync(actor, dispatchId, ct) ?? throw new DispatchNotFoundException("The dispatch does not exist in the authenticated business.");
+        return await store.GetAsync(actor, dispatchId, ct) ?? throw new DispatchNotFoundException("El despacho no existe en la empresa autorizada.");
     }
 
     public Task<DispatchMutationResult> CreateAsync(DispatchActorIdentity actor, CreateDispatchRequest request, CancellationToken ct)
     {
         Require(actor, DispatchPermissionCodes.Create); Scope(actor, request.BusinessId);
-        Required(request.WarehouseId, "WarehouseId");
         var driver = RequiredText(request.DriverName, 160, "DriverName");
         var plate = Text(request.VehiclePlate, 24)?.ToUpperInvariant();
         var notes = Text(request.Notes, 500);
         UniqueDocuments(request.SourceDocumentIds);
         var id = ids.NewId();
-        var number = $"DSP-{request.ScheduledDate:yyyyMMdd}-{id.ToString("N")[..8].ToUpperInvariant()}";
+        // UUIDv7 prefixes share their timestamp. Truncating that prefix can
+        // collide for two dispatches created together; retain the full identity.
+        var number = $"DSP-{request.ScheduledDate:yyyyMMdd}-{id:N}".ToUpperInvariant();
         return store.CreateAsync(actor, id, number, request, driver, plate, notes, time.GetUtcNow(), ct);
     }
 
@@ -95,7 +99,7 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
     {
         Require(actor, request.QuantityDelta < 0 ? DispatchPermissionCodes.CorrectVerification : DispatchPermissionCodes.Verify);
         Required(dispatchId, "DispatchId"); Required(request.DispatchLineId, "DispatchLineId");
-        if (request.QuantityDelta == 0) throw new DispatchValidationException("QuantityDelta cannot be zero.");
+        if (request.QuantityDelta == 0) throw new DispatchValidationException("La variación de cantidad debe ser distinta de cero.");
         Idempotency(request.IdempotencyKey);
         return store.VerifyQuantityAsync(actor, dispatchId, request with { Barcode = Text(request.Barcode, 64) }, time.GetUtcNow(), ct);
     }
@@ -103,7 +107,7 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
     public Task<DispatchMutationResult> DeclareShortageAsync(DispatchActorIdentity actor, Guid dispatchId, DeclareDispatchShortageRequest request, CancellationToken ct)
     {
         Require(actor, DispatchPermissionCodes.DeclareShortage); Required(dispatchId, "DispatchId"); Required(request.DispatchLineId, "DispatchLineId");
-        if (request.Quantity <= 0) throw new DispatchValidationException("Shortage quantity must be positive.");
+        if (request.Quantity <= 0) throw new DispatchValidationException("La cantidad faltante debe ser mayor que cero.");
         Idempotency(request.IdempotencyKey);
         var normalized = request with { Reason = RequiredText(request.Reason, 120, "Reason"), Notes = Text(request.Notes, 500) };
         return store.DeclareShortageAsync(actor, dispatchId, normalized, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
@@ -118,15 +122,22 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
 
     private Task<DispatchMutationResult> Transition(DispatchActorIdentity actor, Guid id, string status, string permission, DispatchTransitionRequest request, CancellationToken ct)
     { Require(actor, permission); Required(id, "DispatchId"); Idempotency(request.IdempotencyKey); return store.TransitionAsync(actor, id, status, RowVersion(request.RowVersion), request.IdempotencyKey.Trim(), time.GetUtcNow(), ct); }
-    private static void Page(int page, int size) { if (page < 1 || size is < 1 or > 100) throw new DispatchValidationException("Page and PageSize are outside the allowed range."); }
-    private static void Status(string? value) { if (value is not null && value is not (DispatchStatuses.Draft or DispatchStatuses.Prepared or DispatchStatuses.InVerification or DispatchStatuses.Verified or DispatchStatuses.Released or DispatchStatuses.Cancelled)) throw new DispatchValidationException("Dispatch status is invalid."); }
-    private static void UniqueDocuments(IReadOnlyCollection<Guid> values) { if (values.Count == 0) throw new DispatchValidationException("Select at least one sales document."); if (values.Any(id => id == Guid.Empty) || values.Count != values.Distinct().Count()) throw new DispatchValidationException("Sales documents must be unique and valid."); }
-    private static void Scope(DispatchActorIdentity actor, Guid businessId) { if (actor.BusinessId != businessId) throw new DispatchForbiddenException("The dispatch business does not match the authenticated context."); }
-    private static void Required(Guid value, string field) { if (value == Guid.Empty) throw new DispatchValidationException($"{field} is required."); }
-    private static string RequiredText(string? value, int max, string field) => Text(value, max) ?? throw new DispatchValidationException($"{field} is required.");
-    private static string? Text(string? value, int max) { var result = value?.Trim(); if (string.IsNullOrEmpty(result)) return null; if (result.Length > max) throw new DispatchValidationException($"Text cannot exceed {max} characters."); return result; }
-    private static void Idempotency(string value) { if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128) throw new DispatchValidationException("IdempotencyKey is required and limited to 128 characters."); }
-    private static byte[] RowVersion(string value) { try { var bytes = Convert.FromBase64String(value); if (bytes.Length != 8) throw new FormatException(); return bytes; } catch (FormatException) { throw new DispatchValidationException("RowVersion is invalid."); } }
-    private static void Require(DispatchActorIdentity actor, string permission) { if (!actor.Permissions.Contains(permission)) throw new DispatchForbiddenException($"Permission '{permission}' is required."); }
-    private static void RequireAny(DispatchActorIdentity actor, params string[] permissions) { if (!permissions.Any(actor.Permissions.Contains)) throw new DispatchForbiddenException("A dispatch permission is required."); }
+    private static void Page(int page, int size) { if (page < 1 || size is < 1 or > 100 || ((long)page - 1) * size > int.MaxValue) throw new DispatchValidationException("La página o la cantidad de registros supera el rango permitido."); }
+    private static void Status(string? value)
+    {
+        if (value is not null && value is not (DispatchStatuses.Draft or DispatchStatuses.Prepared or
+            DispatchStatuses.InVerification or DispatchStatuses.Verified or DispatchStatuses.Released or
+            DispatchStatuses.InDelivery or DispatchStatuses.PendingSettlement or DispatchStatuses.SettlementProcessing or
+            DispatchStatuses.SettlementAttention or DispatchStatuses.Closed or DispatchStatuses.Cancelled))
+            throw new DispatchValidationException("El estado del despacho no es válido.");
+    }
+    private static void UniqueDocuments(IReadOnlyCollection<Guid> values) { if (values.Count is 0 or > DispatchLimits.MaximumDocuments) throw new DispatchValidationException("Selecciona entre 1 y 500 documentos de venta."); if (values.Any(id => id == Guid.Empty) || values.Count != values.Distinct().Count()) throw new DispatchValidationException("Los documentos de venta deben ser válidos y no pueden repetirse."); }
+    private static void Scope(DispatchActorIdentity actor, Guid businessId) { if (actor.BusinessId != businessId) throw new DispatchForbiddenException("La empresa del despacho no corresponde al contexto autorizado."); }
+    private static void Required(Guid value, string field) { if (value == Guid.Empty) throw new DispatchValidationException($"El campo {field} es obligatorio."); }
+    private static string RequiredText(string? value, int max, string field) => Text(value, max) ?? throw new DispatchValidationException($"El campo {field} es obligatorio.");
+    private static string? Text(string? value, int max) { var result = value?.Trim(); if (string.IsNullOrEmpty(result)) return null; if (result.Length > max) throw new DispatchValidationException($"El texto admite máximo {max} caracteres."); return result; }
+    private static void Idempotency(string value) { if (string.IsNullOrWhiteSpace(value) || value.Trim().Length > 128) throw new DispatchValidationException("La identificación de la operación es obligatoria y admite máximo 128 caracteres."); }
+    private static byte[] RowVersion(string value) { try { var bytes = Convert.FromBase64String(value); if (bytes.Length != 8) throw new FormatException(); return bytes; } catch (FormatException) { throw new DispatchValidationException("La versión del documento no es válida. Vuelve a abrirlo antes de continuar."); } }
+    private static void Require(DispatchActorIdentity actor, string permission) { if (!actor.Permissions.Contains(permission)) throw new DispatchForbiddenException($"No tienes permiso para realizar esta acción."); }
+    private static void RequireAny(DispatchActorIdentity actor, params string[] permissions) { if (!permissions.Any(actor.Permissions.Contains)) throw new DispatchForbiddenException("No tienes permiso para consultar o administrar despachos."); }
 }

@@ -12,6 +12,7 @@ AS RETURN
     CROSS APPLY accounting.PostingAccountReadiness(@TenantId,category.Category,account.AccountId) readiness
     WHERE account.TenantId=@TenantId AND account.AccountId=@AccountId
       AND account.FinancialFunction=CASE
+        WHEN @MethodCode=N'PendingCollection' AND usage.SourceType=N'PosPaymentMethod' THEN N'General'
         WHEN @MethodCode=N'Cash' THEN N'Cash'
         WHEN @MethodCode=N'Transfer' THEN N'Bank'
         WHEN @MethodCode=N'Credit' AND usage.SourceType=N'PosPaymentMethod' THEN N'Receivable'

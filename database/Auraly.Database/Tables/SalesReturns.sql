@@ -15,8 +15,10 @@ CREATE TABLE [dbo].[SalesReturns]
     [ReturnedAt] DATETIMEOFFSET(7) NOT NULL,
     [ReturnScopeCode] NVARCHAR(24) NOT NULL CONSTRAINT [DF_SalesReturns_ReturnScopeCode] DEFAULT(N'Partial'),
     [EconomicResolution] NVARCHAR(24) NOT NULL,
+    [ReceivableReversalAmount] DECIMAL(19,4) NULL,
     [RefundMethodCode] NVARCHAR(32) NULL,
     [OriginalPaymentNumber] INT NULL,
+    [OriginalDispatchPaymentId] UNIQUEIDENTIFIER NULL,
     [CardFranchiseCode] NVARCHAR(64) NULL,
     [ApprovalNumber] NVARCHAR(100) NULL,
     [BankAccountId] UNIQUEIDENTIFIER NULL,
@@ -45,6 +47,7 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [FK_SalesReturns_WorkSessionBusiness] FOREIGN KEY ([WorkSessionId],[BusinessId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId],[BusinessId]),
     CONSTRAINT [FK_SalesReturns_OriginalDocument] FOREIGN KEY ([OriginalDocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesReturns_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber]) REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
+    CONSTRAINT [FK_SalesReturns_DispatchPayment] FOREIGN KEY ([OriginalDispatchPaymentId]) REFERENCES dbo.DispatchDeliveryPayments(DispatchDeliveryPaymentId),
     CONSTRAINT [FK_SalesReturns_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [FK_SalesReturns_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SalesReturns_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
@@ -54,20 +57,28 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [CK_SalesReturns_Resolution] CHECK
       (([EconomicResolution]=N'Refund'
           AND [RefundMethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard')
-          AND (([RefundMethodCode]=N'Cash' AND [BankAccountId] IS NULL)
-               OR ([RefundMethodCode]=N'Transfer'
+          AND (([RefundMethodCode]=N'Cash' AND [BankAccountId] IS NULL AND [OriginalDispatchPaymentId] IS NULL)
+               OR ([RefundMethodCode]=N'Transfer' AND [OriginalDispatchPaymentId] IS NULL
                    AND NOT ([OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NOT NULL))
                OR ([RefundMethodCode] IN(N'DebitCard',N'CreditCard')
-                   AND [OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NULL))
+                   AND (([OriginalPaymentNumber] IS NOT NULL AND [OriginalDispatchPaymentId] IS NULL)
+                     OR ([OriginalPaymentNumber] IS NULL AND [OriginalDispatchPaymentId] IS NOT NULL)) AND [BankAccountId] IS NULL))
           AND (([RefundMethodCode] IN(N'DebitCard',N'CreditCard')
                 AND ((NULLIF(LTRIM(RTRIM([CardFranchiseCode])),N'') IS NOT NULL
                       AND NULLIF(LTRIM(RTRIM([ApprovalNumber])),N'') IS NOT NULL)
                      OR ([CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL)))
                OR ([RefundMethodCode] NOT IN(N'DebitCard',N'CreditCard')
                    AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL))) OR
-       ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL
+       ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL AND [OriginalDispatchPaymentId] IS NULL
           AND [OriginalPaymentNumber] IS NULL
-          AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL)),
+          AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL) OR
+       ([EconomicResolution]=N'ReverseUncollected' AND [RefundMethodCode] IS NULL AND [OriginalDispatchPaymentId] IS NULL AND [WorkSessionId] IS NULL
+          AND [OriginalPaymentNumber] IS NULL AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL
+          AND [BankAccountId] IS NULL AND [RefundReference] IS NULL AND [RefundNotes] IS NULL)),
+    CONSTRAINT [CK_SalesReturns_ReceivableReversal] CHECK
+      ((EconomicResolution=N'ReverseUncollected' AND ReceivableReversalAmount IS NOT NULL
+          AND ReceivableReversalAmount>=0 AND ReceivableReversalAmount<=TotalAmount)
+       OR (EconomicResolution<>N'ReverseUncollected' AND ReceivableReversalAmount IS NULL)),
     CONSTRAINT [CK_SalesReturns_ReturnScope] CHECK ([ReturnScopeCode] IN(N'FullCancellation',N'Partial')),
     CONSTRAINT [CK_SalesReturns_Correction] CHECK ([CorrectionCode]=N'1'),
     CONSTRAINT [CK_SalesReturns_Amounts] CHECK
@@ -85,6 +96,10 @@ GO
 CREATE INDEX [IX_SalesReturns_WorkSession_Business]
   ON [dbo].[SalesReturns] ([WorkSessionId],[BusinessId])
   INCLUDE ([Status],[DocumentNumber],[RefundMethodCode],[TotalAmount]);
+GO
+
+CREATE INDEX IX_SalesReturns_DispatchPayment ON dbo.SalesReturns(OriginalDispatchPaymentId)
+  INCLUDE(TotalAmount,EconomicResolution) WHERE OriginalDispatchPaymentId IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[SalesReturnLines]
@@ -204,6 +219,7 @@ CREATE TABLE [dbo].[SalesReturnSettlements]
     [MethodCode] NVARCHAR(32) NULL,
     [OriginalDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [OriginalPaymentNumber] INT NULL,
+    [OriginalDispatchPaymentId] UNIQUEIDENTIFIER NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
     [Reference] NVARCHAR(160) NULL,
     [CardFranchiseCode] NVARCHAR(64) NULL,
@@ -217,24 +233,33 @@ CREATE TABLE [dbo].[SalesReturnSettlements]
       REFERENCES [dbo].[SalesReturns] ([ReturnId],[OriginalDocumentId]),
     CONSTRAINT [FK_SalesReturnSettlements_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber])
       REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
+    CONSTRAINT [FK_SalesReturnSettlements_DispatchPayment] FOREIGN KEY ([OriginalDispatchPaymentId]) REFERENCES dbo.DispatchDeliveryPayments(DispatchDeliveryPaymentId),
     CONSTRAINT [FK_SalesReturnSettlements_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [CK_SalesReturnSettlements_Type] CHECK
       (([SettlementType]=N'Refund' AND [MethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard')
-          AND (([MethodCode]=N'Cash' AND [BankAccountId] IS NULL)
-               OR ([MethodCode]=N'Transfer'
+          AND (([MethodCode]=N'Cash' AND [BankAccountId] IS NULL AND [OriginalDispatchPaymentId] IS NULL)
+               OR ([MethodCode]=N'Transfer' AND [OriginalDispatchPaymentId] IS NULL
                    AND NOT ([OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NOT NULL))
                OR ([MethodCode] IN(N'DebitCard',N'CreditCard')
-                   AND [OriginalPaymentNumber] IS NOT NULL AND [BankAccountId] IS NULL))
+                   AND (([OriginalPaymentNumber] IS NOT NULL AND [OriginalDispatchPaymentId] IS NULL)
+                     OR ([OriginalPaymentNumber] IS NULL AND [OriginalDispatchPaymentId] IS NOT NULL)) AND [BankAccountId] IS NULL))
           AND (([MethodCode] IN(N'DebitCard',N'CreditCard')
                 AND ((NULLIF(LTRIM(RTRIM([CardFranchiseCode])),N'') IS NOT NULL
                       AND NULLIF(LTRIM(RTRIM([ApprovalNumber])),N'') IS NOT NULL)
                      OR ([CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL)))
                OR ([MethodCode] NOT IN(N'DebitCard',N'CreditCard')
                    AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL))) OR
-       ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL AND [OriginalPaymentNumber] IS NULL
+       ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL AND [OriginalDispatchPaymentId] IS NULL AND [OriginalPaymentNumber] IS NULL
+          AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL) OR
+       ([SettlementType]=N'ReverseUncollected' AND [MethodCode] IS NULL AND [OriginalDispatchPaymentId] IS NULL AND [OriginalPaymentNumber] IS NOT NULL
           AND [CardFranchiseCode] IS NULL AND [ApprovalNumber] IS NULL AND [BankAccountId] IS NULL)),
     CONSTRAINT [CK_SalesReturnSettlements_Amount] CHECK ([Amount]>0)
 );
+GO
+
+CREATE INDEX [IX_SalesReturnSettlements_OriginalPayment]
+  ON [dbo].[SalesReturnSettlements] ([OriginalDocumentId],[OriginalPaymentNumber])
+  INCLUDE ([SettlementType],[Amount]);
 GO
 
 CREATE TABLE [dbo].[CustomerCredits]

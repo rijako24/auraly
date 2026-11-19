@@ -14,7 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
-import { expensesApi, type ConfirmExpense, type ExpenseLineInput, type ExpenseOptions, type ExpensePreview } from "@/services/api/expenses";
+import { expensesApi, type ConfirmExpense, type ExpenseAcceptance, type ExpenseLineInput, type ExpenseOptions, type ExpensePreview } from "@/services/api/expenses";
+import { PaymentMethodSelect } from "@/components/payments/payment-method-select";
+import type { DispatchExpense } from "@/services/api/dispatches";
+import type { PaymentMethod } from "@/services/api/payment-methods";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 import type { PurchaseEvidenceType } from "@/services/api/goods-receipts";
 import { ExpenseBreakdown } from "./expense-breakdown";
 import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-adjustment-editor";
@@ -32,25 +36,34 @@ function newLine(options: ExpenseOptions): EditableLine {
     taxTreatment: options.taxTreatments?.[0]?.code ?? "", withholdingConceptCode: null };
 }
 
-export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
-  businessId: string; options: ExpenseOptions; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
+export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispatchReport }: {
+  businessId: string; options: ExpenseOptions; onSaved: (accepted:ExpenseAcceptance) => Promise<void>; onBusyChange: (busy: boolean) => void;
+  dispatchReport?:DispatchExpense & {dispatchId:string};
 }) {
-  const { timeZone, today } = useBusinessDates(businessId);
+  const { timeZone, today, dateInput } = useBusinessDates(businessId);
+  const tenant=useTenantContextStore(state=>state.selectedTenantId);
+  const [cashForm,setCashForm]=useState<PaymentMethod|null>(null);
   const issuedAt = (date: string) => date ? accountingDateAtNoon(date, timeZone) : "";
   const canAdjustWithholdings = useAuthStore(state =>
     state.user?.permissions?.includes("commerce.taxation.withholdings.manage") ?? false);
   const withholdingRules = useQuery({queryKey:["withholding-rules",businessId,"purchase-adjustments"],
     queryFn:() => taxationApi.listRules(false), enabled:canAdjustWithholdings});
   const [party, setParty] = useState<SupplierSiteSelection | null>(null);
-  const [lines, setLines] = useState<EditableLine[]>([]);
+  const [lines, setLines] = useState<EditableLine[]>(()=>{
+    if(!dispatchReport)return [];
+    const concept=options.concepts.find(item=>item.conceptId===dispatchReport.conceptId&&item.isActive);
+    return concept?[{...newLine(options),conceptId:concept.conceptId,costCenterId:concept.defaultCostCenterId,
+      withholdingConceptCode:concept.withholdingConceptCode,description:dispatchReport.description||dispatchReport.category,taxExclusiveAmount:dispatchReport.amount}]:[];
+  });
   const [editingLine, setEditingLine] = useState<EditableLine | null>(null);
   const centers=useCostCenterLabels([...lines.map(line=>line.costCenterId),editingLine?.costCenterId]);
   const [form, setForm] = useState<ConfirmExpense>(() => {
-    const date = issuedAt(today());
+    const date = issuedAt(dispatchReport?.occurredAt?dateInput(dispatchReport.occurredAt):today());
     return { expenseId: crypto.randomUUID(), businessId,
       supplierId: "", partySiteId: null, conceptId: null, costCenterId: null, supplierDocumentNumber: "", issuedAt: date,
       dueDate: date, currencyCode: "COP", description: "", taxExclusiveAmount: 0, vatAmount: 0,
-      withholdingJurisdictionCode: null, evidenceUrl: null, purchaseEvidenceType: options.purchaseEvidenceTypes[0]?.code ?? "SupplierElectronicInvoice" };
+      withholdingJurisdictionCode: null, evidenceUrl: dispatchReport?.evidenceUrl??null, purchaseEvidenceType: options.purchaseEvidenceTypes[0]?.code ?? "SupplierElectronicInvoice",
+      ...(dispatchReport?{dispatchId:dispatchReport.dispatchId,dispatchExpenseId:dispatchReport.expenseId,description:dispatchReport.description||dispatchReport.category}:{}) };
   });
   const [preview, setPreview] = useState<ExpensePreview | null>(null);
   const [phase, setPhase] = useState<"calculate" | "confirm" | null>(null);
@@ -86,7 +99,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     return !!header.supplierId && !!header.issuedAt && !!header.dueDate && header.dueDate >= header.issuedAt &&
     value.length > 0 && value.every(validLine); }
   const valid = canPreview(lines) && !!form.partySiteId && evidence.some(option => option.code === form.purchaseEvidenceType) &&
-    (!supplierInvoice || !!form.supplierDocumentNumber?.trim()) && !editingLine;
+    (!supplierInvoice || !!form.supplierDocumentNumber?.trim()) && !editingLine && (!dispatchReport||!!form.dispatchCashPaymentMethodId);
   function request(value: EditableLine[], hash: string | null, header: ConfirmExpense = form): ConfirmExpense {
     return { ...header, lines: value.map(line => ({ expenseAccountId:null,conceptId:line.conceptId,costCenterId:line.costCenterId,description:line.description,taxExclusiveAmount:line.taxExclusiveAmount,taxProfileId:line.taxProfileId,taxTreatment:line.taxTreatment,withholdingConceptCode:line.withholdingConceptCode })), calculationHash: hash };
   }
@@ -115,9 +128,9 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
       const calculation = preview ?? await calculate(lines);
       if (!calculation?.canConfirm) return;
       setPhase("confirm"); setError(null);
-      await expensesApi.confirm(request(lines, calculation.calculationHash));
+      const accepted=await expensesApi.confirm(request(lines, calculation.calculationHash));
       toast.success("Gasto aceptado. Su comprobante y estado están en Trazabilidad financiera.");
-      await onSaved();
+      await onSaved(accepted);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No fue posible confirmar el gasto.");
       if ((cause as { statusCode?: number }).statusCode === 409) setPreview(null);
@@ -125,6 +138,8 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   }
   return <><form onSubmit={confirm} className="space-y-5">
     <fieldset disabled={!!phase} className="space-y-5 disabled:opacity-75">
+      {dispatchReport&&<section className="space-y-3 rounded-xl border bg-muted/30 p-4"><p className="text-sm"><strong>Gasto reportado: {money.format(dispatchReport.amount)}</strong><span className="block text-muted-foreground">Al confirmar se aprueba este reporte y se registra el gasto con su proveedor real.</span></p><Label>Efectivo del que se pagó</Label><PaymentMethodSelect tenantId={tenant} businessId={businessId} usage="SupplierPayments" methodCode="Cash" autoSelectSingle
+        value={form.dispatchCashPaymentMethodId??""} name={cashForm?.name} ariaLabel="Efectivo usado en el gasto del despacho" onChange={value=>{if(value.paymentMethodId===form.dispatchCashPaymentMethodId&&value.version===form.dispatchCashPaymentMethodVersion)return;setCashForm(value);change({dispatchCashPaymentMethodId:value.paymentMethodId,dispatchCashPaymentMethodVersion:value.version})}}/></section>}
       <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
         <Field label="Proveedor o beneficiario · sede">{id => <div id={id}><SupplierSiteSelect value={form.partySiteId??""}
           sourceKey="expense-supplier-sites" onChange={(partySiteId, selected) => {
@@ -141,7 +156,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
         <Field label="Descripción general (opcional)">{id => <Input id={id} maxLength={300} value={form.description} onChange={event => change({ description: event.target.value })}/>}</Field>
         <Field label="Fecha de emisión">{id => <DatePicker today={today()} id={id} value={form.issuedAt.slice(0, 10)} onChange={date => change({ issuedAt: issuedAt(date) })}/>}</Field>
         <Field label="Fecha de vencimiento">{id => <DatePicker today={today()} id={id} value={form.dueDate.slice(0, 10)} min={form.issuedAt.slice(0, 10)} onChange={date => change({ dueDate: issuedAt(date) })}/>}</Field>
-        <p className="text-sm text-muted-foreground sm:col-span-2">{support ? "Este gasto generará un documento soporte electrónico. El proveedor debe tener su identificación y código postal de seis dígitos completos." : "Este respaldo registra el gasto y la cuenta por pagar sin enviar un documento a la DIAN."}</p>
+        <p className="text-sm text-muted-foreground sm:col-span-2">{support ? "Este gasto generará un documento soporte electrónico. El proveedor debe tener su identificación y código postal de seis dígitos completos." : dispatchReport ? "Este respaldo registra el gasto pagado con efectivo del despacho, sin enviar un documento a la DIAN." : "Este respaldo registra el gasto y la cuenta por pagar sin enviar un documento a la DIAN."}</p>
       </section>
       <section className="space-y-3" aria-label="Líneas del gasto">
         <div className="flex flex-wrap items-center justify-between gap-3">

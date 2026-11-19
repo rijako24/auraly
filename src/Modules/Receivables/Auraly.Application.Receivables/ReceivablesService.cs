@@ -87,7 +87,7 @@ public sealed class ReceivablesService(
     {
         Require(user, ReceivablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
-            throw new ReceivablesValidationException("Invalid pagination.");
+            throw new ReceivablesValidationException("La paginación no es válida.");
         ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "name", "invoiceCount", "originalAmount", "paidAmount", "outstandingAmount", "overdueAmount"))
             throw new ReceivablesValidationException("El ordenamiento de clientes no es válido.");
@@ -109,7 +109,7 @@ public sealed class ReceivablesService(
     private Task<ReceivablePage> ListCoreAsync(ReceivablesUserIdentity user, ReceivableQuery query, string permission, CancellationToken token)
     {
         Require(user, permission);
-        if (query.Page < 1 || query.PageSize is < 1 or > 100) throw new ReceivablesValidationException("Invalid pagination.");
+        if (query.Page < 1 || query.PageSize is < 1 or > 100) throw new ReceivablesValidationException("La paginación no es válida.");
         if (query.ReceivableId == Guid.Empty) throw new ReceivablesValidationException("La factura seleccionada no es válida.");
         ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "documentNumber", "dueDate", "originalAmount", "outstandingAmount", "status"))
@@ -120,14 +120,14 @@ public sealed class ReceivablesService(
     public Task<ReceivableDetail?> GetAsync(ReceivablesUserIdentity user, Guid id, CancellationToken token = default)
     {
         Require(user, ReceivablesPermissionCodes.Read);
-        if (id == Guid.Empty) throw new ReceivablesValidationException("ReceivableId is required.");
+        if (id == Guid.Empty) throw new ReceivablesValidationException("Se requiere una cuenta por cobrar válida.");
         return store.GetAsync(user, id, token);
     }
 
     public Task<CustomerCreditProfile?> GetCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId, CancellationToken token = default)
     {
         Require(user, ReceivablesPermissionCodes.Read);
-        if (customerId == Guid.Empty) throw new ReceivablesValidationException("CustomerId is required.");
+        if (customerId == Guid.Empty) throw new ReceivablesValidationException("Se requiere un cliente válido.");
         return store.GetCreditProfileAsync(user, customerId, token);
     }
 
@@ -144,7 +144,7 @@ public sealed class ReceivablesService(
         CustomerPaymentHistoryQuery query,CancellationToken token=default)
     {
         Require(user,ReceivablesPermissionCodes.Read);
-        if(query.Page<1||query.PageSize is <1 or >100)throw new ReceivablesValidationException("Invalid pagination.");
+        if(query.Page<1||query.PageSize is <1 or >100)throw new ReceivablesValidationException("La paginación no es válida.");
         ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "paidAt", "partyName", "documentNumber", "totalAmount"))
             throw new ReceivablesValidationException("El ordenamiento de recaudos no es válido.");
@@ -154,19 +154,19 @@ public sealed class ReceivablesService(
     private static void ValidateLedgerFilters(string? status, DateOnly? from, DateOnly? to, int dateRangeVersion)
     {
         if (status is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
-            throw new ReceivablesValidationException("The receivable status is invalid.");
+            throw new ReceivablesValidationException("El estado de la cuenta por cobrar no es válido.");
         if (dateRangeVersion is not (1 or 2) || from > to || to == DateOnly.MaxValue)
-            throw new ReceivablesValidationException("The date range is invalid.");
+            throw new ReceivablesValidationException("El rango de fechas no es válido.");
     }
 
     public async Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId,
         UpdateCustomerCreditProfileRequest request, CancellationToken token = default)
     {
         Require(user, ReceivablesPermissionCodes.ManageCredit);
-        if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("The profile belongs to another business.");
+        if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("El perfil pertenece a otra sede.");
         if (customerId == Guid.Empty || request.DefaultDueDays is < 0 or > 3650 || request.CreditLimit < 0 ||
             request.MaximumOverdueInvoices < 0)
-            throw new ReceivablesValidationException("The credit profile is invalid.");
+            throw new ReceivablesValidationException("El perfil de crédito no es válido.");
         var result = await store.UpdateCreditProfileAsync(user, customerId, request, token);
         await synchronization.DispatchPendingAsync(user.TenantId, user.BusinessId, CancellationToken.None);
         return result;
@@ -186,18 +186,18 @@ public sealed class ReceivablesService(
         Require(user, permission);
         if (permission == ReceivablesPermissionCodes.RegisterPosPayment &&
             (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty))
-            throw new ReceivablesValidationException("POS payments require an open work session.");
-        if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("The receipt belongs to another business.");
+            throw new ReceivablesValidationException("Los pagos desde el punto de venta requieren una sesión de caja abierta.");
+        if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("El recibo pertenece a otra sede.");
         if (request.PaymentId == Guid.Empty || request.CustomerId == Guid.Empty || request.PaidAt == default)
-            throw new ReceivablesValidationException("PaymentId, CustomerId and PaidAt are required.");
+            throw new ReceivablesValidationException("Se requiere un pago, un cliente y una fecha de pago válidos.");
         if (request.Allocations is null || request.Payments is null)
-            throw new ReceivablesValidationException("Allocations and payments are required.");
+            throw new ReceivablesValidationException("Se requieren las aplicaciones a documentos y las formas de pago.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
-            throw new ReceivablesValidationException("A valid Idempotency-Key is required.");
+            throw new ReceivablesValidationException("No se pudo identificar la operación. Vuelve a intentarlo con la misma solicitud.");
         var currency = request.CurrencyCode?.Trim().ToUpperInvariant();
-        if (currency != "COP") throw new ReceivablesValidationException("Only COP is accepted.");
+        if (currency != "COP") throw new ReceivablesValidationException("Solo se admiten valores en pesos colombianos (COP).");
         if (request.Allocations.Any(x => x is null) || request.Payments.Any(x => x is null))
-            throw new ReceivablesValidationException("Allocations and payments cannot contain empty rows.");
+            throw new ReceivablesValidationException("Las aplicaciones y las formas de pago no pueden contener filas vacías.");
         ReceivableSettlement settlement;
         try { settlement = ReceivableSettlement.Create(request.Allocations.Select(x => new ReceivableAllocation(x.ReceivableId, x.Amount))); }
         catch (ArgumentException ex) { throw new ReceivablesValidationException(ex.Message, ex); }
@@ -223,10 +223,10 @@ public sealed class ReceivablesService(
         ReceivablesUserIdentity user,ImportPreexistingReceivablesRequest request,CancellationToken token=default)
     {
         Require(user,ReceivablesPermissionCodes.ManageCredit);
-        if(request.BusinessId!=user.BusinessId)throw new ReceivablesForbiddenException("The portfolio belongs to another business.");
-        if(request.Items is null||request.Items.Count is <1 or >100)throw new ReceivablesValidationException("Import between 1 and 100 receivables per batch.");
-        if(request.Items.Any(x=>x is null))throw new ReceivablesValidationException("Portfolio rows cannot be empty.");
-        if(request.Items.Any(x=>x.ReceivableId==Guid.Empty||((x.CustomerId is null||x.CustomerId==Guid.Empty)&&string.IsNullOrWhiteSpace(x.CustomerIdentification))||x.CounterpartAccountId==Guid.Empty||x.Amount<=0||x.Amount>=1000000000000000m||x.Amount!=decimal.Round(x.Amount,4)||x.IssuedAt==default||x.DueDate==default||x.DueDate<x.IssuedAt||string.IsNullOrWhiteSpace(x.DocumentNumber)||x.DocumentNumber.Trim().Length>64))throw new ReceivablesValidationException("Every portfolio row must contain a valid customer, invoice, dates, amount and counterpart account.");
+        if(request.BusinessId!=user.BusinessId)throw new ReceivablesForbiddenException("La cartera pertenece a otra sede.");
+        if(request.Items is null||request.Items.Count is <1 or >100)throw new ReceivablesValidationException("Importa entre 1 y 100 cuentas por cobrar por lote.");
+        if(request.Items.Any(x=>x is null))throw new ReceivablesValidationException("La cartera no puede contener filas vacías.");
+        if(request.Items.Any(x=>x.ReceivableId==Guid.Empty||((x.CustomerId is null||x.CustomerId==Guid.Empty)&&string.IsNullOrWhiteSpace(x.CustomerIdentification))||x.CounterpartAccountId==Guid.Empty||x.Amount<=0||x.Amount>=1000000000000000m||x.Amount!=decimal.Round(x.Amount,4)||x.IssuedAt==default||x.DueDate==default||x.DueDate<x.IssuedAt||string.IsNullOrWhiteSpace(x.DocumentNumber)||x.DocumentNumber.Trim().Length>64))throw new ReceivablesValidationException("Cada fila de cartera requiere un cliente, una factura, fechas, un valor y una cuenta de contrapartida válidos.");
         var normalized=request with { Items=request.Items.Select(x=>x with { DocumentNumber=x.DocumentNumber.Trim(),CustomerIdentification=Normalize(x.CustomerIdentification,64),Notes=Normalize(x.Notes,500) }).ToArray() };
         var result=await store.ImportPreexistingAsync(user,normalized,token);
         foreach(var id in result.ReceivableIds)await accounting.RequestPostingAsync(user.BusinessId,id,ReceivablesDocumentTypes.PreexistingReceivable,token);
@@ -251,12 +251,12 @@ public sealed class ReceivablesService(
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var result = value.Trim();
-        if (result.Length > max) throw new ReceivablesValidationException($"The value exceeds {max} characters.");
+        if (result.Length > max) throw new ReceivablesValidationException($"El valor admite máximo {max} caracteres.");
         return result;
     }
     private static void Require(ReceivablesUserIdentity user, string permission)
     {
-        if (!user.Permissions.Contains(permission)) throw new ReceivablesForbiddenException($"Permission '{permission}' is required.");
+        if (!user.Permissions.Contains(permission)) throw new ReceivablesForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }
 

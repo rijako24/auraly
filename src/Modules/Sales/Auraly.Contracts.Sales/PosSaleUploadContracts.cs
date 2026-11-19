@@ -353,7 +353,9 @@ public sealed record PosSaleUploadRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     Guid? TableId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    decimal RestaurantTipAmount = 0m);
+    decimal RestaurantTipAmount = 0m,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    SaleCollectionMode CollectionMode = SaleCollectionMode.Session);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

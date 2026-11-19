@@ -35,6 +35,7 @@ public static class PosPrintTemplateCatalog
     public static readonly PosPrintTemplateVersion WorkSessionClosureV5 = new("work-session-closure", 5);
     public static readonly PosPrintTemplateVersion WorkSessionClosureV6 = new("work-session-closure", 6);
     public static readonly PosPrintTemplateVersion WorkSessionClosure = new("work-session-closure", 7);
+    public static readonly PosPrintTemplateVersion DispatchClosure = new("dispatch-closure", 1);
     public static readonly PosPrintTemplateVersion CashEntryV1 = new("cash-entry", 1);
     public static readonly PosPrintTemplateVersion CashExitV1 = new("cash-exit", 1);
     public static readonly PosPrintTemplateVersion CashEntryV2 = new("cash-entry", 2);

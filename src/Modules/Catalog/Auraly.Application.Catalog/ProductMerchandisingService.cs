@@ -68,7 +68,7 @@ public sealed class ProductMerchandisingService(
     {
         Require(user, CatalogPermissionCodes.Update);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 120)
-            throw new CatalogValidationException("The product brand name is invalid.");
+            throw new CatalogValidationException("El nombre de la marca del producto no es válido.");
         return store.SaveBrandAsync(user, id, request with { Name = request.Name.Trim() }, timeProvider.GetUtcNow(), ct);
     }
 
@@ -80,7 +80,7 @@ public sealed class ProductMerchandisingService(
         var symbol = request.Symbol?.Trim() ?? string.Empty;
         if (code.Length is < 1 or > 24 || name.Length is < 1 or > 80 || symbol.Length is < 1 or > 16 ||
             request.DecimalPlaces is < 0 or > 6 || (!request.AllowsFractionalQuantity && request.DecimalPlaces != 0))
-            throw new CatalogValidationException("The sale unit configuration is invalid.");
+            throw new CatalogValidationException("La configuración de la unidad de venta no es válida.");
         return store.SaveUnitAsync(user, id, request with { Code = code, Name = name, Symbol = symbol }, timeProvider.GetUtcNow(), ct);
     }
 
@@ -107,39 +107,39 @@ public sealed class ProductMerchandisingService(
 
     private static void Validate(Guid productId, SaveProductMerchandisingRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.BaseUnitCode)) throw new CatalogValidationException("A sale unit is required.");
-        if (request.IsWeighable && !request.AllowsFractionalSale) throw new CatalogValidationException("A scale product must allow decimal quantities.");
-        if (request.Link is not null && request.LinkedProducts.Count > 0) throw new CatalogValidationException("A linked child cannot also be a root product.");
+        if (string.IsNullOrWhiteSpace(request.BaseUnitCode)) throw new CatalogValidationException("Selecciona una unidad de venta.");
+        if (request.IsWeighable && !request.AllowsFractionalSale) throw new CatalogValidationException("Un producto de balanza debe permitir cantidades decimales.");
+        if (request.Link is not null && request.LinkedProducts.Count > 0) throw new CatalogValidationException("Un producto vinculado como hijo no puede ser también un producto principal.");
         if (request.Link is { SharesInventory: true } && request.ManageInventory)
-            throw new CatalogValidationException("A product that shares its parent's inventory cannot control a separate inventory.");
+            throw new CatalogValidationException("Un producto que comparte el inventario del principal no puede controlar un inventario independiente.");
         if (request.ConversionMaximumLossPercent is < 0 or > 100)
-            throw new CatalogValidationException("The maximum conversion loss must be between zero and 100 percent.");
+            throw new CatalogValidationException("La merma máxima de conversión debe estar entre 0 % y 100 %.");
         if (request.LinkedProducts.Any(link => link.AllowsConversion) &&
             (!request.ManageInventory || request.ConversionMaximumLossPercent is null))
-            throw new CatalogValidationException("A convertible family must manage inventory and define its maximum conversion loss.");
-        if (request.Scale is not null && !request.IsWeighable) throw new CatalogValidationException("Scale capture requires a product sold by weight.");
-        if (request.UnitGrossWeightKg is <= 0) throw new CatalogValidationException("Product weight must be greater than zero when provided.");
+            throw new CatalogValidationException("Una familia convertible debe controlar inventario y definir su merma máxima.");
+        if (request.Scale is not null && !request.IsWeighable) throw new CatalogValidationException("La configuración de balanza requiere un producto vendido por peso.");
+        if (request.UnitGrossWeightKg is <= 0) throw new CatalogValidationException("El peso del producto debe ser mayor que cero si se indica.");
         if (request.Barcodes.Any(x => string.IsNullOrWhiteSpace(x.Value)) ||
             request.Barcodes.Select(x => x.Value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Barcodes.Count ||
             request.Barcodes.Count(x => x.IsPrimary) > 1)
-            throw new CatalogValidationException("Product barcodes are invalid or duplicated.");
+            throw new CatalogValidationException("Los códigos de barras del producto no son válidos o están repetidos.");
         if (request.Link is { } link && (link.ParentProductId == productId ||
             (link.SharesInventory && link.InventoryFactor is null or <= 0) ||
             (link.SharesPrice && link.PriceFactor is null or <= 0) ||
             (link.AllowsConversion && (link.SharesInventory || !request.ManageInventory || link.ConversionFactor is null or <= 0)) ||
             (!link.AllowsConversion && link.ConversionFactor is not null)))
-            throw new CatalogValidationException("The linked product configuration is invalid.");
+            throw new CatalogValidationException("La configuración de productos vinculados no es válida.");
         if (request.LinkedProducts.Select(x => x.ChildProductId).Distinct().Count() != request.LinkedProducts.Count ||
             request.LinkedProducts.Any(link => link.ChildProductId == productId ||
                 (link.SharesInventory && link.InventoryFactor is null or <= 0) ||
                 (link.SharesPrice && link.PriceFactor is null or <= 0) ||
                 (link.AllowsConversion && (link.SharesInventory || link.ConversionFactor is null or <= 0)) ||
                 (!link.AllowsConversion && link.ConversionFactor is not null)))
-            throw new CatalogValidationException("The linked product list is invalid.");
+            throw new CatalogValidationException("La lista de productos vinculados no es válida.");
     }
 
     private static void Require(CatalogUserIdentity user, string permission)
     {
-        if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"Permission '{permission}' is required.");
+        if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"No tienes permiso para realizar esta acción.");
     }
 }

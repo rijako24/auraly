@@ -9,5 +9,6 @@
     <PackageReference Include="QRCoder" Version="1.8.0" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\Modules\Dispatching\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
   </ItemGroup>
 </Project>

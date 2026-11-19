@@ -578,7 +578,7 @@ public sealed class SqlPricingStore(
         DateTimeOffset now, CancellationToken ct)
     {
         if (values.Select(x => x.ProductId).Distinct().Count() != values.Count)
-            throw new PricingConflictException("A product can only be published once per batch.");
+            throw new PricingConflictException("Un producto solo puede publicarse una vez en el mismo lote.");
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction =

@@ -31,7 +31,7 @@ public sealed class OrderCancellationService(IOrderCancellationStore cancellatio
         ArgumentNullException.ThrowIfNull(request);
         if (!actor.Permissions.Contains(OrderPermissionCodes.Cancel))
             throw new OrderForbiddenException(
-                $"Permission '{OrderPermissionCodes.Cancel}' is required.");
+                $"No tienes permiso para cancelar pedidos.");
         return await CancelAuthorizedAsync(
             actor, orderId, request, idempotencyKey, cancellationToken);
     }

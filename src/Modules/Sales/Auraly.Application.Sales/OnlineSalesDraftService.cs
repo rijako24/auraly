@@ -453,14 +453,14 @@ public sealed class OnlineSalesDraftService(
         ArgumentNullException.ThrowIfNull(user);
         if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+                $"No tienes permiso para crear ventas.");
     }
 
     private static void DemandPermission(OnlineSalesUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
             throw new OnlineSalesDraftForbiddenException(
-                $"Permission '{permission}' is required.");
+                $"No tienes permiso para realizar esta acción.");
     }
 
     private static void ValidateMutation(
