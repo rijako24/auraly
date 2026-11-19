@@ -5827,3 +5827,16 @@ cambia el motor de pago. `purchase-expense-voucher-payment.spec.ts` verifica
 compra/gasto, apertura válida/bloqueada y un solo GET de posición, sin consultar
 el detalle del documento ni la lista financiera oculta. La prueba real de compra
 completa la entrada, devolución, pago fácil y egreso desde esa misma obligación.
+
+Verificación real en DEV del 19 de noviembre de 2026, sobre `0.1.1-rc2`:
+`dev-011rc2-purchase-egreso-verified.log` aprueba compra con gasto y con cargo por
+distribuir. En ambos casos la obligación original de $90.000 queda en $54.000
+tras devolver mercancía, $53.000 tras el abono nativo y $52.000 tras el egreso
+manual; los reintentos conservan el mismo documento y asiento. El gasto asociado
+de $5.000 conserva su propia deuda, sin duplicarse al asignar el cargo.
+`dev-011rc2-client-final.log` y el caso de proveedor aprobado en
+`dev-011rc2-portfolio-final.log` verifican abono, historial, saldo, desaplicación,
+anticipo y cruce; el segundo también verifica anulación del gasto. La aceptación
+HTTP no se interpreta como contabilización terminada: la prueba espera el job
+`Posted` y usa Actualizar o reapertura explícita para consultar la proyección.
+No se añade polling de aplicación, otro writer ni saldos optimistas.

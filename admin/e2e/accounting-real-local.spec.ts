@@ -446,13 +446,14 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
     documentNumber, issuedAt: date, dueDate: date, amount: 1000.5001,
     counterpartAccountId: counterpart!.accountId, notes: "Apertura aislada para regresión de recaudo",
   }] });
+  await waitForRealPosting(context, receivableId);
   await page.goto("/dashboard/receivables");
   await page.locator("summary").filter({ hasText: "Filtros" }).click();
   await page.getByRole("combobox", { name: "Filtrar cliente y sede", exact: true }).click();
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(name);
   await page.getByRole("option").filter({ hasText: name }).click();
-  // The cloud motor accepts the opening before its financial projection exists.
-  // Observe the page's authoritative push refresh, then read the position once.
+  // The opening was posted before navigation; the visible owner reads its
+  // authoritative page once without polling or optimistic balances.
   await expect(page.getByRole("row").filter({ hasText: name })).toContainText("1.000,5001", { timeout: 60_000 });
   const before = await scopedJson<ReceivableDetail>("GET", `${api}/receivables/${receivableId}`);
   expect(before).toMatchObject({ receivableId, originalAmount: 1000.5001, outstandingAmount: 1000.5001, status: "Open" });
@@ -493,6 +494,9 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   const final = await scopedJson<ReceivableDetail>("GET", `${api}/receivables/${receivableId}`);
   expect(final.outstandingAmount).toBe(after.outstandingAmount);
   expect(final.transactions).toHaveLength(before.transactions.length + 1);
+  // Applying the payment is asynchronous in DEV. Refresh the visible owner
+  // after the posted result instead of asserting an optimistic balance.
+  await page.getByRole("button", { name: "Actualizar", exact: true }).click();
   await expect(page.getByRole("row").filter({ hasText: name })).toContainText("900,2501");
   await page.getByRole("tab", { name: "Facturas", exact: true }).click();
   const invoiceRow = page.getByRole("row").filter({ hasText: documentNumber });
@@ -703,9 +707,13 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   await cancel.getByRole("button", { name: "Confirmar anulación", exact: true }).click();
   const cancelledResponse = await cancelling;
   expect(cancelledResponse.ok(), await cancelledResponse.text()).toBe(true);
+  const cancellation = await cancelledResponse.json() as { cancellationId: string };
+  await waitForRealPosting(context, cancellation.cancellationId);
   const cancelled = await scopedJson<ExpenseDetail>("GET", `${api}/expenses/${expenseId}`);
   expect(cancelled.status).toBe("Cancelled");
   expect(cancelled.payable?.outstandingAmount).toBe(0);
+  await detailDialog.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await page.getByRole("button", { name: `Ver gasto ${expense.documentNumber}`, exact: true }).click();
   await expect(detailDialog.getByRole("button", { name: "Anular gasto", exact: true })).toHaveCount(0);
   await expect(detailDialog.getByRole("button", { name: "Ver reversión", exact: true })).toBeVisible();
   const afterCancellation = await scopedJson<AccountingOpenPositionPage>("GET",

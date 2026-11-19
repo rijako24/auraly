@@ -350,7 +350,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await expect(page.getByRole("combobox", { name: "Tipo de comprobante", exact: true })).toContainText("Egreso");
   await expect(page.getByRole("combobox", { name: "Seleccionar tercero principal", exact: true })).toContainText(supplierName);
   const obligation = page.getByRole("row", { name: "Partida 1", exact: true });
-  await expect(obligation.getByLabel("Débito de la partida", { exact: true })).toHaveValue(/53[.,]000/);
+  await expect(obligation.getByLabel("Débito de la partida", { exact: true })).toHaveValue(/53[.,\s]000/);
   await obligation.getByLabel("Débito de la partida", { exact: true }).fill("1000");
   const cashForms = await scopedJson<{ items: Array<{ accountCode: string }> }>("GET", "/api/commerce/v1/payment-methods?usage=VoucherPayments&methodCode=Cash&page=1&pageSize=1");
   const cash = cashForms.items[0]; expect(cash).toBeTruthy();
@@ -359,6 +359,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await treasury.getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true }).click();
   await page.getByPlaceholder("Buscar por código o nombre…").fill(cash.accountCode);
   await page.getByRole("option", { name: new RegExp(`^${cash.accountCode} · `) }).click();
+  await treasury.getByLabel("Descripción de la partida", { exact: true }).fill(`Pago de ${documentNumber}`);
   await treasury.getByLabel("Crédito de la partida", { exact: true }).fill("1000");
   const savingManual = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/manual/drafts/"));
   await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();

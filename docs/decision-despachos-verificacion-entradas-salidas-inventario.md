@@ -2197,8 +2197,7 @@ no conservan comandos antiguos pendientes, o acordarse y ensayarse su atribució
 explícita. No se borran ni se presume quién los creó. No hay un proceso automático
 de reparación añadido a esta implementación.
 
-Compuertas reales que siguen abiertas para el paquete completo, actualizadas
-después de verificar el reembolso administrativo y el estado canónico del pago:
+Estado de las compuertas del paquete, verificado el 19 de noviembre de 2026:
 
 1. El lote de pedidos distingue el pago confirmado de otros canales del bot del
    pedido operativo sin cobro, como especifica el diseño propietario de Pedidos.
@@ -2207,24 +2206,34 @@ después de verificar el reembolso administrativo y el estado canónico del pago
    conserva la recuperación y facturación habituales y retira la propuesta de
    restringirlas por el registro del bot. No se agrega esa restricción ni se
    cambia ahora la integración del bot; su comportamiento previo se conserva.
-2. El reembolso administrativo desde Devoluciones fue aprobado e implementado
-   en la sección anterior. Sus vínculos explícitos y la ausencia de duplicados
-   tienen pruebas SQL y de interfaz local; falta verificarlo en el navegador
-   contra el backend de DEV después de publicar el corte.
-3. Deben cerrarse la valoración y asignación de documentos con devoluciones
-   anteriores/cargos/última fracción en el recorrido completo; las pruebas de
-   aritmética y las devoluciones nativas ya aprobadas no sustituyen ese recorrido.
-4. Falta el ensayo de upgrade del paquete actual sobre una copia histórica
-   completa, la regresión del resto de cambios incluidos, la auditoría completa
-   del diff y su integración en origin/main. Los ensayos y el despliegue rc296
-   previos se conservan como base, no como prueba de este paquete posterior.
+2. El reembolso administrativo desde Devoluciones tiene evidencia SQL, de
+   interfaz local y de navegador contra DEV: `dev-011rc2-administrative-refund.log`.
+   La venta cobrada conserva su pago; el reembolso real queda vinculado al
+   despacho y su liquidación/replay no repiten la salida de dinero. El saldo de
+   la sesión antes y después de liquidar es idéntico.
+3. Las devoluciones previas, cargos, última fracción, datáfonos y modo comercial
+   conservan sus pruebas focalizadas. `private-evidence-and-ci-isolation.trx`
+   aprueba 42 casos, incluidos los caminos financieros de despacho y su reinicio
+   durante el lease. La prueba real `dev-011rc2-dispatch-final.log` completa
+   cuatro medios, devolución parcial, no entrega, crédito, soporte privado,
+   aprobación/rechazo de gastos, cierre ciego, corrección, verificación y replay.
+   La sesión del facturador no recibe dinero duplicado.
+4. El paquete se integró en `origin/main` y se publicó en DEV como `0.1.1-rc2`,
+   commit `92edad4503a7e99af187724453f1ba416c6694a9`; los cinco componentes y la
+   comprobación de entorno terminaron correctamente en la ejecución
+   [44471727629](https://github.com/rijako24/auraly/actions/runs/44471727629).
+   La repetición del despliegue de esquema/migraciones sobre la copia histórica
+   aislada conserva 151.813 filas operativas/financieras y 35.070 fiscales/de
+   configuración, sin altas ni bajas. Sólo cambian los dos `UpdatedAt` de seed
+   identificados. Las cinco tablas de configuración nativa conservan sus hashes
+   completos. No se suman suites superpuestas como casos distintos.
 
-La revisión actual no autoriza desplegar un checkout sucio ni declarar el conjunto
-listo. No se desplegó este corte a DEV ni a producción. El ensayo anterior de
-Megafruver conserva cuentas, documentos y cartera; debe repetirse lo afectado por
-el corte actual. Los pendientes fiscales documentados en la evidencia rc296,
-incluido el comprador sin identificación verificable de FVL12368, no se resuelven
-inventando datos, reenviando documentos ni modificando producción.
+Producción no está autorizada ni se ha desplegado. El paquete inmutable y el
+plan revisado de Megafruver están preparados para una promoción explícita,
+conservando historia y los controles de concurrencia del corte. Los pendientes
+fiscales históricos, incluido el comprador sin identificación verificable de
+FVL12368, siguen siendo excepciones de datos previos: esta validación técnica no
+certifica su aceptación DIAN ni autoriza inventar datos o reenviar documentos.
 
 
 La comprobación focalizada final del ciclo de vida del proveedor de sincronización
@@ -2292,8 +2301,8 @@ aprobados. Los resultados de ejecuciones solapadas no se suman.
   del endpoint para probar mensajes se corrigieron en
   spanish-public-validation-final.trx (cuatro aprobados).
 
-Estas comprobaciones no sustituyen las compuertas financieras, de upgrade y de
-revisión completa indicadas arriba. No se ha integrado ni desplegado este corte.
+Estas comprobaciones se complementan con las compuertas financieras, de upgrade
+y de navegador descritas arriba; por sí solas no sustituyen esas evidencias.
 
 La auditoría posterior encontró y corrigió la devolución que seguía usando el
 datáfono original después de corregir el recaudo en un cierre normal. También
