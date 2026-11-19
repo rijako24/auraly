@@ -5840,3 +5840,42 @@ anticipo y cruce; el segundo también verifica anulación del gasto. La aceptaci
 HTTP no se interpreta como contabilización terminada: la prueba espera el job
 `Posted` y usa Actualizar o reapertura explícita para consultar la proyección.
 No se añade polling de aplicación, otro writer ni saldos optimistas.
+
+El ensayo funcional posterior sobre la **copia migrada de Megafruver** es una
+evidencia distinta de la preservación de filas y de las pruebas visuales de
+Auraly DEV. El 19 de noviembre se ejecutó la composición actual de la API en
+`Testing`, conectada exclusivamente a `auraly-release-closure-20261116`, sin
+hosted services, envíos a DIAN, correo ni sincronización externa. Los comandos
+invocan los servicios y motores canónicos; los adaptadores del ensayo únicamente
+entregan sus señales a esos mismos consumidores. No es una prueba de navegador
+sobre Megafruver ni una certificación de emisión fiscal.
+
+`megafruver-post-migration-functional-proof.json` conserva el resultado:
+
+- Compra nueva de $3.570, con tres unidades y $570 de IVA en 240811; una CxP y
+  un asiento balanceado. El pago nativo de $100 deja $3.470 pendientes.
+- Venta nueva de un producto del catálogo histórico con las cuatro formas
+  migradas: efectivo, débito, crédito y transferencia; cuatro movimientos de
+  caja, una salida de inventario, un asiento y ninguna CxC.
+- Venta a crédito nueva de $11.900 a un cliente migrado habilitado, con una sola
+  CxC y sin cobro ficticio en caja; abono de $5.950 y saldo final de $5.950.
+- Conteo de una unidad adicional, movimiento de salida de una unidad y traslado
+  con despacho/recepción. Sus reintentos conservan cantidades y resultados.
+
+Cada comando financiero verificado conserva un único asiento balanceado y sus
+replays no repiten efectos. La prueba usa un producto QA gravado, creado por
+`CatalogService`, para no atribuir IVA ficticio a un producto histórico exento;
+la venta al contado sí usa un producto histórico. La bodega QA se crea por el
+maestro canónico cuando se necesita otro destino, sin alterar producción.
+
+La comparación completa posterior conserva las facturas, líneas, movimientos,
+asientos y pagos históricos. No se eliminan filas. Las cuatro modificaciones de
+balances originales pertenecen al producto histórico vendido y a la valoración
+compartida del writer existente. En cuentas, las únicas dos modificaciones son
+`ConfigurationLockedAt` de 240811 y 11100501 por su primer uso: reconstruir sus
+hashes con esa columna nula coincide con la evidencia anterior, demostrando que
+no cambiaron tipo, identidad, relaciones ni otras columnas. Los documentos y
+artefactos fiscales originales conservan sus hashes. Estos resultados están en
+`migrated-functional-history-comparison.json` y
+`migrated-functional-history-detail-proof.json`. No resuelven los pendientes
+fiscales históricos ni autorizan operaciones productivas.
