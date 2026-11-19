@@ -302,7 +302,7 @@ public sealed partial class SqlSalesReturnStore(
             -- before the sale: assignment holds that sale before inserting its
             -- source. Lock the sale, then detect an assignment that won the race.
             DECLARE @LockedSale uniqueidentifier;
-            SELECT @LockedSale=DocumentId FROM dbo.SalesDocuments WITH(UPDLOCK,HOLDLOCK)
+            SELECT @LockedSale=DocumentId FROM dbo.SalesDocuments WITH(UPDLOCK,HOLDLOCK,INDEX(PK_SalesDocuments))
               WHERE DocumentId=@OriginalDocumentId AND BusinessId=@BusinessId;
             IF @ActiveDispatch IS NULL AND EXISTS(SELECT 1 FROM dbo.DispatchSourceDocuments source WITH(READCOMMITTEDLOCK)
               JOIN dbo.Dispatches dispatch WITH(READCOMMITTEDLOCK) ON dispatch.DispatchId=source.DispatchId

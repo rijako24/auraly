@@ -6,7 +6,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
     DECLARE @Claimed TABLE(Id uniqueidentifier,BusinessId uniqueidentifier,DispatchId uniqueidentifier,
       WorkSessionId uniqueidentifier,RequestedBy uniqueidentifier,RequestedAt datetimeoffset(7),Attempts int);
-    BEGIN TRAN;
+    -- The UPDATE is the atomic lease claim. Its autocommit releases the queue
+    -- lock before reading the dispatch; no nested transaction is required.
     ;WITH candidate AS
     (
         SELECT TOP(1) operation.* FROM dbo.DispatchSettlementOperations operation WITH(UPDLOCK,READPAST,READCOMMITTEDLOCK)
@@ -22,7 +23,6 @@ BEGIN
       NextAttemptAt=DATEADD(MINUTE,5,SYSUTCDATETIME()),LastError=NULL
     OUTPUT inserted.DispatchSettlementOperationId,inserted.BusinessId,inserted.DispatchId,
       inserted.WorkSessionId,inserted.RequestedBy,inserted.RequestedAt,inserted.Attempts INTO @Claimed;
-    COMMIT;
     -- Release the queue lock before reading the dispatch. Commands lock the
     -- dispatch first; holding both in the opposite order deadlocks replay.
     SELECT operation.Id,operation.BusinessId,operation.DispatchId,operation.WorkSessionId,

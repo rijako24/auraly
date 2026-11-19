@@ -298,7 +298,14 @@ conserva la devolución comercial y sólo el CreditApplication real; no inventa
 un Refund ni una aplicación por la parte nunca recaudada. La nota fiscal y la impresión siguen
 sus contratos existentes, sin editar plantillas publicadas ni reenviar la venta.
 
-La captura del despacho usa SalesReturnAmountCalculator, incluidos cuatro
+La captura del despacho consume la frontera pública `SalesReturnValuation` de
+Returns.Application; esta delega en el único `SalesReturnAmountCalculator` del
+dominio de devoluciones y devuelve importes, sin exponer sus modelos internos ni
+referenciar Domain.Returns desde otro módulo. No agrega consultas ni otro motor.
+La asignación de despacho y la aceptación de devolución bloquean la misma clave
+de `PK_SalesDocuments` antes de tomar su fotografía. Un índice secundario de
+cobertura no sirve como cerrojo común: sus bloqueos de clave son independientes.
+La valoración conserva cuatro
 decimales y el ajuste de pago acumulado. El evento aceptado conserva ReturnTotal;
 el cierre no repite otra fórmula. Una entrega fallida devuelve todos los cargos
 por el contrato canónico. La devolución financiera vuelve a comprobar el importe

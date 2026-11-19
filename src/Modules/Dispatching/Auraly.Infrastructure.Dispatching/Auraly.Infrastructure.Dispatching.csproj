@@ -6,7 +6,7 @@
   </PropertyGroup>
   <ItemGroup><PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" /></ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\Returns\Auraly.Domain.Returns\Auraly.Domain.Returns.csproj" />
+    <ProjectReference Include="..\..\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
     <ProjectReference Include="..\Auraly.Application.Dispatching\Auraly.Application.Dispatching.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />

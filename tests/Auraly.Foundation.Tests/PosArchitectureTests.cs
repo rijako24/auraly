@@ -203,8 +203,8 @@ public sealed class PosArchitectureTests
             paymentDialog,
             StringComparison.Ordinal);
         Assert.Contains(
-            "shortcut: `F${index + 1}`",
-            paymentDialog,
+            "shortcut:`F${index+1}`",
+            paymentDialog.Replace(" ", "", StringComparison.Ordinal),
             StringComparison.Ordinal);
 
         Assert.Contains(

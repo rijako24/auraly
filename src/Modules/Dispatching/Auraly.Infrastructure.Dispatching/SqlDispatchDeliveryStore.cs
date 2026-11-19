@@ -1,5 +1,5 @@
 using System.Data;
-using Auraly.Domain.Returns;
+using Auraly.Application.Returns;
 using System.Text.Json;
 using System.Security.Cryptography;
 using Auraly.Application.Dispatching;
@@ -168,10 +168,10 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
                 {
                     if(!lineData.TryGetValue(value.OriginalLineNumber,out var line))
                         throw new DispatchValidationException("La línea devuelta no pertenece a la factura.");
-                    returnTotal+=SalesReturnAmountCalculator.Calculate(line.Quantity,line.Discount,line.Untaxed,line.Tax,line.Total,
-                        line.ReturnedQuantity,line.ReturnedDiscount,line.ReturnedUntaxed,line.ReturnedTax,line.ReturnedTotal,value.Quantity).LineTotal;
+                    returnTotal+=SalesReturnValuation.LineTotal(line.Quantity,line.Discount,line.Untaxed,line.Tax,line.Total,
+                        line.ReturnedQuantity,line.ReturnedDiscount,line.ReturnedUntaxed,line.ReturnedTax,line.ReturnedTotal,value.Quantity);
                 }
-                if(returnTotal>0) returnTotal+=SalesReturnAmountCalculator.AllocatePaymentRounding(originalUnrounded,
+                if(returnTotal>0) returnTotal+=SalesReturnValuation.PaymentRounding(originalUnrounded,
                     originalRounding,returnedUnrounded,returnedRounding,returnTotal);
             }
             catch(ArgumentException error){throw new DispatchValidationException(error.Message);}
