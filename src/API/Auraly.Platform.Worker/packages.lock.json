@@ -1327,6 +1327,7 @@
           "Auraly.Application.Fiscal": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Domain.Expenses": "[1.0.0, )"
@@ -1428,6 +1429,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Returns": "[1.0.0, )",
           "Auraly.Domain.Returns": "[1.0.0, )"
         }
@@ -1457,6 +1459,7 @@
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
           "Auraly.Domain.WorkSessions": "[1.0.0, )",
           "Auraly.Pos.Printing": "[1.0.0, )"
@@ -1852,6 +1855,7 @@
       "auraly.pos.printing": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
           "Auraly.Fiscal.Core": "[1.0.0, )",
