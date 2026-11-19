@@ -354,6 +354,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await obligation.getByLabel("Débito de la partida", { exact: true }).fill("1000");
   const cashForms = await scopedJson<{ items: Array<{ accountCode: string }> }>("GET", "/api/commerce/v1/payment-methods?usage=VoucherPayments&methodCode=Cash&page=1&pageSize=1");
   const cash = cashForms.items[0]; expect(cash).toBeTruthy();
+  await page.getByRole("button", { name: "Agregar partida", exact: true }).click();
   const treasury = page.getByRole("row", { name: "Partida 2", exact: true });
   await treasury.getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true }).click();
   await page.getByPlaceholder("Buscar por código o nombre…").fill(cash.accountCode);
