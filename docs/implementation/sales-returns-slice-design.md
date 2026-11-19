@@ -305,6 +305,8 @@ referenciar Domain.Returns desde otro módulo. No agrega consultas ni otro motor
 La asignación de despacho y la aceptación de devolución bloquean la misma clave
 de `PK_SalesDocuments` antes de tomar su fotografía. Un índice secundario de
 cobertura no sirve como cerrojo común: sus bloqueos de clave son independientes.
+La búsqueda forzada por `DocumentId` limita ese bloqueo al lote seleccionado,
+sin recorrer otras ventas. El rechazo por cantidad excesiva se presenta en español.
 La valoración conserva cuatro
 decimales y el ajuste de pago acumulado. El evento aceptado conserva ReturnTotal;
 el cierre no repite otra fórmula. Una entrega fallida devuelve todos los cargos

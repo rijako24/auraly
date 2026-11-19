@@ -207,6 +207,10 @@ identidad/versionado de la forma y un ID de corrección generado en aceptación.
 La versión se valida al aceptar; no congela cuentas para el procesamiento futuro.
 La cuenta de origen se obtiene del auxiliar efectivamente utilizado por el pago
 original o de los bindings del trabajo ya terminado, con alcance tenant/sede.
+El seed de tipos conserva las identidades históricas de `BankTransfer` y
+`Deposit`, aunque estén desactivadas. `PendingCollection` usa una identidad nueva
+en instalaciones nuevas; si ya existe se conserva su ID por la clave catálogo/código.
+Repetir el seed no sustituye tipos referenciados ni agrega opciones duplicadas.
 Si esa evidencia no existe o es ambigua, se rechaza la corrección configurada sin
 adivinar una cuenta de configuración actual ni reparar documentos anteriores.
 

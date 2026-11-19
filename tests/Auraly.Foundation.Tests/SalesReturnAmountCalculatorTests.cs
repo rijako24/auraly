@@ -39,7 +39,7 @@ public sealed class SalesReturnAmountCalculatorTests
                 2m, 0m, 20m, 3.8m, 23.8m,
                 2m));
 
-        Assert.Contains("exceeds", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("excede", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

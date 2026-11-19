@@ -307,7 +307,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         DECLARE @Locked int;
         -- Lock the same clustered key as return acceptance. A covering business
         -- index would lock a different key and allow both snapshots to win.
-        SELECT @Locked=COUNT(*) FROM dbo.SalesDocuments s WITH(UPDLOCK,HOLDLOCK,INDEX(PK_SalesDocuments))
+        SELECT @Locked=COUNT(*) FROM dbo.SalesDocuments s WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesDocuments(DocumentId)))
           JOIN @Ids selected ON selected.Id=s.DocumentId WHERE s.BusinessId=@BusinessId;
         IF (SELECT COUNT(*) FROM dbo.DispatchSourceDocuments WHERE DispatchId=@Id)+(SELECT COUNT(*) FROM @Ids)>@MaxDocuments
           THROW 51000,N'Un despacho admite como máximo 500 documentos.',1;

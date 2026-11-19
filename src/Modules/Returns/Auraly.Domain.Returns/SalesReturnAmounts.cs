@@ -64,11 +64,11 @@ public static class SalesReturnAmountCalculator
         if (originalQuantity <= 0) throw new ArgumentOutOfRangeException(nameof(originalQuantity));
         if (requestedQuantity <= 0) throw new ArgumentOutOfRangeException(nameof(requestedQuantity));
         if (alreadyReturnedQuantity < 0 || alreadyReturnedQuantity + requestedQuantity > originalQuantity)
-            throw new ArgumentException("The cumulative return quantity exceeds the original sale line.");
+            throw new ArgumentException("La cantidad acumulada de devoluciones excede la cantidad de la venta original.");
         if (new[] { originalDiscount, originalUntaxed, originalTax, originalTotal,
                     alreadyReturnedDiscount, alreadyReturnedUntaxed,
                     alreadyReturnedTax, alreadyReturnedTotal }.Any(value => value < 0))
-            throw new ArgumentException("Return amounts cannot be negative.");
+            throw new ArgumentException("Los importes de la devolución no pueden ser negativos.");
 
         var completesLine = alreadyReturnedQuantity + requestedQuantity == originalQuantity;
         return new SalesReturnAmounts(

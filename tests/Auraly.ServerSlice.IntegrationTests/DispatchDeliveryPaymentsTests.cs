@@ -93,6 +93,22 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
         var service = scope.ServiceProvider.GetRequiredService<DispatchDeliveryService>();
         var actor = new DispatchActorIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
             new HashSet<string> { DispatchPermissionCodes.ExecuteDeliveries }, false);
+        if(method=="Cash")
+        {
+            var reason=Guid.NewGuid().ToString("N");
+            await using var reasonConnection=new SqlConnection(fixture.ConnectionString);await reasonConnection.OpenAsync();
+            await using var seed=new SqlCommand("""
+                INSERT dbo.BusinessReasons(ReasonId,BusinessId,ReasonType,Code,Name,CreatedAt,UpdatedAt)
+                VALUES(NEWID(),@Business,N'DeliveryReturn',@Code,N'Devolución de entrega',SYSUTCDATETIME(),SYSUTCDATETIME());
+                """,reasonConnection);
+            seed.Parameters.AddWithValue("@Business",fixture.BusinessId);seed.Parameters.AddWithValue("@Code",reason);
+            await seed.ExecuteNonQueryAsync();
+            using var excessiveReturn=await driver.PutAsJsonAsync(url,request with{
+                DeliveryStatus="PartiallyDelivered",Reason="Devolución parcial",Returns=[new(1,2m,"Sellable",reason,"Cantidad excesiva")]
+            });
+            Assert.Equal(HttpStatusCode.BadRequest,excessiveReturn.StatusCode);
+            Assert.Contains("excede",await excessiveReturn.Content.ReadAsStringAsync(),StringComparison.OrdinalIgnoreCase);
+        }
         await Assert.ThrowsAsync<DispatchNotFoundException>(() => service.GetAsync(
             actor with { TenantId = Guid.NewGuid() }, dispatch, CancellationToken.None));
         await Assert.ThrowsAsync<DispatchConflictException>(() => service.RecordAsync(

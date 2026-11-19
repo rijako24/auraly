@@ -13,6 +13,57 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.Abstractions.ITestOutputHelper output)
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reference_seed_preserves_historical_payment_identities_and_replays_without_collision(bool pendingAlreadyExists)
+    {
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync();
+        // Isolate the global catalog with its real PK/natural-key constraints.
+        // Existing fixture forms and their foreign keys are never rewritten.
+        await using(var catalog=new SqlCommand("""
+            SELECT TOP(0) * INTO #ReferenceOptions FROM reference.Options;
+            ALTER TABLE #ReferenceOptions ADD PRIMARY KEY(OptionId);
+            CREATE UNIQUE INDEX UX_ReferenceSeedCatalogCode ON #ReferenceOptions(CatalogCode,Code);
+            """,connection,transaction))
+            await catalog.ExecuteNonQueryAsync();
+        await using(var setup=new SqlCommand("""
+            INSERT #ReferenceOptions(OptionId,CatalogCode,Code,Label,IsActive,SortOrder,CreatedAt,UpdatedAt)
+            VALUES('10000000-0000-0000-0000-000000000006',N'payment-method',N'BankTransfer',N'Transferencia bancaria',0,60,SYSUTCDATETIME(),SYSUTCDATETIME()),
+              ('10000000-0000-0000-0000-000000000007',N'payment-method',N'Deposit',N'Consignación',0,70,SYSUTCDATETIME(),SYSUTCDATETIME());
+            IF @Existing=1
+              INSERT #ReferenceOptions(OptionId,CatalogCode,Code,Label,IsActive,SortOrder,CreatedAt,UpdatedAt)
+              VALUES(@Pending,N'payment-method',N'PendingCollection',N'Por recaudar',1,60,SYSUTCDATETIME(),SYSUTCDATETIME());
+            """,connection,transaction))
+        {
+            setup.Parameters.AddWithValue("@Existing",pendingAlreadyExists);
+            setup.Parameters.AddWithValue("@Pending",Guid.Parse("3f8a7b01-769f-493f-a4ca-4c7c76e523bc"));
+            await setup.ExecuteNonQueryAsync();
+        }
+        var seed=await File.ReadAllTextAsync(Path.Combine(ServerSliceFixture.FindRepositoryRoot(),
+            "database","Auraly.Database","Scripts","Seeds","SeedReferenceOptions.sql"));
+        seed=seed.Replace("[reference].[Options]","#ReferenceOptions",StringComparison.Ordinal)
+            .Replace("reference.Options","#ReferenceOptions",StringComparison.Ordinal);
+        for(var pass=0;pass<2;pass++)
+        {
+            await using var apply=new SqlCommand(seed,connection,transaction);
+            await apply.ExecuteNonQueryAsync();
+        }
+        await using var verify=new SqlCommand("""
+            SELECT OptionId,Code,IsActive FROM #ReferenceOptions
+            WHERE CatalogCode=N'payment-method' AND Code IN(N'BankTransfer',N'Deposit',N'PendingCollection') ORDER BY Code;
+            """,connection,transaction);
+        await using(var reader=await verify.ExecuteReaderAsync())
+        {
+            Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000006"),reader.GetGuid(0));Assert.Equal("BankTransfer",reader.GetString(1));Assert.False(reader.GetBoolean(2));
+            Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000007"),reader.GetGuid(0));Assert.Equal("Deposit",reader.GetString(1));Assert.False(reader.GetBoolean(2));
+            Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse(pendingAlreadyExists?"3f8a7b01-769f-493f-a4ca-4c7c76e523bc":"10000000-0000-0000-0000-000000000008"),reader.GetGuid(0));Assert.Equal("PendingCollection",reader.GetString(1));Assert.True(reader.GetBoolean(2));
+            Assert.False(await reader.ReadAsync());
+        }
+        await transaction.RollbackAsync();
+    }
+
+    [Theory]
     [InlineData(2)]
     [InlineData(50)]
     public async Task Saving_a_shared_form_atomically_notifies_its_sites_without_extra_reads(int siteCount)
