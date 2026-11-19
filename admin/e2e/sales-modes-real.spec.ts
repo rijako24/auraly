@@ -165,7 +165,7 @@ for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y
     await page.getByRole("button", { name: "Ver pedidos", exact: true }).click();
     const orders = page.getByRole("dialog", { name: mode === "Store" ? "Ventas y pedidos" : "Pedidos", exact: true });
     await orders.getByPlaceholder("Número de pedido", { exact: true }).fill(order.orderNumber);
-    await orders.getByRole("button", { name: /^Recuperar/ }).click();
+    await orders.getByRole("button", { name: `Recuperar ${order.orderNumber}`, exact: true }).click();
     const quantity = page.getByRole("spinbutton", { name: `Cantidad de ${productName}`, exact: true });
     await expect(quantity).toHaveValue("1"); await quantity.fill("2"); await quantity.press("Enter");
     const updating = page.waitForResponse(r => r.request().method() === "PUT" && r.url().endsWith(`/seller-orders/${order.orderId}`));
