@@ -342,11 +342,13 @@ public sealed partial class SqlAccountingStore
     // Only selected document/line keys are enriched. The same filtered keys own the count.
     // Drive enrichment from the already-selected page. Its bounded key lookups
     // do not need a reordered whole-source join plan on the first invocation.
+    // Keep this bounded-page plan across temporary-table statistics changes;
+    // recompiling the complete native-source map costs more than its lookups.
     private const string TraceabilityDocumentDetailsSql = """
             SELECT job.SourceDocumentId,job.SourceDocumentType,COALESCE(sourceNumber.DocumentNumber,draft.Reference) DocumentNumber,
               job.OccurredAt,COALESCE(posting.Status,job.Status) Status,COALESCE(posting.AttemptCount,0) AttemptCount,
               COALESCE(posting.LastErrorCode,CASE WHEN job.Status=N'MissingAccountingJob' THEN N'MissingAccountingJob' END) LastErrorCode,
-              COALESCE(posting.LastErrorMessage,CASE WHEN job.Status=N'MissingAccountingJob' THEN N'The immutable accounting source has no durable posting job.' END) LastErrorMessage,
+              COALESCE(posting.LastErrorMessage,CASE WHEN job.Status=N'MissingAccountingJob' THEN N'La fuente contable inmutable no tiene un trabajo durable de contabilización.' END) LastErrorMessage,
               entry.EntryId,entry.EntryNumber,
               COALESCE(entry.DebitTotal,draftTotals.DebitTotal,draft.AdjustmentAmount) DebitTotal,
               COALESCE(entry.CreditTotal,draftTotals.CreditTotal,draft.AdjustmentAmount) CreditTotal,entry.PostedAt,
@@ -375,7 +377,7 @@ public sealed partial class SqlAccountingStore
             LEFT JOIN dbo.AccountingPostingJobs reversalJob ON reversalJob.SourceDocumentId=reversal.SourceDocumentId
               AND reversalJob.SourceDocumentType=reversal.SourceDocumentType
               AND reversalJob.TenantId=@TenantId AND reversalJob.BusinessId=@BusinessId
-            """ + " OPTION(FORCE ORDER,LOOP JOIN);";
+            """ + " OPTION(FORCE ORDER,LOOP JOIN,KEEP PLAN);";
 
     // One relational source map owns native number, counterparty and voucher
     // classification. Native portfolio payments retain their original source:

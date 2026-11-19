@@ -97,6 +97,7 @@ public sealed class AccountingTraceabilityFilterTests(ServerSliceFixture fixture
         };
         Guid? firstNative = null;
         await using var numberCommand=new SqlCommand { Connection=connection };
+        await using var missingJobCommand=new SqlCommand { Connection=connection };
         var failures=new List<string>();
         foreach (var sample in cases)
         {
@@ -107,6 +108,8 @@ public sealed class AccountingTraceabilityFilterTests(ServerSliceFixture fixture
                     beforeExecute: command => {
                         if(sample.Name=="number"&&i==0)
                             PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command,numberCommand);
+                        if(sample.Name=="missing-job"&&i==0)
+                            PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command,missingJobCommand);
                     });
                 var timer = Stopwatch.StartNew();
                 var page = await service.ListDocumentsAsync(user,from,to,null,sample.Status,sample.Search,sample.Page,25,
@@ -132,6 +135,8 @@ public sealed class AccountingTraceabilityFilterTests(ServerSliceFixture fixture
             if(p95>800)failures.Add($"{sample.Name}: p95 {p95:F1} ms exceeds the 800 ms inbox budget.");
         }
         var profileDirectory=await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(numberCommand,output);
+        if(failures.Count>0)
+            await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(missingJobCommand,output);
         Assert.NotNull(profileDirectory);
         var partyCaptures=0;
         foreach(var file in Directory.EnumerateFiles(profileDirectory,"profile-*.json"))

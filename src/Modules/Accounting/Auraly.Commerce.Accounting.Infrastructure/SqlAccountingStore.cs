@@ -1242,7 +1242,7 @@ public sealed partial class SqlAccountingStore(
               UNION ALL
               SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
                      N'MissingAccountingJob',N'MissingAccountingJob',
-                     N'The immutable accounting source has no durable posting job.'
+                     N'La fuente contable inmutable no tiene un trabajo durable de contabilización.'
               FROM dbo.AccountingSourceDocuments source
               WHERE source.TenantId=@TenantId AND source.BusinessId=@BusinessId
                 AND NOT EXISTS(

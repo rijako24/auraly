@@ -1,9 +1,15 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { CityItem, CreateThirdPartyRequest, DivisionItem, GeographyItem } from "../../src/services/api/parties";
 import { proposedAccountingDate } from "../../src/lib/accounting-document-date";
 import { login } from "./auth";
 import type { AccountingAccount } from "../../src/services/api/accounting";
+
+export async function selectRealCashForm(page: Page, checkout: Locator) {
+  await checkout.getByRole("combobox", { name: "Medio de pago", exact: true }).first().click();
+  const preferred = process.env.AURALY_E2E_CASH_FORM_NAME;
+  await (preferred ? page.getByRole("option").filter({ hasText: preferred }) : page.getByRole("option").first()).click();
+}
 
 // Test synchronization for the real cloud worker, not application polling.
 // A finite observation window checks the durable outcome after acceptance.

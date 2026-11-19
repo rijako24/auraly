@@ -284,12 +284,13 @@ public sealed partial class ServerSliceFixture : IAsyncLifetime
     public string SqlServer { get; } =
         Environment.GetEnvironmentVariable("AURALY_TEST_SQLSERVER") ?? @".\LOCAL";
     public string ConnectionString { get; private set; } = string.Empty;
+    // Reserve 1001-1900; existing fixed fiscal fixtures start again at 1981.
     private long independentSaleConsecutive = 1000;
 
     internal PosSaleUploadRequest CreateUniqueValidRequest()
     {
         var consecutive = Interlocked.Increment(ref independentSaleConsecutive);
-        if (consecutive > 9000) throw new InvalidOperationException("The isolated sale-number range is exhausted.");
+        if (consecutive > 1900) throw new InvalidOperationException("The isolated sale-number range is exhausted.");
         return CreateValidRequest(consecutive);
     }
 

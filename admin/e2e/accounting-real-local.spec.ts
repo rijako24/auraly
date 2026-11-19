@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 import readExcelFile from "read-excel-file/node";
 import type { AccountingAccount, AccountingEntry, AccountingOpenPositionPage, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 import type { CustomerAcceptance, PartyRoleOptionPage, SupplierAcceptance } from "../src/services/api/parties";
@@ -8,7 +8,7 @@ import type { CustomerPaymentAcceptance, CustomerPaymentHistoryPage, ReceivableD
 import { proposedAccountingDate } from "../src/lib/accounting-document-date";
 import type { SupplierPaymentHistoryPage } from "../src/services/api/payables";
 import type { ExpenseDetail, ExpenseOptions } from "../src/services/api/expenses";
-import { realAccountingAuxiliary, realAccountingWorkspace, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
+import { realAccountingAuxiliary, realAccountingWorkspace, realPartyRequest, selectRealCashForm, waitForRealPosting } from "./support/real-accounting-workspace";
 import type { PosWorkSessionClosurePreview as WorkSessionClosurePreview } from "../src/services/pos/pos-edge-client";
 
 async function postedEditorResponse(page: Page, context: Awaited<ReturnType<typeof realAccountingWorkspace>>, response: Response): Promise<VoucherDraft> {
@@ -20,12 +20,6 @@ async function postedEditorResponse(page: Page, context: Awaited<ReturnType<type
   const refreshed = await refreshing;
   expect(refreshed.ok(), await refreshed.text()).toBe(true);
   return refreshed.json() as Promise<VoucherDraft>;
-}
-
-async function selectRealCashForm(page: Page, checkout: Locator) {
-  await checkout.getByRole("combobox", { name: "Medio de pago", exact: true }).first().click();
-  const preferred = process.env.AURALY_E2E_CASH_FORM_NAME;
-  await (preferred ? page.getByRole("option").filter({ hasText: preferred }) : page.getByRole("option").first()).click();
 }
 
 async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof realAccountingWorkspace>>,

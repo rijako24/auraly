@@ -5332,6 +5332,17 @@ grant fue 13.040 KB, con uso de 6.056 KB. No se modificó memoria de SQL,
 volumen, límites ni umbrales para obtener el resultado. Build backend sin
 advertencias/errores; la regresión de interfaz y la auditoría final siguen en curso.
 
+La verificación del 18 de noviembre detectó compilaciones repetidas del detalle
+de la página. Ese segmento acotado conserva su plan mediante `KEEP PLAN`;
+la selección de candidatos y el ordenamiento de página mantienen su
+recompilación para los filtros y la cardinalidad vigentes. No cambia el calendario, filtros,
+conteos, enriquecimiento de la página ni los 1/2 comandos del contrato. Se mantiene
+el gate de 800 ms con 100.000 fuentes; no se amplía para admitir la regresión.
+Los dos benchmarks aprobaron sin compilación ni diagnóstico concurrentes:
+100.000 fuentes, p95 máximo de 758,3 ms en versión 1 y 685,6 ms en versión 2;
+10.000 recibos nativos, máximo de 568,7 ms, incluido el filtro de trabajo faltante
+en 532,8 ms. Se conservaron los 1/2 comandos, filas únicas y ausencia de spills.
+
 ### 14.11 Auditoría de autoridad contable y consistencia (12-11-2026)
 
 La cuenta no guarda un importe editable. El mayor se obtiene de partidas

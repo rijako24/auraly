@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { realAccountingAuxiliary, realAccountingWorkspace, realPartyRequest } from "./support/real-accounting-workspace";
+import { realAccountingAuxiliary, realAccountingWorkspace, realPartyRequest, selectRealCashForm, waitForRealPosting } from "./support/real-accounting-workspace";
 import { createRealProduct } from "./support/real-product";
 import type { AccountingAccount, AccountingEntry, AccountingOpenPositionPage, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 import type { GoodsReceiptAcceptance, GoodsReceiptDetail, GoodsReceiptDraft, GoodsReceiptCostVoucher } from "../src/services/api/goods-receipts";
@@ -40,7 +40,7 @@ async function chooseAnotherDate(page: Page, scope: Locator, label: string) {
 
 for (const unallocatedAsset of [false, true]) {
 test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existente sin duplicar su deuda (${unallocatedAsset ? "activo por distribuir" : "gasto"})`, async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   const context = await realAccountingWorkspace(page);
   const { scopedJson, businessId } = context;
   const supplierName = `Proveedor de cargos ${randomUUID().slice(0, 8)}`;
@@ -98,7 +98,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
     };
     const draft = await scopedJson<VoucherDraft>("PUT", `/api/commerce/v1/accounting/manual/drafts/${sourceId}`, capture);
     const sent = await scopedJson<VoucherDraft>("POST", `/api/commerce/v1/accounting/manual/drafts/${sourceId}/send`, { rowVersion: draft.rowVersion });
-    expect(sent.status, sent.row.errorMessage ?? undefined).toBe("Posted");
+    expect(["Pending", "Posted"], sent.row.errorMessage ?? undefined).toContain(sent.status);
   } else {
     const expenseOptions = await scopedJson<ExpenseOptions>("GET", "/api/commerce/v1/expenses/options?includeDirectories=false");
     const concept = expenseOptions.concepts.find(item => item.isActive);
@@ -119,6 +119,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
     expect(position).toBeTruthy();
     return position!;
   }
+  await waitForRealPosting(context, sourceId);
   const sourceEntry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${sourceId}`);
   let budgetReads = 0;
   page.on("request", request => {
@@ -231,6 +232,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await expect(dialog).toBeHidden({ timeout: 20_000 });
   const row = page.getByRole("row").filter({ hasText: documentNumber });
   await expect(row).toContainText("Procesada", { timeout: 45_000 });
+  await waitForRealPosting(context, accepted.documentId);
   const detail = await scopedJson<GoodsReceiptDetail>("GET", `/api/commerce/v1/goods-receipts/${accepted.documentId}`);
   expect(detail.lines[0]).toMatchObject({ quantity: 10, unitCost: 10000, commercialDiscountPercent: 10, discountAmount: 10000, netAmount: 90000 });
   expect(detail.createsPayable).toBe(true);
@@ -291,6 +293,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   expect(returned.idempotentReplay).toBe(true);
   await expect(returning).toBeHidden();
   await expect(page.getByText(`Devolución ${returned.documentNumber} confirmada y enviada al motor.`, { exact: true })).toBeVisible();
+  await waitForRealPosting(context, returned.returnId);
   const returnable = await scopedJson<ReturnableReceipt>("GET", `/api/commerce/v1/purchase-returns/receipts/${accepted.documentId}`);
   expect(returnable.lines).toEqual([expect.objectContaining({ receivedQuantity: 10, returnedQuantity: 4, availableQuantity: 6 })]);
   const returnEntry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${returned.returnId}`);
@@ -315,12 +318,14 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await page.getByLabel(`Abono para ${documentNumber}`, { exact: true }).fill("1000");
   await page.getByRole("button", { name: "Ir a pagar", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Pago a proveedores", exact: true });
+  await selectRealCashForm(page, checkout);
   const paying = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payable-payments/confirm"));
   await checkout.getByRole("button", { name: "Sin imprimir", exact: true }).click();
   const paymentResponse = await paying;
   expect(paymentResponse.ok(), await paymentResponse.text()).toBe(true);
   const payment = await paymentResponse.json() as { paymentId: string; documentNumber: string; status: string };
   expect(payment.status).toBe("Accepted");
+  await waitForRealPosting(context, payment.paymentId);
   await expect(page.getByText(`Pago a proveedor registrado: ${payment.documentNumber}.`, { exact: true })).toBeVisible();
   expect(receiptReads).toBe(1);
   const paymentKey = paymentResponse.request().headers()["idempotency-key"];
@@ -336,5 +341,34 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   expect(paymentEntry.creditTotal).toBe(1000);
   expect(paymentEntry.lines.some(line => line.partyId === supplier.partyId)).toBe(true);
   await receiptDialog.screenshot({ path: "../work/recepcion-compra-egreso-real.png" });
+  await receiptDialog.getByRole("button", { name: "Cerrar", exact: true }).click();
+  await page.getByRole("button", { name: `Pagar compra ${documentNumber}`, exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard\/financial-traceability\?new=1&payable=/);
+  await expect(page.getByRole("combobox", { name: "Tipo de comprobante", exact: true })).toContainText("Egreso");
+  await expect(page.getByRole("combobox", { name: "Seleccionar tercero principal", exact: true })).toContainText(supplierName);
+  const obligation = page.getByRole("row", { name: "Partida 1", exact: true });
+  await expect(obligation.getByLabel("Débito de la partida", { exact: true })).toHaveValue(/53[.,]000/);
+  await obligation.getByLabel("Débito de la partida", { exact: true }).fill("1000");
+  const cashForms = await scopedJson<{ items: Array<{ accountCode: string }> }>("GET", "/api/commerce/v1/payment-methods?usage=VoucherPayments&methodCode=Cash&page=1&pageSize=1");
+  const cash = cashForms.items[0]; expect(cash).toBeTruthy();
+  const treasury = page.getByRole("row", { name: "Partida 2", exact: true });
+  await treasury.getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true }).click();
+  await page.getByPlaceholder("Buscar por código o nombre…").fill(cash.accountCode);
+  await page.getByRole("option", { name: new RegExp(`^${cash.accountCode} · `) }).click();
+  await treasury.getByLabel("Crédito de la partida", { exact: true }).fill("1000");
+  const savingManual = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/manual/drafts/"));
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+  const manualSaved = await savingManual; expect(manualSaved.ok(), await manualSaved.text()).toBe(true);
+  const manual = await manualSaved.json() as VoucherDraft;
+  const sendingManual = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${manual.documentId}/send`));
+  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  const sentManual = await sendingManual; expect(sentManual.ok(), await sentManual.text()).toBe(true);
+  await waitForRealPosting(context, manual.documentId);
+  const manualEntry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${manual.documentId}`);
+  expect(manualEntry.debitTotal).toBe(1000); expect(manualEntry.creditTotal).toBe(1000);
+  const afterManual = await scopedJson<PayablePage>("GET", `/api/commerce/v1/payables?page=1&pageSize=25&search=${encodeURIComponent(documentNumber)}`);
+  expect(afterManual.items[0]).toMatchObject({ originalAmount: 90000, outstandingAmount: 52000 });
+  const manualReplay = await scopedJson<VoucherDraft>("POST", `/api/commerce/v1/accounting/manual/drafts/${manual.documentId}/send`, { rowVersion: manual.rowVersion });
+  expect(manualReplay.row.entryId).toBe(manualEntry.entryId);
 });
 }
