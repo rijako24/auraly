@@ -977,7 +977,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, DispatchPermissionCodes.Settle,
-            DispatchPermissionCodes.ReadAll);
+            DispatchPermissionCodes.ReadAll, CatalogPermissionCodes.Read, CatalogPermissionCodes.Update);
         using (var defaults = await accounting.PutAsync(
                    "/api/commerce/v1/accounting/defaults", null))
             defaults.EnsureSuccessStatusCode();
@@ -1014,9 +1014,15 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await settlementWorker.StartAsync(CancellationToken.None);
         try
         {
-            var availableCash=(await accounting.GetFromJsonAsync<PaymentMethodPage>(
-                "/api/commerce/v1/payment-methods/?usage=Receipts&methodCode=Cash&search=110505&page=1&pageSize=10"))!;
-            var cashForm=Assert.Single(availableCash.Items.Where(form=>form.AccountCode=="110505"));
+            var cashAccount=await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture,accounting);
+            var types=(await accounting.GetFromJsonAsync<ReferenceOption[]>(
+                "/api/commerce/v1/reference-options/payment-method"))!;
+            var cashRequest=new SavePaymentMethodRequest(Guid.NewGuid(),$"DSP-SHORT-{Guid.NewGuid():N}",
+                "Caja del faltante de prueba",types.Single(type=>type.Code=="Cash").Id,cashAccount.AccountId,
+                true,true,false,false,true,10);
+            using var savedCash=await accounting.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{cashRequest.PaymentMethodId}",cashRequest);
+            Assert.True(savedCash.IsSuccessStatusCode,await savedCash.Content.ReadAsStringAsync());
+            var cashForm=(await savedCash.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
             var request = new SettleDispatchRequest(
                 invoice.CommercialSnapshot.PayableAmount - 1_000m,
                 "Faltante entregado por el transportador", $"settle-{dispatchId:N}",
@@ -1032,7 +1038,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             Assert.Equal(1_000m, await AccountAmountAsync(
                 settlementId, "539595", debit: true));
             Assert.Equal(1_000m, await AccountAmountAsync(
-                settlementId, "110505", debit: false));
+                settlementId, cashAccount.Code, debit: false));
             Assert.Equal("Closed", await ScalarAsync<string>(
                 "SELECT Status FROM dbo.Dispatches WHERE DispatchId=@Id", dispatchId));
 
@@ -4078,7 +4084,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
               DocumentTotalSnapshot,CreditAmountSnapshot,Status,CreatedAt)
             VALUES(
               @SourceId,@DispatchId,@SalesDocumentId,N'SalesInvoice',N'FACTURA-PRUEBA',
-              N'Cliente prueba',N'Vendedor prueba',@Expected,0,N'Delivered',SYSUTCDATETIME());
+              N'Cliente prueba',N'Vendedor prueba',@Expected,
+              (SELECT CreditAmount FROM dbo.SalesDocuments WHERE DocumentId=@SalesDocumentId),N'Delivered',SYSUTCDATETIME());
             INSERT dbo.DispatchDeliveryPayments(
               DispatchDeliveryPaymentId,BusinessId,DispatchId,DispatchSourceDocumentId,
               ApplicationType,PaymentMethod,Amount,RecordedBy,OccurredAt,CreatedAt)
