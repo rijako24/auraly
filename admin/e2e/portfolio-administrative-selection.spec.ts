@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
+import type { AccountingOpenPosition, SaveVoucherDraft } from "../src/services/api/accounting";
 
 test.use({timezoneId:"Pacific/Kiritimati"});
 
-for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? "proveedor" : "cliente"}: destino, páginas y filtros conservan selección sin detalle adicional`, async ({page,baseURL},testInfo) => {
+for (const supplier of [false, true]) for (const mode of ["direct", "manual", "stale"] as const) test(`cartera administrativa ${supplier ? "proveedor" : "cliente"}: ${mode} conserva selección entre páginas`, async ({page,baseURL},testInfo) => {
+  const manual=mode!=="direct",stale=mode==="stale";
   await page.clock.install({ time: new Date("2026-11-12T01:30:00Z") });
   const scenario=financialVoucherScenario(), id=(n:number)=>`bbbbbbbb-1111-4111-8111-${String(n).padStart(12,"0")}`;
   scenario.user.permissions.push("receivables.read","receivables.payments.create","payables.read","payables.payments.create");
@@ -18,9 +20,29 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
     dueOn:"2026-10-05",issuedOn:"2026-09-01",
     partySiteId:siteId,partySiteName:"Principal",transactions:[{transactionId:id(600+index),type:"Opening",balanceChange:1000,occurredAt:"2026-11-12T01:30:00Z"}]}));
   const target=rows[40],requests:URL[]=[];let detailReads=0,failedOnce=false;
+  let selectedReads=0;
+  const saved:SaveVoucherDraft[]=[];
   await installFinancialVoucherContext(page,baseURL!,scenario);
   await page.route("**/api/**",async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
+    if(path==="/api/commerce/v1/accounting/open-positions/selection"){
+      selectedReads++;
+      expect(route.request().postDataJSON()).toEqual({subledgerKind:supplier?"Payable":"Receivable",counterpartyRoleId:roleId,
+        subledgerIds:[targetId,rows[0][key],rows[20][key]],effectiveOn:"2026-11-11"});
+      const items:AccountingOpenPosition[]=[target,rows[0],rows[20]].map(row=>({subledgerKind:supplier?"Payable":"Receivable",subledgerId:row[key] as string,
+        partyId:id(3),partyName:"Tercero selección",partyIdentification:"1001",sourceDocumentId:id(999),sourceDocumentType:"ManualAccountingVoucher",
+        documentNumber:row.documentNumber,occurredAt:row.issuedAt,dueDate:row.dueDate,currencyCode:"COP",originalAmount:row.originalAmount,
+        outstandingAmount:row.outstandingAmount,availableAmount:stale&&row[key]===targetId?1:row.outstandingAmount,pendingPaymentAmount:0,pendingAdjustmentAmount:0,
+        openingEntryId:id(990),openingEntryLineNumber:1,accountId:scenario.draft.lines[0].value.accountId,accountCode:supplier?"22050501":"13050501",
+        accountName:supplier?"Proveedores":"Clientes",accountIsActive:true,openingDebit:supplier?0:row.originalAmount,openingCredit:supplier?row.originalAmount:0,
+        openingLinkIssue:null,counterpartyRoleId:roleId,status:"PartiallyPaid",partySiteId:siteId}));
+      await route.fulfill({json:{items,page:1,pageSize:3,totalCount:3,totalOutstandingAmount:items.reduce((sum,item)=>sum+item.outstandingAmount,0)}});return;
+    }
+    if(path.includes("/accounting/manual/drafts/")&&route.request().method()==="PUT"){
+      const request=route.request().postDataJSON() as SaveVoucherDraft;saved.push(request);
+      await route.fulfill({json:{...scenario.draft,...request,mainPartyName:"Tercero selección",mainPartyIdentification:"1001",rowVersion:"AAAAAAAAAAI=",
+        lines:request.lines.map(value=>({value,accountCode:supplier?"22050501":"13050501",accountName:supplier?"Proveedores":"Clientes",partyName:"Tercero selección",partyIdentification:"1001",costCenterName:null}))}});return;
+    }
     if(path==="/api/commerce/v1/accounting/settlement-configuration"){
       await route.fulfill({json:{isAccountingEnabled:false,bankAccounts:[],paymentMethods:{contractVersion:2,forms:[]}}});return;
     }
@@ -99,6 +121,37 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
   expect(await amount.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   await expect(modal.getByText("3 facturas · 2 fuera de esta página",{exact:true})).toBeVisible();
   expect(requests).toHaveLength(4);
+  expect(selectedReads).toBe(0);
+  if(manual){
+    await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+    expect(selectedReads).toBe(0);expect(saved).toHaveLength(0);
+    await page.getByRole("menuitem",{name:supplier?"Comprobante de egreso":"Recibo de caja",exact:true}).click();
+    const capture=page.getByRole("dialog",{name:supplier?"Comprobante de egreso":"Recibo de caja",exact:true});
+    if(stale){
+      await expect(page.getByText("El abono supera el saldo disponible de una factura. Revisa los pagos pendientes.",{exact:true})).toBeVisible();
+      await expect(capture).toHaveCount(0);expect(saved).toHaveLength(0);expect(selectedReads).toBe(1);
+      await expect(modal.getByLabel("Abono para TARGET-41")).toHaveValue("125");
+      return;
+    }
+    await expect(capture.getByRole("row",{name:"Partida 3",exact:true})).toBeVisible();
+    const amountLabel=supplier?"Débito de la partida":"Crédito de la partida";
+    for(const [index,amount] of [125,50,75].entries())await expect(capture.getByRole("row",{name:`Partida ${index+1}`,exact:true}).getByLabel(amountLabel,{exact:true})).toHaveValue(String(amount));
+    await expect(capture).toContainText("Tercero selección");
+    await page.setViewportSize({width:390,height:844});
+    await page.screenshot({path:testInfo.outputPath("selected-voucher-mobile.png"),fullPage:true});
+    await page.setViewportSize({width:1366,height:900});
+    await capture.getByRole("button",{name:"Guardar borrador",exact:true}).click();
+    await expect(capture.getByRole("button",{name:"Guardar borrador",exact:true})).toBeDisabled();
+    expect(saved).toHaveLength(1);expect(saved[0].mainPartyId).toBe(id(3));expect(saved[0].voucherTypeCode).toBe(supplier?"Disbursement":"CashReceipt");
+    expect(saved[0].lines.map(line=>[line.existingPosition?.subledgerId,supplier?line.debit:line.credit])).toEqual([[targetId,125],[rows[0][key],50],[rows[20][key],75]]);
+    expect(saved[0].lines.every(line=>line.partyId===id(3)&&line.partySiteId===siteId)).toBe(true);
+    expect(selectedReads).toBe(1);expect(requests).toHaveLength(4);expect(detailReads).toBe(1);
+    await capture.getByRole("button",{name:"Volver a la selección",exact:true}).click();
+    await expect(modal.getByLabel("Abono para TARGET-41")).toHaveValue("125");
+    await expect(modal.getByText("3 facturas · 2 fuera de esta página",{exact:true})).toBeVisible();
+    expect(selectedReads).toBe(1);
+    return;
+  }
   const filter=modal.getByRole("group",{name:"Filtros de facturas para pago"});
   await filter.getByLabel("Documento o referencia",{exact:true}).fill("FV-");
   await filter.getByLabel("Documento o referencia",{exact:true}).fill("FV-1");expect(requests).toHaveLength(4);
@@ -107,6 +160,7 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
   await expect(modal.getByLabel("Abono para FV-1",{exact:true})).toHaveValue("50");
   expect(requests).toHaveLength(5);expect(requests[4].searchParams.get("page")).toBe("1");expect(requests[4].searchParams.get("search")).toBe("FV-1");
   await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const paymentDate=modal.getByRole("button",{name:"Fecha del pago",exact:true});
   await expect(paymentDate).toContainText("9 de noviembre de 2026");
   await expect(modal.getByText("Cambio a entregar",{exact:true})).toHaveCount(0);
@@ -116,6 +170,7 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
   await expect(paymentDate).toHaveCount(0);
   await expect(modal.getByLabel("Abono para FV-1",{exact:true})).toHaveValue("50");
   await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await expect(paymentDate).toContainText("10 de noviembre de 2026");
   await modal.getByRole("button",{name:"Atrás",exact:true}).click();
   expect(requests).toHaveLength(5);
@@ -131,6 +186,7 @@ for (const supplier of [false, true]) test(`cartera administrativa ${supplier ? 
   await expect(modal.getByLabel("Abono para FV-1",{exact:true})).toHaveValue("50");
   expect(requests).toHaveLength(8);expect(detailReads).toBe(1);
   await modal.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await expect(page.getByText("Ningún abono puede superar el saldo de la factura.",{exact:true})).toBeVisible();
   await expect(modal.getByRole("button", {name:"Fecha del pago",exact:true})).toHaveCount(0);
   for (const label of ["Registro desde", "Registro hasta"]) {

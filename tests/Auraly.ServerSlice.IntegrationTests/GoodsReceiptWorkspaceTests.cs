@@ -438,6 +438,9 @@ public sealed partial class GoodsReceiptWorkspaceTests(
             "/api/commerce/v1/goods-receipts?status=Draft&page=1&pageSize=25");
         Assert.NotNull(page);
         Assert.Contains(page.Items, item => item.DocumentId == request.DraftId && item.Status == "Draft");
+        var listedDraft = Assert.Single(page.Items.Where(item => item.DocumentId == request.DraftId));
+        Assert.Null(listedDraft.AccountingStatus);
+        Assert.Null(listedDraft.FiscalStatus);
 
         var changedRequest = request with
         {

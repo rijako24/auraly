@@ -133,7 +133,7 @@ export interface AccountingJournalRow { entryId:string;entryNumber:string;occurr
 export interface GeneralLedgerRow { accountCode:string;accountName:string;accountType:string;openingBalance:number;debit:number;credit:number;closingBalance:number; }
 export interface FinancialStatementRow { section:string;accountCode:string;accountName:string;amount:number; }
 export interface AccountingExceptionRow { sourceDocumentId:string;sourceDocumentType:string;occurredAt:string;status:string;errorCode:string|null;errorMessage:string|null; }
-export interface AccountingDocumentRow { voucherTypeCode?:string|null; mainPartyId?:string|null;mainPartyName?:string|null;mainPartyIdentification?:string|null;reversalDocumentId?:string|null;reversalStatus?:string|null;hasManualDraft?:boolean; sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;attemptCount:number;errorCode:string|null;errorMessage:string|null;entryId:string|null;entryNumber:string|null;debitTotal:number|null;creditTotal:number|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;uniqueCodeType:string|null;uniqueCode:string|null;fiscalStatus:string|null; }
+export interface AccountingDocumentRow { fiscalErrorMessage?:string|null; voucherTypeCode?:string|null; mainPartyId?:string|null;mainPartyName?:string|null;mainPartyIdentification?:string|null;reversalDocumentId?:string|null;reversalStatus?:string|null;hasManualDraft?:boolean; sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;attemptCount:number;errorCode:string|null;errorMessage:string|null;entryId:string|null;entryNumber:string|null;debitTotal:number|null;creditTotal:number|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;uniqueCodeType:string|null;uniqueCode:string|null;fiscalStatus:string|null; }
 export interface AccountingDocumentPage { items:AccountingDocumentRow[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface ComplianceReportDefinition { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;name:string;reportKind:"Exogenous"|"FiscalDraft";resolutionNumber:string;resolutionDate:string;technicalAnnex:string;sourceUrl:string;sourceSha256:string; }
 export interface ComplianceConceptMapping { mappingId:string;tenantId:string;businessId:string|null;authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;accountId:string;accountCode:string;accountName:string;conceptCode:string;targetField:string; }
@@ -145,6 +145,9 @@ export interface GenerateComplianceReport { authorityCode:string;taxYear:number;
 export const accountingApi = {
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/accounting/settlement-configuration"),
+  openPositionSelection: (request: { subledgerKind: "Payable" | "Receivable"; counterpartyRoleId: string;
+    subledgerIds: string[]; effectiveOn?: string }) =>
+    apiClient.post<AccountingOpenPositionPage>("/commerce/v1/accounting/open-positions/selection", request),
   openPositions: (params: { subledgerKind: AccountingOpenPosition["subledgerKind"] | "All"; page: number; pageSize: number;
     partyId?: string; accountId?: string; search?: string; dueFrom?: string; dueTo?: string;
     subledgerId?: string; counterpartyRoleId?: string; manualSupportOnly?: boolean; effectiveOn?: string; voucherTypeCode?: "CashReceipt" | "Disbursement" }) => apiClient.get<AccountingOpenPositionPage>("/commerce/v1/accounting/open-positions", params),

@@ -17,7 +17,8 @@ import { AccountSelect } from "./account-select";
 import { AccountingDocumentDialog } from "./accounting-document-dialog";
 import { CloneVoucherButton } from "./clone-voucher-button";
 import { VoucherPositionDialog } from "./voucher-position-dialog";
-import { createVoucherPositionLine, VoucherPendingDocuments } from "./voucher-pending-documents";
+import { VoucherPendingDocuments } from "./voucher-pending-documents";
+import { createVoucherPositionLine } from "@/lib/voucher-payment-preparation";
 import { VoucherFiscalDialog } from "./voucher-fiscal-dialog";
 import { accountingDateAtNoon, proposedAccountingDate } from "@/lib/accounting-document-date";
 import { accountingReversalStatusLabel } from "@/lib/accounting-labels";
@@ -679,7 +680,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       </fieldset>}
     </fieldset>
     <footer className="sticky bottom-0 z-20 flex flex-wrap items-center gap-4 rounded-2xl border bg-background p-4 shadow-lg">
-      <div className="flex-1 text-sm">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={Math.abs(debit - credit) > 0.00001 ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(debit - credit)} · {lines.length} partidas</p></>}
+      <div className="min-w-0 flex-1 basis-full text-sm sm:basis-0">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={Math.abs(debit - credit) > 0.00001 ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(debit - credit)} · {lines.length} partidas</p></>}
         <p className="text-muted-foreground">{saved?.status === "Posted" ? "Comprobante contabilizado: contenido inmutable." : saved?.sentAt ? "Comprobante aceptado; consulta su estado contable. El contenido está congelado." : "Guarda un borrador para seguir editando, o guarda el comprobante definitivo para contabilizarlo."}</p></div>
       <Button variant="outline" disabled={busy} onClick={close}>{modal ? closeLabel : "Volver"}</Button>
       {saved && !dirty && <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{phase === "refresh" ? "Consultando estado…" : "Actualizar estado"}</Button>}

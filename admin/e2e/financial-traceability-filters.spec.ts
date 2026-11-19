@@ -34,7 +34,7 @@ test("trazabilidad filtra por tipo de operación junto con el rango de fechas", 
     const path = url.pathname;
     if (path.endsWith("/auth/me")) return json(route, { userId, tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", roles: ["Administrator"], permissions });
     if (path.endsWith("/execution-context/tenants")) return json(route, [{ tenantId, name: "Auraly" }]);
-    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Auraly" }]);
+    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]);
     if (path.endsWith("/execution-context/access")) return json(route, { tenantId, businessId, roles: ["Administrator"], permissions });
     if (path.endsWith("/commerce/v1/reference-options/accounting-document-type")) return json(route, [
       { id: "44444444-4444-4444-4444-444444444444", code: "GoodsReceipt", label: "Recepción de compra", description: null, sortOrder: 60 },

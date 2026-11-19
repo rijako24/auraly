@@ -466,6 +466,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   await wizard.getByLabel(`Abono para ${documentNumber}`, { exact: true }).fill("100.25");
   await expect(wizard.getByText("Total seleccionado", { exact: true }).locator("../..")).toContainText("100,25");
   await wizard.getByRole("button", { name: "Ir a pagar", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Abono a cartera", exact: true });
   await expect(checkout).toContainText("100,25");
   await selectRealCashForm(page, checkout);
@@ -626,8 +627,10 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   expect(expense.payable?.outstandingAmount).toBe(1000.5);
   await page.getByRole("button", { name: `Ver gasto ${expense.documentNumber}`, exact: true }).click();
   await page.getByRole("button", { name: "Pagar", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await page.getByLabel(`Abono para ${expense.documentNumber}`, { exact: true }).fill("100.25");
   await page.getByRole("button", { name: "Ir a pagar", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Pago a proveedores", exact: true });
   await selectRealCashForm(page, checkout);
   const paying = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payable-payments/confirm"));

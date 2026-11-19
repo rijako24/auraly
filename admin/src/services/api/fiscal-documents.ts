@@ -15,6 +15,7 @@ export interface FiscalDocumentView extends FiscalDocumentQuotaItem {
 
 export const fiscalDocumentsApi = {
   get: (documentId:string) => apiClient.get<FiscalDocumentView>(`/commerce/v1/fiscal/documents/${documentId}`),
+  retry: (documentId:string) => apiClient.post<FiscalDocumentView>(`/commerce/v1/fiscal/documents/${documentId}/retry`, {}),
   sendManualSupport: (documentId:string) => apiClient.post<FiscalDocumentView>(
     `/commerce/v1/fiscal/documents/${documentId}/send-manual-support`, {}),
   quotaHistory: (page: number, pageSize: number, status?: string) =>

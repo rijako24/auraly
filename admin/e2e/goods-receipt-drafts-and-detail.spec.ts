@@ -128,7 +128,7 @@ test.describe("borradores y detalle de recepciones de compra", () => {
     await expect(detail.getByText("Aceite vegetal 3000 ml")).toBeVisible();
     await expect(detail.getByText("IVA descontable")).toBeVisible();
     await expect(detail.getByText("Proveedor de prueba")).toBeVisible();
-    await expect(detail.getByRole("button", { name: "Registrar egreso", exact: true })).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: "Pagar", exact: true })).toHaveCount(0);
     await detail.getByRole("button", { name: "Cerrar" }).click();
     await expect(detail).toBeHidden();
   });

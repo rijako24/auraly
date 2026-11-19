@@ -1,5 +1,32 @@
 # Comprobantes abiertos en Trazabilidad financiera
 
+> **Decisión del usuario del 2026-11-19 sobre visibilidad:** compras y gastos
+> conservan la contabilización y el envío fiscal automáticos. El soporte manual
+> conserva su envío explícito después de contabilizar. Trazabilidad, compras y
+> gastos muestran dos indicadores independientes, provistos por la consulta de
+> su página: contabilidad y DIAN. Verde significa contabilizado o aceptado por
+> DIAN, respectivamente; ámbar identifica procesamiento pendiente y rojo un
+> fallo o un soporte manual aún sin enviar. Un envío pendiente de respuesta no
+> se presenta como aceptado. El detalle accesible por foco, hover y título
+> muestra el estado y el error informado por su propietario. Sin documento
+> fiscal no se muestra una acción DIAN.
+>
+> Los indicadores reutilizan `AccountingService.RetryPostingAsync`,
+> `FiscalDocumentService.RetryAsync`, `SendManualSupportAsync` y los permisos
+> actuales. No habilitan reenvío de documentos aceptados ni contabilización de
+> borradores implícita. El icono del borrador manual conserva la aceptación
+> explícita que antes ofrecía «Guardar comprobante». La política y los efectos
+> pertenecen a esos servicios; los colores son únicamente presentación.
+> Los estados se enriquecen después de paginar, con joins por claves únicas a
+> los jobs/procesos existentes, dentro de la consulta ya propietaria de la
+> página. Presupuesto: cero GET por fila y cero GET adicional tras el comando
+> fiscal; su respuesta actualiza el estado visible y su caché individual.
+> Un reintento contable en trazabilidad permite una lectura de página cuando
+> cambia la pertenencia al filtro de estado o devuelve `Posted`, pues su
+> respuesta no contiene el número, los totales ni todos los datos del asiento.
+> No se agregan polling, tablas, migraciones ni workers. Un rollback de API/UI
+> retira únicamente los indicadores y conserva los procesos y documentos.
+
 El cierre de diseño del 2026-11-09 en la sección 14 prevalece para formas de pago
 del tenant, recibos/anticipos y cuentas compartidas. Es objetivo pendiente de
 implementación; la evidencia de las secciones anteriores conserva su alcance.
@@ -3599,6 +3626,35 @@ normalización y SqlAccountingPostingProcessor existentes. Nómina se rige por l
 sección 13 de decision-nomina-electronica-integrada.md.
 
 ### 14.0 Catálogo común, presentación POS y modal administrativo compartido
+
+Decisión del usuario del 2026-11-19: se conservan dos acciones administrativas,
+**Pago directo** y **Recibo de caja** (CxC) o **Comprobante de egreso**
+(CxP, compras y gastos). Compras/gastos ofrecen Pagar en la fila y el detalle.
+En cartera la elección aparece en Ir a pagar, después de seleccionar facturas
+e importes; no reemplaza esa selección por otra. Son acciones de navegación,
+no un catálogo adicional de formas de pago. Cada alternativa respeta sus
+permisos; activar contabilidad no obliga a usar la captura manual ni desactiva
+la contabilización del pago directo.
+
+El camino manual abre `VoucherDraftEditor` con el tercero canónico y las
+obligaciones/importes seleccionados. Reutiliza la consulta de posiciones y el
+mapeo de partidas del selector de pendientes; una consulta acotada por IDs y
+rol resuelve cuentas originales, disponibilidad y descuentos. El lote conserva
+el límite de `PortfolioSettlement.MaximumAllocations`. No descarga la cartera
+completa, no consulta por factura ni crea borrador, fuente, reserva o pago al
+abrir. Guardar/enviar mantiene los casos de uso y normalizador existentes.
+Los descuentos elegidos conservan sus contrapartidas y el importe de dinero;
+un cambio de saldo o una apertura sin conciliar produce un error explícito.
+Cerrar una captura sin enviar conserva la selección del wizard. POS/Edge
+conservan su entrada directa y no ofrecen un editor contable administrativo.
+
+Presupuesto de este incremento: abrir el menú no realiza I/O. Preparar desde
+cartera usa una petición y un comando SQL para entre 1 y 100 IDs seleccionados;
+objetivo p95 local menor a 1,5 s, medido sin builds/diagnósticos concurrentes.
+El GET paginado conserva su máximo de 50 filas. Desde compras/gastos, el pago
+directo puede leer una vez el detalle elegido porque la fila no trae la sede
+del proveedor; el egreso conserva la preparación por CxP exacta existente.
+La aceptación vuelve a comprobar cuentas, saldos, ámbito y concurrencia.
 
 La precisión del usuario limita el cambio visual del POS: su vista de pagos
 conserva distribución, controles e interacción. Todas las superficies, incluido

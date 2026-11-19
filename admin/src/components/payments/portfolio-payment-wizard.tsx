@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect,useMemo,useRef,useState } from "react";
+import dynamic from "next/dynamic";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight,CreditCard } from "lucide-react";
 import { toast } from "sonner";
@@ -16,7 +17,9 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select,SelectContent,SelectItem,SelectTrigger,SelectValue } from "@/components/ui/select";
 import { payablesApi,type SupplierPaymentTender } from "@/services/api/payables";
-import { accountingApi } from "@/services/api/accounting";
+import { accountingApi, type VoucherDraft, type VoucherDraftPreparation } from "@/services/api/accounting";
+import { prepareVoucherPayment } from "@/lib/voucher-payment-preparation";
+import { PaymentActionMenu } from "./payment-action-menu";
 import { partiesApi } from "@/services/api/parties";
 import { referenceOptionsApi } from "@/services/api/reference-options";
 import { receivablesApi,type CustomerPaymentMethod,type CustomerPaymentTender } from "@/services/api/receivables";
@@ -33,6 +36,9 @@ import { PosEdgeClient,PosEdgeError,loadBrowserPrinterConfiguration,readEdgeToke
 import { printPortfolioPayment,type PortfolioPaymentReceipt } from "@/services/pos/pos-portfolio-payment-print";
 
 type Direction="receivable"|"payable";
+// POS shares the wizard, but never loads the administrative editor.
+const VoucherDraftEditor=dynamic(()=>import("@/components/accounting/voucher-draft-editor").then(module=>module.VoucherDraftEditor),
+  {ssr:false,loading:()=> <p role="status">Cargando editor del comprobante…</p>});
 type Invoice={id:string;number:string;dueDate:string;outstanding:number;currency:string;overdue:boolean;
   original?:number;paid?:number;adjustments?:number;overdueDays?:number;issuedAt?:string|null;agingBandCode?:string;sourceDocumentType?:string|null;dueOn?:string|null;issuedOn?:string|null;
   financialDiscountEligibleAmount?:number|null;financialDiscountAnticipated?:boolean|null;financialDiscountPendingReturn?:boolean};
@@ -58,6 +64,9 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   const queryClient=useQueryClient();
   const attemptStorageKey=`portfolio-payment:${direction}:${businessId}:${workSessionId??userId??"anonymous"}`;
   const [paymentDate,setPaymentDate]=useState("");
+  const [manualCapture,setManualCapture]=useState<{businessId:string;tenantId:string;value:VoucherDraftPreparation}|null>(null);
+  const [manualBusy,setManualBusy]=useState(false);
+  const manualSent=useRef(false);
   const [step,setStep]=useState<1|2>(1);const [party,setParty]=useState<PartyRoleSelection|null>(initialParty??null);
   const [partySiteId,setPartySiteId]=useState<string|undefined>(initialPartySiteId);
   const [partySiteName,setPartySiteName]=useState<string|undefined>(initialPartySiteName);
@@ -87,11 +96,11 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   const installedPrinter=useMemo(()=>{if(!open||receiptPrinter)return null;const token=readEdgeTokenFromLaunch();return token?new PosEdgeClient(token,readEdgeUserSession()):null;},[open,receiptPrinter]);
   const printClient=receiptPrinter??installedPrinter;
   const partyId=direction==="receivable"?party?.customerId:party?.supplierId;
-  useEffect(()=>{if(filterTimer.current)clearTimeout(filterTimer.current);if(open){const party=initialPartyRef.current;setPaymentDate("");setStep(1);setParty(party??null);setPartySiteId(initialPartySiteIdRef.current);setPartySiteName(initialPartySiteNameRef.current);setInvoicePage(1);setSelected({});setSelectedLimits({});setSelectedNumbers({});setDiscountDecisions({});initialSelectionApplied.current=false;setInvoiceIdFilter(initialInvoiceRef.current?.id??null);setFilters({search:"",from:"",to:""});setFilterDraft({search:"",from:"",to:""});}},[open]);
+  useEffect(()=>{if(filterTimer.current)clearTimeout(filterTimer.current);if(open){const party=initialPartyRef.current;setManualCapture(null);manualSent.current=false;setPaymentDate("");setStep(1);setParty(party??null);setPartySiteId(initialPartySiteIdRef.current);setPartySiteName(initialPartySiteNameRef.current);setInvoicePage(1);setSelected({});setSelectedLimits({});setSelectedNumbers({});setDiscountDecisions({});initialSelectionApplied.current=false;setInvoiceIdFilter(initialInvoiceRef.current?.id??null);setFilters({search:"",from:"",to:""});setFilterDraft({search:"",from:"",to:""});}},[open]);
   const requiresSupplierSite=direction==="payable"&&!edgeClient&&!printOnPos;
   const administrativeFilters=printOnPos?null:filters;
   const administrativeInvoiceId=printOnPos?null:invoiceIdFilter;
-  const invoiceKey=open&&partyId&&(!requiresSupplierSite||partySiteId)?JSON.stringify([edgeClient?"edge":printOnPos?"web-pos":"web",direction,businessId,partyId,partySiteId,invoicePage,administrativeInvoiceId,administrativeFilters,printOnPos?null:timeZone]):null;
+  const invoiceKey=open&&!manualCapture&&partyId&&(!requiresSupplierSite||partySiteId)?JSON.stringify([edgeClient?"edge":printOnPos?"web-pos":"web",direction,businessId,partyId,partySiteId,invoicePage,administrativeInvoiceId,administrativeFilters,printOnPos?null:timeZone]):null;
   const currentInvoices=invoiceLoad?.key===invoiceKey?invoiceLoad:null;
   const invoicesQuery={data:currentInvoices?.data??null,isLoading:!!invoiceKey&&(!currentInvoices||currentInvoices.status==="loading"),isError:currentInvoices?.status==="error"};
   useEffect(()=>{
@@ -135,6 +144,29 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   },[open,invoicesQuery.data,printOnPos]);
   const allocations=useMemo(()=>Object.entries(selected).map(([id,value])=>({id,amount:Number(value)})).filter(x=>Number.isFinite(x.amount)&&x.amount>0),[selected]);
   const total=allocations.reduce((sum,x)=>sum+x.amount,0);
+  const canPrepareVoucher=!edgeClient&&!printOnPos&&!!businessId&&!!tenantId&&
+    !!user?.permissions.includes("accounting.read")&&user.permissions.includes("accounting.manual.create");
+  const canPayDirect=!!user?.permissions.includes(direction==="receivable"?"receivables.payments.create":"payables.payments.create");
+  const captureFingerprint=JSON.stringify({businessId,tenantId,partyId,partySiteId,allocations,discountDecisions,canPrepareVoucher,localToday});
+  const liveCapture=useRef({open,fingerprint:captureFingerprint});liveCapture.current={open,fingerprint:captureFingerprint};
+  useEffect(()=>()=>{liveCapture.current.open=false;},[]);
+  const manualPreparation=useMutation({
+    mutationFn:async(fingerprint:string)=>{
+      if(!canPrepareVoucher||!partyId||!businessId||!tenantId)throw new Error("No tienes permiso para preparar este comprobante.");
+      const kind=direction==="receivable"?"Receivable" as const:"Payable" as const;
+      const page=await accountingApi.openPositionSelection({subledgerKind:kind,counterpartyRoleId:partyId,
+        subledgerIds:allocations.map(item=>item.id),effectiveOn:localToday});
+      const value=prepareVoucherPayment(kind,partyId,allocations.map(item=>({...item,
+        financialDiscountEarned:discountDecisions[item.id]==="earned"?true:discountDecisions[item.id]==="lost"?false:null})),page.items);
+      return {fingerprint,businessId,tenantId,value};
+    },
+    onSuccess:result=>{
+      if(!liveCapture.current.open)return;
+      if(result.fingerprint!==liveCapture.current.fingerprint){toast.error("La selección cambió. Revisa las facturas y vuelve a abrir el comprobante.");return;}
+      manualSent.current=false;setManualCapture(result);
+    },
+    onError:error=>toast.error(error.message),
+  });
   const chooseDiscount=(invoice:Invoice,decision:DiscountDecision|null)=>{
     const eligible=invoice.financialDiscountEligibleAmount??0;
     if(decision&&(!eligible||invoice.financialDiscountPendingReturn))return;
@@ -209,6 +241,17 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
       toast.error(`El pago quedó registrado, pero no se pudo imprimir: ${error instanceof Error?error.message:"revisa la impresora."}`));
   }});
   const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(requiresSupplierSite&&!partySiteId){toast.error("Selecciona la sede del proveedor.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
+  if(open&&manualCapture&&businessId===manualCapture.businessId&&tenantId===manualCapture.tenantId)return <Dialog open
+    onOpenChange={next=>{if(!next&&!manualBusy)closeManualCapture()}}>
+    <DialogContent showClose={false} onEscapeKeyDown={event=>event.preventDefault()} onInteractOutside={event=>event.preventDefault()}
+      className="max-h-[94dvh] w-[calc(100%-2rem)] max-w-6xl overflow-y-auto rounded-3xl p-4 sm:p-6">
+      <DialogHeader><DialogTitle>{direction==="receivable"?"Recibo de caja":"Comprobante de egreso"}</DialogTitle>
+        <DialogDescription>{manualCapture.value.mainPartyName} · Facturas e importes seleccionados. Completa las contrapartidas antes de guardar el comprobante.</DialogDescription></DialogHeader>
+      <VoucherDraftEditor businessId={businessId} preparation={manualCapture.value} voucherTypeScope={direction==="receivable"?"CashReceipt":"Disbursement"}
+        onClose={closeManualCapture} onBusyChange={setManualBusy} onSaved={savedManualCapture} onDiscarded={discardedManualCapture}
+        modal closeLabel="Volver a la selección" />
+    </DialogContent>
+  </Dialog>;
   if(open&&step===2)return <PosPaymentDialog
     client={paymentClient} total={total} grossTotal={total} withholdingTotal={0}
     busy={mutation.isPending} documentType="SalesReceipt" documentTypeLocked
@@ -245,10 +288,28 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
       <div className="flex flex-wrap justify-between gap-3 rounded-xl bg-muted p-4"><div><span>Total seleccionado</span>{!printOnPos&&<p className="text-xs text-muted-foreground">{allocations.length} facturas · {allocations.filter(item=>!invoiceItems.some(invoice=>invoice.id===item.id)).length} fuera de esta página</p>}</div><b className="text-lg">{formatCurrency(total,"COP",4)}</b></div>
       {!printOnPos&&allocations.length>0&&<p className="text-sm">Saldo residual proyectado de las seleccionadas: <b>{formatCurrency(allocations.reduce((sum,item)=>sum+(selectedLimits[item.id]??0)-item.amount,0),"COP",4)}</b>. El saldo actual sólo cambia al aplicar el pago.</p>}
       </div></div>
-    <DialogFooter className={`border-t ${printOnPos?"px-6 py-4":"px-4 py-3"}`}><Button type="button" variant="ghost" onClick={()=>changeOpen(false)}>Cancelar</Button><Button type="button" disabled={invoicesQuery.isError||!printOnPos&&(filtersPending||invalidFilterDates||invoicesQuery.isLoading)} onClick={()=>validateStepOne()&&setStep(2)}>Ir a pagar<ArrowRight className="ml-2 h-4 w-4"/></Button></DialogFooter>
+    <DialogFooter className={`border-t ${printOnPos?"px-6 py-4":"px-4 py-3"}`}><Button type="button" variant="ghost" onClick={()=>changeOpen(false)}>Cancelar</Button>{printOnPos||edgeClient
+      ?<Button type="button" disabled={invoicesQuery.isError} onClick={()=>validateStepOne()&&setStep(2)}>Ir a pagar<ArrowRight className="ml-2 h-4 w-4"/></Button>
+      :<PaymentActionMenu direction={direction} label="Ir a pagar" busy={manualPreparation.isPending}
+        disabled={invoicesQuery.isError||filtersPending||invalidFilterDates||invoicesQuery.isLoading}
+        onDirect={canPayDirect?()=>{if(validateStepOne())setStep(2);}:undefined}
+        onVoucher={canPrepareVoucher?()=>{if(validateStepOne())manualPreparation.mutate(captureFingerprint);}:undefined}/>}
+    </DialogFooter>
   </DialogContent></Dialog>;
   function resetInvoiceSelection(){setSelected({});setSelectedLimits({});setSelectedNumbers({});setDiscountDecisions({});setInvoicePage(1);setInvoiceIdFilter(null);initialSelectionApplied.current=false;}
-  function changeOpen(next:boolean){if(!next){if(filterTimer.current)clearTimeout(filterTimer.current);mutation.reset();invoiceRequestEpoch.current++;setParty(null);resetInvoiceSelection();setInvoiceLoad(null);setStep(1);}onOpenChange(next);}
+  function closeManualCapture(){setManualCapture(null);setManualBusy(false);manualPreparation.reset();if(manualSent.current){changeOpen(false);onCompleted?.();}}
+  function savedManualCapture(value:VoucherDraft){
+    queryClient.setQueryData(["voucher-draft",tenantId,businessId,value.documentId],value);
+    // The response owns the draft. Its rank in a filtered list is unknown;
+    // mark that inactive resource stale without issuing another GET.
+    void queryClient.invalidateQueries({queryKey:["financial-traceability",`${tenantId}:${businessId}`],refetchType:"none"});
+    if(value.sentAt)manualSent.current=true;
+  }
+  function discardedManualCapture(documentId:string){
+    queryClient.removeQueries({queryKey:["voucher-draft",tenantId,businessId,documentId]});
+    void queryClient.invalidateQueries({queryKey:["financial-traceability",`${tenantId}:${businessId}`],refetchType:"none"});
+  }
+  function changeOpen(next:boolean){if(!next){if(filterTimer.current)clearTimeout(filterTimer.current);mutation.reset();manualPreparation.reset();setManualCapture(null);invoiceRequestEpoch.current++;setParty(null);resetInvoiceSelection();setInvoiceLoad(null);setStep(1);}onOpenChange(next);}
 }
 function paymentSubmissionError(error:Error){
   const status=error instanceof PosEdgeError?error.status:"statusCode" in error&&typeof error.statusCode==="number"?error.statusCode:0;

@@ -481,7 +481,9 @@ public sealed record GoodsReceiptListItem(
     string? SupplierInvoiceNumber, DateTimeOffset ReceivedAt,
     decimal GrandTotal, DateTimeOffset UpdatedAt,
     string? PurchaseEvidenceType = null, Guid? PayableId = null,
-    decimal? OutstandingAmount = null, string? CurrencyCode = null, string? PayableStatus = null);
+    decimal? OutstandingAmount = null, string? CurrencyCode = null, string? PayableStatus = null,
+    string? AccountingStatus = null, string? AccountingErrorMessage = null,
+    string? FiscalStatus = null, string? FiscalErrorMessage = null);
 
 public sealed record GoodsReceiptPage(
     IReadOnlyList<GoodsReceiptListItem> Items, int Page, int PageSize,

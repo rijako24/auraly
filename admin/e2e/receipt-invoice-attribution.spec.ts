@@ -43,6 +43,7 @@ test("recaudo asistido de dos facturas conserva una forma al cambiar de medio", 
   await dialog.getByRole("checkbox", { name: "Seleccionar FV-1", exact: true }).check();
   await dialog.getByRole("checkbox", { name: "Seleccionar FV-2", exact: true }).check();
   await dialog.getByRole("button", { name: "Ir a pagar", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await expect(dialog.getByText("Para varias facturas se usa un solo medio de pago.", { exact: true })).toBeVisible();
   await dialog.getByRole("textbox", { name: "Valor recibido en Efectivo", exact: true }).fill("60");
   await page.keyboard.press("F2");

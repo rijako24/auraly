@@ -200,6 +200,8 @@ public sealed partial class ExpenseCaptureTests(ServerSliceFixture fixture, ITes
             Assert.Equal(request.ExpenseId, listedExpense.ExpenseId);
             Assert.Equal(detail.Payable.PayableId, listedExpense.PayableId);
             Assert.Equal(detail.Payable.OutstandingAmount, listedExpense.OutstandingAmount);
+            Assert.Equal("Posted", listedExpense.AccountingStatus);
+            Assert.Null(listedExpense.AccountingErrorMessage);
             await using (var connection = new SqlConnection(fixture.ConnectionString))
             {
                 await connection.OpenAsync();

@@ -134,6 +134,7 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
   await expect(detail).toContainText("Cargo de la factura de venta VTA00-00000190");
   await expect(detail.getByRole("button", { name: "Anular gasto" })).toBeVisible();
   await detail.getByRole("button", { name: "Pagar" }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await expect(detail).not.toBeVisible();
   const payment = page.getByRole("dialog", { name: "Pago a proveedores" });
   await expect(payment).toBeVisible();
@@ -141,6 +142,7 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
   await expect(payment.getByText("GTO00-00000020", { exact: true })).toBeVisible();
   await expect(payment.getByLabel("Abono para GTO00-00000020")).toHaveValue("5 000");
   await payment.getByRole("button", { name: "Ir a pagar" }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Pago a proveedores" })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(1);
   await page.goto("/dashboard/expenses");

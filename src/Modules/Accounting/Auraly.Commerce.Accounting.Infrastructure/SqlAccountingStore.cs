@@ -1309,7 +1309,7 @@ public sealed partial class SqlAccountingStore(
                 reader.IsDBNull(16) ? null : reader.GetString(16),
                 reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18),
                 NullableId(reader, 19), NullableText(reader, 20), NullableText(reader, 21),
-                NullableId(reader, 22), NullableText(reader, 23),NullableText(reader,24)));
+                NullableId(reader, 22), NullableText(reader, 23),NullableText(reader,24),NullableText(reader,25)));
         }
         await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);

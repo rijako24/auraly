@@ -4,7 +4,13 @@ public sealed record AccountingOpenPositionQuery(
     string SubledgerKind, int Page, int PageSize, Guid? PartyId = null,
     Guid? AccountId = null, string? Search = null, DateOnly? DueFrom = null,
     DateOnly? DueTo = null, Guid? SubledgerId = null, Guid? CounterpartyRoleId = null, bool ManualSupportOnly = false,
-    DateOnly? EffectiveOn = null, string? VoucherTypeCode = null);
+    DateOnly? EffectiveOn = null, string? VoucherTypeCode = null,
+    IReadOnlyList<Guid>? SubledgerIds = null);
+
+// A bounded selection, not an unpaginated search of the party's portfolio.
+public sealed record AccountingOpenPositionSelectionRequest(
+    string SubledgerKind, Guid CounterpartyRoleId, IReadOnlyList<Guid> SubledgerIds,
+    DateOnly? EffectiveOn = null);
 
 public sealed record AccountingOpenPosition(
     string SubledgerKind, Guid SubledgerId, Guid PartyId, string PartyName,

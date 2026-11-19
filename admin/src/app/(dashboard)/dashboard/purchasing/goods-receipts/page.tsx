@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, FileText, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse,
@@ -19,6 +19,8 @@ import { SupplierChangeConfirmationDialog } from "@/components/purchasing/suppli
 import { DianQuotaNotice } from "@/components/fiscal/dian-quota-notice";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
+import { DocumentProcessingActions } from "@/components/accounting/document-processing-actions";
+import { PaymentActionMenu } from "@/components/payments/payment-action-menu";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -44,7 +46,8 @@ import {
 } from "@/hooks/use-goods-receipts";
 import {
   goodsReceiptsApi, type GoodsReceiptDetail, type GoodsReceiptDraft, type GoodsReceiptLine,
-  type GoodsReceiptListItem, type GoodsReceiptProduct, type GoodsReceiptStatus,
+  type GoodsReceiptListItem,
+  type GoodsReceiptPage, type GoodsReceiptProduct, type GoodsReceiptStatus,
   type SaveGoodsReceiptDraftRequest, type PurchaseEvidenceType, type GoodsReceiptCostDocument,
   type PurchaseCostAllocationMethod, type PurchaseCostKind, type GoodsReceiptVoucherCost,
   type GoodsReceiptFinancialDiscount,
@@ -133,6 +136,8 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
   const userId = useAuthStore((state) => state.user?.userId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canPayVoucher = permissions.has("accounting.read") && permissions.has("accounting.manual.create");
+  const canPayDirect = permissions.has("payables.payments.create");
+  const queryClient = useQueryClient();
   const canCreate = permissions.has("purchasing.goods-receipts.create");
   const canConfirm = permissions.has("purchasing.goods-receipts.confirm");
   const canAssociateProducts = permissions.has("catalog.costs.manage");
@@ -144,6 +149,22 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
   const [editor, setEditor] = useState<EditorDraft>();
   const [detail, setDetail] = useState<GoodsReceiptDetail>();
   const [paymentTarget, setPaymentTarget] = useState<GoodsReceiptDetail>();
+  const [paymentLoadingId, setPaymentLoadingId] = useState<string>();
+  const paymentLoading = useRef(false);
+  const openDirectPayment = useCallback(async (documentId: string) => {
+    if (paymentLoading.current) return;
+    paymentLoading.current = true; setPaymentLoadingId(documentId);
+    try {
+      // The list does not carry the supplier site. Read the selected source once,
+      // only after choosing direct payment, through its existing detail adapter.
+      const receipt = await goodsReceiptsApi.getDetail(documentId);
+      if (receipt.status !== "Processed" || !receipt.payable || receipt.payable.status === "Cancelled" ||
+        receipt.payable.outstandingAmount <= 0 || receipt.payable.currencyCode !== "COP")
+        throw new Error("La compra ya no tiene una obligación disponible para pagar en COP.");
+      setPaymentTarget(receipt);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "No fue posible preparar el pago."); }
+    finally { paymentLoading.current = false; setPaymentLoadingId(undefined); }
+  }, []);
   useEffect(() => {
     if (!businessId) return;
     const receiptId = new URLSearchParams(window.location.search).get("receiptId");
@@ -234,17 +255,22 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
       cell: ({ row }) => formatDateTime(row.original.updatedAt),
     },
     ];
-    if (canPayVoucher) definitions.push({
+    definitions.push({id:"processing",header:"Contabilidad / DIAN",cell:({row})=><DocumentProcessingActions key={row.original.documentId}
+      documentId={row.original.documentId} accountingStatus={row.original.accountingStatus} accountingErrorMessage={row.original.accountingErrorMessage}
+      fiscalStatus={row.original.fiscalStatus} fiscalErrorMessage={row.original.fiscalErrorMessage}
+      onChanged={value=>queryClient.setQueriesData<GoodsReceiptPage>({queryKey:["goods-receipts",businessId]},current=>current?{...current,items:current.items.map(item=>item.documentId===row.original.documentId?{...item,...value}:item)}:current)}/>});
+    if (canPayDirect || canPayVoucher) definitions.push({
       id: "payment", header: "Pago",
       cell: ({ row }) => row.original.status === "Processed" && row.original.payableId &&
         row.original.payableStatus !== "Cancelled" && (row.original.outstandingAmount ?? 0) > 0 ?
-        <Button type="button" size="sm" variant="outline" disabled={row.original.currencyCode !== "COP"}
-          aria-label={`Pagar compra ${row.original.documentNumber}`}
-          onKeyDown={event => event.stopPropagation()}
-          onClick={event => { event.stopPropagation(); router.push(`/dashboard/financial-traceability?new=1&payable=${row.original.payableId}`); }}>Pagar</Button> : null,
+        <PaymentActionMenu direction="payable" size="sm" variant="outline" disabled={row.original.currencyCode !== "COP" || !!paymentLoadingId}
+          ariaLabel={`Pagar compra ${row.original.documentNumber}`}
+          busy={paymentLoadingId === row.original.documentId}
+          onDirect={canPayDirect ? () => void openDirectPayment(row.original.documentId) : undefined}
+          onVoucher={canPayVoucher ? () => router.push(`/dashboard/financial-traceability?new=1&payable=${row.original.payableId}`) : undefined}/> : null,
     });
     return definitions;
-  }, [formatDateTime, canPayVoucher, router]);
+  }, [formatDateTime, canPayVoucher, canPayDirect, paymentLoadingId, openDirectPayment, router, queryClient, businessId]);
 
   const newEntry = async () => {
     if (!businessId || !localDraftKey) return;
@@ -348,11 +374,15 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
           toast.error("No fue posible guardar la recuperación local de esta recepción."));
         setEditor(undefined);
       }} onClear={clearLocalDraft} />
-    <ReceiptDetailDialog detail={detail} canPay={permissions.has("payables.payments.create")}
+    <ReceiptDetailDialog detail={detail} canPay={canPayDirect}
+      onPayVoucher={canPayVoucher && detail?.payable ? () => router.push(`/dashboard/financial-traceability?new=1&payable=${detail.payable!.payableId}`) : undefined}
       canEditCosts={canCreate} onEditCosts={() => void openCostEdit()}
       onPay={() => { setPaymentTarget(detail); setDetail(undefined); }}
       onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
     <PortfolioPaymentWizard direction="payable" open={!!paymentTarget} onOpenChange={open => { if (!open) setPaymentTarget(undefined); }}
+      // Acceptance returns the payment, not this receipt page's payable state.
+      // Reconcile its sole visible owner once; no receipt-detail refetch.
+      onCompleted={() => void list.refetch()}
       initialInvoice={paymentTarget?.payable ? { id: paymentTarget.payable.payableId, number: paymentTarget.documentNumber,
         dueDate: paymentTarget.payable.dueDate, outstanding: paymentTarget.payable.outstandingAmount,
         currency: paymentTarget.payable.currencyCode, overdue: false } : null}
@@ -367,12 +397,13 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
 }
 
 function ReceiptDetailDialog({
-  detail, onClose, canPay, onPay, canEditCosts, onEditCosts,
+  detail, onClose, canPay, onPay, onPayVoucher, canEditCosts, onEditCosts,
 }: {
   detail?: GoodsReceiptDetail;
   onClose: () => void;
   canPay: boolean;
   onPay: () => void;
+  onPayVoucher?: () => void;
   canEditCosts: boolean;
   onEditCosts: () => void;
 }) {
@@ -584,8 +615,8 @@ function ReceiptDetailDialog({
           detail.purchaseEvidenceType === "InternalReceiptVoucher" &&
           detail.currencyCode === "COP" &&
           <Button type="button" variant="outline" onClick={onEditCosts}>Editar costos</Button>}
-        {canPay && detail.status === "Processed" && detail.payable && detail.payable.status !== "Cancelled" && detail.payable.outstandingAmount > 0 &&
-          <><Button type="button" disabled={detail.payable.currencyCode !== "COP"} onClick={onPay}>Registrar egreso</Button>
+        {(canPay || onPayVoucher) && detail.status === "Processed" && detail.payable && detail.payable.status !== "Cancelled" && detail.payable.outstandingAmount > 0 &&
+          <><PaymentActionMenu direction="payable" disabled={detail.payable.currencyCode !== "COP"} onDirect={canPay ? onPay : undefined} onVoucher={onPayVoucher}/>
             {detail.payable.currencyCode !== "COP" && <p className="text-sm text-muted-foreground">Los egresos en moneda extranjera aún no están disponibles.</p>}</>}
         <Button type="button" variant="outline" onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button>
         <Button type="button" onClick={onClose}>Cerrar</Button>

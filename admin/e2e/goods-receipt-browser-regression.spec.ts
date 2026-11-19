@@ -316,10 +316,12 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   const receiptDialog = page.getByRole("dialog", { name: documentNumber, exact: true });
   await expect(receiptDialog).toContainText("54.000");
   expect(receiptReads).toBe(1);
-  await receiptDialog.getByRole("button", { name: "Registrar egreso", exact: true }).click();
+  await receiptDialog.getByRole("button", { name: "Pagar", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   await expect(receiptDialog).toBeHidden();
   await page.getByLabel(`Abono para ${documentNumber}`, { exact: true }).fill("1000");
   await page.getByRole("button", { name: "Ir a pagar", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Pago a proveedores", exact: true });
   await selectRealCashForm(page, checkout);
   const paying = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payable-payments/confirm"));

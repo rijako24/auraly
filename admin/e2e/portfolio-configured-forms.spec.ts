@@ -17,9 +17,10 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
     .map((form,index)=>({...form,code:`FORM-${index}`,paymentTypeId:id(60),typeLabel:form.methodCode,
       accountId:id(70+index),accountCode:`1110${index}`,accountName:form.name,useForSales:true,useForReceipts:true,
       useForSupplierPayments:false,useForPayroll:false,isActive:true,sortOrder:index,version:1,rowVersion:"AAAAAAAAAAE="}));
-  const invoices=[1,2].map(index=>({receivableId:id(100+index),customerId,customerName:"Cliente configurado",
+  const singleInvoice = bankCount === 8 && methodCode === "Transfer";
+  const invoices=(singleInvoice ? [1] : [1,2]).map(index=>({receivableId:id(100+index),customerId,customerName:"Cliente configurado",
     documentNumber:`FV-${index}`,currencyCode:"COP",originalAmount:800,paidAmount:100,outstandingAmount:700,
-    adjustmentAmount:0,dueDate:"2026-10-05T12:00:00-05:00",issuedAt:"2026-09-01T12:00:00-05:00",
+    adjustmentAmount:0,...(singleInvoice ? {originalAmount:1500,outstandingAmount:1400} : {}),dueDate:"2026-10-05T12:00:00-05:00",issuedAt:"2026-09-01T12:00:00-05:00",
     createdAt:"2026-09-01T12:00:00-05:00",status:"PartiallyPaid",isOverdue:true,overdueDays:35,agingBandCode:"Overdue31To60"}));
   let confirmation:Record<string,unknown>|null=null;
   let configurationReads=0;
@@ -32,10 +33,10 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
     else if(path.endsWith("/execution-context/businesses"))body=[{tenantId,businessId,name:"Sede de prueba",timeZone:"America/Bogota"}];
     else if(path.endsWith("/execution-context/access"))body={tenantId,businessId,roles:[],permissions:user.permissions};
     else if(path.endsWith("/receivables/customers"))body={items:[{customerId,customerName:"Cliente configurado",identification:"1001",
-      invoiceCount:2,originalAmount:1600,paidAmount:200,outstandingAmount:1400,overdueAmount:1400}],page:1,pageSize:20,totalCount:1,totalPages:1,
-      totalOutstanding:1400,totalOverdue:1400,totalInvoiceCount:2};
-    else if(path.endsWith("/receivables"))body={items:invoices,page:1,pageSize:20,totalCount:2,totalPages:1,
-      totalOriginal:1600,totalPaid:200,totalAdjustments:0,totalOutstanding:1400,totalOverdue:1400,referenceDate:"2026-11-09"};
+      invoiceCount:invoices.length,originalAmount:singleInvoice?1500:1600,paidAmount:singleInvoice?100:200,outstandingAmount:1400,overdueAmount:1400}],page:1,pageSize:20,totalCount:1,totalPages:1,
+      totalOutstanding:1400,totalOverdue:1400,totalInvoiceCount:invoices.length};
+    else if(path.endsWith("/receivables"))body={items:invoices,page:1,pageSize:20,totalCount:invoices.length,totalPages:1,
+      totalOriginal:singleInvoice?1500:1600,totalPaid:singleInvoice?100:200,totalAdjustments:0,totalOutstanding:1400,totalOverdue:1400,referenceDate:"2026-11-09"};
     else if(path.endsWith("/receivable-payments"))body={items:[],page:1,pageSize:20,totalCount:0,totalPages:0};
     else if(path.endsWith("/accounting/documents")){
       receiptListReads++;
@@ -66,11 +67,12 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
   await page.getByRole("row",{name:/Cliente configurado/}).click();
   const selection=page.getByRole("dialog",{name:"Abono a cartera"});
   await expect(selection.getByText("Original · COP")).toBeVisible();
-  await expect(selection.getByText("35 d")).toHaveCount(2);
+  await expect(selection.getByText("35 d")).toHaveCount(invoices.length);
   await expect(selection.getByRole("button", {name:"Fecha del pago",exact:true})).toHaveCount(0);
-  await selection.getByLabel("Abono para FV-1").fill("700");
-  await selection.getByLabel("Abono para FV-2").fill("700");
+  await selection.getByLabel("Abono para FV-1").fill(singleInvoice?"1400":"700");
+  if(!singleInvoice)await selection.getByLabel("Abono para FV-2").fill("700");
   await selection.getByRole("button",{name:"Ir a pagar"}).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const checkout=page.getByRole("dialog",{name:"Abono a cartera"});
   await expect(checkout.getByText("Cambio a entregar",{exact:true})).toHaveCount(0);
   const paymentDate = checkout.getByRole("button", {name:"Fecha del pago",exact:true});
@@ -165,7 +167,7 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
   await page.getByRole("button",{name:"Guardar transferencia",exact:true}).click();
   await checkout.getByRole("button",{name:"Sin imprimir",exact:true}).click();
   await expect.poll(()=>confirmation).not.toBeNull();
-  expect(confirmation).toMatchObject({paidOn:"2026-11-09",allocations:[{amount:700},{amount:700}],payments:[
+  expect(confirmation).toMatchObject({paidOn:"2026-11-09",allocations:[{amount:1400}],payments:[
     {methodCode:"Transfer",paymentMethodId:id(26),paymentMethodVersion:1,bankAccountId:id(46),amount:700,reference:"REF-7"},
     {methodCode:"Transfer",paymentMethodId:id(27),paymentMethodVersion:1,bankAccountId:id(47),amount:700,reference:"REF-8"},
   ]});

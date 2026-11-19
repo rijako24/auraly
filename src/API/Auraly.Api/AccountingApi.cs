@@ -10,6 +10,13 @@ public static class AccountingApi
 {
     public static IEndpointRouteBuilder MapAccountingApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapPost("/api/commerce/v1/accounting/open-positions/selection", async (HttpContext context,
+            AccountingOpenPositionSelectionRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.OpenPositionsAsync(context.User.ToAccountingIdentity(),
+                new(request.SubledgerKind, 1, request.SubledgerIds?.Count ?? 0,
+                    CounterpartyRoleId: request.CounterpartyRoleId, EffectiveOn: request.EffectiveOn,
+                    SubledgerIds: request.SubledgerIds ?? []), token), Results.Ok))
+            .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/open-positions", async (HttpContext context,
             string? subledgerKind, int? page, int? pageSize, Guid? partyId, Guid? accountId,
             string? search, DateOnly? dueFrom, DateOnly? dueTo, Guid? subledgerId, Guid? counterpartyRoleId, bool? manualSupportOnly, DateOnly? effectiveOn, string? voucherTypeCode,

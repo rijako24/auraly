@@ -1,5 +1,6 @@
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Receivables;
@@ -84,6 +85,7 @@ public sealed partial class AccountingService(
     public Task<AccountingOpenPositionPage> OpenPositionsAsync(AccountingUserIdentity user,
         AccountingOpenPositionQuery query, CancellationToken cancellationToken = default)
     {
+        var selected = query.SubledgerIds;
         var sourceReadPermission = query.VoucherTypeCode == "CashReceipt" ? ReceivablesPermissionCodes.Read
             : query.VoucherTypeCode == "Disbursement" ? PayablesPermissionCodes.Read : query.SubledgerKind switch
         {
@@ -94,9 +96,15 @@ public sealed partial class AccountingService(
         if (!user.Permissions.Contains(AccountingPermissionCodes.Read)
             && (sourceReadPermission is null || !user.Permissions.Contains(sourceReadPermission)))
             throw new AccountingForbiddenException("No tienes permiso para consultar estas obligaciones.");
+        if (selected is not null && (selected.Count is < 1 or > PortfolioSettlement.MaximumAllocations
+            || selected.Any(id => id == Guid.Empty) || selected.Distinct().Count() != selected.Count
+            || query.SubledgerKind is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable)
+            || query.CounterpartyRoleId is null || query.SubledgerId is not null
+            || query.Page != 1 || query.PageSize != selected.Count))
+            throw new AccountingValidationException($"Selecciona entre 1 y {PortfolioSettlement.MaximumAllocations} obligaciones distintas del mismo tercero.");
         if (query.SubledgerKind is not ("All" or AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable or
             AccountingSubledgerKinds.SupplierCredit or AccountingSubledgerKinds.CustomerCredit)
-            || query.Page < 1 || query.PageSize is < 1 or > 50 || query.PartyId == Guid.Empty
+            || query.Page < 1 || query.PageSize < 1 || query.PageSize > (selected is null ? 50 : PortfolioSettlement.MaximumAllocations) || query.PartyId == Guid.Empty
             || query.AccountId == Guid.Empty || query.SubledgerId == Guid.Empty || query.CounterpartyRoleId == Guid.Empty || query.Search?.Length > 120
             || query.DueFrom > query.DueTo || query.ManualSupportOnly && query.SubledgerKind != AccountingSubledgerKinds.Payable
             || query.SubledgerKind == "All" && query.PartyId is null

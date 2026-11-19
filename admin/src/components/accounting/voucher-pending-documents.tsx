@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { accountingApi, type AccountingOpenPosition, type VoucherDraftLineView } from "@/services/api/accounting";
+import { createVoucherPositionLines, voucherDiscountAdjustment, type VoucherDiscountDecision as DiscountDecision } from "@/lib/voucher-payment-preparation";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { AccountSelect } from "./account-select";
 import { AccountingDocumentDialog } from "./accounting-document-dialog";
@@ -17,22 +18,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 type Kind = AccountingOpenPosition["subledgerKind"];
 type LinkedPosition = { subledgerKind: Kind; subledgerId: string; amount: number; financialDiscountEarned?: boolean | null; creditCrossing?: boolean };
 export type VoucherCreditTarget = VoucherDraftLineView & { availableForCreditAmount: number };
-type DiscountDecision = "pending" | "earned" | "lost";
+
 const supportedKind = (value: string): value is Kind =>
   value === "Payable" || value === "Receivable" || value === "SupplierCredit" || value === "CustomerCredit";
 
-export function createVoucherPositionLine(position: AccountingOpenPosition, amount: number,
-  financialGroupId: string | null, financialDiscountEarned: boolean | null = null): VoucherDraftLineView {
-  return { value: {
-    lineId: crypto.randomUUID(), accountId: position.accountId, partyId: position.partyId,
-    partySiteId: position.partySiteId, costCenterId: null,
-    description: `Aplicación ${position.documentNumber}`.slice(0, 500), reference: position.documentNumber.slice(0, 100),
-    debit: (position.openingCredit ?? 0) > 0 ? amount : 0, credit: (position.openingDebit ?? 0) > 0 ? amount : 0,
-    existingPosition: { subledgerKind: position.subledgerKind, subledgerId: position.subledgerId },
-    financialGroupId, financialDiscountEarned,
-  }, accountCode: position.accountCode, accountName: position.accountName,
-    partyName: position.partyName, partyIdentification: position.partyIdentification, costCenterName: null };
-}
 function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, linked, remainingLineCapacity, crossTargets, onCross, onAdd, onOpenOrigin, addBlockReason }: {
   position: AccountingOpenPosition; kind: Kind; voucherTypeCode?: string | null;
   sourceTypeLabel: string;
@@ -73,9 +62,7 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, 
   const discountAvailable = voucherTypeCode === "Disbursement" && kind === "Payable" &&
     !!position.financialDiscountEligibleAmount && position.financialDiscountAnticipated != null &&
     !position.financialDiscountDecided && !position.financialDiscountPendingReturn && crossAmount === 0;
-  const adjustment = discountAvailable && decision !== "pending"
-    ? (decision === "earned" ? position.financialDiscountEligibleAmount! : 0) -
-      (position.financialDiscountAnticipated ? position.financialDiscountEligibleAmount! : 0) : 0;
+  const adjustment = discountAvailable ? voucherDiscountAdjustment(position, decision) : 0;
   const discountAccountId = adjustment > 0 ? position.financialDiscountEarnedAccountId
     : adjustment < 0 ? position.financialDiscountLostAccountId : null;
   const canAdd = !!position.accountId && !position.openingLinkIssue && position.currencyCode === "COP" &&
@@ -88,17 +75,7 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, 
 
   function add() {
     if (!canAdd || addBlockReason || amount === null) return;
-    const groupId = decision === "pending" ? null : crypto.randomUUID();
-    const selected = createVoucherPositionLine(position, amount, groupId, decision === "pending" ? null : decision === "earned");
-    const counterpart: VoucherDraftLineView[] = adjustment === 0 ? [] : [{ value: {
-      lineId: crypto.randomUUID(), accountId: discountAccountId!, partyId: position.partyId,
-      costCenterId: null, description: `Descuento financiero ${position.documentNumber}`.slice(0, 500),
-      reference: position.documentNumber.slice(0, 100), debit: adjustment < 0 ? -adjustment : 0,
-      credit: adjustment > 0 ? adjustment : 0, financialGroupId: groupId,
-    }, accountCode: adjustment > 0 ? position.financialDiscountEarnedAccountCode ?? null : position.financialDiscountLostAccountCode ?? null,
-      accountName: adjustment > 0 ? position.financialDiscountEarnedAccountName ?? null : position.financialDiscountLostAccountName ?? null,
-      partyName: position.partyName, partyIdentification: position.partyIdentification, costCenterName: null }];
-    onAdd([selected, ...counterpart]);
+    onAdd(createVoucherPositionLines(position, amount, decision));
   }
 
   return <><tr className="border-t align-top text-sm" aria-label={`Documento ${position.documentNumber}`}>

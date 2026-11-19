@@ -244,6 +244,10 @@ export interface GoodsReceiptListItem {
   outstandingAmount?: number | null;
   currencyCode?: string | null;
   payableStatus?: string | null;
+  accountingStatus?: string | null;
+  accountingErrorMessage?: string | null;
+  fiscalStatus?: string | null;
+  fiscalErrorMessage?: string | null;
 }
 
 export interface GoodsReceiptPage {

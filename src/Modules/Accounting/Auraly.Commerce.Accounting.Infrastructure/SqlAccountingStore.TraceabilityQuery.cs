@@ -352,13 +352,14 @@ public sealed partial class SqlAccountingStore
               entry.EntryId,entry.EntryNumber,
               COALESCE(entry.DebitTotal,draftTotals.DebitTotal,draft.AdjustmentAmount) DebitTotal,
               COALESCE(entry.CreditTotal,draftTotals.CreditTotal,draft.AdjustmentAmount) CreditTotal,entry.PostedAt,
-              fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus,
+              fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,COALESCE(fiscalProcess.Status,fiscal.FiscalStatus) FiscalStatus,
               CONVERT(bit,CASE WHEN draft.DocumentId IS NOT NULL THEN 1 ELSE 0 END) HasManualDraft,
               mainParty.PartyId MainPartyId,
               COALESCE(mainParty.DisplayName,mainParty.LegalName,mainParty.Identification) MainPartyName,
               mainParty.Identification MainPartyIdentification,
               reversal.SourceDocumentId ReversalDocumentId,reversalJob.Status ReversalStatus,
-              COALESCE(accepted.VoucherTypeCode,draft.VoucherTypeCode,sourceNumber.VoucherTypeCode) VoucherTypeCode
+              COALESCE(accepted.VoucherTypeCode,draft.VoucherTypeCode,sourceNumber.VoucherTypeCode) VoucherTypeCode,
+              COALESCE(fiscalProcess.LastErrorMessage,fiscalProcess.LastStatusDescription) FiscalErrorMessage
             INTO #Documents
             FROM #DocumentPage job
             LEFT JOIN dbo.AccountingSourceDocuments accepted ON accepted.SourceDocumentId=job.SourceDocumentId
@@ -372,6 +373,7 @@ public sealed partial class SqlAccountingStore
               FROM accounting.VoucherDraftLines WHERE DocumentId=draft.DocumentId) draftTotals
             LEFT JOIN dbo.AccountingEntries entry ON entry.EntryId=job.EntryId
             LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=job.SourceDocumentId AND fiscal.BusinessId=@BusinessId
+            LEFT JOIN dbo.FiscalDocumentProcesses fiscalProcess ON fiscalProcess.DocumentId=fiscal.DocumentId AND fiscalProcess.BusinessId=@BusinessId
             LEFT JOIN dbo.AccountingSourceDocuments reversal ON reversal.ReversesDocumentId=job.SourceDocumentId
               AND reversal.TenantId=@TenantId AND reversal.BusinessId=@BusinessId
             LEFT JOIN dbo.AccountingPostingJobs reversalJob ON reversalJob.SourceDocumentId=reversal.SourceDocumentId

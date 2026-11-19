@@ -111,6 +111,7 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
   await expect(page.getByLabel("Abono para FV-001")).toBeVisible();
   await expect.poll(() => paymentInvoiceReads).toBe(readsBeforeCancel + 1);
   await page.getByRole("button", { name: "Ir a pagar" }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Abono a cartera" });
   await expect(checkout.getByText("Recibo de abono a cartera")).toBeVisible();
   if (delayPaymentMethods) {
@@ -279,6 +280,7 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
     await expect(page.getByLabel("Abono para FC-001")).toHaveValue("10 000");
   }
   await page.getByRole("button", { name: "Ir a pagar" }).click();
+  await page.getByRole("menuitem", { name: "Pago directo", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Pago a proveedores" });
   const methodButtons = checkout.locator("button", { hasText: /F[1-4]$/ });
   await expect(methodButtons).toHaveCount(4);

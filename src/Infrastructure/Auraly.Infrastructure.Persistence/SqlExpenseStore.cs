@@ -145,14 +145,22 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense' AND p.BusinessId=e.BusinessId
               LEFT JOIN dbo.DispatchExpenses dispatchExpense ON dispatchExpense.AcceptedExpenseId=e.ExpenseId AND dispatchExpense.BusinessId=e.BusinessId
               LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId WHERE {filter};
-            SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name,e.ExpenseConceptId,COALESCE(c.Name,e.Description),
+            WITH PageEntries AS (
+            SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name SupplierName,e.ExpenseConceptId,COALESCE(c.Name,e.Description) ConceptName,
               e.IssuedAt,e.DueDate,e.GrossAmount,e.WithholdingAmount,e.NetPayable,e.CurrencyCode,e.Status,e.EvidenceUrl,e.PurchaseEvidenceType,
-              COALESCE(p.Status,CASE WHEN e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL THEN N'Paid' END),COALESCE(p.OutstandingAmount,CASE WHEN e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL THEN 0 END),CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),p.PayableId
+              COALESCE(p.Status,CASE WHEN e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL THEN N'Paid' END) PayableStatus,COALESCE(p.OutstandingAmount,CASE WHEN e.Status=N'Processed' AND dispatchExpense.AcceptedExpenseId IS NOT NULL THEN 0 END) OutstandingAmount,CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit) ChargeReturned,p.PayableId
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId LEFT JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId
               LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense' AND p.BusinessId=e.BusinessId
               LEFT JOIN dbo.DispatchExpenses dispatchExpense ON dispatchExpense.AcceptedExpenseId=e.ExpenseId AND dispatchExpense.BusinessId=e.BusinessId
               LEFT JOIN dbo.SalesReturnCharges returned ON returned.AppliedChargeId=e.ExpenseId
-              WHERE {filter} ORDER BY e.IssuedAt DESC,e.ExpenseId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
+              WHERE {filter} ORDER BY e.IssuedAt DESC,e.ExpenseId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY
+            )
+            SELECT page.*,posting.Status,posting.LastErrorMessage,fiscal.Status,COALESCE(fiscal.LastErrorMessage,fiscal.LastStatusDescription)
+            FROM PageEntries page
+            LEFT JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=page.ExpenseId
+              AND posting.SourceDocumentType=N'Expense' AND posting.BusinessId=@BusinessId AND posting.TenantId=@TenantId
+            LEFT JOIN dbo.FiscalDocumentProcesses fiscal ON fiscal.DocumentId=page.ExpenseId AND fiscal.BusinessId=@BusinessId
+            ORDER BY page.IssuedAt DESC,page.ExpenseId;
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId); command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
         command.Parameters.AddWithValue("@ConceptId", (object?)conceptId ?? DBNull.Value); command.Parameters.AddWithValue("@SupplierId", (object?)supplierId ?? DBNull.Value);
@@ -165,7 +173,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         await using var reader = await command.ExecuteReaderAsync(ct); await reader.ReadAsync(ct);
         var count = reader.GetInt32(0); var gross = reader.GetDecimal(1); var held = reader.GetDecimal(2); var net = reader.GetDecimal(3);
         await reader.NextResultAsync(ct); var items = new List<ExpenseListItem>();
-        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15), reader.IsDBNull(16) ? null : reader.GetString(16), reader.IsDBNull(17) ? null : reader.GetDecimal(17), reader.GetBoolean(18),reader.IsDBNull(19)?null:reader.GetGuid(19)));
+        while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15), reader.IsDBNull(16) ? null : reader.GetString(16), reader.IsDBNull(17) ? null : reader.GetDecimal(17), reader.GetBoolean(18),reader.IsDBNull(19)?null:reader.GetGuid(19),reader.IsDBNull(20)?null:reader.GetString(20),reader.IsDBNull(21)?null:reader.GetString(21),reader.IsDBNull(22)?null:reader.GetString(22),reader.IsDBNull(23)?null:reader.GetString(23)));
         return new(items, page, pageSize, count, gross, held, net);
     }
 

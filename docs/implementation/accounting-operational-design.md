@@ -789,6 +789,33 @@ active tenant/business dimensions and equal positive debit and credit totals.
 
 ### Explicit reconciliation of commercial-only positions
 
+**Opening invoice intake review (2026-11-19, approved for implementation):** the
+current screen can select an existing obligation but cannot enter a new legacy
+invoice reference, issue date and due date. An account and party alone do not
+provide an invoice-level portfolio. This is an actual capture/contract gap,
+not a missing label. The proposed extension expands invoice details when the
+selected account has a receivable/payable financial function. Each row carries
+the existing party/site, original document reference, issue/due dates, currency
+and amount outstanding at cutover. The account line derives its amount from
+those rows. Existing obligations must be linked rather than created again;
+new opening obligations require an explicit extension of the current opening
+acceptance and financial writer. A free-text reference alone must never pretend
+to create collectible/payable portfolio. No new sale, purchase, inventory or
+fiscal emission is implied by bringing forward a balance. This proposal does
+not reopen completed historical openings or change the approved Megafruver plan.
+
+The official guides use different interfaces for the same reconciliation need:
+[Siigo Nube](https://siigonube.portaldeclientes.siigo.com/ingresar-saldos-iniciales-de-proveedores/)
+provides dedicated opening portfolio captures;
+[Alegra Colombia](https://ayuda.alegra.com/col/ingresa-los-saldos-iniciales-de-tus-cuentas-contables)
+expands a document reference section inside opening account lines;
+[ERPNext](https://docs.frappe.io/erpnext/opening-invoice-creation-tool)
+uses an opening invoice tool and explicitly reconciles the document schedule
+with the control accounts. These are product precedents, not a DIAN requirement
+for a particular screen layout. Implementation remains pending. The approved extension requires its own acceptance cases
+for new versus already existing obligations, cutover ageing, subsequent partial
+payments, exact-once opening and equality with the opening control account.
+
 The existing opening capture optionally identifies one existing payable or
 receivable per line. Its stable `LineId` and nullable `ExistingPayableId` /
 `ExistingReceivableId` extend `AccountingOpeningBalanceLines`; they do not

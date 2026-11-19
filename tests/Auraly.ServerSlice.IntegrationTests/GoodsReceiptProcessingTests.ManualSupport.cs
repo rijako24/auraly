@@ -253,6 +253,12 @@ public sealed partial class GoodsReceiptProcessingTests
             Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("expense").ValueKind);
             Assert.Equal(FiscalDocumentStatusCodes.AwaitingManualSubmission,
                 await ScalarAsync<string>("SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@Id", documentId));
+            var trace = await accounting.ListDocumentsAsync(identity, new(2026, 9, 1), new(2026, 9, 30),
+                "ManualAccountingVoucher", null, null, 1, 100, partyId: fixture.SupplierPartyId);
+            var visibleSupport = Assert.Single(trace.Items.Where(item => item.SourceDocumentId == documentId));
+            Assert.Equal("Posted", visibleSupport.Status);
+            Assert.Equal(FiscalDocumentStatusCodes.AwaitingManualSubmission, visibleSupport.FiscalStatus);
+            Assert.Null(visibleSupport.FiscalErrorMessage);
             using (var unauthorized = fixture.CreateAdminClient(AccountingPermissionCodes.ManualSend))
             using (var denied = await unauthorized.PostAsJsonAsync(
                 $"/api/commerce/v1/fiscal/documents/{documentId}/send-manual-support", new { }))

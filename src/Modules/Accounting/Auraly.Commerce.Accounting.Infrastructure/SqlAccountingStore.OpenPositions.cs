@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Commerce.Accounting.Application;
@@ -105,6 +106,7 @@ public sealed partial class SqlAccountingStore
         var filters = $"""
             {selectionPartyFilter}
             AND (@Id IS NULL OR p.SubledgerId=@Id)
+            {(query.SubledgerIds is null ? "" : "AND EXISTS(SELECT 1 FROM @SelectedIds selected WHERE selected.Id=p.SubledgerId)")}
             AND (@RoleId IS NULL OR p.CounterpartyRoleId=@RoleId)
             AND (@ManualSupportOnly=0 OR p.SourceDocumentType=N'ManualAccountingVoucher' AND EXISTS(
                 SELECT 1 FROM dbo.FiscalDocuments fiscal WHERE fiscal.DocumentId=p.SourceDocumentId
@@ -161,6 +163,7 @@ public sealed partial class SqlAccountingStore
         // Filter once into narrow candidate keys. Count and page share that set;
         // only page keys reach source detail, opening-line and reservation enrichment.
         await using var command = new SqlCommand($"""
+            {(query.SubledgerIds is null ? "" : "DECLARE @SelectedIds TABLE(Id uniqueidentifier PRIMARY KEY); INSERT @SelectedIds SELECT value FROM OPENJSON(@SelectedIdsJson);")}
             DECLARE @EarnedMappingId uniqueidentifier,@LostMappingId uniqueidentifier,
               @EarnedAccountId uniqueidentifier,@LostAccountId uniqueidentifier,
               @EarnedCode nvarchar(32),@LostCode nvarchar(32),
@@ -254,6 +257,8 @@ public sealed partial class SqlAccountingStore
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        if (query.SubledgerIds is not null)
+            command.Parameters.Add("@SelectedIdsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(query.SubledgerIds);
         command.Parameters.AddWithValue("@ManualSupportOnly", query.ManualSupportOnly);
         command.Parameters.Add("@PartyId", SqlDbType.UniqueIdentifier).Value = (object?)query.PartyId ?? DBNull.Value;
         command.Parameters.Add("@Id", SqlDbType.UniqueIdentifier).Value = (object?)query.SubledgerId ?? DBNull.Value;

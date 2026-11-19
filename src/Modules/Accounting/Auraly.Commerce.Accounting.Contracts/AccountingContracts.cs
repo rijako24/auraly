@@ -575,7 +575,8 @@ public sealed record AccountingDocumentRow(
     string? FiscalDocumentType, string? DianNumber, string? UniqueCodeType,
     string? UniqueCode, string? FiscalStatus, bool HasManualDraft = false,
     Guid? MainPartyId = null, string? MainPartyName = null, string? MainPartyIdentification = null,
-    Guid? ReversalDocumentId = null, string? ReversalStatus = null,string? VoucherTypeCode = null);
+    Guid? ReversalDocumentId = null, string? ReversalStatus = null,string? VoucherTypeCode = null,
+    string? FiscalErrorMessage = null);
 
 public sealed record AccountingDocumentPage(
     IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)

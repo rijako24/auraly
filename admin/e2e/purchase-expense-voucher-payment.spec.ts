@@ -2,10 +2,12 @@ import { expect, test } from "@playwright/test";
 import type { AccountingOpenPosition, SaveVoucherDraft } from "../src/services/api/accounting";
 import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
 
-for (const expense of [false, true]) for (const blocked of [false, true]) {
-  test(`${expense ? "gasto" : "compra"}: Pagar ${blocked ? "expone la apertura sin conciliar" : "prepara su CxP exacta en el egreso existente"}`, async ({ page, baseURL }) => {
+for (const expense of [false, true]) for (const direct of [false, true]) for (const blocked of direct ? [false] : [false, true]) {
+  test(`${expense ? "gasto" : "compra"}: Pagar ${direct ? "abre pago directo sin permisos contables" : blocked ? "expone la apertura sin conciliar" : "prepara su CxP exacta en el egreso existente"}`, async ({ page, baseURL }, testInfo) => {
     const scenario = financialVoucherScenario();
-    scenario.user.permissions.push("expenses.read", "purchasing.goods-receipts.read");
+    scenario.user.permissions.push("expenses.read", "purchasing.goods-receipts.read", "payables.read");
+    scenario.user.permissions = scenario.user.permissions.filter(permission => direct
+      ? !permission.startsWith("accounting.") : permission !== "payables.payments.create");
     const number = expense ? "GTO-001" : "EM-001", sourceType = expense ? "Expense" : "GoodsReceipt";
     const position: AccountingOpenPosition = { subledgerKind: "Payable", subledgerId: scenario.positionId,
       partyId: scenario.draft.mainPartyId!, partyName: "Proveedor de prueba", partyIdentification: "900123456",
@@ -33,7 +35,24 @@ for (const expense of [false, true]) for (const blocked of [false, true]) {
           expenseId: "aaaaaaaa-2222-1111-1111-111111111111", documentNumber: "SALDADO", outstandingAmount: 0, payableStatus: "Paid" }],
           page: 1, pageSize: 25, totalPages: 1, totalCount: 2, grossTotal: 200, withholdingTotal: 0, netPayableTotal: 200 } }); return;
       }
-      if (path.endsWith(`/expenses/${scenario.documentId}`) || path.endsWith(`/goods-receipts/${scenario.documentId}`)) detailReads++;
+      if (path.endsWith(`/expenses/${scenario.documentId}`) || path.endsWith(`/goods-receipts/${scenario.documentId}`)) {
+        detailReads++;
+        await route.fulfill({json:{documentId:scenario.documentId,expenseId:scenario.documentId,documentNumber:number,status:"Processed",
+          supplierId:scenario.draft.mainPartyId,supplierName:"Proveedor de prueba",currencyCode:"COP",dueDate:position.dueDate,chargeReturned:false,
+          payable:{payableId:position.subledgerId,currencyCode:"COP",status:"PartiallyPaid",outstandingAmount:80,dueDate:position.dueDate,
+            partySiteId:"aaaaaaaa-3333-1111-1111-111111111111",partySiteName:"Principal"}}});return;
+      }
+      if(path.endsWith("/payables")){
+        expect(url.searchParams.get("payableId")).toBe(position.subledgerId);
+        await route.fulfill({json:{items:[{payableId:position.subledgerId,documentNumber:number,currencyCode:"COP",outstandingAmount:80,
+          dueDate:position.dueDate,isOverdue:false,status:"PartiallyPaid"}],page:1,pageSize:20,totalCount:1,totalPages:1,currencyTotals:[]}});return;
+      }
+      if(path.endsWith("/accounting/settlement-configuration")){
+        await route.fulfill({json:{isAccountingEnabled:false,bankAccounts:[],paymentMethods:{contractVersion:2,forms:[]}}});return;
+      }
+      if(path.endsWith("/parties/site-options")){
+        await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;
+      }
       if (path.endsWith("/accounting/documents")) financialLists++;
       if (path.endsWith("/accounting/open-positions")) {
         positions++;
@@ -60,7 +79,24 @@ for (const expense of [false, true]) for (const blocked of [false, true]) {
     });
     await page.goto(expense ? "/dashboard/expenses" : "/dashboard/purchasing/goods-receipts");
     await expect(page.getByRole("button", { name: /Pagar .*SALDADO/ })).toHaveCount(0);
-    await page.getByRole("button", { name: `Pagar ${expense ? "gasto" : "compra"} ${number}`, exact: true }).click();
+    const payButton=page.getByRole("button", { name: `Pagar ${expense ? "gasto" : "compra"} ${number}`, exact: true });
+    if(direct){await payButton.focus();await page.keyboard.press("Enter");}else await payButton.click();
+    expect(positions).toBe(0); expect(detailReads).toBe(0);
+    await expect(page.getByRole("menuitem",{name:direct?"Comprobante de egreso":"Pago directo",exact:true})).toBeDisabled();
+    if(direct){
+      await page.getByRole("menuitem",{name:"Pago directo",exact:true}).press("Enter");
+      const wizard=page.getByRole("dialog",{name:"Pago a proveedores",exact:true});
+      await expect(wizard.getByLabel(`Abono para ${number}`,{exact:true})).toHaveValue("80");
+      await expect(wizard.getByRole("combobox",{name:"Seleccionar proveedor y sede",exact:true})).toContainText("Proveedor de prueba · Principal");
+      await wizard.getByRole("button",{name:"Ir a pagar",exact:true}).click();
+      await page.getByRole("menuitem",{name:"Pago directo",exact:true}).click();
+      await expect(wizard.getByRole("button",{name:"Fecha del pago",exact:true})).toBeVisible();
+      await page.setViewportSize({width:390,height:844});
+      await page.screenshot({path:testInfo.outputPath("direct-payment-mobile.png"),fullPage:true});
+      expect(lists).toBe(1);expect(detailReads).toBe(1);expect(positions).toBe(0);expect(financialLists).toBe(0);expect(writes).toHaveLength(0);
+      return;
+    }
+    await page.getByRole("menuitem", { name: "Comprobante de egreso", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`financial-traceability\\?new=1&payable=${position.subledgerId}`));
     if (blocked) {
       await expect(page.getByRole("alert").filter({ hasText: "Falta conciliar la apertura original" })).toBeVisible();
