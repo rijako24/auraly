@@ -245,7 +245,7 @@ public sealed partial class SqlPayablesStore(
                    p.OriginalAmount,p.OutstandingAmount,p.DueDate,p.Status,p.CreatedAt,
                    CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN CAST(1 AS BIT)
                         ELSE CAST(0 AS BIT) END IsOverdue,
-                   p.PartySiteId,s.PartyId SupplierPartyId,p.SourceDocumentId,p.SourceDocumentType
+                   p.PartySiteId,s.PartyId SupplierPartyId,p.SourceDocumentId,p.SourceDocumentType,p.InvoiceIssuedAt
             INTO #Page
             FROM dbo.Payables p
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
@@ -275,7 +275,7 @@ public sealed partial class SqlPayablesStore(
               CASE WHEN page.SourceDocumentType=N'GoodsReceipt' AND discount.EligibleAmount>0
                 AND decided.PayableId IS NULL THEN discount.Anticipated END FinancialDiscountAnticipated,
               CASE WHEN pending.PurchaseReturnId IS NULL THEN CONVERT(bit,0) ELSE CONVERT(bit,1) END FinancialDiscountPendingReturn,
-              issue.IssuedAt,page.SourceDocumentType
+              COALESCE(page.InvoiceIssuedAt,issue.IssuedAt),page.SourceDocumentType
             FROM #Page page
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=page.PartySiteId AND site.PartyId=page.SupplierPartyId
             LEFT JOIN dbo.Expenses expense ON page.SourceDocumentType=N'Expense'

@@ -73,10 +73,10 @@ public sealed partial class SqlReceivablesStore
               -- A COALESCE in the party join produced a cartesian candidate plan
               -- and thousands of repeated site/role lookups for one customer.
               SELECT r.ReceivableId,r.CustomerId,COALESCE(customer.PartyId,r.PartyId) PartyId,
-                r.PartySiteId,CASE WHEN @TemplateVersion>=4 THEN COALESCE(fiscal.FiscalNumber,entry.EntryNumber,r.DocumentNumber)
+                r.PartySiteId,CASE WHEN @TemplateVersion>=4 AND r.InvoiceIssuedAt IS NULL THEN COALESCE(fiscal.FiscalNumber,entry.EntryNumber,r.DocumentNumber)
                   ELSE r.DocumentNumber END DocumentNumber,r.DocumentNumber InternalDocumentNumber,
                 r.CurrencyCode,r.OriginalAmount,r.DueDate,r.Status,
-                r.SourceDocumentId,r.SourceDocumentType
+                r.SourceDocumentId,r.SourceDocumentType,r.InvoiceIssuedAt
               INTO #DocumentCandidates
               FROM dbo.Receivables r
               JOIN dbo.Businesses business ON business.BusinessId=r.BusinessId AND business.TenantId=@TenantId
@@ -141,7 +141,7 @@ public sealed partial class SqlReceivablesStore
               INSERT #Scoped
               SELECT document.ReceivableId,CASE WHEN @WithCredits=1 THEN identityScope.CustomerId ELSE document.CustomerId END,
                 identityScope.PartyId,document.PartySiteId,document.DocumentNumber,document.CurrencyCode,document.OriginalAmount,
-                document.DueDate,document.Status,source.IssuedAt
+                document.DueDate,document.Status,COALESCE(document.InvoiceIssuedAt,source.IssuedAt)
               FROM #DocumentCandidates document
               JOIN #ReportIdentities identityScope ON identityScope.PartyId=document.PartyId
                 AND (identityScope.PartySiteId=document.PartySiteId OR identityScope.PartySiteId IS NULL AND document.PartySiteId IS NULL)

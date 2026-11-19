@@ -25,10 +25,11 @@ test("apertura real vincula la deuda histórica desde la vista sin volver a crea
   expect(equity).toBeTruthy();
   await page.goto("/dashboard/accounting");
   await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
-  const rows = page.locator("tbody tr");
+  const rows = page.getByRole("row", { name: /^Partida de apertura / });
   await rows.nth(0).getByRole("combobox").first().click();
   await page.getByRole("option", { name: `${code}01 · Obligación conciliada E2E`, exact: true }).click();
-  await rows.nth(0).getByRole("combobox", { name: "Seleccionar tercero", exact: true }).click();
+  await rows.nth(0).getByRole("button", { name: "Vincular factura existente" }).click();
+  await rows.nth(0).getByRole("combobox", { name: "Tercero de apertura 1", exact: true }).click();
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(fixture.partyName);
   await page.getByRole("option").filter({ hasText: fixture.partyName }).click();
   await page.getByRole("combobox", { name: "Vincular obligación anterior en partida 1", exact: true }).click();

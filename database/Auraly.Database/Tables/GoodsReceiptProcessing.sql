@@ -331,6 +331,8 @@ CREATE TABLE [dbo].[Payables]
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
     [DocumentNumber] NVARCHAR(80) NOT NULL,
+    -- Historical invoice date; the opening transaction retains its cutover date.
+    [InvoiceIssuedAt] DATETIMEOFFSET(7) NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
     [OriginalAmount] DECIMAL(19,4) NOT NULL,
     [OutstandingAmount] DECIMAL(19,4) NOT NULL,
@@ -359,7 +361,9 @@ CREATE TABLE [dbo].[Payables]
     CONSTRAINT [FK_Payables_ParentGoodsReceipt] FOREIGN KEY ([ParentGoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
     CONSTRAINT [UQ_Payables_Source] UNIQUE ([SourceDocumentId], [SourceDocumentType], [SourceLineId]),
     CONSTRAINT [CK_Payables_SourceLine] CHECK ([SourceLineId] IS NULL OR
-      ([SourceLineId]<>'00000000-0000-0000-0000-000000000000' AND [SourceDocumentType]=N'ManualAccountingVoucher')),
+      ([SourceLineId]<>'00000000-0000-0000-0000-000000000000' AND [SourceDocumentType] IN(N'ManualAccountingVoucher',N'AccountingOpeningBalance'))),
+    CONSTRAINT [CK_Payables_InvoiceIssuedAt] CHECK ([InvoiceIssuedAt] IS NULL OR
+      ([SourceDocumentType]=N'AccountingOpeningBalance' AND [SourceLineId] IS NOT NULL)),
     CONSTRAINT [CK_Payables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0 AND ([FunctionalOriginalAmount] IS NULL OR [FunctionalOriginalAmount]>0) AND [ExchangeRate]>0),
     CONSTRAINT [CK_Payables_Status] CHECK ([Status] IN (N'Open', N'PartiallyPaid', N'Paid', N'Cancelled'))
 );

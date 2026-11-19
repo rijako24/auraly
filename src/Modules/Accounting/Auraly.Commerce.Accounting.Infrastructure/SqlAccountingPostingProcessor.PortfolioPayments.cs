@@ -279,19 +279,22 @@ public sealed partial class SqlAccountingPostingProcessor
     }
 
     private async Task OpenManualReceivablesAsync(SqlConnection connection, SqlTransaction transaction,
-        SourceEnvelope source, IReadOnlyList<VoucherFinancialPositionEffect> openings, CancellationToken token)
+        SourceEnvelope source, IReadOnlyList<VoucherFinancialPositionEffect> openings, CancellationToken token,
+        IReadOnlyDictionary<Guid,DateTimeOffset>? issuedAt = null)
     {
         await using var command = new SqlCommand(DeclareReceivableOpeningsSql + """
             INSERT @ReceivableOpenings(ReceivableId,TransactionId,CustomerId,PartyId,PartySiteId,
-              DocumentId,DocumentType,SourceLineId,Number,Amount,DueDate,OccurredAt)
+              DocumentId,DocumentType,SourceLineId,Number,Amount,DueDate,OccurredAt,InvoiceIssuedAt)
             SELECT PositionId,EffectId,CounterpartyRoleId,CASE WHEN CounterpartyRoleId IS NULL THEN PartyId END,
-              PartySiteId,@DocumentId,@DocumentType,SourceLineId,DocumentReference,Amount,DueDate,@At
+              PartySiteId,@DocumentId,@DocumentType,SourceLineId,DocumentReference,Amount,DueDate,@At,InvoiceIssuedAt
             FROM OPENJSON(@Rows) WITH(PositionId uniqueidentifier,EffectId uniqueidentifier,CounterpartyRoleId uniqueidentifier,
               PartyId uniqueidentifier,PartySiteId uniqueidentifier,SourceLineId uniqueidentifier,DocumentReference nvarchar(64),
-              Amount decimal(19,4),DueDate datetimeoffset(7));
+              Amount decimal(19,4),DueDate datetimeoffset(7),InvoiceIssuedAt datetimeoffset(7));
             IF @@ROWCOUNT<>@Count THROW 51845,'The manual receivable opening batch is incomplete.',1;
             """ + OpenReceivablesSql, connection, transaction);
-        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(openings);
+        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(openings.Select(item=>new {
+            item.PositionId,item.EffectId,item.CounterpartyRoleId,item.PartyId,item.PartySiteId,item.SourceLineId,
+            item.DocumentReference,item.Amount,item.DueDate,InvoiceIssuedAt=issuedAt is null?(DateTimeOffset?)null:issuedAt[item.SourceLineId] }));
         command.Parameters.AddWithValue("@Count", openings.Count);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
         command.Parameters.AddWithValue("@DocumentId", source.DocumentId);

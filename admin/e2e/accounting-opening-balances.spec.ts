@@ -9,12 +9,109 @@ async function authenticate(page: Page) {
   await page.addInitScript(({ tenant, business, granted }) => {
     localStorage.setItem("selected_tenant_id", tenant);
     localStorage.setItem("selected_business_id", business);
+    localStorage.setItem("auraly:pwa-install-dismissed", "1");
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user: { userId: "33333333-3333-3333-3333-333333333333", tenantId: tenant, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: granted } }, version: 0 }));
   }, { tenant: tenantId, business: businessId, granted: permissions });
 }
 
 async function json(route: Route, body: unknown) {
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test(`captura la factura inicial y reutiliza las etiquetas sin consultas por fila ${viewport.width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.clock.setFixedTime(new Date("2026-11-19T12:00:00-05:00"));
+    const accountId = "44444444-4444-4444-4444-444444444444";
+    const equityId = "55555555-5555-5555-5555-555555555555";
+    const partyId = "66666666-6666-6666-6666-666666666666";
+    const siteId = "77777777-7777-7777-7777-777777777777";
+    let partyReads = 0, siteReads = 0, openingReads = 0, saves = 0;
+    let opening = {
+      batchId: "88888888-8888-8888-8888-888888888888", businessId, effectiveOn: "2026-01-01", currencyCode: "COP",
+      description: "Apertura de cartera", status: "Draft", rowVersion: "AQID", debitTotal: 1500, creditTotal: 1500,
+      lines: [
+        { lineId: "99999999-9999-9999-9999-999999999999", lineNumber: 1, accountId, partyId, costCenterId: null,
+          description: "Factura inicial", debit: 0, credit: 1500, existingPosition: null,
+          newInvoice: { documentNumber: "PROV-320", issuedOn: "2025-09-10", dueOn: "2025-10-10", partySiteId: siteId },
+          newInvoicePartySiteName: "Sede principal", partyName: "Proveedor histórico", partyIdentification: "900100200" },
+        { lineId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", lineNumber: 2, accountId: equityId, partyId: null, costCenterId: null,
+          description: "Contrapartida", debit: 1500, credit: 0, existingPosition: null, newInvoice: null,
+          newInvoicePartySiteName: null, partyName: null, partyIdentification: null },
+      ],
+    };
+    await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, username: "e2e", roles: ["Administrator"], permissions }));
+    await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
+    await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
+    await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
+    await page.route("**/api/commerce/v1/reference-options**", route => json(route, []));
+    await page.route("**/api/commerce/v1/portfolio/parties/site-options**", route => {
+      siteReads++;
+      const params = new URL(route.request().url()).searchParams;
+      expect(params.get("partyId")).toBe(partyId);
+      expect(params.get("role")).toBe("Supplier");
+      expect(Number(params.get("pageSize"))).toBeLessThanOrEqual(100);
+      return json(route, { items: [{ partySiteId: siteId, partyId, siteName: "Sede principal", displayName: "Proveedor histórico" }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 });
+    });
+    await page.route("**/api/commerce/v1/parties**", route => {
+      partyReads++;
+      return json(route, { items: [{ partyId, displayName: "Proveedor histórico", identification: "900100200", roles: ["Supplier"], isActive: true }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 });
+    });
+    await page.route("**/api/commerce/v1/accounting/**", async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/accounts")) return json(route, [
+        { accountId, code: "22050501", name: "Proveedores", accountType: "Liability", allowsPosting: true, requiresParty: true, isActive: true, semantics: { financialFunction: "Payable" } },
+        { accountId: equityId, code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
+      ]);
+      if (path.endsWith("/readiness")) return json(route, { status: "Disabled", effectiveFrom: "2026-01-01", blockingIssues: [], canEditOpeningBalances: true });
+      if (path.endsWith("/opening-balances")) {
+        if (route.request().method() === "GET") { openingReads++; return json(route, opening); }
+        saves++;
+        const request = route.request().postDataJSON();
+        expect(request.lines[0]).not.toHaveProperty("partyName");
+        opening = { ...opening, ...request, rowVersion: "BAUG",
+          debitTotal: request.lines.reduce((total: number, line: { debit: number }) => total + line.debit, 0),
+          creditTotal: request.lines.reduce((total: number, line: { credit: number }) => total + line.credit, 0),
+          lines: request.lines.map((line: Record<string, unknown>, index: number) => ({ ...line, lineNumber: index + 1,
+          newInvoicePartySiteName: index === 0 ? "Sede principal" : null, partyName: index === 0 ? "Proveedor histórico" : null, partyIdentification: index === 0 ? "900100200" : null })) };
+        return json(route, opening);
+      }
+      return json(route, []);
+    });
+    await authenticate(page);
+    await page.goto("/dashboard/accounting");
+    await page.getByRole("button", { name: "Saldos iniciales" }).click();
+    const invoice = page.getByRole("region", { name: "Factura inicial de la partida 1" });
+    await expect(invoice).toBeVisible();
+    await expect(invoice.getByLabel("Número de factura original")).toHaveValue("PROV-320");
+    await expect(invoice.getByText("10 de septiembre de 2025", { exact: true })).toBeVisible();
+    await expect(invoice.getByText("10 de octubre de 2025", { exact: true })).toBeVisible();
+    expect(partyReads).toBe(0); expect(siteReads).toBe(0);
+    const save = page.getByRole("button", { name: "Guardar borrador" });
+    await invoice.getByLabel("Número de factura original").fill("");
+    await expect(save).toBeDisabled();
+    await invoice.getByLabel("Número de factura original").fill("PROV-321");
+    await invoice.getByRole("textbox", { name: "Saldo pendiente de la factura inicial 1" }).fill("1750");
+    await page.getByRole("spinbutton", { name: "Débito de apertura 2" }).fill("1750");
+    await invoice.getByLabel("Fecha de vencimiento", { exact: true }).click();
+    await page.getByRole("button", { name: "15 de octubre de 2025", exact: true }).click();
+    await invoice.getByRole("combobox", { name: "Sede de la factura inicial 1" }).click();
+    await expect.poll(() => siteReads).toBe(1);
+    await page.getByRole("option", { name: /Sede principal/ }).click();
+    expect(siteReads).toBe(1); expect(partyReads).toBe(0);
+    await invoice.screenshot({ path: testInfo.outputPath(`opening-invoice-fields-${viewport.width}.png`) });
+    await save.click();
+    await expect(page.getByRole("button", { name: "Aprobar saldos" })).toBeEnabled();
+    expect(saves).toBe(1); expect(openingReads).toBe(1);
+    expect(opening.lines[0].newInvoice).toEqual({ documentNumber: "PROV-321", issuedOn: "2025-09-10", dueOn: "2025-10-15", partySiteId: siteId });
+    await expect(page.getByRole("spinbutton", { name: "Crédito de apertura 1" })).toHaveValue("1750");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`opening-invoice-${viewport.width}.png`), fullPage: true });
+    await page.reload();
+    await page.getByRole("button", { name: "Saldos iniciales" }).click();
+    await expect(page.getByLabel("Número de factura original")).toHaveValue("PROV-321");
+    expect(partyReads).toBe(0); expect(siteReads).toBe(1);
+  });
 }
 
 test("concilia una obligación anterior, conserva su identidad y exige guardar antes de aprobar", async ({ page }) => {
@@ -59,13 +156,14 @@ test("concilia una obligación anterior, conserva su identidad y exige guardar a
   await authenticate(page);
   await page.goto("/dashboard/accounting");
   await page.getByRole("button", { name: "Saldos iniciales" }).click();
-  const rows = page.locator("tbody tr");
+  const rows = page.getByRole("row", { name: /^Partida de apertura / });
   await rows.nth(0).getByRole("combobox").first().click();
   await page.getByRole("option", { name: /22050501.*Proveedores/ }).click();
+  await rows.nth(0).getByRole("button", { name: "Vincular factura existente" }).click();
   const positionPicker = page.getByRole("combobox", { name: "Vincular obligación anterior en partida 1" });
   await expect(positionPicker).toBeDisabled();
   expect(positionRequest).toBe("");
-  await rows.nth(0).getByRole("combobox", { name: "Seleccionar tercero" }).click();
+  await rows.nth(0).getByRole("combobox", { name: "Tercero de apertura 1" }).click();
   await page.getByRole("option", { name: /Proveedor histórico/ }).click();
   await positionPicker.click();
   await page.getByRole("option", { name: /HIST-1500/ }).click();
@@ -131,7 +229,7 @@ test("saldos iniciales busca cualquier tercero activo sin filtrar por rol", asyn
   await authenticate(page);
   await page.goto("/dashboard/accounting");
   await page.getByRole("button", { name: "Saldos iniciales" }).click();
-  await page.getByRole("combobox", { name: "Seleccionar tercero" }).first().click();
+  await page.getByRole("combobox", { name: "Tercero de apertura 1" }).click();
 
   await expect(page.getByText("Proveedor Andino")).toBeVisible();
   await expect(page.getByText("Acreedor Logístico")).toBeVisible();

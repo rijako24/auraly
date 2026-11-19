@@ -344,6 +344,10 @@ CREATE TABLE [dbo].[AccountingOpeningBalanceLines]
     [LineId] UNIQUEIDENTIFIER NULL,
     [ExistingPayableId] UNIQUEIDENTIFIER NULL,
     [ExistingReceivableId] UNIQUEIDENTIFIER NULL,
+    [OpeningDocumentNumber] NVARCHAR(80) NULL,
+    [OpeningIssuedOn] DATE NULL,
+    [OpeningDueOn] DATE NULL,
+    [OpeningPartySiteId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_AccountingOpeningBalanceLines] PRIMARY KEY CLUSTERED ([BatchId],[LineNumber]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Batch] FOREIGN KEY ([BatchId]) REFERENCES [dbo].[AccountingOpeningBalanceBatches]([BatchId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Account] FOREIGN KEY ([AccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
@@ -354,6 +358,13 @@ CREATE TABLE [dbo].[AccountingOpeningBalanceLines]
     CONSTRAINT [CK_AccountingOpeningBalanceLines_ExistingPosition] CHECK (
       ([ExistingPayableId] IS NULL OR [ExistingReceivableId] IS NULL)
       AND (([ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL) OR [LineId] IS NOT NULL)),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_OpeningSite] FOREIGN KEY ([OpeningPartySiteId]) REFERENCES [dbo].[PartySites]([PartySiteId]),
+    CONSTRAINT [CK_AccountingOpeningBalanceLines_OpeningInvoice] CHECK (
+      ([OpeningDocumentNumber] IS NULL AND [OpeningIssuedOn] IS NULL AND [OpeningDueOn] IS NULL AND [OpeningPartySiteId] IS NULL)
+      OR ([OpeningDocumentNumber] IS NOT NULL AND LEN(LTRIM(RTRIM([OpeningDocumentNumber])))>0
+        AND [OpeningIssuedOn] IS NOT NULL AND [OpeningDueOn] IS NOT NULL AND [OpeningDueOn]>=[OpeningIssuedOn]
+        AND [OpeningPartySiteId] IS NOT NULL AND [PartyId] IS NOT NULL AND [LineId] IS NOT NULL
+        AND [ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL)),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_LineId] CHECK ([LineId] IS NULL OR [LineId]<>'00000000-0000-0000-0000-000000000000'),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_Number] CHECK ([LineNumber]>0),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_Side] CHECK (([Debit]>0 AND [Credit]=0) OR ([Credit]>0 AND [Debit]=0))

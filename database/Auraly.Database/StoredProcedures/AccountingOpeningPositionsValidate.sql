@@ -11,11 +11,58 @@ BEGIN
       THROW 51408,N'La conciliación de apertura requiere una transacción y sus partidas.',1;
     DECLARE @Lines TABLE(LineNumber int PRIMARY KEY,AccountId uniqueidentifier,PartyId uniqueidentifier,
       Debit decimal(19,4),Credit decimal(19,4),LineId uniqueidentifier,
-      ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier);
-    INSERT @Lines SELECT LineNumber,AccountId,PartyId,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId
+      ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier,
+      OpeningDocumentNumber nvarchar(80),OpeningIssuedOn date,OpeningDueOn date,
+      OpeningPartySiteId uniqueidentifier,OpeningRoleId uniqueidentifier,OpeningKind nvarchar(16));
+    INSERT @Lines SELECT LineNumber,AccountId,PartyId,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId,
+      OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId,OpeningRoleId,OpeningKind
     FROM OPENJSON(@LinesJson) WITH(LineNumber int,AccountId uniqueidentifier,PartyId uniqueidentifier,
       Debit decimal(19,4),Credit decimal(19,4),LineId uniqueidentifier,
-      ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier);
+      ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier,
+      OpeningDocumentNumber nvarchar(80),OpeningIssuedOn date,OpeningDueOn date,
+      OpeningPartySiteId uniqueidentifier,OpeningRoleId uniqueidentifier,OpeningKind nvarchar(16));
+    IF EXISTS(SELECT 1 FROM @Lines WHERE OpeningDocumentNumber IS NOT NULL OR OpeningIssuedOn IS NOT NULL
+      OR OpeningDueOn IS NOT NULL OR OpeningPartySiteId IS NOT NULL)
+    BEGIN
+    -- New invoice evidence is validated in the same transaction and owner as
+    -- existing links. It never creates a sale, purchase or fiscal document.
+    IF EXISTS(SELECT 1 FROM @Lines line
+      LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
+        AND account.IsActive=1 AND account.AllowsPosting=1 AND account.RequiresParty=1
+      LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId AND party.IsActive=1
+      LEFT JOIN dbo.PartySites site ON site.PartySiteId=line.OpeningPartySiteId AND site.PartyId=party.PartyId AND site.IsActive=1
+      LEFT JOIN dbo.Customers customer ON customer.PartyId=party.PartyId AND customer.TenantId=@TenantId AND customer.IsActive=1
+      LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=party.PartyId AND supplier.TenantId=@TenantId AND supplier.IsActive=1
+      WHERE (line.OpeningDocumentNumber IS NOT NULL OR line.OpeningIssuedOn IS NOT NULL OR line.OpeningDueOn IS NOT NULL OR line.OpeningPartySiteId IS NOT NULL)
+        AND (@HistoricalCatchup=1 OR line.ExistingPayableId IS NOT NULL OR line.ExistingReceivableId IS NOT NULL
+          OR line.LineId IS NULL OR party.PartyId IS NULL OR site.PartySiteId IS NULL
+          OR NULLIF(LTRIM(RTRIM(line.OpeningDocumentNumber)),N'') IS NULL
+          OR line.OpeningIssuedOn IS NULL OR line.OpeningDueOn IS NULL OR line.OpeningIssuedOn>=@EffectiveOn OR line.OpeningDueOn<line.OpeningIssuedOn
+          OR account.AccountId IS NULL OR account.FinancialFunction IS NULL OR account.FinancialFunction NOT IN(N'Receivable',N'Payable')
+          OR line.OpeningKind IS NOT NULL AND line.OpeningKind<>account.FinancialFunction
+          OR account.FinancialFunction=N'Receivable' AND (account.AccountType<>N'Asset' OR ISNULL(account.BalanceSide,N'')<>N'Debit'
+            OR line.Debit<=0 OR line.Credit<>0 OR customer.CustomerId IS NULL OR LEN(line.OpeningDocumentNumber)>64
+            OR line.OpeningRoleId IS NOT NULL AND line.OpeningRoleId<>customer.CustomerId)
+          OR account.FinancialFunction=N'Payable' AND (account.AccountType<>N'Liability' OR ISNULL(account.BalanceSide,N'')<>N'Credit'
+            OR line.Credit<=0 OR line.Debit<>0 OR supplier.SupplierId IS NULL
+            OR line.OpeningRoleId IS NOT NULL AND line.OpeningRoleId<>supplier.SupplierId)))
+      THROW 51408,N'La factura inicial no coincide con la cuenta de cartera, tercero, sede, fechas o saldo al corte.',1;
+    IF EXISTS(SELECT 1 FROM @Lines line JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId
+      WHERE line.OpeningDocumentNumber IS NOT NULL
+      GROUP BY line.PartyId,line.OpeningPartySiteId,line.OpeningDocumentNumber,account.FinancialFunction HAVING COUNT(*)>1)
+      THROW 51408,N'La factura inicial está repetida en las partidas de apertura.',1;
+    IF EXISTS(SELECT 1 FROM @Lines line JOIN dbo.Customers customer ON customer.PartyId=line.PartyId AND customer.TenantId=@TenantId
+      JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.FinancialFunction=N'Receivable'
+      JOIN dbo.Receivables position WITH(UPDLOCK,HOLDLOCK) ON position.BusinessId=@BusinessId AND position.CustomerId=customer.CustomerId
+        AND position.PartySiteId=line.OpeningPartySiteId AND position.DocumentNumber=line.OpeningDocumentNumber
+      WHERE line.OpeningDocumentNumber IS NOT NULL)
+      OR EXISTS(SELECT 1 FROM @Lines line JOIN dbo.Suppliers supplier ON supplier.PartyId=line.PartyId AND supplier.TenantId=@TenantId
+      JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.FinancialFunction=N'Payable'
+      JOIN dbo.Payables position WITH(UPDLOCK,HOLDLOCK) ON position.BusinessId=@BusinessId AND position.SupplierId=supplier.SupplierId
+        AND position.PartySiteId=line.OpeningPartySiteId AND position.DocumentNumber=line.OpeningDocumentNumber
+      WHERE line.OpeningDocumentNumber IS NOT NULL)
+      THROW 51408,N'La factura ya existe en cartera. Vincula la obligación existente para no duplicarla.',1;
+    END;
     IF EXISTS(SELECT 1 FROM @Lines WHERE LineId='00000000-0000-0000-0000-000000000000'
         OR ExistingPayableId IS NOT NULL AND ExistingReceivableId IS NOT NULL
         OR (ExistingPayableId IS NOT NULL OR ExistingReceivableId IS NOT NULL) AND LineId IS NULL)

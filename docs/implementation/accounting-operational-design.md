@@ -789,20 +789,18 @@ active tenant/business dimensions and equal positive debit and credit totals.
 
 ### Explicit reconciliation of commercial-only positions
 
-**Opening invoice intake review (2026-11-19, approved for implementation):** the
-current screen can select an existing obligation but cannot enter a new legacy
-invoice reference, issue date and due date. An account and party alone do not
-provide an invoice-level portfolio. This is an actual capture/contract gap,
-not a missing label. The proposed extension expands invoice details when the
-selected account has a receivable/payable financial function. Each row carries
-the existing party/site, original document reference, issue/due dates, currency
-and amount outstanding at cutover. The account line derives its amount from
-those rows. Existing obligations must be linked rather than created again;
-new opening obligations require an explicit extension of the current opening
-acceptance and financial writer. A free-text reference alone must never pretend
-to create collectible/payable portfolio. No new sale, purchase, inventory or
-fiscal emission is implied by bringing forward a balance. This proposal does
-not reopen completed historical openings or change the approved Megafruver plan.
+**Opening invoice intake (2026-11-19, approved and implemented):** the opening
+screen expands invoice details when the selected account declares a receivable
+or payable financial function. One line identifies one original invoice:
+party/site, document number, original issue/due dates and COP outstanding at
+cutover. That outstanding amount determines the line's debit or credit; the
+account accumulates its invoice lines. It is the opening amount, after payments
+made before cutover, not a reconstruction of those historical payments. Existing
+obligations must be linked rather than created again. A draft creates neither
+portfolio nor journal. Approval and activation use the existing opening aggregate,
+source acceptance, processor and batched portfolio writers. No new sale,
+purchase, inventory or fiscal emission is implied by bringing forward a balance.
+Completed historical openings and the approved Megafruver plan are unchanged.
 
 The official guides use different interfaces for the same reconciliation need:
 [Siigo Nube](https://siigonube.portaldeclientes.siigo.com/ingresar-saldos-iniciales-de-proveedores/)
@@ -812,9 +810,49 @@ expands a document reference section inside opening account lines;
 [ERPNext](https://docs.frappe.io/erpnext/opening-invoice-creation-tool)
 uses an opening invoice tool and explicitly reconciles the document schedule
 with the control accounts. These are product precedents, not a DIAN requirement
-for a particular screen layout. Implementation remains pending. The approved extension requires its own acceptance cases
-for new versus already existing obligations, cutover ageing, subsequent partial
-payments, exact-once opening and equality with the opening control account.
+for a particular screen layout.
+
+New invoice evidence is typed on `AccountingOpeningBalanceLines`. Accepted opening
+payload version 4 generates its position/transaction identities once; activation
+retries reuse the already accepted source, including after a failed journal.
+Version 3 remains the contract for linking existing obligations. Both portfolio
+creation and journal binding commit in the same financial transaction. Original
+invoice dates are stored as `InvoiceIssuedAt` on the existing payable/receivable;
+their journal and opening transaction retain the local opening date. The existing
+report owners project that original date and invoice number. `CreatedAt` remains
+the real registration time. This change preserves the report's current dual
+effective/registration cutoff policy; a proposed exception for late-loaded
+openings requires the user's pending decision before changing historical cuts.
+
+Local acceptance: `AccountingVerticalSliceTests.OpeningInvoices.cs` verifies both
+portfolio directions, rejected evidence, rollback after a journal-binding fault,
+activation retry, subsequent partial payments, payment replay, balanced journal,
+original references/dates in the report and no fiscal process. Existing linked
+opening and ordinary payable/receivable payment tests remain passing. Browser
+coverage in `accounting-opening-balances.spec.ts` verifies desktop/mobile capture,
+reload, bounded site lookup on opening and no directory query per saved row.
+
+The implementation budget is a maximum of 500 identified opening lines, one
+set-based validation of their account/party/site/document evidence, the existing
+three SQL commands for capture, and at most one additional opening-writer command
+per portfolio direction during posting. No role/site/account I/O per line is
+permitted. Local warm p95 must remain under 1.5 seconds for captures at 2/50/500
+lines, measured without concurrent builds or diagnostic load. Reference/site
+selectors load a bounded page only when the user opens them. Acceptance requires
+fresh-schema and upgrade/replay tests, invoice dates and ageing at cutover,
+subsequent partial payments on both sides, duplicate/scoped/concurrent rejection,
+and no fiscal/inventory effects. The measured capture p95 for 20 warm samples was
+8.7/43.6/134.9 ms at 2/50/500 lines, always three SQL commands.
+
+Deployment adds nullable evidence columns and widens the existing identified-line
+constraints to include opening sources; existing rows are not backfilled or
+reclassified. Deploy the schema and updated posting worker before exposing the
+capture. Rollback retains the additive columns and all accepted sources/positions.
+An older worker rejects the new payload without accepted manual-voucher effects;
+it must not be used to process version-4 openings. Drain accepted work with the
+updated worker or apply a forward fix; never delete its invoices or journal to
+make a rollback fit. Upgrade/replay evidence on the isolated historical copy is
+a release gate, in addition to the fresh-schema integration cases.
 
 The existing opening capture optionally identifies one existing payable or
 receivable per line. Its stable `LineId` and nullable `ExistingPayableId` /

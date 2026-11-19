@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Time;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
@@ -1430,12 +1431,13 @@ public sealed partial class SqlAccountingStore(
         DECLARE @OpeningLines TABLE(LineNumber int PRIMARY KEY,AccountId uniqueidentifier,
           PartyId uniqueidentifier,CostCenterId uniqueidentifier,Description nvarchar(300),
           Debit decimal(19,4),Credit decimal(19,4),LineId uniqueidentifier,
-          ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier);
+          ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier,
+          OpeningDocumentNumber nvarchar(80),OpeningIssuedOn date,OpeningDueOn date,OpeningPartySiteId uniqueidentifier);
         """;
 
     private const string OpeningBalancePositionsValidationSql = """
         DECLARE @ReconciliationLines nvarchar(max)=(SELECT LineNumber,AccountId,PartyId,Debit,Credit,
-          LineId,ExistingPayableId,ExistingReceivableId FROM @OpeningLines FOR JSON PATH);
+          LineId,ExistingPayableId,ExistingReceivableId,OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId FROM @OpeningLines FOR JSON PATH);
         EXEC accounting.OpeningPositionsValidate @TenantId,@BusinessId,@EffectiveOn,@ReconciliationLines;
         """;
 
@@ -1483,10 +1485,11 @@ public sealed partial class SqlAccountingStore(
             var now = timeProvider.GetUtcNow();
             await using (var command = new SqlCommand(OpeningBalanceLinesTableSql + "\n" + """
                 INSERT @OpeningLines
-                SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId
+                SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId,OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId
                 FROM OPENJSON(@Lines) WITH(LineNumber int,AccountId uniqueidentifier,PartyId uniqueidentifier,
                   CostCenterId uniqueidentifier,Description nvarchar(300),Debit decimal(19,4),Credit decimal(19,4),
-                  LineId uniqueidentifier,ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier);
+                  LineId uniqueidentifier,ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier,
+                  OpeningDocumentNumber nvarchar(80),OpeningIssuedOn date,OpeningDueOn date,OpeningPartySiteId uniqueidentifier);
                 """ + "\n" + OpeningBalanceDimensionsValidationSql + "\n" + OpeningBalancePositionsValidationSql + "\n" + """
                 DECLARE @ExistingId uniqueidentifier=(SELECT BatchId
                   FROM dbo.AccountingOpeningBalanceBatches WITH(UPDLOCK,HOLDLOCK)
@@ -1510,9 +1513,9 @@ public sealed partial class SqlAccountingStore(
                   VALUES(@BatchId,@TenantId,@BusinessId,@EffectiveOn,@Currency,@Description,N'Draft',
                          @UserId,@Now,@UserId,@Now);
                 INSERT dbo.AccountingOpeningBalanceLines
-                  (BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId)
+                  (BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId,OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId)
                 SELECT @BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,
-                  ExistingPayableId,ExistingReceivableId FROM @OpeningLines;
+                  ExistingPayableId,ExistingReceivableId,OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId FROM @OpeningLines;
                 """, connection, transaction))
             {
                 command.Parameters.AddWithValue("@BatchId", request.BatchId);
@@ -1528,7 +1531,9 @@ public sealed partial class SqlAccountingStore(
                         line.PartyId, line.CostCenterId, Description = line.Description.Trim(), line.Debit, line.Credit,
                         LineId = line.LineId ?? ids.NewId(),
                         ExistingPayableId = line.ExistingPosition?.SubledgerKind == "Payable" ? line.ExistingPosition.SubledgerId : (Guid?)null,
-                        ExistingReceivableId = line.ExistingPosition?.SubledgerKind == "Receivable" ? line.ExistingPosition.SubledgerId : (Guid?)null }));
+                        ExistingReceivableId = line.ExistingPosition?.SubledgerKind == "Receivable" ? line.ExistingPosition.SubledgerId : (Guid?)null,
+                        OpeningDocumentNumber = line.NewInvoice?.DocumentNumber.Trim(), OpeningIssuedOn = line.NewInvoice?.IssuedOn,
+                        OpeningDueOn = line.NewInvoice?.DueOn, OpeningPartySiteId = line.NewInvoice?.PartySiteId }));
                 command.Parameters.Add("@ExpectedVersion", SqlDbType.Timestamp).Value = (object?)expectedVersion ?? DBNull.Value;
                 try { await command.ExecuteNonQueryAsync(cancellationToken); }
                 catch (SqlException exception) when (exception.Number is 51405 or 51406)
@@ -1577,7 +1582,7 @@ public sealed partial class SqlAccountingStore(
             }
             await using (var validate = new SqlCommand(OpeningBalanceLinesTableSql + "\n" + """
                 INSERT @OpeningLines SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,
-                  LineId,ExistingPayableId,ExistingReceivableId
+                  LineId,ExistingPayableId,ExistingReceivableId,OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId
                 FROM dbo.AccountingOpeningBalanceLines WHERE BatchId=@BatchId;
                 """ + "\n" + OpeningBalanceDimensionsValidationSql + "\n" + OpeningBalancePositionsValidationSql + "\n" + """
                 SELECT COUNT(*),COALESCE(SUM(Debit),0),COALESCE(SUM(Credit),0) FROM @OpeningLines;
@@ -1671,9 +1676,13 @@ public sealed partial class SqlAccountingStore(
                    batch.RowVersion,batch.UpdatedAt,batch.ApprovedAt,batch.PostedAt,
                    line.LineNumber,line.AccountId,line.PartyId,line.CostCenterId,line.Description,line.Debit,line.Credit,
                    line.LineId,line.ExistingPayableId,line.ExistingReceivableId,
-                   COALESCE(payable.DocumentNumber,receivable.DocumentNumber)
+                   COALESCE(payable.DocumentNumber,receivable.DocumentNumber),
+                   line.OpeningDocumentNumber,line.OpeningIssuedOn,line.OpeningDueOn,line.OpeningPartySiteId,
+                   openingSite.Name,COALESCE(openingParty.DisplayName,openingParty.LegalName,openingParty.Identification),openingParty.Identification
             FROM dbo.AccountingOpeningBalanceBatches batch
             LEFT JOIN dbo.AccountingOpeningBalanceLines line ON line.BatchId=batch.BatchId
+            LEFT JOIN dbo.Parties openingParty ON openingParty.PartyId=line.PartyId AND openingParty.TenantId=batch.TenantId
+            LEFT JOIN dbo.PartySites openingSite ON openingSite.PartySiteId=line.OpeningPartySiteId AND openingSite.PartyId=line.PartyId
             LEFT JOIN dbo.Payables payable ON payable.PayableId=line.ExistingPayableId AND payable.BusinessId=batch.BusinessId
             LEFT JOIN dbo.Receivables receivable ON receivable.ReceivableId=line.ExistingReceivableId AND receivable.BusinessId=batch.BusinessId
             WHERE batch.TenantId=@TenantId AND batch.BusinessId=@BusinessId AND batch.EffectiveOn=@EffectiveOn
@@ -1704,7 +1713,9 @@ public sealed partial class SqlAccountingStore(
                     reader.IsDBNull(17) ? null : reader.GetGuid(17),
                     !reader.IsDBNull(18) ? new("Payable", reader.GetGuid(18)) :
                     !reader.IsDBNull(19) ? new("Receivable", reader.GetGuid(19)) : null,
-                    reader.IsDBNull(20) ? null : reader.GetString(20)));
+                    reader.IsDBNull(20) ? null : reader.GetString(20),
+                    reader.IsDBNull(21) ? null : new(reader.GetString(21),DateOnly.FromDateTime(reader.GetDateTime(22)),
+                        DateOnly.FromDateTime(reader.GetDateTime(23)),reader.GetGuid(24)),NullableText(reader,25),NullableText(reader,26),NullableText(reader,27)));
         } while (await reader.ReadAsync(cancellationToken));
         return new(batchId, businessId, effectiveOn, currency, description, status,
             lines.Sum(line => line.Debit), lines.Sum(line => line.Credit), version,
@@ -1937,11 +1948,20 @@ public sealed partial class SqlAccountingStore(
         var batches = new List<OpeningBatchPosting>();
         await using (var command = new SqlCommand("""
             SELECT b.BatchId,b.BusinessId,b.Description,l.LineNumber,l.AccountId,
-                   l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit,l.LineId,l.ExistingPayableId,l.ExistingReceivableId
+                   l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit,l.LineId,l.ExistingPayableId,l.ExistingReceivableId,
+                   l.OpeningDocumentNumber,l.OpeningIssuedOn,l.OpeningDueOn,l.OpeningPartySiteId,account.FinancialFunction,
+                   CASE account.FinancialFunction WHEN N'Receivable' THEN customer.CustomerId WHEN N'Payable' THEN supplier.SupplierId END,
+                   business.TimeZone
             FROM dbo.AccountingOpeningBalanceBatches b WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses business ON business.BusinessId=b.BusinessId AND business.IsActive=1
             INNER JOIN dbo.AccountingOpeningBalanceLines l ON l.BatchId=b.BatchId
+            JOIN dbo.AccountingAccounts account ON account.AccountId=l.AccountId AND account.TenantId=@TenantId
+            LEFT JOIN dbo.Customers customer ON customer.PartyId=l.PartyId AND customer.TenantId=@TenantId AND customer.IsActive=1
+            LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=l.PartyId AND supplier.TenantId=@TenantId AND supplier.IsActive=1
             WHERE b.TenantId=@TenantId AND b.EffectiveOn=@EffectiveOn AND b.Status=N'Approved'
+              AND NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments accepted
+                WHERE accepted.SourceDocumentId=b.BatchId AND accepted.SourceDocumentType=N'AccountingOpeningBalance'
+                  AND accepted.TenantId=b.TenantId AND accepted.BusinessId=b.BusinessId)
             ORDER BY b.BusinessId,l.LineNumber;
             """, connection, transaction))
         {
@@ -1954,8 +1974,19 @@ public sealed partial class SqlAccountingStore(
                 var batch = batches.LastOrDefault(value => value.BatchId == batchId);
                 if (batch is null)
                 {
-                    batch = new(batchId, reader.GetGuid(1), reader.GetString(2), []);
+                    var zone = TimeZoneInfo.FindSystemTimeZoneById(BusinessCalendar.NormalizeZoneId(reader.GetString(19)));
+                    batch = new(batchId, reader.GetGuid(1), reader.GetString(2), BusinessCalendar.StartOfDay(effectiveOn,zone), []);
                     batches.Add(batch);
+                }
+                AccountingOpeningInvoicePosting? invoice = null;
+                if (!reader.IsDBNull(13))
+                {
+                    if (reader.IsDBNull(17) || reader.GetString(17) is not ("Payable" or "Receivable") || reader.IsDBNull(18))
+                        throw new AccountingValidationException("La cuenta o el rol de la factura inicial cambió. Revisa la apertura antes de activar.");
+                    var zone = TimeZoneInfo.FindSystemTimeZoneById(BusinessCalendar.NormalizeZoneId(reader.GetString(19)));
+                    invoice = new(ids.NewId(),ids.NewId(),reader.GetString(17),reader.GetGuid(18),reader.GetGuid(16),reader.GetString(13),
+                        BusinessCalendar.AtNoon(DateOnly.FromDateTime(reader.GetDateTime(14)),zone),
+                        BusinessCalendar.AtNoon(DateOnly.FromDateTime(reader.GetDateTime(15)),zone));
                 }
                 batch.Lines.Add(new(reader.GetInt32(3), reader.GetGuid(4),
                     reader.IsDBNull(5) ? null : reader.GetGuid(5),
@@ -1963,26 +1994,23 @@ public sealed partial class SqlAccountingStore(
                     reader.GetDecimal(8), reader.GetDecimal(9),
                     reader.IsDBNull(10) ? null : reader.GetGuid(10),
                     !reader.IsDBNull(11) ? new("Payable", reader.GetGuid(11)) :
-                    !reader.IsDBNull(12) ? new("Receivable", reader.GetGuid(12)) : null));
+                    !reader.IsDBNull(12) ? new("Receivable", reader.GetGuid(12)) : null,invoice));
             }
         }
 
-        var occurredAt = new DateTimeOffset(effectiveOn.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         foreach (var page in batches.Chunk(100))
             await SqlAccountingPostingJobWriter.InsertSourcesAsync(connection, transaction,
                 page.Select(batch => new SqlAccountingPostingJobWriter.Source(user.TenantId, batch.BusinessId,
                     batch.BatchId, "AccountingOpeningBalance",
-                    batch.Lines.Any(line => line.ExistingPosition is not null)
+                    batch.Lines.Any(line => line.ExistingPosition is not null || line.NewInvoice is not null)
                     ? JsonSerializer.Serialize(new AccountingReconciledOpeningPayload(
-                        batch.BatchId, batch.BusinessId, occurredAt, "OPENING_BALANCE", batch.Description,
-                        batch.Lines.Select(line => new AccountingReconciledOpeningLine(line.LineNumber,
-                            line.AccountId, line.PartyId, line.CostCenterId, line.Description,
-                            line.Debit, line.Credit, line.LineId, line.ExistingPosition)).ToArray()))
+                        batch.BatchId, batch.BusinessId, batch.OccurredAt, "OPENING_BALANCE", batch.Description,
+                        batch.Lines,PayloadVersion:batch.Lines.Any(line=>line.NewInvoice is not null)?4:3))
                     : JsonSerializer.Serialize(new ConfirmManualAccountingVoucherRequest(
-                        batch.BatchId, batch.BusinessId, occurredAt, "OPENING_BALANCE", batch.Description,
+                        batch.BatchId, batch.BusinessId, batch.OccurredAt, "OPENING_BALANCE", batch.Description,
                         batch.Lines.Select(line => new ManualVoucherLineRequest(line.AccountId, line.PartyId,
                             line.CostCenterId, line.Description, line.Debit, line.Credit)).ToArray())),
-                    occurredAt, ids.NewId())).ToArray(), now, AccountingJobRequirement.OpeningBalance, cancellationToken);
+                    batch.OccurredAt, ids.NewId())).ToArray(), now, AccountingJobRequirement.OpeningBalance, cancellationToken);
     }
 
     public async Task<IReadOnlyList<AccountingOpeningBalancePosting>> ListPendingOpeningPostingsAsync(
@@ -2355,8 +2383,8 @@ public sealed partial class SqlAccountingStore(
         parameter.Value = value;
     }
     private sealed record OpeningBatchPosting(
-        Guid BatchId, Guid BusinessId, string Description,
-        List<AccountingOpeningBalanceLineView> Lines);
+        Guid BatchId, Guid BusinessId, string Description, DateTimeOffset OccurredAt,
+        List<AccountingReconciledOpeningLine> Lines);
     private static void AddPeriod(SqlCommand command, Guid tenantId, DateOnly starts, DateOnly ends) { command.Parameters.AddWithValue("@TenantId", tenantId); command.Parameters.AddWithValue("@StartsOn", starts.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@EndsOn", ends.ToDateTime(TimeOnly.MinValue)); }
     private static void AddMapping(SqlCommand command, SetAccountMappingRequest value) { command.Parameters.AddWithValue("@TenantId", value.TenantId); command.Parameters.AddWithValue("@BusinessId", (object?)value.BusinessId ?? DBNull.Value); command.Parameters.AddWithValue("@Category", value.Category); command.Parameters.AddWithValue("@AccountId", value.AccountId); command.Parameters.AddWithValue("@EffectiveFrom", value.EffectiveFrom.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@EffectiveTo", value.EffectiveTo is null ? DBNull.Value : value.EffectiveTo.Value.ToDateTime(TimeOnly.MinValue)); }
     private static void AddScope(SqlCommand command, AccountingUserIdentity user, Guid documentId) { command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId); command.Parameters.AddWithValue("@DocumentId", documentId); }

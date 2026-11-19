@@ -348,7 +348,17 @@ public static class AccountingOpeningBalanceStatuses
 public sealed record AccountingOpeningBalanceLineRequest(
     Guid AccountId, Guid? PartyId, Guid? CostCenterId, string Description,
     decimal Debit, decimal Credit,
-    Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null);
+    Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null,
+    AccountingOpeningInvoice? NewInvoice = null);
+
+public sealed record AccountingOpeningInvoice(string DocumentNumber, DateOnly IssuedOn,
+    DateOnly DueOn, Guid PartySiteId);
+
+// Acceptance generates these effect identities once. They are not another
+// configuration snapshot or an independently writable portfolio operation.
+public sealed record AccountingOpeningInvoicePosting(Guid PositionId, Guid TransactionId,
+    string SubledgerKind, Guid CounterpartyRoleId, Guid PartySiteId, string DocumentNumber,
+    DateTimeOffset IssuedAt, DateTimeOffset DueDate);
 
 public sealed record AccountingOpeningPositionReference(string SubledgerKind, Guid SubledgerId,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -363,10 +373,11 @@ public sealed record AccountingOpeningBalanceLineView(
     int LineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,
     string Description, decimal Debit, decimal Credit,
     Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null,
-    string? ExistingPositionDocumentNumber = null);
+    string? ExistingPositionDocumentNumber = null, AccountingOpeningInvoice? NewInvoice = null,
+    string? NewInvoicePartySiteName = null, string? PartyName = null, string? PartyIdentification = null);
 
-// Version 3 is specific to reconciled openings. Older workers reject it instead
-// of posting an opening while silently ignoring its links to existing balances.
+// Version 3 links existing balances; version 4 also carries initial invoices.
+// Older workers reject these contracts instead of silently dropping their effects.
 public sealed record AccountingReconciledOpeningPayload(
     Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt, string ConceptCode,
     string Description, IReadOnlyList<AccountingReconciledOpeningLine> Lines, int PayloadVersion = 3,
@@ -376,7 +387,9 @@ public sealed record AccountingReconciledOpeningPayload(
 public sealed record AccountingReconciledOpeningLine(
     int LineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,
     string Description, decimal Debit, decimal Credit, Guid? LineId,
-    AccountingOpeningPositionReference? ExistingPosition);
+    AccountingOpeningPositionReference? ExistingPosition,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    AccountingOpeningInvoicePosting? NewInvoice = null);
 
 public sealed record AccountingOpeningBalanceView(
     Guid BatchId, Guid BusinessId, DateOnly EffectiveOn, string CurrencyCode,

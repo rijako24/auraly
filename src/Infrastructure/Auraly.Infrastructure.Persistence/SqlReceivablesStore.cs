@@ -166,7 +166,7 @@ public sealed partial class SqlReceivablesStore(
             SELECT r.ReceivableId,r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                    r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,r.OutstandingAmount,r.DueDate,
                    r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit) IsOverdue,
-                   r.PartySiteId,site.Name PartySiteName,r.PartyId,r.SourceDocumentId,r.SourceDocumentType
+                   r.PartySiteId,site.Name PartySiteName,r.PartyId,r.SourceDocumentId,r.SourceDocumentType,r.InvoiceIssuedAt
             INTO #Page
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
@@ -178,7 +178,7 @@ public sealed partial class SqlReceivablesStore(
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
               page.Status,page.CreatedAt,page.IsOverdue,page.PartySiteId,page.PartySiteName,
               COALESCE(paid.PaidAmount,0),page.PartyId,
-              issue.IssuedAt,page.SourceDocumentType
+              COALESCE(page.InvoiceIssuedAt,issue.IssuedAt),page.SourceDocumentType
             FROM #Page page
             LEFT JOIN dbo.AccountingSourceDocuments financialSource ON financialSource.SourceDocumentId=page.SourceDocumentId
               AND financialSource.SourceDocumentType=page.SourceDocumentType AND financialSource.BusinessId=@BusinessId

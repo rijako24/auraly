@@ -1,11 +1,12 @@
 "use client";
 
-import {Suspense,useEffect,useMemo,useState,type ComponentProps,type FormEvent,type ReactNode} from "react";
+import {Fragment,Suspense,useEffect,useMemo,useState,type ComponentProps,type FormEvent,type ReactNode} from "react";
 import {useMutation,useQuery,useQueryClient} from "@tanstack/react-query";
 import {useSearchParams} from "next/navigation";
 import {AlertTriangle,BarChart3,BookOpen,Building2,CalendarRange,CheckCircle2,ChevronRight,Landmark,Link2,Loader2,Plus,ReceiptText,RefreshCw,Settings2,TableProperties,Trash2} from "lucide-react";
 import {toast} from "sonner";
-import {accountingApi,type AccountingAccount,type AccountingOpenPosition,type AccountingOpeningBalanceLine,type BankAccount,type AccountMovementQuery} from "@/services/api/accounting";
+import {accountingApi,type AccountingAccount,type AccountingOpenPosition,type AccountingOpeningBalanceLine,type AccountingOpeningInvoice,type BankAccount,type AccountMovementQuery} from "@/services/api/accounting";
+import {OpeningInvoiceFields} from "@/components/accounting/opening-invoice-fields";
 import {PagedEntitySelect} from "@/components/forms/paged-entity-select";
 import {CostCentersSection} from "@/components/accounting/cost-centers-section";
 import {CostCenterSelect,useCostCenterLabels} from "@/components/accounting/cost-center-select";
@@ -33,8 +34,9 @@ import {auxiliaryReportColumns,auxiliaryReportRows} from "@/lib/accounting-auxil
 
 type Section="setup"|"puc"|"banks"|"reconciliation"|"centers"|"periods"|"opening"|"withholdings"|"balance"|"reports"|"compliance";
 type OpeningMode="ZeroDeclared"|"ImportedAndApproved";
-type OpeningDraftLine={accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:string;credit:string;lineId:string;existingPosition:AccountingOpeningBalanceLine["existingPosition"];existingPositionDocumentNumber?:string|null};
-const emptyOpeningLine=():OpeningDraftLine=>({lineId:crypto.randomUUID(),existingPosition:null,accountId:"",partyId:null,costCenterId:null,description:"Saldo inicial",debit:"",credit:""});
+type OpeningDraftLine={accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:string;credit:string;lineId:string;existingPosition:AccountingOpeningBalanceLine["existingPosition"];existingPositionDocumentNumber?:string|null;newInvoice:AccountingOpeningInvoice|null;newInvoicePartySiteName?:string|null;partyName?:string|null;partyIdentification?:string|null};
+const emptyOpeningInvoice=():AccountingOpeningInvoice=>({documentNumber:"",issuedOn:"",dueOn:"",partySiteId:""});
+const emptyOpeningLine=():OpeningDraftLine=>({lineId:crypto.randomUUID(),existingPosition:null,newInvoice:null,accountId:"",partyId:null,costCenterId:null,description:"Saldo inicial",debit:"",credit:""});
 const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0});
 const auxiliaryMoney=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",minimumFractionDigits:2,maximumFractionDigits:4});
 const year=new Date().getFullYear(),yearStart=`${year}-01-01`,yearEnd=`${year}-12-31`;
@@ -130,44 +132,109 @@ function AccountingConfigurationWorkspace(){
 
 function OpeningBalancesSection({businessId,effectiveOn,setEffectiveOn,accounts,canEditOpeningBalances,refresh}:{businessId:string;effectiveOn:string;setEffectiveOn:(value:string)=>void;accounts:AccountingAccount[];canEditOpeningBalances:boolean;refresh:()=>Promise<unknown>}){
   const client=useQueryClient();
-  const canConfigure=useAuthStore(state=>state.user?.permissions.includes("accounting.configure")??false);
-  const canActivate=useAuthStore(state=>state.user?.permissions.includes("accounting.activate")??false);
+  const permissions=useAuthStore(state=>state.user?.permissions);
+  const canConfigure=permissions?.includes("accounting.configure")??false;
+  const canActivate=permissions?.includes("accounting.activate")??false;
   const queryKey=["accounting-opening-balance",businessId,effectiveOn];
   const opening=useQuery({queryKey,queryFn:()=>accountingApi.openingBalance(effectiveOn),enabled:Boolean(businessId&&effectiveOn)});
   const [batchId,setBatchId]=useState(crypto.randomUUID()),[rowVersion,setRowVersion]=useState<string|null>(null),[description,setDescription]=useState(`Saldos iniciales al ${effectiveOn}`),[lines,setLines]=useState<OpeningDraftLine[]>([emptyOpeningLine(),emptyOpeningLine()]);
   const centerLabels=useCostCenterLabels(lines.map(line=>line.costCenterId));
   useEffect(()=>{
     if(opening.data===undefined)return;
-    if(opening.data){setBatchId(opening.data.batchId);setRowVersion(opening.data.rowVersion);setDescription(opening.data.description);setLines(opening.data.lines.map(line=>({lineId:line.lineId??crypto.randomUUID(),existingPosition:line.existingPosition??null,existingPositionDocumentNumber:line.existingPositionDocumentNumber,accountId:line.accountId,partyId:line.partyId,costCenterId:line.costCenterId,description:line.description,debit:line.debit?String(line.debit):"",credit:line.credit?String(line.credit):""})));return}
+    if(opening.data){setBatchId(opening.data.batchId);setRowVersion(opening.data.rowVersion);setDescription(opening.data.description);setLines(opening.data.lines.map(line=>({lineId:line.lineId??crypto.randomUUID(),existingPosition:line.existingPosition??null,existingPositionDocumentNumber:line.existingPositionDocumentNumber,newInvoice:line.newInvoice??null,newInvoicePartySiteName:line.newInvoicePartySiteName,partyName:line.partyName,partyIdentification:line.partyIdentification,accountId:line.accountId,partyId:line.partyId,costCenterId:line.costCenterId,description:line.description,debit:line.debit?String(line.debit):"",credit:line.credit?String(line.credit):""})));return;}
     setBatchId(crypto.randomUUID());setRowVersion(null);setDescription(`Saldos iniciales al ${effectiveOn}`);setLines([emptyOpeningLine(),emptyOpeningLine()]);
-  // New lines delegate automatic classification to the motor. Persisted lines
-  // retain their explicit center when their authoritative opening is loaded.
   },[opening.data,effectiveOn]);
   const status=opening.data?.status??"Draft",editable=canEditOpeningBalances&&status==="Draft"&&canConfigure;
   const update=(index:number,change:Partial<OpeningDraftLine>)=>setLines(current=>current.map((line,position)=>position===index?{...line,...change}:line));
-  const normalized=lines.map(line=>({...line,debit:Number(line.debit||0),credit:Number(line.credit||0)}));
-  const signature=(value:{description:string;lines:Array<{accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number;existingPosition?:AccountingOpeningBalanceLine["existingPosition"]}>})=>JSON.stringify([value.description.trim(),value.lines.map(line=>[line.accountId,line.partyId,line.costCenterId,line.description.trim(),line.debit,line.credit,line.existingPosition??null])]);
+  const normalized=lines.map(line=>({...line,debit:Number(line.debit||0),credit:Number(line.credit||0),newInvoice:line.newInvoice?{...line.newInvoice,documentNumber:line.newInvoice.documentNumber.trim()}:null}));
+  const signature=(value:{description:string;lines:Array<{accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number;existingPosition?:AccountingOpeningBalanceLine["existingPosition"];newInvoice?:AccountingOpeningInvoice|null}>})=>JSON.stringify([value.description.trim(),value.lines.map(line=>[line.accountId,line.partyId,line.costCenterId,line.description.trim(),line.debit,line.credit,line.existingPosition??null,line.newInvoice??null])]);
   const dirty=!opening.data||signature({description,lines:normalized})!==signature(opening.data);
   const debit=normalized.reduce((total,line)=>total+line.debit,0),credit=normalized.reduce((total,line)=>total+line.credit,0),balanced=debit>0&&Math.abs(debit-credit)<0.0001;
-  const valid=Boolean(description.trim())&&normalized.length>0&&normalized.every(line=>{const account=accounts.find(item=>item.accountId===line.accountId);return Boolean(account&&line.description.trim()&&(line.debit>0)!==(line.credit>0)&&(!account.requiresParty||line.partyId))});
-  const save=useMutation({mutationFn:()=>accountingApi.saveOpeningBalance({batchId,businessId,effectiveOn,currencyCode:"COP",description:description.trim(),rowVersion,lines:normalized.map(line=>({lineId:line.lineId,existingPosition:line.existingPosition,accountId:line.accountId,partyId:line.partyId,costCenterId:line.costCenterId,description:line.description.trim(),debit:line.debit,credit:line.credit}))}),onSuccess:value=>{client.setQueryData(queryKey,value);setBatchId(value.batchId);setRowVersion(value.rowVersion);toast.success("Borrador de saldos iniciales guardado")},onError:showError});
-  const approve=useMutation({mutationFn:()=>accountingApi.approveOpeningBalance(batchId),onSuccess:async value=>{client.setQueryData(queryKey,value);await refresh();toast.success("Saldos iniciales aprobados y listos para activar")},onError:showError});
+  const valid=Boolean(description.trim())&&normalized.length>0&&normalized.length<=500&&normalized.every(line=>{
+    const account=accounts.find(item=>item.accountId===line.accountId),invoice=line.newInvoice;
+    const kind=account?.semantics?.financialFunction;
+    return Boolean(account&&line.description.trim()&&(line.debit>0)!==(line.credit>0)&&(!account.requiresParty||line.partyId)&&
+      (!(kind==="Payable"||kind==="Receivable")||line.existingPosition||invoice)&&
+      (!invoice||(line.partyId&&invoice.documentNumber&&invoice.partySiteId&&invoice.issuedOn&&invoice.dueOn&&invoice.issuedOn<effectiveOn&&invoice.dueOn>=invoice.issuedOn&&
+        (kind==="Payable"&&line.credit>0&&line.debit===0||kind==="Receivable"&&line.debit>0&&line.credit===0))));
+  });
+  const save=useMutation({mutationFn:()=>accountingApi.saveOpeningBalance({batchId,businessId,effectiveOn,currencyCode:"COP",description:description.trim(),rowVersion,lines:normalized.map(line=>({lineId:line.lineId,existingPosition:line.existingPosition,newInvoice:line.newInvoice,accountId:line.accountId,partyId:line.partyId,costCenterId:line.costCenterId,description:line.description.trim(),debit:line.debit,credit:line.credit}))}),onSuccess:value=>{client.setQueryData(queryKey,value);setBatchId(value.batchId);setRowVersion(value.rowVersion);toast.success("Borrador de saldos iniciales guardado");},onError:showError});
+  const approve=useMutation({mutationFn:()=>accountingApi.approveOpeningBalance(batchId),onSuccess:async value=>{client.setQueryData(queryKey,value);await refresh();toast.success("Saldos iniciales aprobados y listos para activar");},onError:showError});
   const accountingReady=!canEditOpeningBalances;
   const captureEnabled=editable&&!opening.isPending&&!opening.isError&&!save.isPending&&!approve.isPending;
   const canApprove=canActivate&&canEditOpeningBalances&&status==="Draft"&&!opening.isPending&&!opening.isError;
-  return <Card className="overflow-hidden rounded-3xl"><CardHeader className="border-b bg-muted/30"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><CardTitle>Saldos iniciales</CardTitle><Badge variant={status==="Draft"?"outline":"secondary"}>{status==="Draft"?"Borrador":status==="Approved"?"Aprobado":"Contabilizado"}</Badge></div><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Registra el estado contable con el que empieza este negocio. Al activar con saldos aprobados, Auraly genera el asiento de apertura y todos los movimientos posteriores parten de él.</p></div><Field label="Fecha efectiva"><Input className="w-48" type="date" value={effectiveOn} disabled={accountingReady||save.isPending||approve.isPending} onChange={event=>setEffectiveOn(event.target.value)}/></Field></div></CardHeader><CardContent className="space-y-4 p-0"><div className="grid gap-4 p-5 md:grid-cols-[1fr_auto]"><Field label="Descripción del asiento"><Input value={description} disabled={!captureEnabled} maxLength={300} onChange={event=>setDescription(event.target.value)}/></Field><div className="flex items-end gap-2"><Button type="button" variant="outline" disabled={!captureEnabled} onClick={()=>setLines(current=>[...current,emptyOpeningLine()])}><Plus className="mr-2 h-4 w-4"/>Agregar línea</Button></div></div><div className="overflow-x-auto border-y"><table className="w-full min-w-[1120px] text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-left">Cuenta PUC</th><th className="text-left">Tercero</th><th className="text-left">Centro de costo</th><th className="text-left">Descripción / obligación anterior</th><th className="text-right">Débito</th><th className="text-right">Crédito</th><th className="w-12"/></tr></thead><tbody>{lines.map((line,index)=>{const account=accounts.find(item=>item.accountId===line.accountId);const kind=account?.semantics?.financialFunction;return <tr key={line.lineId} className="border-t align-top"><td className="p-2"><Select value={line.accountId} disabled={!captureEnabled} onValueChange={accountId=>update(index,{accountId,partyId:accounts.find(item=>item.accountId===accountId)?.requiresParty?line.partyId:null,existingPosition:null,existingPositionDocumentNumber:null})}><SelectTrigger><SelectValue placeholder="Seleccionar cuenta"/></SelectTrigger><SelectContent>{accounts.map(item=><SelectItem key={item.accountId} value={item.accountId}>{item.code} · {item.name}</SelectItem>)}</SelectContent></Select>{account?.requiresParty&&<small className="text-amber-700">Esta cuenta exige tercero.</small>}</td><td className="p-2"><PartySelect value={line.partyId??"none"} disabled={!captureEnabled} leadingOptions={[{value:"none",label:"Sin tercero"}]} placeholder="Buscar cualquier tercero" onChange={value=>update(index,{partyId:value==="none"?null:value,existingPosition:null,existingPositionDocumentNumber:null})}/></td><td className="p-2"><CostCenterSelect value={line.costCenterId} onChange={value=>update(index,{costCenterId:value})} selected={line.costCenterId?centerLabels.data?.get(line.costCenterId):undefined} disabled={!captureEnabled} ariaLabel={`Centro de costo de apertura ${index+1}`}/></td><td className="space-y-2 p-2"><Input value={line.description} disabled={!captureEnabled} maxLength={300} onChange={event=>update(index,{description:event.target.value})}/>{(kind==="Payable"||kind==="Receivable")&&<PagedEntitySelect<AccountingOpenPosition>
-        queryKey={["opening-position-options",businessId,kind,line.partyId]}
-        value={line.existingPosition?.subledgerId??""}
-        selectedOption={line.existingPosition?{value:line.existingPosition.subledgerId,label:line.existingPositionDocumentNumber??"Obligación seleccionada"}:null}
-        disabled={!captureEnabled||!line.partyId||save.isPending||approve.isPending}
-        placeholder="Vincular obligación anterior (opcional)"
-        ariaLabel={`Vincular obligación anterior en partida ${index+1}`}
-        searchPlaceholder="Buscar factura u obligación…"
-        emptyMessage="No hay obligaciones pendientes para este tercero."
-        loadPage={async(search,page,pageSize)=>{const result=await accountingApi.openPositions({subledgerKind:kind,partyId:line.partyId!,search,page,pageSize});return {...result,totalPages:Math.ceil(result.totalCount/result.pageSize)}}}
-        getOption={item=>({value:item.subledgerId,label:item.documentNumber,description:`${item.partyName} · Saldo ${auxiliaryMoney.format(item.outstandingAmount)}${item.openingEntryId?" · Ya tiene apertura contable":""}`})}
-        onChange={(_id,_option,item)=>{if(item)update(index,{existingPosition:{subledgerKind:kind,subledgerId:item.subledgerId},existingPositionDocumentNumber:item.documentNumber,description:`Saldo ${item.documentNumber}`,debit:kind==="Receivable"?String(item.outstandingAmount):"",credit:kind==="Payable"?String(item.outstandingAmount):""})}}
-        onClear={line.existingPosition?()=>update(index,{existingPosition:null,existingPositionDocumentNumber:null}):undefined}/>}</td><td className="p-2"><Input className="text-right" type="number" min="0" step="0.0001" value={line.debit} disabled={!captureEnabled} onChange={event=>update(index,{debit:event.target.value,credit:event.target.value?"":line.credit})}/></td><td className="p-2"><Input className="text-right" type="number" min="0" step="0.0001" value={line.credit} disabled={!captureEnabled} onChange={event=>update(index,{credit:event.target.value,debit:event.target.value?"":line.debit})}/></td><td className="p-2"><Button type="button" size="icon" variant="ghost" disabled={!captureEnabled||lines.length<=1} aria-label="Eliminar línea" onClick={()=>setLines(current=>current.filter((_,position)=>position!==index))}><Trash2 className="h-4 w-4"/></Button></td></tr>})}</tbody><tfoot className="border-t-2 bg-muted/30 font-bold"><tr><td className="p-3" colSpan={4}>Totales {balanced&&<span className="ml-2 text-emerald-700">· Cuadrado</span>}</td><td className="text-right">{auxiliaryMoney.format(debit)}</td><td className="text-right">{auxiliaryMoney.format(credit)}</td><td/></tr></tfoot></table></div>{opening.isError&&<p role="alert" className="p-5 text-destructive">No se pudieron cargar los saldos iniciales. <Button variant="link" onClick={()=>void opening.refetch()}>Reintentar</Button></p>}{opening.isLoading&&<p className="p-6 text-center text-sm text-muted-foreground">Cargando saldos iniciales…</p>}<div className="flex flex-col gap-3 p-5 pt-0 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-muted-foreground">Para conciliar cartera anterior, selecciona su cuenta, tercero y obligación. Se incorpora el saldo pendiente sin crear otra deuda. Guarda los cambios antes de aprobar.</p><div className="flex gap-2"><Button type="button" variant="outline" disabled={!captureEnabled||!valid||save.isPending||approve.isPending} onClick={()=>save.mutate()}>{save.isPending&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Guardar borrador</Button><Button type="button" disabled={!canApprove||!opening.data||dirty||!valid||!balanced||save.isPending||approve.isPending} onClick={()=>approve.mutate()}>{approve.isPending&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Aprobar saldos</Button></div></div></CardContent></Card>
+  return <Card className="overflow-hidden rounded-3xl">
+    <CardHeader className="border-b bg-muted/30"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div><CardTitle>Saldos iniciales</CardTitle><p className="mt-1 text-sm text-muted-foreground">Registra el balance de apertura. Para cartera, detalla cada factura con su saldo pendiente.</p></div>
+      <Field label="Fecha efectiva"><Input className="w-full sm:w-48" type="date" value={effectiveOn} disabled={accountingReady||save.isPending||approve.isPending} onChange={event=>setEffectiveOn(event.target.value)}/></Field>
+    </div></CardHeader>
+    <CardContent className="space-y-4 p-0">
+      <div className="grid gap-4 p-5 lg:grid-cols-[1fr_auto]">
+        <Field label="Descripción del asiento"><Input value={description} disabled={!captureEnabled} maxLength={300} onChange={event=>setDescription(event.target.value)}/></Field>
+        <div className="flex flex-wrap items-end gap-2">
+          <Button type="button" variant="outline" disabled={!captureEnabled||lines.length>=500} onClick={()=>setLines(current=>[...current,emptyOpeningLine()])}><Plus className="mr-2 h-4 w-4"/>Agregar línea</Button>
+          <Button type="button" disabled={!captureEnabled||lines.length>=500} onClick={()=>setLines(current=>{
+            const empty=current.findIndex(line=>!line.accountId&&!line.partyId&&!line.debit&&!line.credit&&!line.newInvoice);
+            const invoice={...emptyOpeningLine(),description:"Factura inicial",newInvoice:emptyOpeningInvoice()};
+            return empty<0?[...current,invoice]:current.map((line,index)=>index===empty?{...invoice,lineId:line.lineId}:line);
+          })}><ReceiptText className="mr-2 h-4 w-4"/>Agregar factura inicial</Button>
+        </div>
+      </div>
+      <div className="border-y"><table className="block w-full text-sm lg:table">
+        <thead className="hidden bg-muted/50 lg:table-header-group"><tr><th className="p-3 text-left">Cuenta PUC</th><th className="text-left">Tercero</th><th className="text-left">Centro de costo</th><th className="text-left">Descripción / factura</th><th className="text-right">Débito</th><th className="text-right">Crédito</th><th className="w-12"/></tr></thead>
+        <tbody className="block lg:table-row-group">{lines.map((line,index)=>{
+          const account=accounts.find(item=>item.accountId===line.accountId),kind=account?.semantics?.financialFunction;
+          const portfolio=kind==="Payable"||kind==="Receivable";
+          return <Fragment key={line.lineId}>
+            <tr aria-label={`Partida de apertura ${index+1}`} className="grid min-w-0 grid-cols-2 gap-3 border-t p-3 lg:table-row lg:p-0">
+              <td className="col-span-2 min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Cuenta PUC</span>
+                <Select value={line.accountId} disabled={!captureEnabled} onValueChange={accountId=>{const selected=accounts.find(item=>item.accountId===accountId);const functionCode=selected?.semantics?.financialFunction;update(index,{accountId,partyId:selected?.requiresParty?line.partyId:null,partyName:selected?.requiresParty?line.partyName:null,partyIdentification:selected?.requiresParty?line.partyIdentification:null,existingPosition:null,existingPositionDocumentNumber:null,newInvoice:functionCode==="Payable"||functionCode==="Receivable"?emptyOpeningInvoice():null,newInvoicePartySiteName:null});}}>
+                  <SelectTrigger aria-label={`Cuenta de apertura ${index+1}`}><SelectValue placeholder="Seleccionar cuenta"/></SelectTrigger>
+                  <SelectContent>{accounts.filter(item=>!line.newInvoice||!!line.accountId||item.semantics?.financialFunction==="Payable"||item.semantics?.financialFunction==="Receivable").map(item=><SelectItem key={item.accountId} value={item.accountId}>{item.code} · {item.name}</SelectItem>)}</SelectContent>
+                </Select>{account?.requiresParty&&<small className="text-amber-700">Esta cuenta exige tercero.</small>}
+              </td>
+              <td className="col-span-2 min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Tercero</span>
+                <PartySelect value={line.partyId??"none"} disabled={!captureEnabled} leadingOptions={[{value:"none",label:"Sin tercero"}]}
+                  selectedOption={line.partyId?{value:line.partyId,label:line.partyName??"Tercero seleccionado",description:line.partyIdentification}:null}
+                  ariaLabel={`Tercero de apertura ${index+1}`} placeholder="Buscar cualquier tercero"
+                  onChange={(value,party)=>update(index,{partyId:value==="none"?null:value,partyName:party?.displayName,partyIdentification:party?.identification,existingPosition:null,existingPositionDocumentNumber:null,newInvoice:line.newInvoice?{...line.newInvoice,partySiteId:""}:null,newInvoicePartySiteName:null})}/>
+              </td>
+              <td className="col-span-2 min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Centro de costo</span><CostCenterSelect value={line.costCenterId} onChange={value=>update(index,{costCenterId:value})} selected={line.costCenterId?centerLabels.data?.get(line.costCenterId):undefined} disabled={!captureEnabled} ariaLabel={`Centro de costo de apertura ${index+1}`}/></td>
+              <td className="col-span-2 min-w-0 space-y-2 lg:p-2"><Input aria-label={`Descripción de apertura ${index+1}`} value={line.description} disabled={!captureEnabled} maxLength={300} onChange={event=>update(index,{description:event.target.value})}/>
+                {portfolio&&<><Button type="button" size="sm" variant="ghost" disabled={!captureEnabled} onClick={()=>update(index,{newInvoice:line.newInvoice?null:emptyOpeningInvoice(),newInvoicePartySiteName:null,existingPosition:null,existingPositionDocumentNumber:null})}>{line.newInvoice?"Vincular factura existente":"Registrar factura inicial nueva"}</Button>
+                {!line.newInvoice&&<PagedEntitySelect<AccountingOpenPosition>
+                  queryKey={["opening-position-options",businessId,kind,line.partyId]} value={line.existingPosition?.subledgerId??""}
+                  selectedOption={line.existingPosition?{value:line.existingPosition.subledgerId,label:line.existingPositionDocumentNumber??"Obligación seleccionada"}:null}
+                  disabled={!captureEnabled||!line.partyId} placeholder="Seleccionar factura existente"
+                  ariaLabel={`Vincular obligación anterior en partida ${index+1}`} searchPlaceholder="Buscar factura u obligación…"
+                  emptyMessage="No hay obligaciones pendientes para este tercero."
+                  loadPage={async(search,page,pageSize)=>{const result=await accountingApi.openPositions({subledgerKind:kind,partyId:line.partyId!,search,page,pageSize});return {...result,totalPages:Math.ceil(result.totalCount/result.pageSize)};}}
+                  getOption={item=>({value:item.subledgerId,label:item.documentNumber,description:`${item.partyName} · Saldo ${auxiliaryMoney.format(item.outstandingAmount)}${item.openingEntryId?" · Ya tiene apertura contable":""}`})}
+                  onChange={(_id,_option,item)=>{if(item)update(index,{existingPosition:{subledgerKind:kind,subledgerId:item.subledgerId},existingPositionDocumentNumber:item.documentNumber,description:`Saldo ${item.documentNumber}`,debit:kind==="Receivable"?String(item.outstandingAmount):"",credit:kind==="Payable"?String(item.outstandingAmount):""});}}
+                  onClear={line.existingPosition?()=>update(index,{existingPosition:null,existingPositionDocumentNumber:null}):undefined}/>}</>}
+                {line.newInvoice&&!portfolio&&<p className="text-xs text-muted-foreground">Selecciona una cuenta que maneje cuentas por cobrar o por pagar.</p>}
+              </td>
+              <td className="min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Débito</span><Input aria-label={`Débito de apertura ${index+1}`} className="text-right" type="number" min="0" step="0.0001" value={line.debit} disabled={!captureEnabled||!!line.newInvoice} onChange={event=>update(index,{debit:event.target.value,credit:event.target.value?"":line.credit})}/></td>
+              <td className="min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Crédito</span><Input aria-label={`Crédito de apertura ${index+1}`} className="text-right" type="number" min="0" step="0.0001" value={line.credit} disabled={!captureEnabled||!!line.newInvoice} onChange={event=>update(index,{credit:event.target.value,debit:event.target.value?"":line.debit})}/></td>
+              <td className="col-span-2 lg:p-2"><Button type="button" size="icon" variant="ghost" disabled={!captureEnabled||lines.length<=1} aria-label="Eliminar línea" onClick={()=>setLines(current=>current.filter((_,position)=>position!==index))}><Trash2 className="h-4 w-4"/></Button></td>
+            </tr>
+            {line.newInvoice&&portfolio&&<tr className="block lg:table-row"><td colSpan={7} className="block p-3 lg:table-cell"><OpeningInvoiceFields businessId={businessId} partyId={line.partyId} kind={kind} lineNumber={index+1}
+              invoice={line.newInvoice} siteName={line.newInvoicePartySiteName} effectiveOn={effectiveOn} amount={Number((kind==="Receivable"?line.debit:line.credit)||0)} disabled={!captureEnabled}
+              onInvoice={(newInvoice,newInvoicePartySiteName)=>update(index,{newInvoice,newInvoicePartySiteName})}
+              onAmount={amount=>update(index,{debit:kind==="Receivable"&&amount>0?String(amount):"",credit:kind==="Payable"&&amount>0?String(amount):""})}/></td></tr>}
+          </Fragment>;
+        })}</tbody>
+        <tfoot className="block border-t-2 bg-muted/30 font-bold lg:table-footer-group"><tr className="grid grid-cols-2 gap-2 p-3 lg:table-row"><td className="col-span-2 lg:p-3" colSpan={4}>Totales {balanced&&<span className="ml-2 text-emerald-700">· Cuadrado</span>}</td><td className="text-right">{auxiliaryMoney.format(debit)}</td><td className="text-right">{auxiliaryMoney.format(credit)}</td><td/></tr></tfoot>
+      </table></div>
+      {opening.isError&&<p role="alert" className="p-5 text-destructive">No se pudieron cargar los saldos iniciales. <Button variant="link" onClick={()=>void opening.refetch()}>Reintentar</Button></p>}
+      {opening.isLoading&&<p className="p-6 text-center text-sm text-muted-foreground">Cargando saldos iniciales…</p>}
+      {accountingReady&&<p className="px-5 text-sm text-muted-foreground">La apertura contable ya está cerrada. Sus saldos se conservan para consulta.</p>}
+      <div className="flex flex-col gap-3 p-5 pt-0 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-muted-foreground">Una partida por factura. La cuenta acumula sus saldos. Si la deuda ya existe, vincúlala para incorporarla sin crear otra. Guarda los cambios antes de aprobar.</p><div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" disabled={!captureEnabled||!valid||save.isPending||approve.isPending} onClick={()=>save.mutate()}>{save.isPending&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Guardar borrador</Button>
+        <Button type="button" disabled={!canApprove||!opening.data||dirty||!valid||!balanced||save.isPending||approve.isPending} onClick={()=>approve.mutate()}>{approve.isPending&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Aprobar saldos</Button>
+      </div></div>
+    </CardContent>
+  </Card>;
 }
 
 function AutomationSection({categories,accounts,mapped,mappedCount,scope,setScope,pending,onMap}:{categories:Array<{category:string;displayName:string;isRequired:boolean}>;accounts:Array<{accountId:string;code:string;name:string}>;mapped:Map<string,string>;mappedCount:number;scope:"tenant"|"business";setScope:(value:"tenant"|"business")=>void;pending:boolean;onMap:(category:string,accountId:string)=>void}){const requiredCount=categories.filter(item=>item.isRequired).length;return <Card className="overflow-hidden rounded-3xl"><CardHeader className="border-b bg-muted/30"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>Cuentas automáticas</CardTitle><p className="mt-1 text-sm text-muted-foreground">Cada concepto debe apuntar a una cuenta contabilizable. {mappedCount}/{requiredCount} completos.</p></div><Select value={scope} onValueChange={value=>setScope(value as "tenant"|"business")}><SelectTrigger className="w-56"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="tenant">Regla general de la empresa</SelectItem><SelectItem value="business">Excepción para esta sede</SelectItem></SelectContent></Select></div></CardHeader><CardContent className="p-0"><div className="grid lg:grid-cols-2">{categories.map(item=><div key={item.category} className="grid grid-cols-[minmax(0,1fr)_minmax(13rem,1.2fr)] items-center gap-3 border-b p-4 lg:odd:border-r"><strong className="text-sm">{item.displayName}</strong><Select value={mapped.get(item.category)??""} disabled={pending||!accounts.length} onValueChange={accountId=>onMap(item.category,accountId)}><SelectTrigger className={mapped.has(item.category)?"":"border-amber-400 bg-amber-50"}><SelectValue placeholder="Seleccionar cuenta"/></SelectTrigger><SelectContent>{accounts.map(account=><SelectItem key={account.accountId} value={account.accountId}>{account.code} · {account.name}</SelectItem>)}</SelectContent></Select></div>)}</div></CardContent></Card>}

@@ -156,17 +156,17 @@ public sealed partial class SqlAccountingPostingProcessor
           TransactionId uniqueidentifier,CustomerId uniqueidentifier,PartyId uniqueidentifier,
           PartySiteId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
           SourceLineId uniqueidentifier,Number nvarchar(64),Amount decimal(19,4),
-          DueDate datetimeoffset(7),OccurredAt datetimeoffset(7),TransactionSourceId uniqueidentifier);
+          DueDate datetimeoffset(7),OccurredAt datetimeoffset(7),TransactionSourceId uniqueidentifier,InvoiceIssuedAt datetimeoffset(7));
         """;
 
     private const string OpenReceivablesSql = """
         DECLARE @ReceivableOpeningCount int=(SELECT COUNT(*) FROM @ReceivableOpenings);
         INSERT dbo.Receivables(ReceivableId,BusinessId,CustomerId,PartyId,PartySiteId,
           SourceDocumentId,SourceDocumentType,SourceLineId,DocumentNumber,CurrencyCode,
-          OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+          OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt,InvoiceIssuedAt)
         SELECT opening.ReceivableId,@BusinessId,opening.CustomerId,opening.PartyId,opening.PartySiteId,
           opening.DocumentId,opening.DocumentType,opening.SourceLineId,opening.Number,N'COP',
-          opening.Amount,opening.Amount,opening.DueDate,N'Open',@Now
+          opening.Amount,opening.Amount,opening.DueDate,N'Open',@Now,opening.InvoiceIssuedAt
         FROM @ReceivableOpenings opening JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
         LEFT JOIN dbo.Customers customer ON customer.CustomerId=opening.CustomerId AND customer.TenantId=business.TenantId
         LEFT JOIN dbo.PartySites site ON site.PartySiteId=opening.PartySiteId AND site.PartyId=customer.PartyId
@@ -956,7 +956,7 @@ public sealed partial class SqlAccountingPostingProcessor
 
     private sealed record PayableOpening(Guid PayableId, Guid TransactionId, Guid SupplierId, Guid? PartySiteId,
         Guid DocumentId, string DocumentType, Guid? SourceLineId, string Number, string Currency, decimal Amount,
-        decimal FunctionalAmount, decimal ExchangeRate, Guid? ParentGoodsReceiptId, DateTimeOffset DueDate, DateTimeOffset OccurredAt);
+        decimal FunctionalAmount, decimal ExchangeRate, Guid? ParentGoodsReceiptId, DateTimeOffset DueDate, DateTimeOffset OccurredAt, DateTimeOffset? InvoiceIssuedAt = null);
 
     private async Task OpenPayablesAsync(SqlConnection connection, SqlTransaction transaction,
         Guid businessId, IReadOnlyList<PayableOpening> openings, CancellationToken token)
@@ -967,20 +967,20 @@ public sealed partial class SqlAccountingPostingProcessor
             DECLARE @Openings TABLE(PayableId uniqueidentifier PRIMARY KEY,TransactionId uniqueidentifier,
               SupplierId uniqueidentifier,PartySiteId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
               SourceLineId uniqueidentifier,Number nvarchar(80),Currency char(3),Amount decimal(19,4),FunctionalAmount decimal(19,4),
-              ExchangeRate decimal(19,8),ParentGoodsReceiptId uniqueidentifier,DueDate datetimeoffset(7),OccurredAt datetimeoffset(7));
+              ExchangeRate decimal(19,8),ParentGoodsReceiptId uniqueidentifier,DueDate datetimeoffset(7),OccurredAt datetimeoffset(7),InvoiceIssuedAt datetimeoffset(7));
             INSERT @Openings SELECT * FROM OPENJSON(@Rows) WITH(PayableId uniqueidentifier,TransactionId uniqueidentifier,
               SupplierId uniqueidentifier,PartySiteId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
               SourceLineId uniqueidentifier,Number nvarchar(80),Currency char(3),Amount decimal(19,4),FunctionalAmount decimal(19,4),
-              ExchangeRate decimal(19,8),ParentGoodsReceiptId uniqueidentifier,DueDate datetimeoffset(7),OccurredAt datetimeoffset(7));
+              ExchangeRate decimal(19,8),ParentGoodsReceiptId uniqueidentifier,DueDate datetimeoffset(7),OccurredAt datetimeoffset(7),InvoiceIssuedAt datetimeoffset(7));
             IF @@ROWCOUNT<>@Count THROW 51842,'The payable opening batch is incomplete.',1;
             INSERT dbo.Payables
               (PayableId,BusinessId,SupplierId,PartySiteId,SourceDocumentId,SourceDocumentType,
                DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,FunctionalOriginalAmount,
-               ExchangeRate,ParentGoodsReceiptId,DueDate,Status,CreatedAt,SourceLineId)
+               ExchangeRate,ParentGoodsReceiptId,DueDate,Status,CreatedAt,SourceLineId,InvoiceIssuedAt)
             SELECT opening.PayableId,@BusinessId,opening.SupplierId,
                site.PartySiteId,opening.DocumentId,opening.DocumentType,
                opening.Number,opening.Currency,opening.Amount,opening.Amount,opening.FunctionalAmount,opening.ExchangeRate,
-               opening.ParentGoodsReceiptId,opening.DueDate,N'Open',@Now,opening.SourceLineId
+               opening.ParentGoodsReceiptId,opening.DueDate,N'Open',@Now,opening.SourceLineId,opening.InvoiceIssuedAt
             FROM @Openings opening JOIN dbo.Suppliers supplier ON supplier.SupplierId=opening.SupplierId
             JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
               AND business.TenantId=supplier.TenantId

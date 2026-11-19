@@ -45,7 +45,7 @@ public sealed partial class SqlPayablesStore
               SELECT p.PayableId,p.SupplierId,p.PartySiteId,p.DocumentNumber,
                 p.CurrencyCode,p.OriginalAmount,p.DueDate,p.Status,
                 s.Name SupplierName,COALESCE(s.Identification,N'') Identification,site.Name PartySiteName,
-                p.SourceDocumentId,p.SourceDocumentType
+                p.SourceDocumentId,p.SourceDocumentType,p.InvoiceIssuedAt
               INTO #Candidates
               FROM dbo.Payables p
               JOIN dbo.Businesses business ON business.BusinessId=p.BusinessId
@@ -85,7 +85,7 @@ public sealed partial class SqlPayablesStore
             OPTION (FORCE ORDER, LOOP JOIN);
             SELECT candidate.PayableId,candidate.SupplierId,candidate.PartySiteId,candidate.DocumentNumber,
               candidate.CurrencyCode,candidate.OriginalAmount,candidate.DueDate,candidate.Status,
-              document.IssuedAt,candidate.SupplierName,candidate.Identification,candidate.PartySiteName
+              COALESCE(candidate.InvoiceIssuedAt,document.IssuedAt) IssuedAt,candidate.SupplierName,candidate.Identification,candidate.PartySiteName
             INTO #Scoped FROM #Candidates candidate
             JOIN #DocumentSources document ON document.SourceDocumentId=candidate.SourceDocumentId
               AND document.SourceDocumentType=candidate.SourceDocumentType;

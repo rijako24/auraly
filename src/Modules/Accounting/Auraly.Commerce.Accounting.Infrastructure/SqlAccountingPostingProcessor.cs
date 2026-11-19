@@ -2403,17 +2403,25 @@ public sealed partial class SqlAccountingPostingProcessor(
                 BaseAmount: line.BaseAmount)).ToArray());
     }
 
-    private static async Task<FinancialFactsResult> LoadOpeningBalanceFactsAsync(
+    private async Task<FinancialFactsResult> LoadOpeningBalanceFactsAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source, CancellationToken token)
     {
         using var document = JsonDocument.Parse(source.PayloadJson);
-        if (!document.RootElement.TryGetProperty("PayloadVersion", out var version) || version.ValueKind == JsonValueKind.Null || version.GetInt32() != 3)
+        if (!document.RootElement.TryGetProperty("PayloadVersion", out var version) || version.ValueKind == JsonValueKind.Null || version.GetInt32() is not (3 or 4))
             return FinancialFactsResult.Ready(LoadManualVoucherFacts(source));
         var opening = JsonSerializer.Deserialize<AccountingReconciledOpeningPayload>(source.PayloadJson)
             ?? throw new InvalidOperationException("The reconciled opening source is invalid.");
         if (opening.VoucherId != source.DocumentId || opening.BusinessId != source.BusinessId || opening.OccurredAt != source.OccurredAt)
             throw new InvalidOperationException("The reconciled opening identity does not match its accepted source.");
         AccountingJournal.ValidateIdentifiedSourceLines(opening.Lines.Select(line => line.LineId));
+        var invoices = opening.Lines.Where(line=>line.NewInvoice is not null).ToArray();
+        if (opening.PayloadVersion == 3 && invoices.Length != 0 || opening.PayloadVersion == 4 &&
+            (invoices.Length == 0 || opening.HistoricalCatchup == true || invoices.Any(line=>line.NewInvoice!.PositionId==Guid.Empty ||
+                line.NewInvoice.TransactionId==Guid.Empty || line.NewInvoice.CounterpartyRoleId==Guid.Empty ||
+                line.NewInvoice.SubledgerKind is not ("Receivable" or "Payable")) ||
+                invoices.Select(line=>line.NewInvoice!.PositionId).Distinct().Count()!=invoices.Length ||
+                invoices.Select(line=>line.NewInvoice!.TransactionId).Distinct().Count()!=invoices.Length))
+            throw new InvalidOperationException("La evidencia de la factura inicial o las identidades de sus efectos aceptados no son válidas.");
         await using var validate = new SqlCommand("accounting.OpeningPositionsValidate", connection, transaction)
             { CommandType = CommandType.StoredProcedure };
         validate.Parameters.AddWithValue("@TenantId", source.TenantId);
@@ -2424,14 +2432,38 @@ public sealed partial class SqlAccountingPostingProcessor(
         {
             line.LineNumber, line.AccountId, line.PartyId, line.Debit, line.Credit, line.LineId,
             ExistingPayableId = line.ExistingPosition?.SubledgerKind == "Payable" ? line.ExistingPosition.SubledgerId : (Guid?)null,
-            ExistingReceivableId = line.ExistingPosition?.SubledgerKind == "Receivable" ? line.ExistingPosition.SubledgerId : (Guid?)null
+            ExistingReceivableId = line.ExistingPosition?.SubledgerKind == "Receivable" ? line.ExistingPosition.SubledgerId : (Guid?)null,
+            OpeningDocumentNumber=line.NewInvoice?.DocumentNumber,
+            OpeningIssuedOn=line.NewInvoice is {} issued ? DateOnly.FromDateTime(issued.IssuedAt.DateTime) : (DateOnly?)null,
+            OpeningDueOn=line.NewInvoice is {} due ? DateOnly.FromDateTime(due.DueDate.DateTime) : (DateOnly?)null,
+            OpeningPartySiteId=line.NewInvoice?.PartySiteId,OpeningRoleId=line.NewInvoice?.CounterpartyRoleId,
+            OpeningKind=line.NewInvoice?.SubledgerKind
         }));
         try { await validate.ExecuteNonQueryAsync(token); }
         catch (SqlException error) when (error.Number == 51408)
         { return FinancialFactsResult.Pending("OpeningReconciliationRequired", error.Message); }
+        // These are the same batched opening writers as ordinary invoices and
+        // manual vouchers. Both the new obligations and journal commit together.
+        var payableInvoices=invoices.Where(line=>line.NewInvoice!.SubledgerKind=="Payable").ToArray();
+        if(payableInvoices.Length>0)
+            await OpenPayablesAsync(connection,transaction,source.BusinessId,payableInvoices.Select(line=>
+                new PayableOpening(line.NewInvoice!.PositionId,line.NewInvoice.TransactionId,line.NewInvoice.CounterpartyRoleId,
+                    line.NewInvoice.PartySiteId,source.DocumentId,source.DocumentType,line.LineId,line.NewInvoice.DocumentNumber,
+                    "COP",line.Credit,line.Credit,1m,null,line.NewInvoice.DueDate,source.OccurredAt,line.NewInvoice.IssuedAt)).ToArray(),token);
+        var receivableInvoices=invoices.Where(line=>line.NewInvoice!.SubledgerKind=="Receivable").ToArray();
+        if(receivableInvoices.Length>0)
+        {
+            await OpenManualReceivablesAsync(connection,transaction,source,receivableInvoices.Select(line=>
+                new VoucherFinancialPositionEffect(line.NewInvoice!.TransactionId,line.LineId!.Value,"Open","Receivable",line.LineId.Value,
+                    line.NewInvoice.PositionId,line.AccountId,line.PartyId!.Value,line.NewInvoice.CounterpartyRoleId,
+                    line.NewInvoice.PartySiteId,line.Debit,line.NewInvoice.DueDate,line.NewInvoice.DocumentNumber)).ToArray(),token,
+                receivableInvoices.ToDictionary(line=>line.LineId!.Value,line=>line.NewInvoice!.IssuedAt));
+            await SqlAccountingPosSynchronizationOutbox.InsertCustomersAsync(connection,transaction,source.BusinessId,
+                receivableInvoices.Select(line=>line.NewInvoice!.CounterpartyRoleId).Distinct().ToArray(),ids,timeProvider.GetUtcNow(),token);
+        }
         return FinancialFactsResult.Ready(FinancialFacts.Manual(opening.Description, opening.Lines.Select(line =>
             new ManualLineSpec(line.AccountId, line.Debit, line.Credit, line.PartyId, line.CostCenterId,
-                line.Description, line.LineId, OpeningKind: line.ExistingPosition?.SubledgerKind switch
+                line.Description, line.LineId, OpeningKind: (line.ExistingPosition?.SubledgerKind ?? line.NewInvoice?.SubledgerKind) switch
                 {
                     null => JournalOpeningKind.None,
                     "Payable" => JournalOpeningKind.Payable,

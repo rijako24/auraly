@@ -421,18 +421,24 @@ public sealed partial class AccountingService(
         if (request.CurrencyCode is not "COP")
             throw new AccountingValidationException("El saldo inicial contable admite COP.");
         ValidateText(request.Description, 300, "Descripción");
-        if (request.Lines is null || request.Lines.Count == 0)
-            throw new AccountingValidationException("El saldo inicial requiere al menos una partida.");
+        if (request.Lines is null || request.Lines.Count is < 1 or > 500)
+            throw new AccountingValidationException("El saldo inicial requiere entre 1 y 500 partidas.");
         foreach (var line in request.Lines)
         {
             if (line.LineId == Guid.Empty || line.ExistingPosition is { } position &&
                 (position.SubledgerId == Guid.Empty || position.ReversesTransactionId is not null || position.SubledgerKind is not ("Payable" or "Receivable")))
                 throw new AccountingValidationException("La referencia de la obligación o la identidad de la partida no es válida.");
-            if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
+            if (line.NewInvoice is { } invoice && (line.ExistingPosition is not null || line.PartyId is null ||
+                invoice.PartySiteId == Guid.Empty || string.IsNullOrWhiteSpace(invoice.DocumentNumber) || invoice.DocumentNumber.Length > 80 ||
+                invoice.IssuedOn == default || invoice.DueOn == default || invoice.DueOn < invoice.IssuedOn || invoice.IssuedOn >= request.EffectiveOn))
+                throw new AccountingValidationException("La factura inicial requiere tercero, sede, número, emisión anterior al corte y vencimiento válido; no puede vincular otra obligación al mismo tiempo.");
+            if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 || !IsBankMoney(line.Debit) || !IsBankMoney(line.Credit) ||
                 (line.Debit > 0) == (line.Credit > 0))
                 throw new AccountingValidationException("Cada partida del saldo inicial requiere exactamente un débito o un crédito positivo.");
             ValidateText(line.Description, 300, "Descripción de la partida");
         }
+        if (!IsBankMoney(request.Lines.Sum(line=>line.Debit)) || !IsBankMoney(request.Lines.Sum(line=>line.Credit)))
+            throw new AccountingValidationException("Los totales de apertura exceden el importe contable permitido.");
         return store.SaveOpeningBalanceAsync(user, request, cancellationToken);
     }
 
