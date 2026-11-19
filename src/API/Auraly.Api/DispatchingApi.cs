@@ -1,8 +1,8 @@
 using System.Security.Claims;
 using Auraly.Application.Dispatching;
 using Auraly.Contracts.Dispatching;
-using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Time;
+using Auraly.Platform.Application.Services;
 using Auraly.Pos.Printing;
 
 namespace Auraly.Api;
@@ -78,26 +78,31 @@ public static class DispatchingApi
             await ExecuteAsync(() => service.DeclareShortageAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
 
         group.MapGet("/{dispatchId:guid}/execution", async (ClaimsPrincipal principal, Guid dispatchId,
-            DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct), Results.Ok));
+            DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPut("/{dispatchId:guid}/delivery-results", async (ClaimsPrincipal principal, Guid dispatchId,
-            RecordDispatchDeliveryRequest request, DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.RecordAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+            RecordDispatchDeliveryRequest request, DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.RecordAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPut("/{dispatchId:guid}/delivery-order", async (ClaimsPrincipal principal, Guid dispatchId,
-            ReorderDispatchDocumentsRequest request, DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.ReorderAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+            ReorderDispatchDocumentsRequest request, DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.ReorderAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPost("/{dispatchId:guid}/expenses", async (ClaimsPrincipal principal, Guid dispatchId,
-            DispatchExpenseInput request, DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.RecordExpenseAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+            DispatchExpenseInput request, DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.RecordExpenseAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPut("/{dispatchId:guid}/expenses/{expenseId:guid}/review", async (ClaimsPrincipal principal, Guid dispatchId,
-            Guid expenseId, ReviewDispatchExpenseRequest request, DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.ReviewExpenseAsync(principal.ToDispatchIdentity(), dispatchId, expenseId, request, ct), Results.Ok));
+            Guid expenseId, ReviewDispatchExpenseRequest request, DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.ReviewExpenseAsync(principal.ToDispatchIdentity(), dispatchId, expenseId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
         group.MapPost("/{dispatchId:guid}/evidence", async (ClaimsPrincipal principal, Guid dispatchId,
-            IFormFile file, DispatchDeliveryService service, AzureBlobObjectStorage blobs, CancellationToken ct) =>
+            IFormFile file, DispatchDeliveryService service, IBlobStorageService blobs, IMediaUrlResolver media, CancellationToken ct) =>
             await ExecuteAsync(async () =>
         {
             var actor = principal.ToDispatchIdentity();
@@ -107,24 +112,31 @@ public static class DispatchingApi
             var extension = Path.GetExtension(file.FileName);
             if (extension.Length > 10) extension = ".jpg";
             await using var stream = file.OpenReadStream();
-            var url = await blobs.UploadImageAsync(actor.BusinessId, stream, $"dispatch-evidence/{dispatchId:D}/{Guid.NewGuid():N}{extension}", file.ContentType, ct);
-            return new { url };
+            var reference = await blobs.UploadImageAsync(actor.BusinessId, stream, $"dispatch-evidence/{dispatchId:D}/{Guid.NewGuid():N}{extension}", ct);
+            var signed = await media.ResolveBusinessBatchAsync(actor.BusinessId, [reference], ct);
+            var readUrl = signed[reference];
+            // Only the stable unsigned identity belongs in documents and hashes.
+            var url = new Uri(readUrl, UriKind.Absolute).GetLeftPart(UriPartial.Path);
+            return new { url, readUrl };
         }, Results.Ok)).RequireAuthorization(policy => policy.RequireClaim("permission", DispatchPermissionCodes.ExecuteDeliveries)).DisableAntiforgery();
 
 
         group.MapPut("/{dispatchId:guid}/payments/{paymentId:guid}/verification", async (ClaimsPrincipal principal,
             Guid dispatchId, Guid paymentId, VerifyDispatchPaymentRequest request,
-            DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.VerifyPaymentAsync(principal.ToDispatchIdentity(), dispatchId, paymentId, request, ct), Results.Ok));
+            DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.VerifyPaymentAsync(principal.ToDispatchIdentity(), dispatchId, paymentId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPut("/{dispatchId:guid}/payments/{paymentId:guid}/correction", async (ClaimsPrincipal principal,
             Guid dispatchId, Guid paymentId, CorrectDispatchPaymentRequest request,
-            DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.CorrectPaymentAsync(principal.ToDispatchIdentity(), dispatchId, paymentId, request, ct), Results.Ok));
+            DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.CorrectPaymentAsync(principal.ToDispatchIdentity(), dispatchId, paymentId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPost("/{dispatchId:guid}/close-route", async (ClaimsPrincipal principal, Guid dispatchId,
-            CloseDispatchRouteRequest request, DispatchDeliveryService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.CloseRouteAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+            CloseDispatchRouteRequest request, DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
+            await ExecuteAsync(() => service.CloseRouteAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok,
+                result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPost("/{dispatchId:guid}/closure-receipt", async (ClaimsPrincipal principal, Guid dispatchId,
             DispatchClosureReceiptRequest request, DispatchDeliveryService service, IBusinessClock clock, CancellationToken ct) =>
@@ -141,14 +153,15 @@ public static class DispatchingApi
 
         group.MapPost("/{dispatchId:guid}/settle", async (ClaimsPrincipal principal, Guid dispatchId,
             SettleDispatchRequest request, DispatchDeliveryService service,
-            DispatchSettlementCoordinator coordinator, CancellationToken ct) =>
+            DispatchSettlementCoordinator coordinator, IMediaUrlResolver media, CancellationToken ct) =>
             await ExecuteAsync(async () =>
             {
                 var actor=principal.ToDispatchIdentity();
                 var result = await service.SettleAsync(actor, dispatchId, request, ct);
                 coordinator.Signal();
                 return result;
-            }, Results.Ok)).RequireAuthorization(policy=>policy.RequireClaim("permission",DispatchPermissionCodes.Settle));
+            }, Results.Ok, result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)))
+            .RequireAuthorization(policy=>policy.RequireClaim("permission",DispatchPermissionCodes.Settle));
 
         return endpoints;
     }
@@ -161,9 +174,40 @@ public static class DispatchingApi
         DispatchService service, CancellationToken ct) =>
         await ExecuteAsync(() => action(service, principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok);
 
-    private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action, Func<T, IResult> success)
+    private static async Task<DispatchExecutionDetail> WithEvidenceAsync(DispatchExecutionDetail detail,
+        Guid businessId, IMediaUrlResolver media, CancellationToken ct)
     {
-        try { return success(await action()); }
+        var references = detail.Documents.SelectMany(document => document.Payments).Select(payment => payment.EvidenceUrl)
+            .Concat(detail.Expenses.Select(expense => expense.EvidenceUrl)).OfType<string>()
+            .Where(reference => !string.IsNullOrWhiteSpace(reference)).Distinct(StringComparer.Ordinal).ToArray();
+        if (references.Length == 0) return detail;
+        var urls = await media.ResolveBusinessBatchAsync(businessId, references, ct);
+        return detail with {
+            Documents = detail.Documents.Select(document => document with {
+                Payments = document.Payments.Select(payment => payment with { EvidenceReadUrl = ReadUrl(urls, payment.EvidenceUrl) }).ToArray()
+            }).ToArray(),
+            Expenses = detail.Expenses.Select(expense => expense with { EvidenceReadUrl = ReadUrl(urls, expense.EvidenceUrl) }).ToArray()
+        };
+    }
+
+    private static async Task<DispatchPaymentReviewResult> WithEvidenceAsync(DispatchPaymentReviewResult detail,
+        Guid businessId, IMediaUrlResolver media, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(detail.Payment.EvidenceUrl)) return detail;
+        var urls = await media.ResolveBusinessBatchAsync(businessId, [detail.Payment.EvidenceUrl], ct);
+        return detail with { Payment = detail.Payment with { EvidenceReadUrl = urls[detail.Payment.EvidenceUrl] } };
+    }
+
+    private static string? ReadUrl(IReadOnlyDictionary<string,string> urls, string? reference) =>
+        string.IsNullOrWhiteSpace(reference) ? null : urls[reference];
+
+    private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action, Func<T, IResult> success,
+        Func<T, Task<T>>? present = null)
+    {
+        try {
+            var result = await action();
+            return success(present is null ? result : await present(result));
+        }
         catch (DispatchForbiddenException ex) { return Results.Problem(ex.Message, statusCode: 403); }
         catch (DispatchNotFoundException ex) { return Results.Problem(ex.Message, statusCode: 404); }
         catch (DispatchValidationException ex) { return Results.Problem(ex.Message, statusCode: 400); }
@@ -188,5 +232,5 @@ public static class DispatchClaimsPrincipalExtensions
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out var value)
             ? value
-            : throw new DispatchForbiddenException($"The authenticated identity lacks claim '{claimType}'.");
+            : throw new DispatchForbiddenException("No se pudo validar el contexto de acceso del usuario.");
 }

@@ -76,10 +76,10 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
             </div>}
             {editable && <Button size="sm" variant="outline" aria-label={`Corregir forma de pago de ${document.documentNumber}`} disabled={busy !== null} onClick={() => setCorrecting(payment)}><Pencil className="mr-2 h-4 w-4"/>Corregir</Button>}
             {payment.correctionReason && <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-950">Original: {payment.originalFormName ?? methodName(payment.originalPaymentMethod ?? null)}. Corrección: {payment.correctionReason}</p>}
-            {payment.evidenceUrl && <button type="button" className="flex items-center gap-3 rounded-xl border p-2 text-left text-sm" onClick={() => setImage(payment.evidenceUrl)}>
-              {/* The saved URL is reused directly; no per-row signing or blob lookup. */}
+            {payment.evidenceUrl && <button type="button" className="flex items-center gap-3 rounded-xl border p-2 text-left text-sm" onClick={() => setImage(payment.evidenceReadUrl ?? payment.evidenceUrl)}>
+              {/* The response signs the private references in one batch; rows do no metadata I/O. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={payment.evidenceUrl} alt={`Soporte de ${document.documentNumber}`} loading="lazy" decoding="async" className="h-16 w-20 rounded-lg object-cover"/>
+              <img src={payment.evidenceReadUrl ?? payment.evidenceUrl} alt={`Soporte de ${document.documentNumber}`} loading="lazy" decoding="async" className="h-16 w-20 rounded-lg object-cover"/>
               <span>Ampliar soporte</span>
             </button>}
           </article>)}

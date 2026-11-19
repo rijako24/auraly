@@ -16,7 +16,7 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
     expectedQuantity: 1, verifiedQuantity: 1, shortageQuantity: 0, documents: [], lines: [], shortages: [] };
   const formId="55555555-5555-5555-5555-555555555555";
   const nativeCash={paymentMethodId:formId,code:"CASH-CUSTOM",name:"Caja principal de reparto",methodCode:"Cash",accountCode:"110506",accountName:"Caja reparto",version:1,isActive:true};
-  const documents=Array.from({length:cashForms},(_,index)=>({dispatchSourceDocumentId:`source-${index}`,sourceDocumentId:`sale-${index}`,documentNumber:`CVI-${index}`,customerName:"Cliente",lines:[],returns:[],payments:[{paymentId:`payment-${index}`,applicationType:"InvoicePayment",paymentMethod:"Cash",paymentMethodId:index===0?formId:"66666666-6666-6666-6666-666666666666",formName:index===0?nativeCash.name:"Otra caja",amount:100000/cashForms}]}));
+  const documents=Array.from({length:cashForms},(_,index)=>({dispatchSourceDocumentId:`source-${index}`,sourceDocumentId:`sale-${index}`,documentNumber:`CVI-${index}`,customerName:"Cliente",lines:[],returns:[],payments:[{paymentId:`payment-${index}`,applicationType:"InvoicePayment",paymentMethod:"Cash",paymentMethodId:index===0?formId:"66666666-6666-6666-6666-666666666666",formName:index===0?nativeCash.name:"Otra caja",amount:100000/cashForms,evidenceUrl:"https://media.auraly.test/private/proof.png",evidenceReadUrl:"https://media.auraly.test/private/proof.png?read=temporary"}]}));
   const execution = { ...dispatch, documents, expenses: [], settlement: { grossCash: 100000, approvedCashExpenses: 0,
     expectedCash: 100000, declaredCash: 100000, difference: 0, depositTotal: 0, remainingCreditTotal: 0,
     creditAdvanceTotal: 0, returnTotal: 0, undeliveredTotal: 0, dispatchTotal: 100000, balanceDifference: 0, status: "PendingReview" } };
@@ -41,9 +41,16 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
     else if (path.endsWith("/dispatches")) body = { items: [dispatch], page: 1, pageSize: 25, totalCount: 1, totalPages: 1 };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
+  await page.route("https://media.auraly.test/**", route => route.fulfill({status:200,contentType:"image/png",body:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==","base64")}));
   await page.goto("/dashboard/cash-differences");
   await page.getByRole("button", { name: "Ver despacho", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción y liquidación del despacho" });
+  if(cashForms>0){
+    await expect(dialog.getByRole("img",{name:"Soporte de CVI-0",exact:true})).toHaveAttribute("src","https://media.auraly.test/private/proof.png?read=temporary");
+    await dialog.getByRole("button",{name:/Ampliar soporte/}).first().click();
+    await expect(page.getByRole("img",{name:"Soporte ampliado del pago",exact:true})).toHaveAttribute("src","https://media.auraly.test/private/proof.png?read=temporary");
+    await page.getByRole("dialog",{name:"Soporte del pago",exact:true}).getByRole("button",{name:"Close",exact:true}).click();
+  }
   const input = dialog.getByRole("textbox", { name: "Efectivo físico recibido", exact: true });
   await expect(input).toHaveValue("100.000");
   await input.fill("90000"); await expect(input).toHaveValue("90.000");

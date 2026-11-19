@@ -7,6 +7,15 @@ namespace Auraly.Console.Services;
 /// </summary>
 public sealed class ConsoleMediaUrlResolver : IMediaUrlResolver
 {
+    public async Task<IReadOnlyDictionary<string, string>> ResolveBusinessBatchAsync(
+        Guid businessId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var reference in mediaRefs.Distinct(StringComparer.Ordinal))
+            result.Add(reference, await ResolveAsync(businessId, reference, ct));
+        return result;
+    }
+
     public async Task<IReadOnlyDictionary<string, string>> ResolveTenantBatchAsync(
         Guid tenantId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default)
     {

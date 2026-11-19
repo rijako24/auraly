@@ -2317,3 +2317,33 @@ Producción no está autorizada. La consulta agregada de sólo lectura del
 inconclusas en Megafruver; no existen manifiestos de ese tenant que puedan haber
 originado capturas de entrega con la aplicación anterior. La evidencia se conserva
 en `work/release-preparation-current/megafruver-production-dispatch-preflight.json`.
+
+### Soportes privados y referencia estable del despacho
+
+La carga de soportes reutiliza `IBlobStorageService`/`BlobStorageService`; se retira
+`AzureBlobObjectStorage`, que intentaba crear acceso público incompatible con la
+política del almacenamiento. No cambia permisos del contenedor ni infraestructura.
+El documento conserva `EvidenceUrl` sin firma. La respuesta HTTP agrega
+`EvidenceReadUrl` temporal mediante `IMediaUrlResolver.ResolveBusinessBatchAsync`;
+la interfaz usa ese enlace exclusivamente para visualizar. El enlace dura 15
+minutos; Actualizar o reabrir obtiene otro lote, sin polling. Nunca vuelve a enviar
+ni persiste el SAS como parte de la entrega, gasto, huella o cierre inmutable.
+El campo nulo se omite al serializar el contrato almacenado para conservar las
+huellas de cierres anteriores.
+
+Cada ejecución reúne soportes de pagos y gastos y los resuelve en un lote. La
+firma solo reconoce URLs del almacenamiento configurado y del contenedor de la
+sede autorizada; no firma URLs de otras sedes. No consulta existencia por objeto.
+Presupuesto: cero consultas SQL adicionales, cero lecturas Blob por soporte y
+como máximo una solicitud de clave de delegación en frío por lote; la clave
+compartida se reutiliza con exclusión mutua. Una carga conserva las dos operaciones
+del writer existente (crear contenedor privado si falta y subir archivo).
+`ProductImageTenantStorageTests` verifica 50 soportes, aislamiento, firma de solo
+lectura, reapertura y cancelación. `DispatchDeliveryPaymentsTests` ejercita la
+carga HTTP y confirma referencia estable, ausencia de SAS persistido, autorización
+y replay sin efectos duplicados.
+
+No requiere migración de datos, tablas ni reprocesamiento financiero. El rollback
+debe conservar el writer privado: volver al cargador público reproduciría el fallo
+en Azure. Los documentos anteriores siguen conservando sus referencias y sus
+huellas; no se reescriben sus archivos ni sus cierres.

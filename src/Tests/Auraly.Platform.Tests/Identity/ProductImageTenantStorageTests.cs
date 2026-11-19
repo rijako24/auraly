@@ -17,6 +17,69 @@ namespace Auraly.Platform.Tests.Identity;
 public sealed class ProductImageTenantStorageTests
 {
     [Fact]
+    public async Task Business_evidence_signs_only_its_fifty_private_objects_in_one_batch_without_blob_reads()
+    {
+        var business = Guid.NewGuid();
+        var root = new Uri("https://evidencestore.blob.core.windows.net");
+        var service = new Mock<BlobServiceClient>(MockBehavior.Strict);
+        service.SetupGet(value => value.Uri).Returns(root);
+        var blobs = new List<Mock<BlobClient>>();
+        service.Setup(value => value.GetBlobContainerClient(It.IsAny<string>())).Returns((string name) => {
+            var container = new Mock<BlobContainerClient>(MockBehavior.Strict);
+            container.Setup(value => value.GetBlobClient(It.IsAny<string>())).Returns((string path) => {
+                var blob = new Mock<BlobClient>(MockBehavior.Strict);
+                blob.SetupGet(value => value.CanGenerateSasUri).Returns(false);
+                blob.SetupGet(value => value.Uri).Returns(new Uri($"{root}{name}/{path}"));
+                blobs.Add(blob); return blob.Object;
+            });
+            return container.Object;
+        });
+        service.Setup(value => value.GetUserDelegationKeyAsync(It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Response.FromValue(BlobsModelFactory.UserDelegationKey(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(),
+                DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1), "b", "2020-12-06", Convert.ToBase64String(new byte[32])), Mock.Of<Response>()));
+        var resolver = new BlobMediaUrlResolver(service.Object, NullLogger<BlobMediaUrlResolver>.Instance);
+        var owned = Enumerable.Range(0, 50).Select(index => $"{root}business-{business:N}/dispatch-evidence/photo-{index}.png").ToArray();
+        var other = $"{root}business-{Guid.NewGuid():N}/dispatch-evidence/other.png";
+        const string external = "https://example.test/receipt.png";
+        var refs = owned.Concat([other, external, owned[0]]).ToArray();
+        var first = await resolver.ResolveBusinessBatchAsync(business, refs);
+        var reopened = await resolver.ResolveBusinessBatchAsync(business, refs);
+        Assert.Equal(52, first.Count);
+        foreach (var reference in owned)
+        {
+            Assert.StartsWith(reference + "?", first[reference]);
+            Assert.Contains("sp=r", new Uri(first[reference]).Query);
+            Assert.StartsWith(reference + "?", reopened[reference]);
+        }
+        Assert.Equal(other, first[other]); Assert.Equal(external, first[external]);
+        var expired = owned[0] + "?sig=expired&se=2020-01-01";
+        Assert.DoesNotContain("sig=expired", (await resolver.ResolveBusinessBatchAsync(business, [expired]))[expired]);
+        service.Verify(value => value.GetUserDelegationKeyAsync(It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Strict clients have no Exists/Download setup: either would fail this test.
+        Assert.NotEmpty(blobs);
+    }
+
+    [Fact]
+    public async Task Business_image_upload_keeps_the_container_private_and_passes_cancellation_to_storage()
+    {
+        var business = Guid.NewGuid(); using var cancellation = new CancellationTokenSource();
+        var service = new Mock<BlobServiceClient>(MockBehavior.Strict);
+        var container = new Mock<BlobContainerClient>(MockBehavior.Strict);
+        var blob = new Mock<BlobClient>(MockBehavior.Strict);
+        service.Setup(value => value.GetBlobContainerClient($"business-{business:N}")).Returns(container.Object);
+        container.Setup(value => value.CreateIfNotExistsAsync(PublicAccessType.None, It.IsAny<IDictionary<string,string>>(),
+                It.IsAny<BlobContainerEncryptionScopeOptions>(), cancellation.Token))
+            .ReturnsAsync((Response<BlobContainerInfo>)null!);
+        container.Setup(value => value.GetBlobClient("dispatch-evidence/photo.png")).Returns(blob.Object);
+        blob.Setup(value => value.UploadAsync(It.IsAny<Stream>(),
+                It.Is<BlobUploadOptions>(options => options.HttpHeaders.ContentType == "image/png"), cancellation.Token))
+            .ReturnsAsync((Response<BlobContentInfo>)null!);
+        var storage = new BlobStorageService(service.Object, NullLogger<BlobStorageService>.Instance);
+        Assert.Equal("dispatch-evidence/photo.png", await storage.UploadImageAsync(business, new MemoryStream([1,2,3]), "dispatch-evidence/photo.png", cancellation.Token));
+        service.VerifyAll(); container.VerifyAll(); blob.VerifyAll();
+    }
+
+    [Fact]
     public async Task Product_list_resolves_only_page_covers_in_one_batch_without_reading_each_gallery()
     {
         var tenant = Guid.NewGuid(); var business = Guid.NewGuid(); var firstId = Guid.NewGuid();
@@ -156,7 +219,7 @@ public sealed class ProductImageTenantStorageTests
         storage.Verify(value => value.UploadTenantImageAsync(
             tenantId, It.IsAny<Stream>(), It.IsAny<string>()), Times.Exactly(2));
         storage.Verify(value => value.UploadImageAsync(
-            It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<string>()), Times.Never);
+            It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

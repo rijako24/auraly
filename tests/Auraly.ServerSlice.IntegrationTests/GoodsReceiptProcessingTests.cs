@@ -892,9 +892,9 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
             Assert.Equal(10m, await ScalarAsync<decimal>(
                 "SELECT SUM(QuantityChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'",
                 request.DocumentId));
-            Assert.Equal(60_000m, await ScalarAsync<decimal>(
+            var inventoryDelta = await ScalarAsync<decimal>(
                 "SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'",
-                request.DocumentId));
+                request.DocumentId);
             Assert.Equal("Posted||", await ScalarAsync<string>(
                 "SELECT CONCAT(Status,N'|',COALESCE(LastErrorCode,N''),N'|',COALESCE(LastErrorMessage,N'')) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
                 request.DocumentId));
@@ -933,12 +933,15 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
             Assert.Equal(1_900m, await ScalarAsync<decimal>(
                 "SELECT FunctionalTaxAmount FROM purchasing.GoodsReceiptCostDocuments WHERE CostDocumentId=@Id",
                 freightDocumentId));
-            Assert.Equal(60_000m, await CombinedAccountAmountAsync(
-                request.DocumentId, "143505", debit: true));
-            Assert.Equal(0m, await CombinedAccountAmountAsync(
-                request.DocumentId, "143505", debit: false));
-            Assert.Equal(0m, await CombinedAccountAmountAsync(
-                request.DocumentId, "613595", debit: false));
+            // Shared stock may round its weighted-average value. The journal
+            // must match the actual ledger delta and retain the full acquisition
+            // net across inventory and its common cost adjustment.
+            var inventoryNet = await CombinedAccountAmountAsync(request.DocumentId, "143505", debit: true)
+                - await CombinedAccountAmountAsync(request.DocumentId, "143505", debit: false);
+            var costAdjustment = await CombinedAccountAmountAsync(request.DocumentId, "613595", debit: true)
+                - await CombinedAccountAmountAsync(request.DocumentId, "613595", debit: false);
+            Assert.Equal(inventoryDelta, inventoryNet);
+            Assert.Equal(60_000m, inventoryNet + costAdjustment);
             Assert.Equal(11_400m, await CombinedAccountAmountAsync(
                 request.DocumentId, "240810", debit: true));
             Assert.Equal(71_400m, await CombinedAccountAmountAsync(

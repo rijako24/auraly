@@ -72,6 +72,18 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
         var tender = new DispatchDeliveryPaymentInput("InvoicePayment", method, 50_000m,
             method == "Transfer" ? new string(' ', 140) + "TRANSFER-100  " : null, null, form.PaymentMethodId, form.Version,
             card ? $" {franchise} " : null, card ? new string(' ', 90) + "APPROVAL-100  " : null);
+        if (method == "Transfer")
+        {
+            using var proof = new MultipartFormDataContent();
+            var proofImage = new ByteArrayContent([1,2,3]); proofImage.Headers.ContentType = new("image/png"); proof.Add(proofImage,"file","transferencia.png");
+            using var uploaded = await driver.PostAsync($"/api/commerce/v1/dispatches/{dispatch}/evidence", proof);
+            Assert.True(uploaded.IsSuccessStatusCode, await uploaded.Content.ReadAsStringAsync());
+            using var document = System.Text.Json.JsonDocument.Parse(await uploaded.Content.ReadAsStringAsync());
+            var stable = document.RootElement.GetProperty("url").GetString()!;
+            Assert.Empty(new Uri(stable).Query);
+            Assert.Contains("test-read=1", document.RootElement.GetProperty("readUrl").GetString());
+            tender = tender with { EvidenceUrl = stable };
+        }
         var request = new RecordDispatchDeliveryRequest(source, "Delivered", null, "Entrega real de prueba", null, null,
             DateTimeOffset.Parse("2026-11-17T16:00:00Z"), Guid.NewGuid().ToString("N"), [tender], []);
         var url = $"/api/commerce/v1/dispatches/{dispatch}/delivery-results";
@@ -124,6 +136,16 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
         Assert.Equal(form.PaymentMethodId, payment.PaymentMethodId); Assert.Equal(form.Version, payment.PaymentMethodVersion);
         Assert.Equal(tender.Reference?.Trim(), payment.Reference); Assert.Equal(franchise, payment.CardFranchiseCode);
         Assert.Equal(tender.ApprovalNumber?.Trim(), payment.ApprovalNumber);
+        Assert.Equal(tender.EvidenceUrl, payment.EvidenceUrl);
+        if (method == "Transfer")
+        {
+            Assert.Contains("test-read=1", payment.EvidenceReadUrl);
+            var stored = await service.GetAsync(actor, dispatch, CancellationToken.None);
+            var storedPayment = Assert.Single(Assert.Single(stored.Documents).Payments);
+            Assert.Equal(tender.EvidenceUrl, storedPayment.EvidenceUrl);
+            Assert.Null(storedPayment.EvidenceReadUrl);
+            Assert.DoesNotContain("EvidenceReadUrl", System.Text.Json.JsonSerializer.Serialize(storedPayment));
+        }
         using var replay = await driver.PutAsJsonAsync(url, request);
         Assert.True(replay.IsSuccessStatusCode, await replay.Content.ReadAsStringAsync());
         var replayed = (await replay.Content.ReadFromJsonAsync<DispatchExecutionDetail>())!;

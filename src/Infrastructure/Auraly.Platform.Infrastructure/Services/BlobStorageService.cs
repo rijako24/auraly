@@ -22,18 +22,18 @@ public class BlobStorageService : IBlobStorageService
 
     private static string GetTenantContainerName(Guid tenantId) => $"tenant-{tenantId:N}".ToLowerInvariant();
 
-    public async Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName)
-        => await UploadToContainerAsync(GetContainerName(businessId), imageStream, fileName);
+    public async Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName, CancellationToken ct = default)
+        => await UploadToContainerAsync(GetContainerName(businessId), imageStream, fileName, ct);
 
     public async Task<string> UploadTenantImageAsync(Guid tenantId, Stream imageStream, string fileName)
         => await UploadToContainerAsync(GetTenantContainerName(tenantId), imageStream, fileName);
 
-    private async Task<string> UploadToContainerAsync(string container, Stream imageStream, string fileName)
+    private async Task<string> UploadToContainerAsync(string container, Stream imageStream, string fileName, CancellationToken ct = default)
     {
         try
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(container);
-            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
+            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: ct);
 
             var blobClient = containerClient.GetBlobClient(fileName);
             var contentType = Path.GetExtension(fileName).ToLowerInvariant() switch
@@ -46,7 +46,7 @@ public class BlobStorageService : IBlobStorageService
             await blobClient.UploadAsync(imageStream, new BlobUploadOptions
             {
                 HttpHeaders = new BlobHttpHeaders { ContentType = contentType }
-            });
+            }, ct);
             _logger.LogInformation("Imagen subida: {FileName}", fileName);
             return fileName;
         }

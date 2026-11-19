@@ -33,21 +33,45 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
     public async Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default)
         => await ResolveFromContainerAsync($"tenant-{tenantId:N}".ToLowerInvariant(), mediaRef, false, ct);
 
-    public async Task<IReadOnlyDictionary<string, string>> ResolveTenantBatchAsync(
-        Guid tenantId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default)
+    public Task<IReadOnlyDictionary<string, string>> ResolveBusinessBatchAsync(
+        Guid businessId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default)
     {
-        var containerName = $"tenant-{tenantId:N}".ToLowerInvariant();
-        var references = mediaRefs.Distinct(StringComparer.Ordinal).ToArray();
+        if (mediaRefs.Count == 0)
+            return Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>(StringComparer.Ordinal));
+        var containerName = $"business-{businessId:N}".ToLowerInvariant();
+        // Only this storage account's current business container may gain a SAS.
+        var root = _blobServiceClient.Uri;
+        var prefix = root.AbsolutePath.TrimEnd('/') + "/" + containerName + "/";
+        var references = mediaRefs.Distinct(StringComparer.Ordinal).Select(reference => {
+            var path = reference;
+            if (Uri.TryCreate(reference, UriKind.Absolute, out var uri) &&
+                uri.Scheme == root.Scheme && uri.Authority.Equals(root.Authority, StringComparison.OrdinalIgnoreCase) &&
+                uri.AbsolutePath.StartsWith(prefix, StringComparison.Ordinal))
+                path = Uri.UnescapeDataString(uri.AbsolutePath[prefix.Length..]);
+            return (Reference: reference, Path: path);
+        }).ToArray();
+        return ResolveBatchAsync(containerName, references, ct);
+    }
+
+    public Task<IReadOnlyDictionary<string, string>> ResolveTenantBatchAsync(
+        Guid tenantId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default)
+        => ResolveBatchAsync($"tenant-{tenantId:N}".ToLowerInvariant(),
+            mediaRefs.Distinct(StringComparer.Ordinal).Select(reference => (Reference: reference, Path: reference)).ToArray(), ct);
+
+    private async Task<IReadOnlyDictionary<string, string>> ResolveBatchAsync(
+        string containerName, IReadOnlyCollection<(string Reference, string Path)> references, CancellationToken ct)
+    {
+        if (references.Count == 0) return new Dictionary<string, string>(StringComparer.Ordinal);
         UserDelegationKey? key = null;
         // Prepare the credential once; signing each item performs no Blob I/O.
-        if (references.Any(reference => !Uri.TryCreate(reference, UriKind.Absolute, out var uri) || uri.Scheme != "https") &&
+        if (references.Any(reference => !Uri.TryCreate(reference.Path, UriKind.Absolute, out var uri) || uri.Scheme != "https") &&
             !_blobServiceClient.GetBlobContainerClient(containerName).GetBlobClient("products/").CanGenerateSasUri)
             key = await GetDelegationKeyAsync(ct);
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var reference in references)
         {
             ct.ThrowIfCancellationRequested();
-            result.Add(reference, await ResolveFromContainerAsync(containerName, reference, false, ct, key));
+            result.Add(reference.Reference, await ResolveFromContainerAsync(containerName, reference.Path, false, ct, key));
         }
         return result;
     }

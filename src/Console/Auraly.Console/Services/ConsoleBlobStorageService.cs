@@ -16,7 +16,7 @@ public class ConsoleBlobStorageService : IBlobStorageService
         _logger = logger;
     }
 
-    public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName)
+    public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName, CancellationToken ct = default)
     {
         _logger.LogDebug("[MOCK] UploadImageAsync llamado para business {BusinessId}: {FileName}", businessId, fileName);
         return Task.FromResult<string>(string.Empty);

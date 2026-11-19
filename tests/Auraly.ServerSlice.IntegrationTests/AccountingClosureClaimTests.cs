@@ -29,6 +29,7 @@ public sealed class AccountingClosureClaimTests(ServerSliceFixture fixture)
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
         var saleIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var seriesId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using (var arrange = new SqlCommand("""
@@ -46,12 +47,17 @@ public sealed class AccountingClosureClaimTests(ServerSliceFixture fixture)
             JOIN dbo.Countries country ON country.CountryId=division.CountryId
             WHERE city.IsActive=1 AND division.IsActive=1 AND country.IsActive=1
             ORDER BY city.CityId;
+            -- Keep synthetic correction documents out of the live CVI cursor.
+            INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DocumentType,Prefix,SeriesCode,
+              Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+            VALUES(@SeriesId,@BusinessId,N'SalesReceipt',N'ECC',LEFT(CONVERT(nvarchar(36),@SeriesId),16),
+              8,1,99999999,0,0,@At);
             INSERT dbo.SalesDocuments(DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
               DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,DocumentType,
               IdempotencyKey,PayloadHash,IssuedAt,CustomerIdentification,CustomerId,CustomerPartySiteId,
               UntaxedAmount,TaxAmount,PayableAmount,CreditAmount,ProcessingStatus,ReceivedAt,SoldByUserId)
             SELECT input.Id,@BusinessId,@WarehouseId,N'Online',@SeriesId,
-              CONVERT(nvarchar(36),input.Id),N'ECC',N'00',input.Ordinal,N'SalesReceipt',
+              CONVERT(nvarchar(36),input.Id),N'ECC',LEFT(CONVERT(nvarchar(36),@SeriesId),16),input.Ordinal,N'SalesReceipt',
               CONVERT(nvarchar(36),input.Id),CONVERT(binary(32),0),@At,N'900123456',@CustomerId,@SiteId,
               input.Amount,0,input.Amount,0,N'Processed',@At,@UserId
             FROM OPENJSON(@Sales) WITH(Id uniqueidentifier,Ordinal bigint,Amount decimal(19,4)) input;
@@ -68,10 +74,10 @@ public sealed class AccountingClosureClaimTests(ServerSliceFixture fixture)
             arrange.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             arrange.Parameters.AddWithValue("@UserId", fixture.UserId);
             arrange.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
-            arrange.Parameters.AddWithValue("@SeriesId", fixture.OnlineSalesReceiptSeriesId);
+            arrange.Parameters.AddWithValue("@SeriesId", seriesId);
             arrange.Parameters.AddWithValue("@At", at);
             arrange.Parameters.AddWithValue("@Sales", JsonSerializer.Serialize(saleIds.Select((id, index) =>
-                new { Id = id, Ordinal = (long)BitConverter.ToUInt32(id.ToByteArray(), 0) + 1, Amount = (index + 1) * 10_000m })));
+                new { Id = id, Ordinal = index + 1, Amount = (index + 1) * 10_000m })));
             await arrange.ExecuteNonQueryAsync();
         }
         var payload = new WorkSessionClosureReconciliationPayload(Guid.NewGuid(), Guid.NewGuid(), fixture.TenantId,

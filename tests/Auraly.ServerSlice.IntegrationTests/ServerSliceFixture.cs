@@ -1603,7 +1603,7 @@ internal sealed class TestBlobStorageService : IBlobStorageService
 {
     public Task<byte[]> DownloadImageAsync(Guid businessId, string fileName, CancellationToken ct = default) =>
         Task.FromResult(new byte[] { 1, 2, 3 });
-    public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName) =>
+    public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName, CancellationToken ct = default) =>
         Task.FromResult(fileName);
     public Task<string> UploadTenantImageAsync(Guid tenantId, Stream imageStream, string fileName) =>
         Task.FromResult(fileName);
@@ -1617,6 +1617,15 @@ internal sealed class TestBlobStorageService : IBlobStorageService
 
 internal sealed class TestMediaUrlResolver : IMediaUrlResolver
 {
+    public Task<IReadOnlyDictionary<string, string>> ResolveBusinessBatchAsync(
+        Guid businessId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyDictionary<string, string>>(mediaRefs.Distinct(StringComparer.Ordinal)
+            .ToDictionary(reference => reference,
+                reference => reference.StartsWith($"https://media.auraly.test/{businessId:D}/", StringComparison.Ordinal)
+                    ? reference + "?test-read=1"
+                    : Uri.TryCreate(reference, UriKind.Absolute, out var uri) && uri.Scheme == "https"
+                        ? reference : $"https://media.auraly.test/{businessId:D}/{reference}?test-read=1", StringComparer.Ordinal));
+
     public Task<IReadOnlyDictionary<string, string>> ResolveTenantBatchAsync(
         Guid tenantId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyDictionary<string, string>>(mediaRefs.Distinct(StringComparer.Ordinal)

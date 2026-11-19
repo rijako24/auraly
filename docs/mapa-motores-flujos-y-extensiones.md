@@ -434,3 +434,11 @@ Registrar correlation/job/document/business ID, intento, transición, duración 
 - `docs/implementation/dian-fiscal-engine-design.md`
 - `docs/implementation/accounting-operational-design.md`
 - `docs/agent-engine-manual.md`
+
+Los soportes del despacho usan el writer privado `IBlobStorageService`, sin otro
+cargador Blob. El adaptador HTTP resuelve en lote sus enlaces de lectura mediante
+`IMediaUrlResolver.ResolveBusinessBatchAsync`; `EvidenceUrl` sigue siendo la
+identidad estable y `EvidenceReadUrl` solo presentación temporal. No se persisten
+SAS ni se consulta existencia por elemento. El alcance y presupuesto están en
+`decision-despachos-verificacion-entradas-salidas-inventario.md`, sección
+«Soportes privados y referencia estable del despacho».

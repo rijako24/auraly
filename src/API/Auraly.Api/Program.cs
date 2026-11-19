@@ -458,7 +458,6 @@ builder.Services.AddScoped<OrderCancellationService>();
 builder.Services.AddScoped<OrderRecoveryService>();
 builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
-builder.Services.AddScoped<AzureBlobObjectStorage>();
 builder.Services.AddScoped<IPurchaseOrderStore, SqlPurchaseOrderStore>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();

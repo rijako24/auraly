@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Auraly.Contracts.Dispatching;
 
 public static class DispatchLimits
@@ -139,7 +141,8 @@ public sealed record DispatchDeliveryPaymentDetail(Guid PaymentId, string Applic
     Guid? PaymentMethodId = null, int? PaymentMethodVersion = null, string? FormName = null,
     string? CardFranchiseCode = null, string? ApprovalNumber = null, Guid? VerifiedBy = null,
     DateTimeOffset? VerifiedAt = null, string? OriginalPaymentMethod = null, string? OriginalFormName = null,
-    string? CorrectionReason = null, Guid? CorrectedBy = null, DateTimeOffset? CorrectedAt = null);
+    string? CorrectionReason = null, Guid? CorrectedBy = null, DateTimeOffset? CorrectedAt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? EvidenceReadUrl = null);
 public sealed record DispatchPaymentReviewResult(Guid DispatchId, Guid DispatchSourceDocumentId,
     DispatchDeliveryPaymentDetail Payment, decimal GrossCash, decimal ExpectedCash,
     decimal CashDifference, decimal TransferTotal, decimal CardTotal);
@@ -148,7 +151,8 @@ public sealed record DispatchDeliveryProductLine(int OriginalLineNumber, Guid Pr
 public sealed record DispatchDeliveryDocument(Guid DispatchSourceDocumentId, Guid SourceDocumentId, string DocumentType, string DocumentNumber, int Sequence, Guid? CustomerId, string CustomerName, string? DeliveryAddress, decimal DocumentTotal, decimal CreditAmount, decimal? DestinationLatitude, decimal? DestinationLongitude, string DeliveryStatus, string? Reason, string? Notes, decimal? Latitude, decimal? Longitude, DateTimeOffset? DeliveredAt, IReadOnlyCollection<DispatchDeliveryProductLine> Lines, IReadOnlyCollection<DispatchDeliveryPaymentDetail> Payments, IReadOnlyCollection<DispatchDeliveryReturnDetail> Returns, decimal ReturnTotal = 0, DispatchReturnCalculation? ReturnCalculation = null, string CollectionMode = "Session");
 public sealed record DispatchReturnCalculation(decimal OriginalUnrounded,decimal OriginalRounding,decimal UnroundedOutstanding,decimal RemainingRounding);
 public sealed record DispatchExpenseDetail(Guid ExpenseId, string Category, decimal Amount, string? Description, string? EvidenceUrl, string ApprovalStatus, decimal? ApprovedAmount,
-    Guid? ConceptId = null, Guid? AcceptedExpenseId = null, DateTimeOffset? OccurredAt = null,string? AcceptedExpenseStatus = null);
+    Guid? ConceptId = null, Guid? AcceptedExpenseId = null, DateTimeOffset? OccurredAt = null,string? AcceptedExpenseStatus = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? EvidenceReadUrl = null);
 public sealed record DispatchSettlementSummary(decimal GrossCash, decimal ApprovedCashExpenses, decimal ExpectedCash, decimal DeclaredCash, decimal Difference, decimal DepositTotal, decimal RemainingCreditTotal, decimal CreditAdvanceTotal, decimal ReturnTotal, decimal UndeliveredTotal, decimal DispatchTotal, decimal BalanceDifference, string Status, Guid? ReceivedBy, DateTimeOffset? ReceivedAt, decimal? CashReceived = null, decimal CardTotal = 0,
     decimal? DeclaredCard = null, decimal? DeclaredTransfer = null, Guid? TransporterClosedBy = null, DateTimeOffset? TransporterClosedAt = null, decimal PreviouslyCollectedTotal = 0);
 public sealed record DispatchLinkedReturn(Guid ReturnId,Guid OriginalDocumentId,string DocumentNumber,decimal TotalAmount,string EconomicResolution);
