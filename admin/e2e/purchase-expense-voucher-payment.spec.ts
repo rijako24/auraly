@@ -39,7 +39,10 @@ for (const expense of [false, true]) for (const blocked of [false, true]) {
         positions++;
         expect(url.searchParams.get("subledgerId")).toBe(position.subledgerId);
         expect(url.searchParams.get("subledgerKind")).toBe("Payable");
-        expect(url.searchParams.get("voucherTypeCode")).toBe("Disbursement");
+        // Voucher-scoped searches require a party. This exact-ID lookup uses
+        // the canonical Payable query; the editor selects Disbursement below.
+        expect(url.searchParams.has("voucherTypeCode")).toBe(false);
+        expect(url.searchParams.get("page")).toBe("1");
         expect(url.searchParams.get("effectiveOn")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         expect(url.searchParams.get("pageSize")).toBe("1");
         await route.fulfill({ json: { items: [position], page: 1, pageSize: 1, totalCount: 1, totalOutstandingAmount: 80 } }); return;

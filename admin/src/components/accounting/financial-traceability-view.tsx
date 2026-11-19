@@ -80,7 +80,7 @@ function FinancialTraceabilityWorkspace({ scope, businessId }: { scope?: Traceab
     retry: false, staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false,
     queryFn: async () => {
       const page = await accountingApi.openPositions({ subledgerKind: "Payable", subledgerId: payableId!,
-        page: 1, pageSize: 1, effectiveOn: localToday, voucherTypeCode: "Disbursement" });
+        page: 1, pageSize: 1, effectiveOn: localToday });
       const position = page.items[0];
       if (page.totalCount !== 1 || !position || position.subledgerId !== payableId)
         throw new Error("La cuenta por pagar ya no está disponible para este egreso.");

@@ -5816,3 +5816,14 @@ la migración de retiro, pruebas históricas y documentación de antecedentes.
 Se preservaron los cambios ajenos del checkout. No se modificó la presentación
 POS ni se publicaron cambios en DEV/producción. Los pendientes del inventario
 14.10 y el arranque local integral continúan fuera de este cierre del incremento.
+
+La preparación de **Pagar compra / Pagar gasto** consulta una única posición
+`Payable` por `subledgerId`, página 1 y tamaño 1, con la fecha local efectiva.
+No envía `voucherTypeCode` sin tercero: ese filtro identifica búsquedas por
+tercero y el servicio canónico lo rechaza cuando falta `partyId`. La obligación
+exacta ya aporta el tercero y su apertura; el editor conserva por separado
+`voucherTypeScope=Disbursement`. No agrega consultas, relaja autorización ni
+cambia el motor de pago. `purchase-expense-voucher-payment.spec.ts` verifica
+compra/gasto, apertura válida/bloqueada y un solo GET de posición, sin consultar
+el detalle del documento ni la lista financiera oculta. La prueba real de compra
+completa la entrada, devolución, pago fácil y egreso desde esa misma obligación.

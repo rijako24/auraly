@@ -231,8 +231,11 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await expect(toast).toContainText(documentNumber);
   await expect(dialog).toBeHidden({ timeout: 20_000 });
   const row = page.getByRole("row").filter({ hasText: documentNumber });
-  await expect(row).toContainText("Procesada", { timeout: 45_000 });
   await waitForRealPosting(context, accepted.documentId);
+  // The cloud worker finishes after acceptance; inspect the authoritative
+  // state through an explicit refresh rather than expecting runtime polling.
+  await page.reload();
+  await expect(row).toContainText("Procesada", { timeout: 20_000 });
   const detail = await scopedJson<GoodsReceiptDetail>("GET", `/api/commerce/v1/goods-receipts/${accepted.documentId}`);
   expect(detail.lines[0]).toMatchObject({ quantity: 10, unitCost: 10000, commercialDiscountPercent: 10, discountAmount: 10000, netAmount: 90000 });
   expect(detail.createsPayable).toBe(true);
@@ -268,7 +271,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await page.route("**/api/commerce/v1/purchase-returns/confirm", async route => {
     submissions.push(route.request().postDataJSON());
     if (submissions.length === 1) {
-      const upstream = await route.fetch();
+      const upstream = await route.fetch().catch(() => { throw new Error("No se pudo consultar la devolución real; revisa la conexión TLS del ejecutor de pruebas."); });
       expect(upstream.ok(), await upstream.text()).toBe(true);
       acceptedReturn = await upstream.json() as PurchaseReturnAcceptance;
       await route.fulfill({ status: 503, contentType: "application/problem+json",
@@ -325,8 +328,8 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   expect(paymentResponse.ok(), await paymentResponse.text()).toBe(true);
   const payment = await paymentResponse.json() as { paymentId: string; documentNumber: string; status: string };
   expect(payment.status).toBe("Accepted");
-  await waitForRealPosting(context, payment.paymentId);
   await expect(page.getByText(`Pago a proveedor registrado: ${payment.documentNumber}.`, { exact: true })).toBeVisible();
+  await waitForRealPosting(context, payment.paymentId);
   expect(receiptReads).toBe(1);
   const paymentKey = paymentResponse.request().headers()["idempotency-key"];
   expect(paymentKey).toBeTruthy();
