@@ -132,6 +132,9 @@ El encabezado ofrece un icono **Pedidos** con el mismo panel lateral de Tiendas,
 sin ventas pausadas ni lecturas mientras esté cerrado. Su lista reutiliza
 `OrdersWorkspace` y la consulta paginada canónica. Consultar exige `orders.read`;
 recuperar para facturar exige además `orders.recover` y `sales.create`.
+El panel recibe la sede y su zona horaria desde la opción del bootstrap POS
+ya cargada. No depende de que se haya abierto el selector administrativo de
+sedes, ni vuelve a consultar ese recurso para calcular los rangos de fecha.
 La recuperación abre `/pos?workspace=orders&recoverOrder=…`, reutiliza el borrador,
 claim, edición, pagos y emisor existentes de Pedidos y conserva esa vista al
 refrescar. El acceso normal al POS restaurante sigue abriendo Mesas. Este contexto

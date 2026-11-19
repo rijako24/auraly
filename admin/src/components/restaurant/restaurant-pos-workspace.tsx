@@ -973,6 +973,7 @@ export function RestaurantPosWorkspace({ option }: {
       <SheetContent className="flex min-h-0 w-full flex-col p-4 sm:max-w-xl">
         <SheetHeader className="pr-8"><SheetTitle>Pedidos</SheetTitle><SheetDescription>Consulta y recupera un pedido para facturarlo sin mesa.</SheetDescription></SheetHeader>
         {ordersOpen && <OrdersWorkspace compact showHeader={false} initialStatus="Available"
+          businessId={option.businessId} timeZone={option.timeZone}
           loadPage={loadCommerceOrders} loadDetail={loadCommerceOrder}
           recoveryBlockedReason={recoveryBlockedReason}
           onRecover={permissions.includes("orders.recover") && permissions.includes("sales.create")

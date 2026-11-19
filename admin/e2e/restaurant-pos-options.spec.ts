@@ -82,10 +82,12 @@ test(requireCredential ? "la sede exige mesero y clave también al administrador
 }
 
 test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas ocultas", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-19T02:00:00Z"));
   const permissions = ["restaurant.attend", "restaurant.tables.open_without_waiter", "restaurant.price_channels.select", "orders.read", "orders.recover", "sales.create"];
   const user = { userId, tenantId, tenantKey: "E2E", username: "caja", firstName: "Ana",
     lastName: "Gómez", roles: ["Administrador"], permissions };
   const option = { businessId, businessName: "Restaurante", warehouseId, warehouseCode: "P01",
+    timeZone: "Pacific/Auckland",
     warehouseName: "Principal", warehouseAllowsNegativeStockSales: false,
     hasActiveEdgeEnrollment: false, restaurantRequireWaiterCredential: false, pointOfSaleMode: "RestaurantBar" };
   const account = { accountId, businessId, tableId, warehouseId, responsibleUserId: userId,
@@ -112,6 +114,7 @@ test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas o
   let draftReads = 0;
   let productReads = 0;
   let orderReads = 0;
+  let businessContextReads = 0;
   await page.context().addCookies([{ name: "auth_token", value: "restaurant-options-test",
     url: baseUrl, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ user, tenantId, businessId }) => {
@@ -124,7 +127,7 @@ test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas o
     if (path.endsWith("/auth/me")) return json(route, user);
     if (path.endsWith("/work-sessions/current")) return json(route, { workSessionId: "77777777-7777-7777-7777-777777777777", businessId, userId, status: "Open" });
     if (path.endsWith("/execution-context/tenants")) return json(route, [{ tenantId, name: "Restaurante" }]);
-    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Restaurante" }]);
+    if (path.endsWith("/execution-context/businesses")) { businessContextReads++; return json(route, [{ tenantId, businessId, name: "Restaurante" }]); }
     if (path.endsWith("/execution-context/access")) return json(route, { tenantId, businessId, roles: user.roles, permissions });
     if (path.endsWith("/pos/workspace/bootstrap")) return json(route, { tenantId, tenantName: "Restaurante", userId,
       userDisplayName: "Ana Gómez", options: [option], canEnrollPosDevice: false, hasEnrollmentPermission: false,
@@ -138,6 +141,10 @@ test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas o
     if (path.endsWith("/cancellations") || path.endsWith("/categories")) return json(route, []);
     if (path.endsWith("/products")) { productReads++; return json(route, { items: [], hasMore: false, nextOffset: null }); }
     if (path.endsWith("/commerce/v1/orders")) {
+      // The POS bootstrap is the only source of this zone in this fixture.
+      // Auckland is already Nov19 while Bogota is still Nov18 at the fixed time.
+      expect(new Date(url.searchParams.get("createdFrom")!).toISOString()).toBe("2026-11-18T11:00:00.000Z");
+      expect(new Date(url.searchParams.get("createdTo")!).toISOString()).toBe("2026-11-19T11:00:00.000Z");
       orderReads++; return json(route, { items: [{ orderId: "88888888-8888-8888-8888-888888888888",
         orderNumber: "PED-01", status: "Available", source: 0, customerName: "Cliente pedido",
         currency: "COP", total: 5000, lineCount: 1, createdAt: account.openedAt, canInvoice: true,
@@ -181,11 +188,14 @@ test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas o
   expect(Math.abs(clientBox!.y - channelBox!.y)).toBeLessThan(1);
   expect(channelReads).toHaveLength(0); expect(customerReads).toHaveLength(0);
   expect(orderReads).toBe(0);
+  const contextReadsBeforeOrders = businessContextReads;
   await page.getByRole("button", { name: "Ver pedidos", exact: true }).click();
   const orders = page.getByRole("dialog", { name: "Pedidos", exact: true });
+  await expect(orders.getByText(/Vuelve a cargar el contexto/)).toHaveCount(0);
   await expect(orders.getByRole("button", { name: /^Recuperar/ })).toBeDisabled();
   await expect(orders.getByRole("status")).toHaveText("La captura tiene productos. Termínala o vacíala antes de recuperar.");
   expect(orderReads).toBe(1);
+  expect(businessContextReads).toBe(contextReadsBeforeOrders);
   await expect(orders.getByRole("tab", { name: /En espera/ })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await customerButton.click(); const customerDialog = page.getByRole("dialog", { name: "Buscar cliente", exact: true });
