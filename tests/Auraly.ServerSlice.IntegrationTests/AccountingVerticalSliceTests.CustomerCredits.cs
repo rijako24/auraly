@@ -28,7 +28,7 @@ public sealed partial class AccountingVerticalSliceTests
         using (var activation = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
             new ActivateAccountingRequest(new(2026,1,1),"COP","ZeroDeclared"))) activation.EnsureSuccessStatusCode();
         var (customerId,siteId) = await CreateCustomerAsync();
-        var sale = WithUblSnapshot(fixture.CreateValidRequest(fault switch {"Balance"=>9_956,"Hash"=>9_957,_=>9_955}))
+        var sale = WithUblSnapshot(fixture.CreateUniqueValidRequest())
             with {CustomerId=customerId,CustomerPartySiteId=siteId};
         sale = sale with { Payments=[], Credit=new(customerId,11_900m,sale.FiscalSnapshot!.IssuedAt.AddDays(30),PartySiteId:siteId),
             UblSnapshot=sale.UblSnapshot! with {PaymentFormCode="2",DueDate=DateOnly.FromDateTime(sale.FiscalSnapshot.IssuedAt.AddDays(30).Date)} };
@@ -169,7 +169,7 @@ public sealed partial class AccountingVerticalSliceTests
             new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared")))
             activate.EnsureSuccessStatusCode();
         var (customerId, siteId) = await CreateCustomerAsync();
-        var sale = WithUblSnapshot(fixture.CreateValidRequest(correctedRefund ? 9_941 : 9_942)) with
+        var sale = WithUblSnapshot(fixture.CreateUniqueValidRequest()) with
         {
             CustomerId = customerId, CustomerPartySiteId = siteId
         };

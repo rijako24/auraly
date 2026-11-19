@@ -3163,6 +3163,12 @@ los perfiles de IVA activos y reutiliza el editor de ajustes tributarios con su
 permiso. Cualquier cambio del diario invalida la revisión. El selector de sedes
 de proveedor conserva el buscador canónico y filtra por tercero antes de contar
 y paginar; no carga directorios completos ni cambia identidades al abrirse.
+La proyección compartida de clientes/proveedores devuelve conteo y página en un
+comando. Desactiva únicamente el objetivo optimista de filas del paginador SQL,
+que en búsquedas poco frecuentes provocaba recorridos repetidos de todas las
+sedes. Con 7.000 terceros, primera página, siguiente, búsqueda vacía y sin
+coincidencias deben permanecer por debajo de 500 ms locales; no cambia filtros,
+autorización ni fuente de datos.
 El presupuesto del preview es cuatro comandos SQL, independientes del
 número de bases, y p95 inferior a 1,5 s en veinte muestras aisladas por volumen.
 Una captura con ajustes tributarios puntuales puede añadir la consulta por

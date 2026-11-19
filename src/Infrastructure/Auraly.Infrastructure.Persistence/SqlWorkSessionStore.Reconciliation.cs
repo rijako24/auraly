@@ -1243,7 +1243,7 @@ public sealed partial class SqlWorkSessionStore
                        THEN supplierPayment.BankAccountId END)),N'BankAccount:'),
                 originalTenderCategory.Category,originalClosureCategory.Category),
               correctedTenderCategory.Category,
-              CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturns returned WITH(UPDLOCK,HOLDLOCK)
+              CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturns returned WITH(UPDLOCK,HOLDLOCK,FORCESEEK(IX_SalesReturns_Original_Status(OriginalDocumentId)))
                 WHERE returned.OriginalDocumentId=sale.DocumentId AND returned.BusinessId=@BusinessId
                   AND returned.EconomicResolution=N'Refund') THEN 1 ELSE 0 END AS bit) HasRefunds
             FROM #Corrections correction

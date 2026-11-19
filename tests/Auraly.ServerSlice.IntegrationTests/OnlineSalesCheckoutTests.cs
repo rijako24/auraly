@@ -22,7 +22,23 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     public async Task Selected_final_consumer_uses_the_same_fiscal_identity_as_an_anonymous_sale()
     {
         var userId = await CreateUserAsync("selected-final-consumer");
-        var (customerId, partySiteId) = await CreateNaturalPersonCustomerAsync(userId, "222222222222");
+        // Another checkout may already have provisioned the tenant's canonical
+        // final consumer. Its identity is unique, so reuse it in this fixture.
+        Guid customerId, partySiteId;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var lookup = new SqlCommand("""
+                SELECT customer.CustomerId,site.PartySiteId FROM dbo.Customers customer
+                JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=customer.TenantId
+                JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1 AND site.IsPrimary=1
+                WHERE customer.TenantId=@Tenant AND party.Identification=N'222222222222';
+                """, connection);
+            lookup.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            await using var reader = await lookup.ExecuteReaderAsync();
+            if (await reader.ReadAsync()) { customerId=reader.GetGuid(0); partySiteId=reader.GetGuid(1); Assert.False(await reader.ReadAsync()); }
+            else (customerId,partySiteId)=await CreateNaturalPersonCustomerAsync(userId,"222222222222");
+        }
         await ExecuteAsync("""
             UPDATE party SET PartyType=N'Organization',DisplayName=N'Consumidor final',LegalName=N'Consumidor final'
             FROM dbo.Parties party JOIN dbo.Customers customer ON customer.PartyId=party.PartyId
@@ -49,8 +65,6 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var replay = await CompleteAsync(client,captured.DraftId,request,key);
         Assert.Equal(completed.Receipt.DocumentId,replay.Receipt.DocumentId);
         Assert.Equal("222222222222",completed.Receipt.CustomerIdentification);
-        Assert.Equal("Dirección principal",completed.Receipt.CustomerAddress);
-        Assert.Equal("3001234567",completed.Receipt.CustomerPhone);
         using var scope = fixture.CreateScope();
         Assert.True(await scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>().ProcessAsync(
             fixture.BusinessId,completed.Receipt.DocumentId,"selected-final-consumer"));

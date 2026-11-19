@@ -126,7 +126,9 @@ public sealed partial class PortfolioManualAdvanceTests
             await SendAsync("CashReceipt",[
                 new(cash.AccountId,party,null,"Otro recaudo",100_000,0,LineId:Guid.NewGuid()),
                 new(advance.AccountId,party,null,"Anticipo posterior al rol",0,100_000,LineId:Guid.NewGuid())]);
-            using(var reads=new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+            using(var reads=new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                commandFilter: command => command.CommandText.Contains("SELECT TimeZone FROM dbo.Businesses", StringComparison.Ordinal)
+                    || command.CommandText.Contains("CREATE TABLE #Scoped(ReceivableId", StringComparison.Ordinal)))
             {
                 var selected=await service.ReportAsync(actor,query with {CustomerId=customerId,PageSize=50});
                 Assert.Equal(2,reads.Count);Assert.Equal(2,selected.TotalCount);

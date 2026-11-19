@@ -274,7 +274,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     public async Task Dian_rejected_invoice_retry_regenerates_the_same_fiscal_document()
     {
         fixture.DrainFiscalSignals();
-        var request = fixture.CreateValidRequest(152);
+        var request = fixture.WithHistoricalSaleUblSnapshot(fixture.CreateValidRequest(152));
         using (var pos = fixture.CreateClient())
         using (var upload = fixture.CreateUploadMessage(request))
         using (var response = await pos.SendAsync(upload))
@@ -302,7 +302,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         using var retry = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
         using var retryResponse = await retry.PostAsync(
             $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/retry", null);
-        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        Assert.True(retryResponse.StatusCode == HttpStatusCode.OK, await retryResponse.Content.ReadAsStringAsync());
         var retried = await retryResponse.Content.ReadFromJsonAsync<FiscalDocumentView>();
         Assert.NotNull(retried);
         Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration, retried.Status);

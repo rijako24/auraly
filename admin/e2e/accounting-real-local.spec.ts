@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
 import readExcelFile from "read-excel-file/node";
 import type { AccountingAccount, AccountingEntry, AccountingOpenPositionPage, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 import type { CustomerAcceptance, PartyRoleOptionPage, SupplierAcceptance } from "../src/services/api/parties";
@@ -8,8 +8,25 @@ import type { CustomerPaymentAcceptance, CustomerPaymentHistoryPage, ReceivableD
 import { proposedAccountingDate } from "../src/lib/accounting-document-date";
 import type { SupplierPaymentHistoryPage } from "../src/services/api/payables";
 import type { ExpenseDetail, ExpenseOptions } from "../src/services/api/expenses";
-import { realAccountingAuxiliary, realAccountingWorkspace, realPartyRequest } from "./support/real-accounting-workspace";
+import { realAccountingAuxiliary, realAccountingWorkspace, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
 import type { PosWorkSessionClosurePreview as WorkSessionClosurePreview } from "../src/services/pos/pos-edge-client";
+
+async function postedEditorResponse(page: Page, context: Awaited<ReturnType<typeof realAccountingWorkspace>>, response: Response): Promise<VoucherDraft> {
+  const accepted = await response.json() as VoucherDraft;
+  if (accepted.status !== "Pending") return accepted;
+  await waitForRealPosting(context, accepted.documentId);
+  const refreshing = page.waitForResponse(value => value.request().method() === "GET" && value.url().endsWith(`/manual/drafts/${accepted.documentId}`));
+  await page.getByRole("button", { name: "Actualizar estado", exact: true }).click();
+  const refreshed = await refreshing;
+  expect(refreshed.ok(), await refreshed.text()).toBe(true);
+  return refreshed.json() as Promise<VoucherDraft>;
+}
+
+async function selectRealCashForm(page: Page, checkout: Locator) {
+  await checkout.getByRole("combobox", { name: "Medio de pago", exact: true }).first().click();
+  const preferred = process.env.AURALY_E2E_CASH_FORM_NAME;
+  await (preferred ? page.getByRole("option").filter({ hasText: preferred }) : page.getByRole("option").first()).click();
+}
 
 async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof realAccountingWorkspace>>,
   kind: "Payable" | "Receivable", documentNumber: string, positionId: string, partyId: string, previousOutstanding: number,
@@ -40,7 +57,7 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   await editor.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const sendResponse = await sending;
   expect(sendResponse.ok(), await sendResponse.text()).toBe(true);
-  const sent = await sendResponse.json() as VoucherDraft;
+  const sent = await postedEditorResponse(page, context, sendResponse);
   expect(sent.status, sent.row.errorMessage ?? undefined).toBe("Posted");
   const balanceAfterSending = await scopedJson<{ outstandingAmount: number }>("GET", `${api}/${payable ? "payables" : "receivables"}/${positionId}`);
   expect(balanceAfterSending.outstandingAmount).toBe(Number((previousOutstanding + 50.0001).toFixed(4)));
@@ -87,7 +104,11 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
     ],
   };
   const cross = await scopedJson<VoucherDraft>("PUT", `${api}/accounting/manual/drafts/${crossId}`, crossCapture);
-  const crossed = await scopedJson<VoucherDraft>("POST", `${api}/accounting/manual/drafts/${crossId}/send`, { rowVersion: cross.rowVersion });
+  let crossed = await scopedJson<VoucherDraft>("POST", `${api}/accounting/manual/drafts/${crossId}/send`, { rowVersion: cross.rowVersion });
+  if (crossed.status === "Pending") {
+    await waitForRealPosting(context, crossId);
+    crossed = await scopedJson<VoucherDraft>("GET", `${api}/accounting/manual/drafts/${crossId}`);
+  }
   expect(crossed.status, crossed.row.errorMessage ?? undefined).toBe("Posted");
   await page.getByRole("button", { name: "Actualizar", exact: true }).click();
   await invoice.click();
@@ -110,7 +131,7 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   await restore.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const restoredResponse = await sendingRestore;
   expect(restoredResponse.ok(), await restoredResponse.text()).toBe(true);
-  const restored = await restoredResponse.json() as VoucherDraft;
+  const restored = await postedEditorResponse(page, context, restoredResponse);
   expect(restored.status, restored.row.errorMessage ?? undefined).toBe("Posted");
   const finalCredits = await scopedJson<AccountingOpenPositionPage>("GET",
     `${api}/accounting/open-positions?subledgerKind=${payable ? "SupplierCredit" : "CustomerCredit"}&partyId=${partyId}&page=1&pageSize=10`);
@@ -150,7 +171,7 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   await editor.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const returnSentResponse = await sendingReturn;
   expect(returnSentResponse.ok(), await returnSentResponse.text()).toBe(true);
-  const returned = await returnSentResponse.json() as VoucherDraft;
+  const returned = await postedEditorResponse(page, context, returnSentResponse);
   expect(returned.status, returned.row.errorMessage ?? undefined).toBe("Posted");
   expect(returned).toMatchObject({ financialEffects: { positions: [], payments: [], unapplications: [
     expect.objectContaining({ reversedTransactionType: "PaymentReturn", amount: 20.0001 })] } });
@@ -226,11 +247,11 @@ test(`tesorería directa ${method} se contabiliza desde la vista sin factura fic
   await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const sendResponse = await sending;
   expect(sendResponse.ok(), await sendResponse.text()).toBe(true);
-  const sent = await sendResponse.json();
+  const sent = await postedEditorResponse(page, context, sendResponse);
   expect(sent.status, sent.row.errorMessage ?? undefined).toBe("Posted");
-  expect(sent.financialEffects.payments).toEqual([]);
-  expect(sent.financialEffects.positions).toEqual([]);
-  expect(sent.financialEffects.directMovements).toEqual([expect.objectContaining({ accountId: cash.accountId, amount: -500 })]);
+  expect(sent.financialEffects?.payments).toEqual([]);
+  expect(sent.financialEffects?.positions).toEqual([]);
+  expect(sent.financialEffects?.directMovements).toEqual([expect.objectContaining({ accountId: cash.accountId, amount: -500 })]);
   const after = await scopedJson<WorkSessionClosurePreview>("GET", `/api/commerce/v1/work-sessions/${session.workSessionId}/closure-preview`);
   expect(after.expectedCash).toBe(before.expectedCash);
   expect(after.cashMovements?.filter(item => item.documentId === saved.documentId)).toHaveLength(0);
@@ -302,7 +323,7 @@ test("asiento libre real conserva terceros y bases al guardar, contabilizar y cl
   await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const sendResponse = await sending;
   expect(sendResponse.ok(), await sendResponse.text()).toBe(true);
-  const sent = await sendResponse.json() as VoucherDraft;
+  const sent = await postedEditorResponse(page, context, sendResponse);
   expect(sent.status, sent.row.errorMessage ?? undefined).toBe("Posted");
   expect(sent.row.entryId).toBeTruthy();
   await expect(first.getByLabel("Base de la partida", { exact: true })).toBeDisabled();
@@ -414,7 +435,7 @@ test("asiento libre real conserva terceros y bases al guardar, contabilizar y cl
 });
 
 test("abono real de cartera conserva la obligación, el recaudo y un solo asiento al reintentar", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   const context = await realAccountingWorkspace(page);
   const { scopedJson, businessId } = context;
   const api = "/api/commerce/v1";
@@ -431,13 +452,16 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
     documentNumber, issuedAt: date, dueDate: date, amount: 1000.5001,
     counterpartAccountId: counterpart!.accountId, notes: "Apertura aislada para regresión de recaudo",
   }] });
-  const before = await scopedJson<ReceivableDetail>("GET", `${api}/receivables/${receivableId}`);
-  expect(before).toMatchObject({ receivableId, originalAmount: 1000.5001, outstandingAmount: 1000.5001, status: "Open" });
   await page.goto("/dashboard/receivables");
   await page.locator("summary").filter({ hasText: "Filtros" }).click();
   await page.getByRole("combobox", { name: "Filtrar cliente y sede", exact: true }).click();
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(name);
   await page.getByRole("option").filter({ hasText: name }).click();
+  // The cloud motor accepts the opening before its financial projection exists.
+  // Observe the page's authoritative push refresh, then read the position once.
+  await expect(page.getByRole("row").filter({ hasText: name })).toContainText("1.000,5001", { timeout: 60_000 });
+  const before = await scopedJson<ReceivableDetail>("GET", `${api}/receivables/${receivableId}`);
+  expect(before).toMatchObject({ receivableId, originalAmount: 1000.5001, outstandingAmount: 1000.5001, status: "Open" });
   await page.getByRole("button", { name: "Abono a cartera", exact: true }).click();
   const wizard = page.getByRole("dialog", { name: "Abono a cartera", exact: true });
   await wizard.getByRole("combobox", { name: "Seleccionar customer", exact: true }).click();
@@ -449,6 +473,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   await wizard.getByRole("button", { name: "Ir a pagar", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Abono a cartera", exact: true });
   await expect(checkout).toContainText("100,25");
+  await selectRealCashForm(page, checkout);
   const paying = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/receivable-payments/confirm"));
   await checkout.getByRole("button", { name: "Sin imprimir", exact: true }).click();
   const confirmed = await paying;
@@ -456,6 +481,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   const payment = await confirmed.json() as CustomerPaymentAcceptance;
   expect(payment.status).toBe("Accepted");
   await expect(checkout).toBeHidden();
+  await waitForRealPosting(context, payment.paymentId);
   const after = await scopedJson<ReceivableDetail>("GET", `${api}/receivables/${receivableId}`);
   expect(after).toMatchObject({ receivableId, sourceDocumentId: before.sourceDocumentId, originalAmount: 1000.5001,
     outstandingAmount: 900.2501, status: "PartiallyPaid" });
@@ -559,7 +585,7 @@ test("un gasto pendiente aparece debajo del tercero en el comprobante manual", a
 });
 
 test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por pagar", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   const context = await realAccountingWorkspace(page);
   const { scopedJson, businessId } = context;
   const api = "/api/commerce/v1";
@@ -594,6 +620,7 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   const confirmed = await confirming;
   expect(confirmed.ok(), await confirmed.text()).toBe(true);
   const { expenseId } = await confirmed.json() as { expenseId: string };
+  await waitForRealPosting(context, expenseId);
   const expense = await scopedJson<ExpenseDetail>("GET", `${api}/expenses/${expenseId}`);
   expect(expense.status).toBe("Processed");
   expect(expense.lines?.[0].expenseAccountId).toBe(concept.expenseAccountId);
@@ -604,13 +631,14 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   await page.getByLabel(`Abono para ${expense.documentNumber}`, { exact: true }).fill("100.25");
   await page.getByRole("button", { name: "Ir a pagar", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Pago a proveedores", exact: true });
-  await expect(checkout.getByRole("combobox", { name: "Medio de pago" })).toContainText("Efectivo");
+  await selectRealCashForm(page, checkout);
   const paying = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payable-payments/confirm"));
   await checkout.getByRole("button", { name: "Sin imprimir", exact: true }).click();
   const paymentResponse = await paying;
   expect(paymentResponse.ok(), await paymentResponse.text()).toBe(true);
   const payment = await paymentResponse.json() as { status: string; paymentId: string; documentNumber: string };
   expect(payment.status).toBe("Accepted");
+  await waitForRealPosting(context, payment.paymentId);
   await expect(page.getByText(`Pago a proveedor registrado: ${payment.documentNumber}.`, { exact: true })).toBeVisible();
   const after = await scopedJson<ExpenseDetail>("GET", `${api}/expenses/${expenseId}`);
   expect(after.payable?.payableId).toBe(expense.payable?.payableId);

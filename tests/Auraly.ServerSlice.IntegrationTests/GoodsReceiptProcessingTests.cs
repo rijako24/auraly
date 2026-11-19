@@ -395,7 +395,7 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
             Assert.False(configuration.IsAccountingEnabled);
             Assert.NotNull(configuration.PaymentMethods);
             var method = Assert.Single(configuration.PaymentMethods.Forms.Where(form =>
-                form.MethodCode == "Cash" && form.UseForSupplierPayments));
+                form.Code == "Cash" && form.UseForSupplierPayments));
             await fixture.EnsureSupplierPaymentSeriesAsync(connection);
             await using (var position = new SqlCommand(
                 "SELECT PayableId,OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND BusinessId=@Business;", connection))

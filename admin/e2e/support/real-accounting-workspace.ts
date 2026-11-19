@@ -5,6 +5,20 @@ import { proposedAccountingDate } from "../../src/lib/accounting-document-date";
 import { login } from "./auth";
 import type { AccountingAccount } from "../../src/services/api/accounting";
 
+// Test synchronization for the real cloud worker, not application polling.
+// A finite observation window checks the durable outcome after acceptance.
+export async function waitForRealPosting(context: Awaited<ReturnType<typeof realAccountingContext>>, documentId: string) {
+  await expect.poll(async () => {
+    const result = await context.scopedResponse("GET", `/api/commerce/v1/accounting/postings/by-document/${documentId}`);
+    // Operational acceptance precedes creation of the financial source.
+    if (result.status === 404) return "AwaitingOperationalProcessing";
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    const posting = result.body as { status: string; errorCode?: string; errorMessage?: string };
+    expect(["AccountingPendingConfiguration", "DeadLettered", "Failed"], JSON.stringify(posting)).not.toContain(posting.status);
+    return posting.status;
+  }, { timeout: 30_000, intervals: [500, 1_000, 2_000, 5_000], message: "El documento aceptado debe terminar contabilizado una sola vez" }).toBe("Posted");
+}
+
 export async function realAccountingContext(page: Page, businessIdOverride?: string) {
   test.skip(process.env.AURALY_E2E_REAL_LOGIN !== "1", "Requiere el entorno de pruebas autorizado.");
   const tenantId = process.env.AURALY_E2E_TENANT_ID;
@@ -29,13 +43,16 @@ export async function realAccountingContext(page: Page, businessIdOverride?: str
     localStorage.setItem("selected_business_id", businessId!);
     localStorage.setItem("auraly:pwa-install-dismissed", "1");
   }, { tenantId, businessId });
-  async function scopedJson<T>(method: string, path: string, data?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
-    const result = await page.evaluate(async ({ method, path, headers, data, extraHeaders }) => {
+  async function scopedResponse(method: string, path: string, data?: unknown, extraHeaders: Record<string, string> = {}) {
+    return page.evaluate(async ({ method, path, headers, data, extraHeaders }) => {
       const response = await fetch(path, { method, headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
         credentials: "include", body: data === undefined ? undefined : JSON.stringify(data) });
       const text = await response.text();
       return { ok: response.ok, status: response.status, body: text ? JSON.parse(text) : null };
     }, { method, path, headers, data, extraHeaders });
+  }
+  async function scopedJson<T>(method: string, path: string, data?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
+    const result = await scopedResponse(method, path, data, extraHeaders);
     expect(result.ok, `${method} ${path}: ${result.status} ${JSON.stringify(result.body)}`).toBe(true);
     return result.body as T;
   }
@@ -44,7 +61,7 @@ export async function realAccountingContext(page: Page, businessIdOverride?: str
     "GET", "/api/execution-context/businesses");
   const business = businesses.find(item => item.businessId === businessId);
   expect(business?.timeZone, "El contexto autorizado debe incluir la zona del negocio de pruebas.").toBeTruthy();
-  return { scopedJson, businessId: businessId!, timeZone: business!.timeZone };
+  return { scopedJson, scopedResponse, businessId: businessId!, timeZone: business!.timeZone };
 }
 
 export async function realAccountingWorkspace(page: Page) {

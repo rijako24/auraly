@@ -929,6 +929,20 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Published_price_reaches_only_its_site_when_isolated_and_all_site_boxes_when_prices_are_shared()
     {
+        async Task<List<PosSynchronizationInvalidation>> ReadCatalogSignalsAsync(params Guid[] expectedBusinesses)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var signals = new List<PosSynchronizationInvalidation>();
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                signals.Add(await fixture.ReadSynchronizationMessageAsync(timeout.Token));
+                signals.AddRange(fixture.DrainSynchronizationMessages());
+                if (expectedBusinesses.All(business => signals.Any(signal => signal.Stream == "Catalog" && signal.BusinessId == business)))
+                    return signals;
+            }
+            Assert.Fail("No llegaron las invalidaciones de catálogo esperadas dentro del lote acotado.");
+            return signals;
+        }
         fixture.DrainSynchronizationMessages();
         var productId = Guid.NewGuid();
         var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
@@ -1003,11 +1017,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
                 PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
                 PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices);
             await PrepareAndPublishAsync(pricing, productId, 12_000m);
-            var isolatedSignals = new List<PosSynchronizationInvalidation>
-            {
-                await fixture.ReadSynchronizationMessageAsync()
-            };
-            isolatedSignals.AddRange(fixture.DrainSynchronizationMessages());
+            var isolatedSignals = await ReadCatalogSignalsAsync(fixture.BusinessId);
             Assert.Contains(isolatedSignals, signal =>
                 signal.Stream == "Catalog" && signal.BusinessId == fixture.BusinessId);
             Assert.DoesNotContain(isolatedSignals, signal =>
@@ -1029,13 +1039,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
 
             fixture.DrainSynchronizationMessages();
             await PrepareAndPublishAsync(pricing, productId, 14_000m);
-            var sharedSignals = new List<PosSynchronizationInvalidation>();
-            while (sharedSignals
-                       .Where(signal => signal.Stream == "Catalog")
-                       .Select(signal => signal.BusinessId)
-                       .Distinct()
-                       .Count() < 2)
-                sharedSignals.Add(await fixture.ReadSynchronizationMessageAsync());
+            var sharedSignals = await ReadCatalogSignalsAsync(fixture.BusinessId, otherBusinessId);
             Assert.Contains(sharedSignals, signal =>
                 signal.Stream == "Catalog" && signal.BusinessId == fixture.BusinessId);
             Assert.Contains(sharedSignals, signal =>

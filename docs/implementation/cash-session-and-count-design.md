@@ -211,6 +211,9 @@ El seed de tipos conserva las identidades históricas de `BankTransfer` y
 `Deposit`, aunque estén desactivadas. `PendingCollection` usa una identidad nueva
 en instalaciones nuevas; si ya existe se conserva su ID por la clave catálogo/código.
 Repetir el seed no sustituye tipos referenciados ni agrega opciones duplicadas.
+El mapping de cierre de `PendingCollection` no exige conteo: representa recaudo
+pendiente, nunca efectivo ni crédito comercial. Su presencia en el catálogo no
+lo habilita para una venta directa ni crea un movimiento de sesión.
 Si esa evidencia no existe o es ambigua, se rechaza la corrección configurada sin
 adivinar una cuenta de configuración actual ni reparar documentos anteriores.
 
@@ -365,4 +368,7 @@ concurrencia del cierre, gastos, permisos, sesión normal y bandeja paginada.
 para caja. El historial de entregas conserva recibos de aceptación y un solo
 resultado IsCurrent; un replay antiguo devuelve el estado actual sin sustituir
 sus pagos. Esta evidencia corresponde al encabezado; la posterior atribución de
-pedidos exige sus propias pruebas. No se ha desplegado este corte.
+pedidos exige sus propias pruebas. El encabezado común está publicado en DEV
+desde `0.1.0-rc299`; producción no se ha actualizado. La regresión posterior
+conserva las pruebas de atribución de pedidos, devoluciones y reclasificación
+como evidencia separada de la migración del encabezado.

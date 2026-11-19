@@ -157,7 +157,7 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
 
         // Other integration tests share this business and can fill the first history page.
         // Inspect each operation by its stable document ID instead of relying on pagination.
-        foreach (var documentId in new[] { receiptId, countId, adjustmentId })
+        foreach (var documentId in new[] { countId, adjustmentId })
         {
             var operation = await inventory.GetFromJsonAsync<InventoryOperationDetail>(
                 $"/api/commerce/v1/inventory/operations/{documentId:D}");

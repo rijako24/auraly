@@ -7,7 +7,7 @@ import type { CommerceOrderDetail, InvoiceOrdersResponse } from "../src/services
 import type { SalesWorkspaceOption } from "../src/services/pos/online-pos-client";
 import type { CatalogProductDetail } from "../src/services/api/products";
 import type { InventoryBalanceItem, InventoryReasonItem, Page as InventoryPage } from "../src/services/api/inventory";
-import { realAccountingWorkspace, realPartyRequest } from "./support/real-accounting-workspace";
+import { realAccountingWorkspace, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
 import { createRealProduct } from "./support/real-product";
 
 test.use({ actionTimeout: 60_000, serviceWorkers: "block" });
@@ -162,6 +162,12 @@ for (const scenario of [
     if (response.request().method() === "POST" && response.url().endsWith("/orders/invoice/credit-validation")) creditValidations.push(response);
   });
   if (scenario.method === "Credit") await page.getByRole("button", { name: "Crédito", exact: true }).click();
+  else {
+    await page.getByRole("combobox", { name: "Forma de pago del lote", exact: true }).click();
+    const preferredCash = process.env.AURALY_E2E_CASH_FORM_NAME;
+    if (preferredCash) await page.getByPlaceholder("Buscar forma de pago…", { exact: true }).fill(preferredCash);
+    await (preferredCash ? page.getByRole("option").filter({ hasText: preferredCash }) : page.getByRole("option").first()).click();
+  }
   await page.getByRole("button", { name: `Emitir ${scenario.method === "Credit" ? "a crédito" : "de contado"} (${scenario.count})`, exact: true }).click();
   await expect(page.getByText(`${scenario.count} pedidos emitidos correctamente.`, { exact: true })).toBeVisible({ timeout: 90_000 });
   const emissions = await Promise.all(invoiceResponses.map(async response => {
@@ -178,6 +184,7 @@ for (const scenario of [
   expect(results.map(item => item.orderId).sort()).toEqual(orders.map(item => item.orderId).sort());
   expect(results.every(item => item.status === "Invoiced" && item.documentId)).toBe(true);
   expect(new Set(results.map(item => item.documentId)).size).toBe(scenario.count);
+  for (const result of results) await waitForRealPosting(context, result.documentId!);
   const portfolio = await scopedJson<{ items: Array<{ documentNumber: string; outstandingAmount: number }> }>("GET",
     `${api}/receivables?customerId=${customer.customerId}&page=1&pageSize=20`);
   for (const [index, result] of results.entries()) {

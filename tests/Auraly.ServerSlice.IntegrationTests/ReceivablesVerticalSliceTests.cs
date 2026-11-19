@@ -562,7 +562,7 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             Assert.False(configuration.IsAccountingEnabled);
             Assert.NotNull(configuration.PaymentMethods);
             var cash = Assert.Single(configuration.PaymentMethods.Forms.Where(method =>
-                method.MethodCode == "Cash" && method.UseForReceipts));
+                method.Code == "Cash" && method.UseForReceipts));
             var partialAmount = decimal.Round(receivable.OriginalAmount * .4m, 4);
             var payment = new ConfirmCustomerPaymentRequest(
                 Guid.NewGuid(), fixture.BusinessId, customerId,

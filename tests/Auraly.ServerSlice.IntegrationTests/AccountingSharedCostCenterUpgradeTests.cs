@@ -31,6 +31,7 @@ public sealed class AccountingSharedCostCenterUpgradeTests(ServerSliceFixture fi
             WHERE business.TenantId=center.TenantId ORDER BY BusinessId) business WHERE center.LegacyBusinessId IS NULL;
         ALTER TABLE dbo.AccountingPostingJobs DROP CONSTRAINT FK_AccountingPostingJobs_ResolvedCostCenter;
         ALTER TABLE dbo.AccountingCostCenterAssignments DROP CONSTRAINT FK_AccountingCostCenterAssignments_Center;
+        ALTER TABLE payroll.Employments DROP CONSTRAINT FK_PayrollEmployments_Center;
         ALTER TABLE dbo.AccountingCostCenters DROP CONSTRAINT FK_AccountingCostCenters_Parent;
         ALTER TABLE dbo.AccountingCostCenters DROP CONSTRAINT FK_AccountingCostCenters_Tenant;
         ALTER TABLE dbo.AccountingCostCenters DROP CONSTRAINT FK_AccountingCostCenters_LegacyBusiness;

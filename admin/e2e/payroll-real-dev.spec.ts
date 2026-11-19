@@ -1,0 +1,189 @@
+import { randomUUID } from "node:crypto";
+import { expect, test } from "@playwright/test";
+import { realAccountingWorkspace, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
+import type { PayrollEmployment, PayrollEmploymentPage, PayrollOptions, PayrollProfile, PayrollRun } from "../src/services/api/payroll";
+import type { AccountingEntry } from "../src/services/api/accounting";
+
+test.use({ actionTimeout: 30_000 });
+
+test("nómina real: perfil contractual, selección, días por concepto y causación desde la vista", async ({ page }) => {
+  test.setTimeout(360_000);
+  const context = await realAccountingWorkspace(page);
+  const { scopedJson } = context;
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: context.timeZone }).format(new Date());
+  const path = "/api/commerce/v1/payroll";
+  const options = await scopedJson<PayrollOptions>("GET", `${path}/options`);
+  const existingRuns = await scopedJson<Array<{ runKind: string; periodStart: string; periodEnd: string }>>("GET", `${path}/runs`);
+  const periods = Array.from({ length: 12 }, (_, offset) => {
+    const month = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1 + offset, 1);
+    return { start: new Date(month).toISOString().slice(0, 10),
+      end: new Date(Date.UTC(new Date(month).getUTCFullYear(), new Date(month).getUTCMonth() + 1, 0)).toISOString().slice(0, 10) };
+  });
+  const period = periods.find(candidate => !existingRuns.some(run => run.runKind === "Regular" && run.periodStart === candidate.start && run.periodEnd === candidate.end));
+  expect(period, "Se necesita un período regular libre en el entorno de pruebas.").toBeTruthy();
+  const periodStart = period!.start;
+  const accountingPeriods = await scopedJson<Array<{ startsOn: string; endsOn: string; status: string }>>("GET", "/api/commerce/v1/accounting/periods");
+  if (!accountingPeriods.some(value => value.status === "Open" && value.startsOn <= period!.end && value.endsOn >= period!.end)) {
+    await scopedJson("POST", "/api/commerce/v1/accounting/periods", { periodId: randomUUID(), tenantId: process.env.AURALY_E2E_TENANT_ID,
+      startsOn: periodStart, endsOn: period!.end, name: `Período QA nómina ${periodStart}` });
+  }
+  const contracts = (await scopedJson<PayrollEmploymentPage>("GET", `${path}/employments?page=1&pageSize=50`)).items;
+  const rules = options.ruleSets.find(rule => rule.status === "Approved");
+  expect(rules).toBeTruthy();
+  const tag = `QA-${randomUUID().slice(0, 8)}`;
+
+  await page.goto("/dashboard/payroll?section=configuration");
+  await page.getByRole("button", { name: "Nuevo perfil", exact: true }).click();
+  const profileCard = page.getByRole("heading", { name: "Perfiles contables", exact: true }).locator("..").locator("..");
+  await profileCard.getByRole("textbox", { name: "Código", exact: true }).fill(tag);
+  await profileCard.getByRole("textbox", { name: "Nombre", exact: true }).fill(`Perfil ${tag}`);
+  await profileCard.getByRole("combobox", { name: "Porcentajes y topes del parámetro" }).click();
+  await page.getByRole("option").filter({ hasText: rules!.code }).click();
+  const savingProfile = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/payroll/profiles/"));
+  await profileCard.getByRole("button", { name: "Guardar perfil", exact: true }).click();
+  const profileResponse = await savingProfile;
+  expect(profileResponse.ok(), await profileResponse.text()).toBe(true);
+  let profile = await profileResponse.json() as PayrollProfile;
+
+  // Seven independent synthetic masters; geography is read once for the batch.
+  const prototype = await realPartyRequest(context, `Entidad ${tag}`);
+  const institutions: string[] = [];
+  for (const label of ["EPS", "Pensión", "Cesantías", "ARL", "Caja", "SENA", "ICBF"]) {
+    const name = `${label} ${tag}`;
+    const created = await scopedJson<{ partyId: string }>("POST", "/api/commerce/v1/suppliers", {
+      ...prototype, operationId: randomUUID(),
+      party: { ...prototype.party, identification: String(800000000 + Math.floor(Math.random() * 100000000)), displayName: name, legalName: name },
+    });
+    institutions.push(created.partyId);
+  }
+  profile = await scopedJson<PayrollProfile>("PUT", `${path}/profiles/${profile.profileId}`, {
+    ...profile, mappings: ["Sena", "Icbf"].map((role, index) => {
+      const concept = options.concepts.find(value => value.systemRoleCode === role);
+      expect(concept).toBeTruthy();
+      return { mappingId: randomUUID(), conceptId: concept!.conceptId, debitAccountId: null, creditAccountId: null,
+        beneficiaryPartyId: institutions[index + 5], effectiveFrom: rules!.effectiveFrom, effectiveTo: null };
+    }),
+  });
+  const employees: PayrollEmployment[] = [];
+  const methodOptions = options.catalogs["payroll-payment-method"];
+  for (const method of ["Cash", "Transfer"]) {
+    const methodOption = methodOptions.find(value => value.code === method)!;
+    const template = contracts.find(value => value.paymentMethodOptionId === methodOption.optionId && value.isActive)!;
+    expect(template).toBeTruthy();
+    const name = `${tag} ${method}`;
+    const identity = await scopedJson<{ partyId: string }>("POST", "/api/commerce/v1/parties/identity", {
+      ...prototype, operationId: randomUUID(), targetRole: "Employee", party: { ...prototype.party,
+        partyType: "NaturalPerson", identificationTypeCode: options.catalogs["payroll-identification-type"].find(value => value.code === "CC")!.code,
+        identification: String(1000000000 + Math.floor(Math.random() * 900000000)),
+        displayName: name, legalName: null, firstName: tag, lastName: method },
+    });
+    const employeeRole = await scopedJson<{ employeeId: string }>("POST", "/api/employees", {
+      businessId: context.businessId, name, partyId: identity.partyId, serviceIds: [],
+    });
+    employees.push(await scopedJson<PayrollEmployment>("PUT", `${path}/employments/${identity.partyId}`, {
+      ...template, employmentId: identity.partyId, partyId: identity.partyId, employeeId: employeeRole.employeeId,
+      contractNumber: `${tag}-${method}`, startDate: periodStart, endDate: null, rowVersion: null, appliesTransportAllowance: true,
+      configuration: { accountingProfileId: profile.profileId, healthPartyId: institutions[0], pensionPartyId: institutions[1],
+        severancePartyId: institutions[2], riskPartyId: institutions[3], compensationPartyId: institutions[4], costCenterId: null },
+    }));
+  }
+
+  await page.goto("/dashboard/payroll");
+  await page.getByRole("button", { name: "Nueva liquidación", exact: true }).click();
+  const creating = page.getByRole("dialog", { name: "Nueva liquidación", exact: true });
+  await creating.getByRole("combobox", { name: "Periodicidad", exact: true }).click();
+  await page.getByRole("option", { name: "Mensual", exact: true }).click();
+  const monthOffset = (Number(periodStart.slice(0, 4)) - Number(today.slice(0, 4))) * 12 + Number(periodStart.slice(5, 7)) - Number(today.slice(5, 7));
+  for (const [label, day] of [["Inicio", periodStart], ["Fin", period!.end], ["Fecha de pago", period!.end]]) {
+    if (monthOffset === 0 && label !== "Fecha de pago") continue;
+    await creating.getByText(label, { exact: true }).locator("..").getByRole("button").click();
+    for (let month = 0; month < monthOffset; month++) await creating.getByRole("button", { name: "Mes siguiente", exact: true }).click();
+    const dateLabel = new Intl.DateTimeFormat("es-CO", { dateStyle: "long", timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
+    await creating.getByRole("button", { name: dateLabel, exact: true }).click();
+  }
+  const creatingRun = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payroll/runs"));
+  await creating.getByRole("button", { name: "Crear borrador", exact: true }).click();
+  const createdResponse = await creatingRun;
+  expect(createdResponse.ok(), await createdResponse.text()).toBe(true);
+  let run = await createdResponse.json() as PayrollRun;
+  expect(run.periodStart).toBe(periodStart);
+  await page.getByRole("button", { name: new RegExp(`^${run.periodStart} — ${run.periodEnd} Borrador`) }).click();
+  const selection = page.getByRole("region", { name: "Trabajadores de la liquidación", exact: true });
+  await selection.getByRole("button", { name: "Ninguno", exact: true }).click();
+  for (const employee of employees) await selection.getByRole("checkbox", { name: `Incluir ${employee.employeeName}, contrato ${employee.contractNumber}`, exact: true }).check();
+  const calculating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
+  await selection.getByRole("button", { name: "Calcular nómina", exact: true }).click();
+  const calculationResponse = await calculating;
+  expect(calculationResponse.ok(), await calculationResponse.text()).toBe(true);
+  run = await calculationResponse.json() as PayrollRun;
+  expect(run.employees).toHaveLength(2);
+  expect(run.employees.every(employee => employee.baseWorkedDays === 30)).toBe(true);
+  await test.info().attach("native-payroll-fixture", { body: JSON.stringify({ profileId: profile.profileId,
+    payrollRunId: run.payrollRunId, employmentIds: employees.map(employee => employee.employmentId), periodStart }), contentType: "application/json" });
+  await page.getByRole("tab", { name: "Novedades", exact: true }).click();
+  await page.getByRole("region", { name: "Trabajadores liquidados", exact: true }).getByRole("button", { name: employees[0].employeeName, exact: true }).click();
+  const transport = options.concepts.find(concept => concept.systemRoleCode === "TransportAllowance")!;
+  expect(transport).toBeTruthy();
+  await page.getByRole("button", { name: `Editar días de ${transport.name}`, exact: true }).click();
+  await page.getByRole("spinbutton", { name: `Días trabajados de ${transport.name}`, exact: true }).fill("25");
+  const changingDays = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
+  await page.getByRole("button", { name: `Guardar días de ${transport.name}`, exact: true }).click();
+  const daysResponse = await changingDays;
+  expect(daysResponse.ok(), await daysResponse.text()).toBe(true);
+  run = await scopedJson<PayrollRun>("GET", `${path}/runs/${run.payrollRunId}`);
+  const worker = run.employees.find(employee => employee.employmentId === employees[0].employmentId)!;
+  expect(worker.lines.find(line => line.conceptId === transport.conceptId)!.quantity).toBe(25);
+  expect(worker.baseWorkedDays).toBe(30);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.screenshot({ path: "../work/release-preparation-current/dev-native-payroll-mobile-days.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("tab", { name: "Liquidaciones", exact: true }).click();
+  const approving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/approve`));
+  await page.getByRole("button", { name: "Aprobar y contabilizar", exact: true }).click();
+  const approved = await approving;
+  expect(approved.ok(), await approved.text()).toBe(true);
+  await waitForRealPosting(context, run.payrollRunId);
+  const entry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${run.payrollRunId}`);
+  expect(entry.debitTotal).toBe(entry.creditTotal);
+  expect(entry.debitTotal).toBeGreaterThan(0);
+  console.info("Perfil contractual, selección, días por concepto y causación real verificados.");
+  await page.screenshot({ path: "../work/release-preparation-current/dev-native-payroll-posted.png", fullPage: true });
+  await page.getByRole("tab", { name: "Pagos", exact: true }).click();
+  await page.getByRole("button", { name: "Confirmar pago", exact: true }).click();
+  const paying = page.getByRole("dialog", { name: "Confirmar lote de pago", exact: true });
+  await paying.getByRole("combobox", { name: "Liquidación", exact: true }).click();
+  const total = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(run.netPayable);
+  await page.getByRole("option", { name: `${run.periodStart} — ${run.periodEnd} · Neto liquidado ${total}`, exact: true }).click();
+  const refreshingPending = page.waitForResponse(response => response.request().method() === "GET" && response.url().includes(`/payroll/runs/${run.payrollRunId}`));
+  await paying.getByRole("button", { name: "Actualizar pendientes", exact: true }).click();
+  expect((await refreshingPending).ok()).toBe(true);
+  for (const method of ["Cash", "Transfer"]) {
+    const definition = methodOptions.find(value => value.code === method)!;
+    const group = paying.getByRole("region", { name: `Grupo ${definition.label}`, exact: true });
+    await group.getByRole("button", { name: new RegExp(definition.label) }).click();
+    await group.getByRole("combobox", { name: "Forma de pago", exact: true }).click();
+    await page.getByPlaceholder("Buscar forma de pago…").fill(method === "Cash" ? "QA-RC299-CASH" : "QA-RC299-TRANSFER");
+    await page.getByRole("option").filter({ hasText: method === "Cash" ? "QA-RC299-CASH" : "QA-RC299-TRANSFER" }).click();
+    await group.getByRole("button", { name: "Fecha de pago", exact: true }).click();
+    for (let month = 0; month < monthOffset; month++) await paying.getByRole("button", { name: "Mes siguiente", exact: true }).click();
+    await paying.getByRole("button", { name: new Intl.DateTimeFormat("es-CO", { dateStyle: "long", timeZone: "UTC" }).format(new Date(`${period!.end}T12:00:00Z`)), exact: true }).click();
+    await group.getByRole("textbox", { name: "Referencia bancaria o de caja", exact: true }).fill(`${tag}-${method}`);
+    const paymentResponse = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payroll/payments"));
+    await group.getByRole("button", { name: "Confirmar pago del grupo", exact: true }).click();
+    const accepted = await paymentResponse;
+    expect(accepted.ok(), await accepted.text()).toBe(true);
+    const batch = await accepted.json() as { paymentBatchId: string; employeeCount: number; totalAmount: number };
+    expect(batch.employeeCount).toBe(1);
+    await waitForRealPosting(context, batch.paymentBatchId);
+    const paymentEntry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${batch.paymentBatchId}`);
+    expect(paymentEntry.debitTotal).toBe(batch.totalAmount);
+    expect(paymentEntry.creditTotal).toBe(batch.totalAmount);
+    const replay = await scopedJson<{ paymentBatchId: string }>("POST", `${path}/payments`, accepted.request().postDataJSON());
+    expect(replay.paymentBatchId).toBe(batch.paymentBatchId);
+    console.info(`Pago de nómina ${method}: asiento balanceado y replay sin duplicados verificados.`);
+  }
+  const paid = await scopedJson<PayrollRun>("GET", `${path}/runs/${run.payrollRunId}`);
+  expect(paid.payableEmployees).toEqual([]);
+  await page.screenshot({ path: "../work/release-preparation-current/dev-native-payroll-paid.png", fullPage: true });
+});

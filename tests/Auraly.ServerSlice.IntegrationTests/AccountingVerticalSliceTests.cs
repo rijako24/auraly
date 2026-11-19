@@ -1328,8 +1328,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         try
         {
             var rejectedProcessing = await WaitForDocumentProcessingRejectionAsync(rejectedSale.DocumentId);
-            Assert.Contains("bank account", rejectedProcessing.Error, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("tenant", rejectedProcessing.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("cuenta bancaria", rejectedProcessing.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("empresa", rejectedProcessing.Error, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(0, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Id", rejectedSale.DocumentId));
             Assert.Equal(0, await ScalarAsync<int>(
@@ -2262,8 +2262,25 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(112_650m, await ScalarAsync<decimal>(
             "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id",
             withheldReceipt.DocumentId));
-        Assert.Equal(100_000m, await AccountAmountAsync(
-            withheldReceipt.DocumentId, "143505", debit: true));
+        // The inventory posting follows the persisted, rounded valuation delta.
+        // Acquisition and its cost adjustment together retain the invoice net.
+        await using (var valuation = new SqlConnection(fixture.ConnectionString))
+        {
+            await valuation.OpenAsync();
+            await using var reconciliation = new SqlCommand("""
+                SELECT (SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id),
+                  SUM(CASE WHEN account.Code=N'143505' THEN line.Debit-line.Credit ELSE 0 END),
+                  SUM(CASE WHEN account.Code=N'613595' THEN line.Debit-line.Credit ELSE 0 END)
+                FROM dbo.AccountingEntryLines line JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+                JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId
+                WHERE entry.SourceDocumentId=@Id;
+                """, valuation);
+            reconciliation.Parameters.AddWithValue("@Id", withheldReceipt.DocumentId);
+            await using var result = await reconciliation.ExecuteReaderAsync();
+            Assert.True(await result.ReadAsync());
+            Assert.Equal(result.GetDecimal(0), result.GetDecimal(1));
+            Assert.Equal(100_000m, result.GetDecimal(1) + result.GetDecimal(2));
+        }
         Assert.Equal(19_000m, await AccountAmountAsync(
             withheldReceipt.DocumentId, "240810", debit: true));
         Assert.Equal(112_650m, await AccountAmountAsync(

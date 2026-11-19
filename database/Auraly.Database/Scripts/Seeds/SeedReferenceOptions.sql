@@ -352,7 +352,8 @@ USING (VALUES
   (N'DebitCard',N'Card',CAST(1 AS bit),20),
   (N'CreditCard',N'Card',CAST(1 AS bit),20),
   (N'Transfer',N'Transfer',CAST(1 AS bit),30),
-  (N'Credit',N'Credit',CAST(0 AS bit),40)
+  (N'Credit',N'Credit',CAST(0 AS bit),40),
+  (N'PendingCollection',N'PendingCollection',CAST(0 AS bit),50)
 ) AS source(PaymentMethodCode,ClosureMethodCode,RequiresCount,SortOrder)
 ON target.PaymentMethodCode=source.PaymentMethodCode
 WHEN MATCHED THEN UPDATE SET ClosureMethodCode=source.ClosureMethodCode,

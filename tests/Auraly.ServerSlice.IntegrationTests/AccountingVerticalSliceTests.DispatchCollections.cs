@@ -88,7 +88,7 @@ public sealed partial class AccountingVerticalSliceTests
                 using var rejected=await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{original.PaymentMethodId}",invalid);
                 Assert.Equal(System.Net.HttpStatusCode.BadRequest,rejected.StatusCode);
             }
-            var direct=WithUblSnapshot(fixture.CreateValidRequest(9958)) with{Payments=[new(1,"PendingCollection",11900,null,
+            var direct=WithUblSnapshot(fixture.CreateUniqueValidRequest()) with{Payments=[new(1,"PendingCollection",11900,null,
                 PaymentMethodId:original.PaymentMethodId,PaymentMethodVersion:original.Version,PaymentMethodCode:original.Code,PaymentMethodName:original.Name,AccountId:original.AccountId)]};
             using var directClient=fixture.CreateClient();using var directUpload=fixture.CreateUploadMessage(direct);
             using var forbiddenDirect=await directClient.SendAsync(directUpload);
@@ -109,20 +109,18 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.True(invoiceResponse.IsSuccessStatusCode, await invoiceResponse.Content.ReadAsStringAsync());
         var results = (await invoiceResponse.Content.ReadFromJsonAsync<InvoiceOrdersResponse>())!.Results;
         var otherEmission = Assert.Single(results, item => item.OrderId == secondOrder);
-        Assert.Equal("Invoiced", otherEmission.Status);
+        Assert.True(otherEmission.Status == "Invoiced", System.Text.Json.JsonSerializer.Serialize(otherEmission));
         await AssertBalancedAsync(otherEmission.DocumentId!.Value);
         Guid sale;
         if(creditPortion>0||previouslyCollected)
         {
             var(customer,site)=await CreateCustomerAsync();
-            var uploadConsecutive=previouslyCollected
-                ? (creditPortion,returnCase) switch{(0,"Partial")=>9960,(0,"NotDelivered")=>9961,(>0,"Partial")=>9962,(>0,_)=>9957,_=>9956}
-                : creditPortion==11900?returnCase=="Partial"?9954:9953:creditPortion==8000?9952:returnCase=="Partial"?9951:9950;
-            var upload=WithUblSnapshot(fixture.CreateValidRequest(uploadConsecutive) with{
+            var upload=WithUblSnapshot(fixture.CreateUniqueValidRequest() with{
                 SourceOrderId=previouslyCollected?null:order,CollectionMode=previouslyCollected?SaleCollectionMode.Session:SaleCollectionMode.Dispatch,CustomerId=customer,CustomerPartySiteId=site,
                 Credit=creditPortion==0?null:new PosSaleCreditContract(customer,creditPortion,new DateTimeOffset(2026,8,31,0,0,0,TimeSpan.FromHours(-5)),PartySiteId:site),
                 Payments=creditPortion==11900?[]:[new PosSalePaymentContract(1,"Cash",11900-creditPortion,null,PaymentMethodId:original.PaymentMethodId,
                     PaymentMethodVersion:original.Version,PaymentMethodCode:original.Code,PaymentMethodName:original.Name,AccountId:original.AccountId)]});
+            var uploadConsecutive=upload.DocumentNumber.Consecutive;
             if(previouslyCollected&&documentType==PosSaleDocumentTypes.Receipt)
             {
                 var series=Guid.NewGuid();var code=$"RR{uploadConsecutive}";

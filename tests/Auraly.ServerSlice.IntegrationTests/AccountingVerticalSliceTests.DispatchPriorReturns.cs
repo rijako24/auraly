@@ -23,10 +23,11 @@ public sealed partial class AccountingVerticalSliceTests
         using(var defaults=await admin.PutAsync("/api/commerce/v1/accounting/defaults",null))defaults.EnsureSuccessStatusCode();
         using(var activation=await admin.PostAsJsonAsync("/api/commerce/v1/accounting/activate",new ActivateAccountingRequest(new(2026,1,1),"COP","ZeroDeclared")))activation.EnsureSuccessStatusCode();
         var(customer,site)=await CreateCustomerAsync();
-        var request=WithUblSnapshot(fixture.CreateValidRequest(raceAssignment?credit?9984:9983:credit?9981:priorQuantity==.25m?9980:9982) with{
+        var source=fixture.CreateUniqueValidRequest();
+        var request=WithUblSnapshot(source with{
             CustomerId=customer,CustomerPartySiteId=site,
             Credit=credit?new PosSaleCreditContract(customer,11900,new(2026,8,31,0,0,0,TimeSpan.FromHours(-5)),PartySiteId:site):null,
-            Payments=credit?[]:fixture.CreateValidRequest(9980).Payments});
+            Payments=credit?[]:source.Payments});
         if(credit)request=request with{UblSnapshot=request.UblSnapshot! with{PaymentFormCode="2",DueDate=new(2026,8,31)}};
         using(var pos=fixture.CreateClient())using(var message=fixture.CreateUploadMessage(request))using(var response=await pos.SendAsync(message))
             Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());

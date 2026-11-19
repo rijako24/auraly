@@ -249,6 +249,8 @@ public sealed partial class OnlineSalesCheckoutTests
             {
                 Assert.True(await row.ReadAsync());Assert.True(row.IsDBNull(0));Assert.Equal("OpenPeriodMissing",row.GetString(1));
             }
+            form = Assert.Single((await client.GetFromJsonAsync<PaymentMethodPage>(
+                $"/api/commerce/v1/payment-methods?paymentMethodId={form.PaymentMethodId}"))!.Items);
             using var semanticEdit = await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form.PaymentMethodId}",
                 configuration with { PaymentTypeId = types.Single(type => type.Code == "Cash").Id,
                     IsActive = false, RowVersion = form.RowVersion });
@@ -321,6 +323,8 @@ public sealed partial class OnlineSalesCheckoutTests
         var key = $"configured-sale-{Guid.NewGuid():N}";
 
         var accepted = await CompleteAsync(client, captured.DraftId, request, key);
+        form = Assert.Single((await client.GetFromJsonAsync<PaymentMethodPage>(
+            $"/api/commerce/v1/payment-methods?paymentMethodId={form.PaymentMethodId}"))!.Items);
         var creditType = (await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!
             .Single(value => value.Code == "Credit");
         using var semanticEdit = await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configuration.PaymentMethodId}",

@@ -44,7 +44,7 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         // previous planned Friday is today and must not be seeded as history.
         if (secondFriday >= today) secondFriday = secondFriday.AddDays(-7);
         var firstFriday = secondFriday.AddDays(-7);
-        using var client = CreateClient(InventoryPermissionCodes.Read);
+        using var client = CreateClient(InventoryPermissionCodes.Read, InventoryPermissionCodes.Produce);
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         string? previousMode;

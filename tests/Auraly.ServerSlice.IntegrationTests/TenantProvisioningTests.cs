@@ -1120,7 +1120,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.AccountingCostCenters c WHERE c.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
               (SELECT COUNT(*) FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM reference.Options optionValue
-               WHERE optionValue.CatalogCode=N'payment-method' AND optionValue.IsActive=1
+                 WHERE optionValue.CatalogCode=N'payment-method' AND optionValue.IsActive=1
+                   AND optionValue.Code<>N'PendingCollection'
                  AND NOT EXISTS(
                    SELECT 1
                    FROM dbo.AccountingConfigurationProfiles profile

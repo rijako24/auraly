@@ -65,6 +65,8 @@ public sealed partial class PayablesVerticalSliceTests
             await using var unresolved = new SqlCommand("SELECT AccountId FROM dbo.SupplierPaymentTenders WHERE PaymentId=@Id",connection);
             unresolved.Parameters.AddWithValue("@Id",payment.PaymentId);
             Assert.Equal(DBNull.Value,await unresolved.ExecuteScalarAsync());
+            form = Assert.Single((await client.GetFromJsonAsync<PaymentMethodPage>(
+                $"/api/commerce/v1/payment-methods?paymentMethodId={form.PaymentMethodId}"))!.Items);
             using var semanticEdit = await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form.PaymentMethodId}",
                 configuration with { PaymentTypeId = types.Single(type => type.Code == "Transfer").Id,
                     IsActive = false,RowVersion = form.RowVersion });

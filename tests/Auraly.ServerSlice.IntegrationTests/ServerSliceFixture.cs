@@ -284,6 +284,14 @@ public sealed partial class ServerSliceFixture : IAsyncLifetime
     public string SqlServer { get; } =
         Environment.GetEnvironmentVariable("AURALY_TEST_SQLSERVER") ?? @".\LOCAL";
     public string ConnectionString { get; private set; } = string.Empty;
+    private long independentSaleConsecutive = 1000;
+
+    internal PosSaleUploadRequest CreateUniqueValidRequest()
+    {
+        var consecutive = Interlocked.Increment(ref independentSaleConsecutive);
+        if (consecutive > 9000) throw new InvalidOperationException("The isolated sale-number range is exhausted.");
+        return CreateValidRequest(consecutive);
+    }
 
     // Read-only scenarios create deliberately unconfigured sites. Keep their
     // history, but do not leave them active for later tenant-readiness scenarios.
@@ -438,9 +446,10 @@ public sealed partial class ServerSliceFixture : IAsyncLifetime
         .Drain();
 
     public async Task<PosSynchronizationInvalidation>
-        ReadSynchronizationMessageAsync()
+        ReadSynchronizationMessageAsync(CancellationToken cancellationToken = default)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
         return await (_factory ?? throw new InvalidOperationException(
             "The API fixture is not initialized."))
             .Services

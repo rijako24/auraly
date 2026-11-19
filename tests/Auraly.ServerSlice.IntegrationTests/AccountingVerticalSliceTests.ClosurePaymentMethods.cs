@@ -32,7 +32,7 @@ public sealed partial class AccountingVerticalSliceTests
         var sessionId = Guid.NewGuid();
         await sessions.RegisterDeviceOpenAsync(identity,
             new(userId, sessionId, fixture.BusinessId, new DateTimeOffset(2026, 7, 27, 10, 0, 0, TimeSpan.Zero)), fixture.DeviceId);
-        var sale = WithUblSnapshot(fixture.CreateValidRequest(configuredForm ? 9985 : 9984)) with
+        var sale = WithUblSnapshot(fixture.CreateUniqueValidRequest()) with
         {
             SoldByUserId = userId, WorkSessionId = sessionId,
             Payments = [new PosSalePaymentContract(1, "Cash", 11900, null)]
@@ -124,7 +124,7 @@ public sealed partial class AccountingVerticalSliceTests
         // exercises set-based validation; no artificial Posted rows are seeded.
         for (var index = 0; index < (actualBlindCount ? 25 : 1); index++)
         {
-            var createdSale = WithUblSnapshot(fixture.CreateValidRequest((actualBlindCount ? 9950 : 9910) + index + (refundBeforeCorrection ? 10 : 0) + (targetType == "DebitCard" ? 30 : 0) + (remapTarget ? 5 : 0) + (sameForm ? 6 : 0) + (originalType == "Transfer" ? 1 : card ? 2 : sameAccount ? 3 : targetType == "Cash" ? 4 : 0)) with
+            var createdSale = WithUblSnapshot(fixture.CreateUniqueValidRequest() with
             {
                 SoldByUserId = userId, WorkSessionId = sessionId,
                 Payments = [new PosSalePaymentContract(1, originalType, 11900,

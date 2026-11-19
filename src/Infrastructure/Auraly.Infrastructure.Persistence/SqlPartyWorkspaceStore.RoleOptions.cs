@@ -16,6 +16,8 @@ public sealed partial class SqlPartyWorkspaceStore
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
+        // Rare cross-party/site searches must not rescan every site for each
+        // candidate while trying to satisfy the page's optimistic row goal.
         command.CommandText = $"""
             SELECT COUNT_BIG(1)
             FROM dbo.Parties party
@@ -49,7 +51,8 @@ public sealed partial class SqlPartyWorkspaceStore
                 OR party.Identification LIKE N'%'+@Search+N'%'
                 OR site.Name LIKE N'%'+@Search+N'%' OR site.Code LIKE N'%'+@Search+N'%')
             ORDER BY party.DisplayName,party.PartyId,site.IsPrimary DESC,site.Name,site.PartySiteId
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            OPTION (USE HINT('DISABLE_OPTIMIZER_ROWGOAL'));
             """;
         command.Parameters.AddRange([
             new SqlParameter("@TenantId", actor.TenantId),

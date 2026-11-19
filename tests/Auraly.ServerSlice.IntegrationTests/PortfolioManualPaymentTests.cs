@@ -214,17 +214,12 @@ public sealed partial class PayablesVerticalSliceTests
                     new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified")).ToArray(),
                 [new(closed.Payment.VerificationKey, "Cash", closed.Payment.Amount + 1m, "Importe real corregido")]);
             using (var response = await SendAsync(client, closed.Path + "/reconcile", request, $"reconcile-unapply-{Guid.NewGuid():N}"))
-                Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
-            Assert.Equal(1m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
-            var blocked = await SaveUnapplicationAsync(unapplyAmount);
-            using (var response = await client.PostAsJsonAsync($"/api/commerce/v1/accounting/manual/drafts/{blocked.DocumentId}/send", new SendVoucherDraftRequest(blocked.RowVersion)))
             {
                 Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-                Assert.Contains("su importe fue corregido", await response.Content.ReadAsStringAsync());
+                Assert.Contains("conserva el importe original", await response.Content.ReadAsStringAsync());
             }
-            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id", blocked.DocumentId));
-            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SupplierCredits WHERE SourceDocumentId=@Id", blocked.DocumentId));
-            Assert.Equal(1m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+            Assert.Equal(0m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.WorkSessionClosureReconciliations WHERE WorkSessionClosureId=@Id", closed.Closure.WorkSessionClosureId));
             return;
         }
         var unapplication = await SaveUnapplicationAsync(unapplyAmount);
@@ -335,7 +330,7 @@ public sealed partial class PayablesVerticalSliceTests
                 catch (Exception error) { Console.WriteLine($"Correction diagnostic failed: {error.GetType().Name}: {error.Message}"); }
             }
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-            Assert.Contains("desaplicaciones", await response.Content.ReadAsStringAsync());
+            Assert.Contains("conserva el importe original", await response.Content.ReadAsStringAsync());
             Assert.Equal(1, validationCommands.Count);
         }
         validationCommands.Dispose();

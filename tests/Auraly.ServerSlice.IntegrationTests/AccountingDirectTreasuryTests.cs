@@ -290,7 +290,7 @@ public sealed class AccountingDirectTreasuryTests(ServerSliceFixture fixture)
                            new[] { correction with { Amount = movement.Amount * 2m } }))
                 {
                     Assert.Equal(HttpStatusCode.BadRequest, wrongAmount.StatusCode);
-                    Assert.Contains("desde contabilidad", await wrongAmount.Content.ReadAsStringAsync());
+                    Assert.Contains("conserva el importe original", await wrongAmount.Content.ReadAsStringAsync());
                 }
                 using var evidence = await client.PostAsJsonAsync(closurePath + "/payment-corrections/validate", new[] { correction });
                 Assert.True(evidence.IsSuccessStatusCode, await evidence.Content.ReadAsStringAsync());

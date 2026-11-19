@@ -29,7 +29,7 @@ public sealed partial class AccountingVerticalSliceTests
             await fixture.EnsurePortfolioPaymentSeriesAsync(numbering,"ReceivablePayment","RCC");
         }
         var(customer,site)=await CreateCustomerAsync();
-        var sale=WithUblSnapshot(fixture.CreateValidRequest(9958) with{CustomerId=customer,CustomerPartySiteId=site,Payments=[],
+        var sale=WithUblSnapshot(fixture.CreateUniqueValidRequest() with{CustomerId=customer,CustomerPartySiteId=site,Payments=[],
             Credit=new PosSaleCreditContract(customer,11900,new DateTimeOffset(2026,8,31,0,0,0,TimeSpan.FromHours(-5)),PartySiteId:site)});
         sale=sale with{UblSnapshot=sale.UblSnapshot! with{PaymentFormCode="2",DueDate=new(2026,8,31)}};
         using(var pos=fixture.CreateClient())using(var upload=fixture.CreateUploadMessage(sale))using(var response=await pos.SendAsync(upload))
