@@ -23,14 +23,14 @@ public sealed partial class AccountingVerticalSliceTests
         {
             await DisableAccountingAsync();
             using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
-            var siteId = await PrepareOpeningInvoicePartyAsync();
+            var (partyId, siteId) = await PrepareOpeningInvoicePartyAsync();
             var account = await CreateHistoricalAccountAsync(client, false);
             var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
             var equity = accounts.First(item => item.AccountType == "Equity" && item.AllowsPosting && item.IsActive);
             var batchId = Guid.NewGuid();
             var cut = new DateOnly(2027, 1, count == 2 ? 1 : count == 50 ? 2 : 3);
             var lines = Enumerable.Range(0, count - 1).Select(index => new AccountingOpeningBalanceLineRequest(
-                account, fixture.SupplierPartyId, null, "Factura inicial", 0, 1, Guid.NewGuid(),
+                account, partyId, null, "Factura inicial", 0, 1, Guid.NewGuid(),
                 NewInvoice: new($"INI-{batchId:N}-{index}", cut.AddDays(-60), cut.AddDays(-30), siteId))).ToList();
             lines.Add(new(equity.AccountId, null, null, "Contrapartida", count - 1, 0));
             var request = new SaveAccountingOpeningBalanceRequest(batchId, fixture.BusinessId, cut, "COP", "Cartera inicial por conjunto", null, lines);
@@ -78,7 +78,7 @@ public sealed partial class AccountingVerticalSliceTests
                 AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
                 PayablesPermissionCodes.RegisterPayment, PayablesPermissionCodes.Read,
                 ReceivablesPermissionCodes.RegisterPayment, ReceivablesPermissionCodes.Read);
-            var siteId = await PrepareOpeningInvoicePartyAsync();
+            var (partyId, siteId) = await PrepareOpeningInvoicePartyAsync();
             var account = await CreateHistoricalAccountAsync(client, receivable);
             var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
             var equity = accounts.First(item => item.AccountType == "Equity" && item.AllowsPosting && item.IsActive);
@@ -87,7 +87,7 @@ public sealed partial class AccountingVerticalSliceTests
             var batchId = Guid.NewGuid();
             var reference = $"INI-{batchId:N}";
             var invoice = new AccountingOpeningInvoice(reference, cut.AddDays(-60), cut.AddDays(-30), siteId);
-            var firstLine = new AccountingOpeningBalanceLineRequest(account, fixture.SupplierPartyId, null,
+            var firstLine = new AccountingOpeningBalanceLineRequest(account, partyId, null,
                 "Factura anterior al inicio", receivable ? 1_000m : 0m, receivable ? 0m : 1_000m, Guid.NewGuid(), NewInvoice: invoice);
             var secondLine = firstLine with { LineId = Guid.NewGuid(), NewInvoice = invoice with { DocumentNumber = reference + "-2" } };
             var request = new SaveAccountingOpeningBalanceRequest(batchId, fixture.BusinessId, cut, "COP", "Cartera inicial", null,
@@ -179,12 +179,12 @@ public sealed partial class AccountingVerticalSliceTests
             var at = new DateTimeOffset(cut.ToDateTime(new TimeOnly(9, 0)), TimeSpan.FromHours(-5));
             var payment = new SaveVoucherDraftRequest(paymentId, AccountingManualDocumentTypes.ManualVoucher, at,
                 "MANUAL_VOUCHER", "Abono a facturas iniciales", null,
-                [.. positions.Select((position, index) => new VoucherDraftLine(account, fixture.SupplierPartyId, null,
+                [.. positions.Select((position, index) => new VoucherDraftLine(account, partyId, null,
                     position.Number, receivable ? 0 : amounts[index], receivable ? amounts[index] : 0, position.Number,
                     Guid.NewGuid(), ExistingPosition: new(kind, position.Id), FinancialGroupId: paymentId, PartySiteId: siteId)),
-                 new(cash.AccountId, fixture.SupplierPartyId, null, "Dinero", receivable ? 200 : 0, receivable ? 0 : 200,
+                 new(cash.AccountId, partyId, null, "Dinero", receivable ? 200 : 0, receivable ? 0 : 200,
                      LineId: Guid.NewGuid(), FinancialGroupId: paymentId)],
-                null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4,
+                null, null, MainPartyId: partyId, PayloadVersion: 4,
                 VoucherTypeCode: receivable ? "CashReceipt" : "Disbursement");
             var draftPath = $"/api/commerce/v1/accounting/manual/drafts/{paymentId}";
             VoucherDraftView draft;
@@ -237,19 +237,32 @@ public sealed partial class AccountingVerticalSliceTests
         }
     }
 
-    private async Task<Guid> PrepareOpeningInvoicePartyAsync()
+    private async Task<(Guid PartyId, Guid SiteId)> PrepareOpeningInvoicePartyAsync()
     {
+        var partyId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.Customers WHERE PartyId=@PartyId AND TenantId=@TenantId)
-              INSERT dbo.Customers(CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
-              VALUES(NEWID(),@PartyId,@TenantId,0,1,@UserId,SYSDATETIMEOFFSET());
-            SELECT TOP(1) PartySiteId FROM dbo.PartySites WHERE PartyId=@PartyId AND IsActive=1 ORDER BY IsPrimary DESC,PartySiteId;
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'Organization',N'Tercero de apertura QA',N'Tercero de apertura QA',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+            VALUES(NEWID(),@PartyId,@TenantId,0,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Suppliers(SupplierId,TenantId,PartyId,Identification,Name,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@PartyId,CONVERT(nvarchar(36),@PartyId),N'Proveedor de apertura QA',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,PostalCode,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            SELECT TOP(1) @SiteId,@PartyId,N'PRINCIPAL',N'Sede de apertura QA',CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,PostalCode,1,1,@UserId,SYSDATETIMEOFFSET()
+            FROM dbo.PartySites WHERE PartyId=@TemplatePartyId AND IsActive=1 ORDER BY IsPrimary DESC,PartySiteId;
+            IF @@ROWCOUNT<>1 THROW 51000,'The opening test requires its isolated party site.',1;
             """, connection);
-        command.Parameters.AddWithValue("@PartyId", fixture.SupplierPartyId);
+        command.Parameters.AddWithValue("@PartyId", partyId);
+        command.Parameters.AddWithValue("@SiteId", siteId);
+        command.Parameters.AddWithValue("@TemplatePartyId", fixture.SupplierPartyId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
-        return (Guid)(await command.ExecuteScalarAsync())!;
+        await command.ExecuteNonQueryAsync();
+        return (partyId, siteId);
     }
 }
