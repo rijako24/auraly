@@ -750,6 +750,13 @@ function Publish-PosInstallerIfPresent {
             "PosInstaller__Sha256=$($installerArtifact.sha256)" `
         --output none
     Assert-LastExitCode 'No se pudo registrar la version e integridad del instalador POS en API'
+    # IOptions is bound by the running process. Persisted app settings alone do
+    # not prove that the download endpoint adopted the new version and hash.
+    & az webapp restart `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --output none
+    Assert-LastExitCode 'No se pudo reiniciar la API para aplicar el descriptor del instalador POS'
     return $installerArtifact
 }
 
@@ -810,8 +817,7 @@ if ($selectedComponents -contains 'function') {
 if ($selectedComponents -contains 'api') { Publish-Api }
 $installerMetadata = if ($selectedComponents -contains 'pos-installer') { Publish-PosInstallerIfPresent } else { $null }
 
-$apiStatus = if ($selectedComponents -contains 'api' -or
-    ($selectedComponents -contains 'pos-installer' -and $manifest.deploymentComponents -notcontains 'database')) {
+$apiStatus = if ($selectedComponents -contains 'api' -or $selectedComponents -contains 'pos-installer') {
     Wait-HttpHealthy "https://$($configuration.Api).azurewebsites.net/health"
 }
 else { $null }

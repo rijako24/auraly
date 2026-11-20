@@ -6,8 +6,16 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      test_suite:
+        description: Proyecto de las pruebas puntuales
+        required: true
+        default: integration
+        type: choice
+        options:
+          - integration
+          - foundation
       integration_test_filter:
-        description: Filtro explícito para validar únicamente los casos afectados
+        description: Filtro explícito de las pruebas seleccionadas
         required: true
         type: string
 
@@ -44,15 +52,21 @@ jobs:
       - name: Run integration regression
         if: github.event_name != 'workflow_dispatch'
         run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation!=FreshProcess"
-      - name: Run selected integration regression
+      - name: Run selected regression
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           INTEGRATION_TEST_FILTER: ${{ inputs.integration_test_filter }}
+          SELECTED_TEST_SUITE: ${{ inputs.test_suite }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:INTEGRATION_TEST_FILTER)) { throw 'Se requiere un filtro de pruebas explícito.' }
+          $project = switch ($env:SELECTED_TEST_SUITE) {
+            'integration' { 'tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj' }
+            'foundation' { 'tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj' }
+            default { throw 'Proyecto de pruebas no admitido.' }
+          }
           $results = Join-Path $env:RUNNER_TEMP 'targeted-integration-results'
-          dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj `
+          dotnet test $project `
             --no-build --configuration Release --filter $env:INTEGRATION_TEST_FILTER `
             --logger 'trx;LogFileName=targeted.trx' --results-directory $results
           if ($LASTEXITCODE -ne 0) { throw 'Fallaron las pruebas seleccionadas.' }

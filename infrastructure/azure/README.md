@@ -104,6 +104,16 @@ la comprobación de salud de los binarios compatibles, antes de anunciar el clie
 nuevo. Si el release solo incluye el instalador, el job de nube se omite y la
 publicación conserva su comprobación de API. Un fallo del backend bloquea la
 publicación del instalador y de Admin.
+Al actualizar versión y SHA-256 del instalador se reinicia explícitamente la API
+para que su descriptor cargue esos valores, y se espera su salud también cuando
+ese job ejecuta solo `pos-installer` dentro de un release que incluía base de datos.
+La configuración guardada en Azure no demuestra por sí sola la configuración
+efectiva del proceso: la comprobación de descarga debe contrastar versión,
+SHA-256 y firma con el manifiesto. En DEV RC5 se reprodujo el descriptor RC4
+persistente y se comprobó la descarga RC5 correcta después de reiniciar.
+La validación manual dirigida de `quality.yml` permite seleccionar `integration`
+o `foundation` y conserva el filtro explícito y el rechazo de cero pruebas.
+Así se comprueban los contratos del publicador sin repetir toda la regresión.
 Si falla el corte, no se reinician automáticamente los binarios anteriores contra
 el esquema nuevo. Para el PUC compartido se conserva la dimensión histórica en
 `LegacyBusinessId`; el retorno a binarios anteriores exige una reversión

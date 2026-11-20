@@ -798,6 +798,70 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("dev", "None", true, 4, null)]
+    [InlineData("prod", "None", true, 4, null)]
+    [InlineData("dev", "None", false, 4, null)]
+    [InlineData("dev", "Upload", true, 1, "publicar el instalador")]
+    [InlineData("dev", "Settings", true, 2, "registrar la version")]
+    [InlineData("dev", "Restart", true, 3, "reiniciar la API")]
+    [InlineData("dev", "Health", true, 4, "Health failed")]
+    public async Task Installer_publication_restarts_its_api_and_waits_for_runtime_configuration(
+        string environment, string failStage, bool recordedDatabase, int expectedEvents, string? expectedIssue)
+    {
+        var pipeline = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(),
+            "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var start = pipeline.IndexOf("function Publish-PosInstallerIfPresent", StringComparison.Ordinal);
+        var end = pipeline.IndexOf("$manifest = Test-Release", start, StringComparison.Ordinal);
+        var healthStart = pipeline.IndexOf("$apiStatus = if", end, StringComparison.Ordinal);
+        var healthEnd = pipeline.IndexOf("$functionStatus = if", healthStart, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start && healthStart > end && healthEnd > healthStart);
+        var folder = Path.Combine(Path.GetTempPath(), $"auraly-installer-config-{Guid.NewGuid():N}");
+        var filename = environment == "prod" ? "auraly-pos-prod-1.2.3.exe" : "auraly-pos-1.2.3.exe";
+        Directory.CreateDirectory(folder);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, filename), "test upload boundary");
+            // Execute the real publisher and health branch. Only Azure/HTTP I/O
+            // is replaced; a full manifest still invokes the installer alone.
+            var script = $$"""
+                param([string]$Root)
+                $ErrorActionPreference='Stop'
+                $Environment='{{environment}}';$ReleaseVersion='1.2.3';$releasePath=$Root
+                $configuration=@{Storage='test';ResourceGroup='test';Api='api'}
+                $manifest=@{artifacts=@(@{name='{{filename}}';sha256=('a'*64)});deploymentComponents=@({{(recordedDatabase ? "'database','api','function','admin','pos-installer'" : "'pos-installer'")}})}
+                $selectedComponents=@('pos-installer');$events=[Collections.Generic.List[string]]::new()
+                function az {
+                  $stage=if($args[0] -eq 'storage'){'Upload'}elseif($args[1] -eq 'restart'){'Restart'}else{'Settings'}
+                  $events.Add($stage);$global:LASTEXITCODE=if($stage -eq '{{failStage}}'){1}else{0}
+                }
+                function Assert-LastExitCode {param([string]$Message)if($LASTEXITCODE -ne 0){throw $Message} }
+                function Wait-HttpHealthy {param([string]$Url)$events.Add('Health');if('{{failStage}}' -eq 'Health'){throw 'Health failed'};return 'Healthy'}
+                {{pipeline[start..end]}}
+                $issue=$null
+                try {$metadata=Publish-PosInstallerIfPresent
+                {{pipeline[healthStart..healthEnd]}}
+                } catch {$issue=$_.Exception.Message}
+                [pscustomobject]@{events=$events.ToArray();issue=$issue;status=$apiStatus}|ConvertTo-Json -Compress
+                """;
+            using var result = JsonDocument.Parse(await RunPowerShellAsync(script, folder));
+            var events = result.RootElement.GetProperty("events").EnumerateArray().Select(item => item.GetString()).ToArray();
+            Assert.Equal(new[] { "Upload", "Settings", "Restart", "Health" }.Take(expectedEvents), events);
+            var issue = result.RootElement.GetProperty("issue");
+            if (expectedIssue is null)
+            {
+                Assert.Equal(JsonValueKind.Null, issue.ValueKind);
+                Assert.Equal("Healthy", result.RootElement.GetProperty("status").GetString());
+            }
+            else Assert.Contains(expectedIssue, issue.GetString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(Path.Combine(folder, filename));
+            Directory.Delete(folder);
+        }
+    }
+
     [Fact]
     public void WhatsApp_configuration_uses_the_app_configuration_data_plane()
     {
