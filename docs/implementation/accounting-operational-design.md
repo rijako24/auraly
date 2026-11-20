@@ -886,6 +886,9 @@ measured virtual rows, retaining all values and totals in the same bounded
 500-line editable aggregate. TanStack Virtual handles variable invoice-detail
 heights on desktop and mobile; the focused row and its immediate neighbors
 remain mounted for keyboard navigation. Adding a row scrolls to its position.
+Desktop columns retain fixed proportions, top-aligned controls and sticky
+headers/totals while scrolling; invoice capture remains grouped beneath its
+own row. Mobile retains the existing labelled fields without horizontal scroll.
 There is no pagination of the active document. Cost-center labels resolve only
 for the visual buffer in stable 20-line batches through the existing bounded
 label resolver; rows outside that buffer issue no directory reads. Memoized rows keep

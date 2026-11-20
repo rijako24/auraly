@@ -217,8 +217,9 @@ function OpeningBalancesSection({recovery,businessId,effectiveOn,setEffectiveOn,
       <div ref={scrollRef} role="region" aria-label="Partidas de saldos iniciales" className="max-h-[32rem] overflow-auto border-y" onFocusCapture={event=>{
         const row=(event.target as HTMLElement).closest<HTMLElement>("[data-line-id]");
         if(row)setFocusedLine(row.dataset.lineId??null);
-      }}><table className="block w-full text-sm lg:table">
-        <thead className="hidden bg-muted/50 lg:table-header-group"><tr><th className="p-3 text-left">Cuenta PUC</th><th className="text-left">Tercero</th><th className="text-left">Centro de costo</th><th className="text-left">Descripción / factura</th><th className="text-right">Débito</th><th className="text-right">Crédito</th><th className="w-12"/></tr></thead>
+      }}><table className="block w-full text-sm lg:table lg:table-fixed">
+        <colgroup className="hidden lg:table-column-group"><col className="w-[20%]"/><col className="w-[17%]"/><col className="w-[13%]"/><col/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-14"/></colgroup>
+        <thead className="sticky top-0 z-10 hidden bg-muted shadow-sm lg:table-header-group"><tr><th className="p-2 text-left">Cuenta PUC</th><th className="p-2 text-left">Tercero</th><th className="p-2 text-left">Centro de costo</th><th className="p-2 text-left">Descripción / factura</th><th className="p-2 text-right">Débito</th><th className="p-2 text-right">Crédito</th><th><span className="sr-only">Acciones</span></th></tr></thead>
         {local.ready&&visibleIndices.map((index,position)=>{
           const line=lines[index],item=items[position],previous=items[position-1];
           const gap=virtualized?item.start-(previous?.end??0):0;
@@ -231,7 +232,7 @@ function OpeningBalancesSection({recovery,businessId,effectiveOn,setEffectiveOn,
           </Fragment>;
         })}
         {virtualized&&items.length>0&&<tbody aria-hidden className="block lg:table-row-group"><tr className="block lg:table-row"><td colSpan={7} className="block p-0 lg:table-cell" style={{height:Math.max(0,virtualizer.getTotalSize()-items[items.length-1].end)}}/></tr></tbody>}
-        <tfoot className="block border-t-2 bg-muted/30 font-bold lg:table-footer-group"><tr className="grid grid-cols-2 gap-2 p-3 lg:table-row"><td className="col-span-2 lg:p-3" colSpan={4}>Totales {balanced&&<span className="ml-2 text-emerald-700">· Cuadrado</span>}</td><td className="text-right">{auxiliaryMoney.format(debit)}</td><td className="text-right">{auxiliaryMoney.format(credit)}</td><td/></tr></tfoot>
+        <tfoot className="sticky bottom-0 z-10 block border-t-2 bg-background font-bold lg:table-footer-group"><tr className="grid grid-cols-2 gap-2 p-3 lg:table-row"><td className="col-span-2 lg:p-3" colSpan={4}>Totales {balanced&&<span className="ml-2 text-emerald-700">· Cuadrado</span>}</td><td className="text-right lg:p-2">{auxiliaryMoney.format(debit)}</td><td className="text-right lg:p-2">{auxiliaryMoney.format(credit)}</td><td/></tr></tfoot>
       </table></div>
       {local.ready&&<p className="px-5 text-xs text-muted-foreground">{lines.length} partidas · Desplázate para revisar el documento completo.</p>}
       {opening.isError&&<p role="alert" className="p-5 text-destructive">No se pudieron cargar los saldos iniciales. <Button variant="link" onClick={()=>void opening.refetch()}>Reintentar</Button></p>}
@@ -254,12 +255,12 @@ const OpeningBalanceRow=memo(function OpeningBalanceRow({line,index,accounts,bus
           const account=accounts.find(item=>item.accountId===line.accountId),kind=account?.semantics?.financialFunction;
           const portfolio=kind==="Payable"||kind==="Receivable";
           return <Fragment>
-            <tr aria-label={`Partida de apertura ${index+1}`} className="grid min-w-0 grid-cols-2 gap-3 border-t p-3 lg:table-row lg:p-0">
+            <tr aria-label={`Partida de apertura ${index+1}`} className="grid min-w-0 grid-cols-2 gap-3 border-t p-3 lg:table-row lg:p-0 lg:[&>td]:align-top">
               <td className="col-span-2 min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Cuenta PUC</span>
                 <Select value={line.accountId} disabled={!captureEnabled} onValueChange={accountId=>{const selected=accounts.find(item=>item.accountId===accountId);const functionCode=selected?.semantics?.financialFunction;update(index,{accountId,partyId:selected?.requiresParty?line.partyId:null,partyName:selected?.requiresParty?line.partyName:null,partyIdentification:selected?.requiresParty?line.partyIdentification:null,existingPosition:null,existingPositionDocumentNumber:null,newInvoice:functionCode==="Payable"||functionCode==="Receivable"?emptyOpeningInvoice():null,newInvoicePartySiteName:null});}}>
                   <SelectTrigger aria-label={`Cuenta de apertura ${index+1}`}><SelectValue placeholder="Seleccionar cuenta"/></SelectTrigger>
                   <SelectContent>{accounts.filter(item=>!line.newInvoice||!!line.accountId||item.semantics?.financialFunction==="Payable"||item.semantics?.financialFunction==="Receivable").map(item=><SelectItem key={item.accountId} value={item.accountId}>{item.code} · {item.name}</SelectItem>)}</SelectContent>
-                </Select>{account?.requiresParty&&<small className="text-amber-700">Esta cuenta exige tercero.</small>}
+                </Select>{account?.requiresParty&&!line.partyId&&<small className="text-amber-700">Esta cuenta exige tercero.</small>}
               </td>
               <td className="col-span-2 min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Tercero</span>
                 <PartySelect value={line.partyId??"none"} disabled={!captureEnabled} leadingOptions={[{value:"none",label:"Sin tercero"}]}
@@ -269,7 +270,7 @@ const OpeningBalanceRow=memo(function OpeningBalanceRow({line,index,accounts,bus
               </td>
               <td className="col-span-2 min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Centro de costo</span><CostCenterSelect value={line.costCenterId} onChange={value=>update(index,{costCenterId:value})} selected={centerLabel} disabled={!captureEnabled} ariaLabel={`Centro de costo de apertura ${index+1}`}/></td>
               <td className="col-span-2 min-w-0 space-y-2 lg:p-2"><Input aria-label={`Descripción de apertura ${index+1}`} value={line.description} disabled={!captureEnabled} maxLength={300} onChange={event=>update(index,{description:event.target.value})}/>
-                {portfolio&&<><Button type="button" size="sm" variant="ghost" disabled={!captureEnabled} onClick={()=>update(index,{newInvoice:line.newInvoice?null:emptyOpeningInvoice(),newInvoicePartySiteName:null,existingPosition:null,existingPositionDocumentNumber:null})}>{line.newInvoice?"Vincular factura existente":"Registrar factura inicial nueva"}</Button>
+                {portfolio&&<><Button type="button" size="sm" variant="ghost" className="h-auto min-h-8 w-full justify-start whitespace-normal px-0 text-left text-xs" disabled={!captureEnabled} onClick={()=>update(index,{newInvoice:line.newInvoice?null:emptyOpeningInvoice(),newInvoicePartySiteName:null,existingPosition:null,existingPositionDocumentNumber:null})}>{line.newInvoice?"Vincular factura existente":"Registrar factura inicial nueva"}</Button>
                 {!line.newInvoice&&<PagedEntitySelect<AccountingOpenPosition>
                   queryKey={["opening-position-options",businessId,kind,line.partyId]} value={line.existingPosition?.subledgerId??""}
                   selectedOption={line.existingPosition?{value:line.existingPosition.subledgerId,label:line.existingPositionDocumentNumber??"Obligación seleccionada"}:null}

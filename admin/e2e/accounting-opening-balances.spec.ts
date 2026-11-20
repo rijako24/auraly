@@ -275,6 +275,10 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await grid.evaluate(element=>{element.scrollTop=element.scrollHeight;});
       await expect(page.getByLabel("Descripción de apertura 500",{exact:true})).toHaveValue("Contrapartida");
       await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toBeFocused();
+      if(viewport.width===1440){
+        const bounds=await grid.boundingBox(),header=await grid.locator("thead").boundingBox();
+        expect(header!.y).toBeGreaterThanOrEqual(bounds!.y);expect(header!.y).toBeLessThan(bounds!.y+3);
+      }
       await expect(page.getByRole("combobox",{name:"Centro de costo de apertura 499",exact:true})).toContainText(`CC-${opening.lines[498].costCenterId!.slice(0,6)}`);
       expect(centerReads.map(ids=>ids.length)).toEqual([20,20,19]);
       await page.getByLabel("Descripción de apertura 500",{exact:true}).fill("Contrapartida revisada");

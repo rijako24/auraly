@@ -121,6 +121,10 @@ test("recarga inmediata real: conserva la última edición incompleta sin guarda
     await grid.evaluate(element=>{element.scrollTop=element.scrollHeight;});
     const last=grid.getByLabel("Descripción de apertura 500",{exact:true});await expect(last).toHaveValue(width===1440?"Volumen 500":"Revisado 1440");
     await expect(first).toBeFocused();
+    if(width===1440){
+      const bounds=await grid.boundingBox(),header=await grid.locator("thead").boundingBox();
+      expect(header!.y).toBeGreaterThanOrEqual(bounds!.y);expect(header!.y).toBeLessThan(bounds!.y+3);
+    }
     await last.fill(`Revisado ${width}`);
     await expect.poll(async()=>(await readLocalCatalogDraft<StoredOpeningCapture>(page,key))?.capture.lines[499].description).toBe(`Revisado ${width}`);
     expect(await grid.locator('tr[aria-label^="Partida de apertura "]').count()).toBeLessThan(30);
@@ -263,6 +267,14 @@ test("apertura contabilizada real: consulta la fecha oficial desde otro navegado
   await expect(capture.getByRole("button",{name:"Guardar borrador",exact:true})).toBeDisabled();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await capture.getByRole("region",{name:"Factura inicial de la partida 1",exact:true}).screenshot({path:testInfo.outputPath("posted-opening-another-browser-mobile.png")});
+  await page.setViewportSize({width:1440,height:1100});
+  const grid=capture.getByRole("region",{name:"Partidas de saldos iniciales",exact:true});
+  await grid.evaluate(element=>{element.scrollTop=0;});
+  expect(await grid.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+  await capture.screenshot({path:testInfo.outputPath("posted-opening-desktop-organized.png")});
+  await grid.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+  const bounds=await grid.boundingBox(),header=await grid.locator("thead").boundingBox();
+  expect(header!.y).toBeGreaterThanOrEqual(bounds!.y);expect(header!.y).toBeLessThan(bounds!.y+3);
 });
 
 test("cartera inicial real: muestra abonos, saldos y edades del cliente y proveedor en móvil", async ({ page }, testInfo) => {
