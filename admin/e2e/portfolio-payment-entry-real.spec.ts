@@ -14,6 +14,7 @@ for (const supplier of [false, true]) {
     const initial = process.env.AURALY_E2E_DEV_OPENING_FIXTURE ? await openingPortfolioContext(page) : null;
     const context = initial?.context ?? await realAccountingContext(page);
     const { scopedJson } = context, api = "/api/commerce/v1", kind = supplier ? "Payable" : "Receivable";
+    test.skip(!!initial?.fixture.Payments?.[kind], "Este pago inicial ya tiene evidencia completa; conservar el mismo documento y sus abonos.");
     let name: string, party: { partyId: string; supplierId?: string; customerId?: string }, roleId: string, cash: AccountingAccount | null;
     if (initial) {
       expect(initial.fixture.Opening).toBeTruthy();

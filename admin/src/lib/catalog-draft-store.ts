@@ -8,7 +8,7 @@ type StoredCatalogDraft<T> = {
   updatedAt: string;
 };
 
-export type CatalogDraftKind = "party-create" | "party-edit" | "product-create" | "product-edit";
+export type CatalogDraftKind = "party-create" | "party-edit" | "product-create" | "product-edit" | "accounting-opening";
 
 export function catalogDraftKey(
   kind: CatalogDraftKind,
@@ -39,9 +39,14 @@ async function transaction<T>(
   const database = await openDatabase();
   try {
     return await new Promise<T>((resolve, reject) => {
-      const request = action(database.transaction(STORE, mode).objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
+      const transaction = database.transaction(STORE, mode);
+      const request = action(transaction.objectStore(STORE));
+      let result: T;
+      request.onsuccess = () => { result = request.result; };
       request.onerror = () => reject(request.error);
+      transaction.oncomplete = () => resolve(result);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
     });
   } finally {
     database.close();

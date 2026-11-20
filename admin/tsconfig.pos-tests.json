@@ -12,6 +12,8 @@
     "src/lib/utils.test.ts",
     "src/lib/accounting-document-date.ts",
     "src/lib/accounting-document-date.test.ts",
+    "src/lib/accounting-opening-recovery.ts",
+    "src/lib/accounting-opening-recovery.test.ts",
     "src/components/restaurant/restaurant-payment-calculation.ts",
     "src/components/restaurant/restaurant-payment-calculation.test.ts",
     "src/components/payments/preexisting-receivables-template.ts",

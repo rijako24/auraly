@@ -863,6 +863,41 @@ current mounted view; closing it changes no permissions or subscriptions and
 performs no I/O. The regression dismisses it through that visible control
 before saving/approving, without forced clicks or hidden overlays.
 
+**Automatic local recovery (approved 2026-11-19):** the opening form uses the
+existing `createLocalDraftCoordinator` and generic catalog-draft envelope store.
+The additional `accounting-opening` key kind creates no IndexedDB object store,
+database schema, endpoint or accounting writer. `useOpeningRecoveryScope` owns
+the selected effective date and the serialized queue; `useOpeningBalanceRecovery`
+owns hydration of the form from the existing server query and local snapshot.
+Keys include tenant, actor, business and effective date. Initial loading reads
+one selected-date record and at most one capture, with no directory I/O per line.
+Edits coalesce for 250 ms in the existing coordinator, flush on closing/hiding,
+and never save or approve on the server automatically.
+The local 500-line acceptance budget is a warm p95 below 100 ms for the committed
+IndexedDB transaction and 1.5 seconds from input to durable capture (including
+coalescing), measured across 20 edits without concurrent builds/diagnostics.
+The form waits for the current readiness and local hydration before mounting
+its rows. The existing pagination component mounts 20 capture rows at a time
+(up to 100 when selected), retaining all values and totals in the same bounded
+500-line editable aggregate. This is local form navigation, not client-side
+pagination of a remote directory/report. Adding a row opens its capture page.
+Memoized rows keep unchanged selectors intact when one line changes.
+Reloading and restoring the full 500-line form must finish within five seconds;
+it must add no server save or per-line directory query.
+
+Recovery retains incomplete invoice fields, amounts, stable batch/line IDs and
+the server row version. A different current row version or batch shows explicit
+choices to continue the saved version or recover the local capture against the
+current draft; the latter still requires Guardar borrador before approval.
+Approved/posted openings always project the server version. Accepted saves and
+approvals clear pending local writes through the same coordinator before they
+can recreate an obsolete snapshot; subsequent edits resume recovery. Server
+acceptance reuses its aggregate response and does not refetch that aggregate.
+Storage errors are visible in Spanish and preserve the manual save/approve path.
+The shared store now waits for transaction completion, including abort failures,
+before reporting a write as finished. Rollback leaves only optional device keys;
+all saved drafts, invoices, journals and balances remain in their current owners.
+
 Deployment adds nullable evidence columns and widens the existing identified-line
 constraints to include opening sources; existing rows are not backfilled or
 reclassified. Deploy the schema and updated posting worker before exposing the

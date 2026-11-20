@@ -1,4 +1,10 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { openingRecoveryKey, openingRecoveryScope, type StoredOpeningCapture } from "../src/lib/accounting-opening-recovery";
+import { closeOpeningNotificationHint } from "./support/opening-portfolio-fixture";
+import type { AccountingOpeningBalance } from "../src/services/api/accounting";
+import { readLocalCatalogDraft } from "./support/local-draft-evidence";
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
@@ -18,6 +24,8 @@ async function json(route: Route, body: unknown) {
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 }
 
+const localOpening = (page: Page, key: string) => readLocalCatalogDraft<StoredOpeningCapture>(page, key);
+
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
   test(`captura la factura inicial y reutiliza las etiquetas sin consultas por fila ${viewport.width}`, async ({ page }, testInfo) => {
     const granted = viewport.width === 390 ? [...permissions, "pos.approvals.read", "pos.approvals.authorize"] : permissions;
@@ -28,9 +36,11 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const partyId = "66666666-6666-6666-6666-666666666666";
     const siteId = "77777777-7777-7777-7777-777777777777";
     let partyReads = 0, siteReads = 0, openingReads = 0, saves = 0;
-    let opening = {
+    let pauseReadiness = false, releaseReadiness: (() => void) | undefined;
+    let opening: AccountingOpeningBalance = {
       batchId: "88888888-8888-8888-8888-888888888888", businessId, effectiveOn: "2026-01-01", currencyCode: "COP",
       description: "Apertura de cartera", status: "Draft", rowVersion: "AQID", debitTotal: 1500, creditTotal: 1500,
+      updatedAt: "2026-11-19T17:00:00-05:00", approvedAt: null, postedAt: null,
       lines: [
         { lineId: "99999999-9999-9999-9999-999999999999", lineNumber: 1, accountId, partyId, costCenterId: null,
           description: "Factura inicial", debit: 0, credit: 1500, existingPosition: null,
@@ -67,11 +77,15 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
         { accountId, code: "22050501", name: "Proveedores", accountType: "Liability", allowsPosting: true, requiresParty: true, isActive: true, semantics: { financialFunction: "Payable" } },
         { accountId: equityId, code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
       ]);
-      if (path.endsWith("/readiness")) return json(route, { status: "Disabled", effectiveFrom: "2026-01-01", blockingIssues: [], canEditOpeningBalances: true });
+      if (path.endsWith("/readiness")) {
+        if (pauseReadiness) await new Promise<void>(resolve => { releaseReadiness = resolve; });
+        return json(route, { status: "Disabled", effectiveFrom: new URL(route.request().url()).searchParams.get("effectiveFrom"), blockingIssues: [], canEditOpeningBalances: true });
+      }
       if (path.endsWith("/opening-balances")) {
-        if (route.request().method() === "GET") { openingReads++; return json(route, opening); }
+        if (route.request().method() === "GET") { openingReads++; return json(route, new URL(route.request().url()).searchParams.get("effectiveOn") === opening.effectiveOn ? opening : null); }
         saves++;
         const request = route.request().postDataJSON();
+        expect(request.rowVersion).toBe(opening.rowVersion);
         expect(request.lines[0]).not.toHaveProperty("partyName");
         opening = { ...opening, ...request, rowVersion: "BAUG",
           debitTotal: request.lines.reduce((total: number, line: { debit: number }) => total + line.debit, 0),
@@ -96,8 +110,21 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await expect(invoice.getByText("10 de octubre de 2025", { exact: true })).toBeVisible();
     expect(partyReads).toBe(0); expect(siteReads).toBe(0);
     const save = page.getByRole("button", { name: "Guardar borrador" });
+    const localKey = openingRecoveryKey(openingRecoveryScope(tenantId, "33333333-3333-3333-3333-333333333333", businessId), opening.effectiveOn);
     await invoice.getByLabel("Número de factura original").fill("");
     await expect(save).toBeDisabled();
+    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber).toBe("");
+    pauseReadiness = true;
+    try {
+      await page.reload();
+      await page.getByRole("button", { name: "Saldos iniciales" }).click();
+      await expect.poll(() => openingReads).toBe(2);
+      await expect.poll(() => !!releaseReadiness).toBe(true);
+    } finally { pauseReadiness = false; releaseReadiness?.(); }
+    await closeOpeningNotificationHint(page);
+    await expect(invoice.getByLabel("Número de factura original")).toHaveValue("");
+    await expect(save).toBeDisabled();
+    expect(saves).toBe(0);
     await invoice.getByLabel("Número de factura original").fill("PROV-321");
     await invoice.getByRole("textbox", { name: "Saldo pendiente de la factura inicial 1" }).fill("1750,1254");
     await page.getByRole("textbox", { name: "Débito de apertura 2" }).fill("1750,1254");
@@ -107,10 +134,31 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await expect.poll(() => siteReads).toBe(1);
     await page.getByRole("option", { name: /Sede principal/ }).click();
     expect(siteReads).toBe(1); expect(partyReads).toBe(0);
+    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0].credit).toBe("1750.1254");
+    await page.reload();
+    await page.getByRole("button", { name: "Saldos iniciales" }).click();
+    await closeOpeningNotificationHint(page);
+    await expect(invoice.getByLabel("Número de factura original")).toHaveValue("PROV-321");
+    if (viewport.width === 1440) {
+      await page.evaluate(() => {
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function(...args) {
+          const request = put.apply(this, args);
+          IDBObjectStore.prototype.put = put;
+          request.addEventListener("success", () => this.transaction.abort(), { once: true });
+          return request;
+        };
+      });
+      await invoice.getByLabel("Número de factura original").fill("NO-COMMIT");
+      await expect(page.getByRole("alert").filter({ hasText: "No fue posible recuperar o guardar" })).toBeVisible();
+      expect((await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber).toBe("PROV-321");
+      await invoice.getByLabel("Número de factura original").fill("PROV-321");
+    }
     await invoice.screenshot({ path: testInfo.outputPath(`opening-invoice-fields-${viewport.width}.png`) });
     await save.click();
     await expect(page.getByRole("button", { name: "Aprobar saldos" })).toBeEnabled();
-    expect(saves).toBe(1); expect(openingReads).toBe(1);
+    expect(saves).toBe(1); expect(openingReads).toBe(3);
+    await expect.poll(() => localOpening(page, localKey)).toBeNull();
     expect(opening.lines[0].newInvoice).toEqual({ documentNumber: "PROV-321", issuedOn: "2025-09-10", dueOn: "2025-10-15", partySiteId: siteId });
     await expect(page.getByRole("textbox", { name: "Crédito de apertura 1" })).toHaveValue(/1[\s\u00a0]750\.1254/);
     expect(opening.lines[0].credit).toBe(1750.1254);
@@ -120,6 +168,91 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.getByRole("button", { name: "Saldos iniciales" }).click();
     await expect(page.getByLabel("Número de factura original")).toHaveValue("PROV-321");
     expect(partyReads).toBe(0); expect(siteReads).toBe(1);
+    await closeOpeningNotificationHint(page);
+    await invoice.getByLabel("Número de factura original").fill("MI-CAPTURA");
+    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber).toBe("MI-CAPTURA");
+    opening = { ...opening, rowVersion: "UkVNT1RF", lines: opening.lines.map((line, index) => index === 0
+      ? { ...line, newInvoice: { ...line.newInvoice!, documentNumber: "OTRO-BORRADOR" } } : line) };
+    await page.reload();
+    await page.getByRole("button", { name: "Saldos iniciales" }).click();
+    await closeOpeningNotificationHint(page);
+    await expect(page.getByRole("button", { name: "Recuperar mi captura", exact: true })).toBeVisible();
+    await expect(save).toBeDisabled();
+    expect(saves).toBe(1);
+    if (viewport.width === 1440) {
+      await page.getByRole("button", { name: "Recuperar mi captura", exact: true }).click();
+      await expect(invoice.getByLabel("Número de factura original")).toHaveValue("MI-CAPTURA");
+      await save.click();
+      await expect.poll(() => saves).toBe(2);
+    } else {
+      await page.getByRole("button", { name: "Usar borrador guardado", exact: true }).click();
+      await expect(invoice.getByLabel("Número de factura original")).toHaveValue("OTRO-BORRADOR");
+    }
+    await expect.poll(() => localOpening(page, localKey)).toBeNull();
+    await invoice.getByLabel("Número de factura original").fill("NO-RESTAURAR-APROBADO");
+    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber).toBe("NO-RESTAURAR-APROBADO");
+    opening = { ...opening, status: "Approved" };
+    await page.reload();
+    await page.getByRole("button", { name: "Saldos iniciales" }).click();
+    await expect(invoice.getByLabel("Número de factura original")).toHaveValue(viewport.width === 1440 ? "MI-CAPTURA" : "OTRO-BORRADOR");
+    await expect(save).toBeDisabled();
+    if (viewport.width === 1440) {
+      test.setTimeout(120_000);
+      const savesBeforeVolume=saves;
+      const invoiceLine = opening.lines[0], balance = Number((499 * 1.1254).toFixed(4));
+      opening = { ...opening, batchId: randomUUID(), effectiveOn: "2026-02-01", status: "Draft", rowVersion: "TEFSR0U=", debitTotal: balance, creditTotal: balance,
+        lines: [...Array.from({ length: 499 }, (_, index) => ({ ...invoiceLine, lineId: randomUUID(), lineNumber: index + 1,
+          credit: 1.1254, newInvoice: { ...invoiceLine.newInvoice!, documentNumber: `VOLUMEN-${index + 1}` } })),
+          { ...opening.lines[1], lineId: randomUUID(), lineNumber: 500, debit: balance }] };
+      const card = page.getByRole("region", { name: "Saldos iniciales de la empresa", exact: true });
+      await card.getByText("Fecha efectiva", { exact: true }).locator("..").getByRole("button").click();
+      await page.getByRole("button", { name: "Mes siguiente", exact: true }).click();
+      await page.getByRole("button", { name: "1 de febrero de 2026", exact: true }).click();
+      await expect(page.locator('tr[aria-label^="Partida de apertura "]')).toHaveCount(20);
+      await expect(page.getByText("1-20 de 500",{exact:true})).toBeVisible();
+      await expect(page.getByLabel("Descripción de apertura 1", { exact: true })).toBeEnabled();
+      await page.evaluate(() => {
+        const metrics: Array<{ storageMs: number; captureMs: number }> = [];
+        (window as unknown as { openingMetrics: typeof metrics }).openingMetrics = metrics;
+        let editedAt = performance.now();
+        document.addEventListener("input", event => { if ((event.target as HTMLElement).getAttribute("aria-label") === "Descripción de apertura 1") editedAt = performance.now(); }, true);
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function(...args) {
+          const startedAt = performance.now(), request = put.apply(this, args);
+          const value = args[0] as { value?: StoredOpeningCapture };
+          if (value.value?.kind === "capture" && value.value.capture.lines.length === 500)
+            this.transaction.addEventListener("complete", () => metrics.push({ storageMs: performance.now() - startedAt, captureMs: performance.now() - editedAt }), { once: true });
+          return request;
+        };
+      });
+      for (let sample = 0; sample < 20; sample++) {
+        await page.getByLabel("Descripción de apertura 1", { exact: true }).fill(`Captura de volumen ${sample}`);
+        await expect.poll(() => page.evaluate(() => (window as unknown as { openingMetrics: unknown[] }).openingMetrics.length)).toBe(sample + 1);
+      }
+      const metrics = await page.evaluate(() => (window as unknown as { openingMetrics: Array<{ storageMs: number; captureMs: number }> }).openingMetrics);
+      const p95 = (values: number[]) => values.toSorted((a, b) => a - b)[18];
+      const budget = { samples: metrics, storageP95Ms: p95(metrics.map(item => item.storageMs)), captureP95Ms: p95(metrics.map(item => item.captureMs)), networkSaves: saves-savesBeforeVolume, recoveryMs: 0 };
+      const budgetPath = testInfo.outputPath("opening-local-500-budget.json");
+      await writeFile(budgetPath, JSON.stringify(budget, null, 2));
+      expect(budget.networkSaves).toBe(0);
+      expect(budget.storageP95Ms).toBeLessThan(100);
+      expect(budget.captureP95Ms).toBeLessThan(1500);
+      const started = Date.now();
+      await page.reload();
+      await page.getByRole("button", { name: "Saldos iniciales" }).click();
+      await expect(page.getByLabel("Descripción de apertura 1", { exact: true })).toHaveValue("Captura de volumen 19");
+      budget.recoveryMs = Date.now() - started;
+      await writeFile(budgetPath, JSON.stringify(budget, null, 2));
+      expect(budget.recoveryMs).toBeLessThan(5000);
+      expect(partyReads).toBe(0); expect(siteReads).toBe(1);
+      await page.getByRole("button",{name:"Última página",exact:true}).click();
+      await expect(page.getByLabel("Descripción de apertura 500",{exact:true})).toHaveValue("Contrapartida");
+      await page.getByLabel("Descripción de apertura 500",{exact:true}).fill("Contrapartida revisada");
+      const volumeKey=openingRecoveryKey(openingRecoveryScope(tenantId,"33333333-3333-3333-3333-333333333333",businessId),opening.effectiveOn);
+      await expect.poll(async()=>(await localOpening(page,volumeKey))?.capture.lines[499].description).toBe("Contrapartida revisada");
+      await page.getByRole("button",{name:"Primera página",exact:true}).click();
+      await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toHaveValue("Captura de volumen 19");
+    }
   });
 }
 

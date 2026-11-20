@@ -4,7 +4,9 @@ import type { AccountingAccount, AccountingEntry, AccountingOpeningBalance, Acco
 import type { PaymentMethodPage } from "../src/services/api/payment-methods";
 import { addCalendarDays, proposedAccountingDate } from "../src/lib/accounting-document-date";
 import { closeOpeningNotificationHint, openingPortfolioContext, type OpeningPartyFixture } from "./support/opening-portfolio-fixture";
-import { realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
+import { realAccountingContext, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
+import { openingRecoveryKey, openingRecoveryScope, type StoredOpeningCapture } from "../src/lib/accounting-opening-recovery";
+import { readLocalCatalogDraft } from "./support/local-draft-evidence";
 
 test("empresa QA de apertura: navegador, contexto propio y configuración inicial", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
@@ -12,6 +14,7 @@ test("empresa QA de apertura: navegador, contexto propio y configuración inicia
   const readiness = await context.scopedJson<{ status: string; canEditOpeningBalances: boolean; blockingIssues: unknown[] }>("GET",
     `/api/commerce/v1/accounting/readiness?effectiveFrom=${proposedAccountingDate(context.timeZone).slice(0, 10)}&openingBalanceMode=ImportedAndApproved`);
   expect(readiness.canEditOpeningBalances).toBe(true);
+  console.info(JSON.stringify({ openingQaPrerequisites: readiness.blockingIssues }));
   await page.goto("/dashboard/accounting");
   await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -91,16 +94,26 @@ test("apertura inicial real: captura facturas de cliente y proveedor desde escri
     await invoice.getByRole("textbox", { name: `Saldo pendiente de la factura inicial ${index + 1}`, exact: true }).fill(String(document.amount).replace(".", ","));
   }
   await expect(capture.getByText("· Cuadrado", { exact: true })).toBeVisible();
+  const actorId = await page.evaluate(() => JSON.parse(localStorage.getItem("auth-state")!).state.user.userId as string);
+  const recoveryKey = openingRecoveryKey(openingRecoveryScope(fixture.TenantId, actorId, fixture.BusinessId), effectiveOn);
+  await expect.poll(async () => (await readLocalCatalogDraft<StoredOpeningCapture>(page, recoveryKey))?.capture.lines.map(line => line.newInvoice?.documentNumber)).toEqual(documents.map(document => document.number));
+  const localCapture = (await readLocalCatalogDraft<StoredOpeningCapture>(page, recoveryKey))!;
+  await page.reload();
+  await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
+  for (const [index, document] of documents.entries())
+    await expect(capture.getByRole("region", { name: `Factura inicial de la partida ${index + 1}`, exact: true }).getByLabel("Número de factura original")).toHaveValue(document.number);
+  await expect(page.getByText("Recuperamos la captura de este equipo.", { exact: false })).toBeVisible();
   const saving = page.waitForResponse(response => response.request().method() === "PUT" && new URL(response.url()).pathname.endsWith("/opening-balances"));
   await capture.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const savedResponse = await saving; expect(savedResponse.ok(), await savedResponse.text()).toBe(true);
   const saved = await savedResponse.json() as AccountingOpeningBalance;
+  expect(saved.batchId).toBe(localCapture.capture.batchId);
   expect(saved.lines).toHaveLength(4);
   expect(saved.lines.map(line => line.newInvoice?.documentNumber)).toEqual(documents.map(document => document.number));
   expect(saved.debitTotal).toBe(2001.0004); expect(saved.creditTotal).toBe(2001.0004);
+  await expect.poll(() => readLocalCatalogDraft(page, recoveryKey)).toBeNull();
   await page.reload();
   await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
-  await chooseDate(page, capture.getByText("Fecha efectiva", { exact: true }).locator("..").getByRole("button"), effectiveOn);
   for (const [index, document] of documents.entries())
     await expect(capture.getByRole("region", { name: `Factura inicial de la partida ${index + 1}`, exact: true }).getByLabel("Número de factura original")).toHaveValue(document.number);
   await capture.screenshot({ path: testInfo.outputPath("initial-opening-desktop.png") });
@@ -177,6 +190,32 @@ test("cartera inicial real: muestra abonos, saldos y edades del cliente y provee
     await viewer.getByText(fixture.Opening!.documents.find(item => item.kind === kind)!.number, { exact: true }).scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await viewer.screenshot({ path: testInfo.outputPath(`initial-${kind}-report-mobile.png`) });
+    await viewer.getByRole("button", { name: "Cerrar", exact: true }).click();
+  }
+});
+
+test("cartera existente DEV: abre los reportes generales de cliente y proveedor en móvil", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  page.setDefaultTimeout(20_000);
+  test.skip(process.env.AURALY_E2E_TARGET !== "dev" || !!process.env.AURALY_E2E_DEV_OPENING_FIXTURE,
+    "Requiere el contexto AURALY DEV original; esta prueba es de solo lectura.");
+  const context = await realAccountingContext(page);
+  const cutoff = proposedAccountingDate(context.timeZone).slice(0, 10);
+  for (const area of ["receivables", "payables"]) {
+    const report = await context.scopedJson<{ items: unknown[]; totalOutstanding: number }>("GET",
+      `/api/commerce/v1/${area}/report?consolidated=true&templateVersion=4&dateRangeVersion=2&cutoff=${cutoff}&page=1&pageSize=20`);
+    expect(Number.isFinite(report.totalOutstanding)).toBe(true);
+    await page.goto(`/dashboard/${area}`);
+    const loading = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${area}/report`));
+    await page.getByRole("button", { name: "Reportes", exact: true }).click();
+    const response = await loading;
+    expect(response.ok(), await response.text()).toBe(true);
+    const viewer = page.getByRole("dialog").last();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await closeOpeningNotificationHint(page);
+    await expect(viewer.getByRole("button", { name: "Consolidado general", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await viewer.screenshot({ path: testInfo.outputPath(`existing-${area}-report-mobile.png`) });
     await viewer.getByRole("button", { name: "Cerrar", exact: true }).click();
   }
 });

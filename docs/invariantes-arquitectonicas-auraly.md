@@ -288,6 +288,17 @@ negocio; el antiguo borrador
 de `localStorage` se importa una sola vez al abrirlo y se elimina únicamente tras
 guardar la copia en IndexedDB.
 
+La captura de saldos iniciales conserva Guardar borrador y Aprobar saldos en el
+agregado contable canónico. Su recuperación automática reutiliza el coordinador
+local y el almacén genérico de capturas existente; no crea otro writer contable.
+Las claves aíslan tenant, usuario, sede y fecha efectiva. Se recupera primero la
+fecha elegida y después la captura contra la versión vigente del borrador. Una
+versión distinta exige elegir explícitamente qué captura continuar; una apertura
+aprobada o contabilizada nunca se reemplaza con la copia local. Guardar o aprobar
+retira la copia del equipo después de la aceptación del servidor, sin bloquear
+el resultado contable si el almacenamiento local falla. Las escrituras locales
+se consideran completas al confirmar la transacción de IndexedDB.
+
 ### Autorizacion administrativa
 
 - Cada permiso nuevo se registra en el catalogo canónico. Los permisos operativos
