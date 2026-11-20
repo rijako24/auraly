@@ -15,9 +15,23 @@ describe("formatted decimal input", () => {
     assert.equal(parseDecimalInput("12 500.50"), 12500.5);
   });
 
-  it("discards letters and commas", () => {
+  it("discards letters and grouping commas before a decimal point", () => {
     assert.equal(sanitizeDecimalInput("$ 12a,500x.75 COP"), "12500.75");
     assert.equal(formatDecimalInput("$ 12a,500x.75 COP"), "12 500.75");
+  });
+
+  it("accepts the mobile decimal comma without multiplying the amount", () => {
+    assert.equal(parseDecimalInput("1750,1254"), 1750.1254);
+    assert.equal(formatDecimalInput("1750,1254"), "1 750.1254");
+    assert.equal(parseDecimalInput("0,25"), 0.25);
+    assert.equal(parseDecimalInput("-12,5", true), -12.5);
+  });
+
+  it("accepts pasted currency grouping in either supported notation", () => {
+    assert.equal(parseDecimalInput("$ 1.750,1254 COP"), 1750.1254);
+    assert.equal(parseDecimalInput("$ 1,750.1254 COP"), 1750.1254);
+    assert.equal(parseDecimalInput("1 750.1254"), 1750.1254);
+    assert.equal(parseDecimalInput("1750.1254"), 1750.1254);
   });
 
   it("keeps only one decimal point and limits the fraction", () => {

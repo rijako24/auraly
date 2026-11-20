@@ -1,6 +1,13 @@
 export function sanitizeDecimalInput(value: string, maximumFractionDigits = 4, allowNegative = false): string {
   const negative = allowNegative && value.trimStart().startsWith("-");
-  const allowed = value.replace(/[^\d.]/g, "");
+  // Mobile keyboards can emit a comma. When both separators are pasted, the
+  // last one is decimal; grouping separators are removed before numeric parsing.
+  const normalized = value.includes(",")
+    ? value.lastIndexOf(",") > value.lastIndexOf(".")
+      ? value.replace(/\./g, "").replace(/,/g, ".")
+      : value.replace(/,/g, "")
+    : value;
+  const allowed = normalized.replace(/[^\d.]/g, "");
   if (!allowed) return negative ? "-" : "";
 
   const separator = allowed.indexOf(".");

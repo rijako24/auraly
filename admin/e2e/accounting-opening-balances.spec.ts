@@ -91,8 +91,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await invoice.getByLabel("Número de factura original").fill("");
     await expect(save).toBeDisabled();
     await invoice.getByLabel("Número de factura original").fill("PROV-321");
-    await invoice.getByRole("textbox", { name: "Saldo pendiente de la factura inicial 1" }).fill("1750");
-    await page.getByRole("spinbutton", { name: "Débito de apertura 2" }).fill("1750");
+    await invoice.getByRole("textbox", { name: "Saldo pendiente de la factura inicial 1" }).fill("1750,1254");
+    await page.getByRole("textbox", { name: "Débito de apertura 2" }).fill("1750,1254");
     await invoice.getByLabel("Fecha de vencimiento", { exact: true }).click();
     await page.getByRole("button", { name: "15 de octubre de 2025", exact: true }).click();
     await invoice.getByRole("combobox", { name: "Sede de la factura inicial 1" }).click();
@@ -104,7 +104,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await expect(page.getByRole("button", { name: "Aprobar saldos" })).toBeEnabled();
     expect(saves).toBe(1); expect(openingReads).toBe(1);
     expect(opening.lines[0].newInvoice).toEqual({ documentNumber: "PROV-321", issuedOn: "2025-09-10", dueOn: "2025-10-15", partySiteId: siteId });
-    await expect(page.getByRole("spinbutton", { name: "Crédito de apertura 1" })).toHaveValue("1750");
+    await expect(page.getByRole("textbox", { name: "Crédito de apertura 1" })).toHaveValue(/1[\s\u00a0]750\.1254/);
+    expect(opening.lines[0].credit).toBe(1750.1254);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`opening-invoice-${viewport.width}.png`), fullPage: true });
     await page.reload();
@@ -167,14 +168,14 @@ test("concilia una obligación anterior, conserva su identidad y exige guardar a
   await page.getByRole("option", { name: /Proveedor histórico/ }).click();
   await positionPicker.click();
   await page.getByRole("option", { name: /HIST-1500/ }).click();
-  await expect(rows.nth(0).getByRole("spinbutton").nth(1)).toHaveValue("1500");
+  await expect(rows.nth(0).getByRole("textbox", { name: "Crédito de apertura 1" })).toHaveValue(/1[\s\u00a0]500/);
   const query = new URL(positionRequest).searchParams;
   expect(query.get("partyId")).toBe(partyId);
   expect(query.get("subledgerKind")).toBe("Payable");
   expect(Number(query.get("pageSize"))).toBeLessThanOrEqual(100);
   await rows.nth(1).getByRole("combobox").first().click();
   await page.getByRole("option", { name: /310505.*Capital/ }).click();
-  await rows.nth(1).getByRole("spinbutton").first().fill("1500");
+  await rows.nth(1).getByRole("textbox", { name: "Débito de apertura 2" }).fill("1500");
   const approve = page.getByRole("button", { name: "Aprobar saldos" });
   await expect(approve).toBeDisabled();
   await page.getByRole("button", { name: "Guardar borrador" }).click();
@@ -185,7 +186,7 @@ test("concilia una obligación anterior, conserva su identidad y exige guardar a
   expect(savedLines[0].existingPosition).toEqual({ subledgerKind: "Payable", subledgerId: positionId });
   const stableId = savedLines[0].lineId;
   expect(stableId).toEqual(expect.any(String));
-  await rows.nth(0).getByRole("textbox").fill("Conciliación revisada");
+  await rows.nth(0).getByRole("textbox", { name: "Descripción de apertura 1" }).fill("Conciliación revisada");
   await expect(approve).toBeDisabled();
   await page.getByRole("button", { name: "Guardar borrador" }).click();
   await expect(approve).toBeEnabled();

@@ -35,10 +35,10 @@ test("apertura real vincula la deuda histórica desde la vista sin volver a crea
   await page.getByRole("combobox", { name: "Vincular obligación anterior en partida 1", exact: true }).click();
   await page.getByPlaceholder("Buscar factura u obligación…").fill(fixture.documentNumber);
   await page.getByRole("option").filter({ hasText: fixture.documentNumber }).click();
-  await expect(rows.nth(0).getByRole("spinbutton").nth(1)).toHaveValue(String(fixture.outstandingAmount));
+  await expect(rows.nth(0).getByRole("textbox", { name: "Crédito de apertura 1" })).toHaveValue(new RegExp(String(fixture.outstandingAmount).replace(/\B(?=(\d{3})+(?!\d))/g,"[\\s\\u00a0]")));
   await rows.nth(1).getByRole("combobox").first().click();
   await page.getByRole("option", { name: `${equity.code} · ${equity.name}`, exact: true }).click();
-  await rows.nth(1).getByRole("spinbutton").first().fill(String(fixture.outstandingAmount));
+  await rows.nth(1).getByRole("textbox", { name: "Débito de apertura 2" }).fill(String(fixture.outstandingAmount));
   const saving = page.waitForResponse(response => response.request().method() === "PUT" && new URL(response.url()).pathname.endsWith("/opening-balances"));
   await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const savedResponse = await saving;

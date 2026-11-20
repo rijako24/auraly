@@ -7,6 +7,7 @@ import {AlertTriangle,BarChart3,BookOpen,Building2,CalendarRange,CheckCircle2,Ch
 import {toast} from "sonner";
 import {accountingApi,type AccountingAccount,type AccountingOpenPosition,type AccountingOpeningBalanceLine,type AccountingOpeningInvoice,type BankAccount,type AccountMovementQuery} from "@/services/api/accounting";
 import {OpeningInvoiceFields} from "@/components/accounting/opening-invoice-fields";
+import {FormattedNumberInput} from "@/components/ui/formatted-number-input";
 import {PagedEntitySelect} from "@/components/forms/paged-entity-select";
 import {CostCentersSection} from "@/components/accounting/cost-centers-section";
 import {CostCenterSelect,useCostCenterLabels} from "@/components/accounting/cost-center-select";
@@ -163,7 +164,7 @@ function OpeningBalancesSection({businessId,effectiveOn,setEffectiveOn,accounts,
   const accountingReady=!canEditOpeningBalances;
   const captureEnabled=editable&&!opening.isPending&&!opening.isError&&!save.isPending&&!approve.isPending;
   const canApprove=canActivate&&canEditOpeningBalances&&status==="Draft"&&!opening.isPending&&!opening.isError;
-  return <Card className="overflow-hidden rounded-3xl">
+  return <Card role="region" aria-label="Saldos iniciales de la empresa" className="overflow-hidden rounded-3xl">
     <CardHeader className="border-b bg-muted/30"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div><CardTitle>Saldos iniciales</CardTitle><p className="mt-1 text-sm text-muted-foreground">Registra el balance de apertura. Para cartera, detalla cada factura con su saldo pendiente.</p></div>
       <Field label="Fecha efectiva"><Input className="w-full sm:w-48" type="date" value={effectiveOn} disabled={accountingReady||save.isPending||approve.isPending} onChange={event=>setEffectiveOn(event.target.value)}/></Field>
@@ -214,8 +215,8 @@ function OpeningBalancesSection({businessId,effectiveOn,setEffectiveOn,accounts,
                   onClear={line.existingPosition?()=>update(index,{existingPosition:null,existingPositionDocumentNumber:null}):undefined}/>}</>}
                 {line.newInvoice&&!portfolio&&<p className="text-xs text-muted-foreground">Selecciona una cuenta que maneje cuentas por cobrar o por pagar.</p>}
               </td>
-              <td className="min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Débito</span><Input aria-label={`Débito de apertura ${index+1}`} className="text-right" type="number" min="0" step="0.0001" value={line.debit} disabled={!captureEnabled||!!line.newInvoice} onChange={event=>update(index,{debit:event.target.value,credit:event.target.value?"":line.credit})}/></td>
-              <td className="min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Crédito</span><Input aria-label={`Crédito de apertura ${index+1}`} className="text-right" type="number" min="0" step="0.0001" value={line.credit} disabled={!captureEnabled||!!line.newInvoice} onChange={event=>update(index,{credit:event.target.value,debit:event.target.value?"":line.debit})}/></td>
+              <td className="min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Débito</span><FormattedNumberInput ariaLabel={`Débito de apertura ${index+1}`} className="text-right" kind="currency" value={line.debit} disabled={!captureEnabled||!!line.newInvoice} onValueChange={value=>update(index,{debit:value===null?"":String(value),credit:value===null?line.credit:""})}/></td>
+              <td className="min-w-0 lg:p-2"><span className="mb-1 block text-xs text-muted-foreground lg:hidden">Crédito</span><FormattedNumberInput ariaLabel={`Crédito de apertura ${index+1}`} className="text-right" kind="currency" value={line.credit} disabled={!captureEnabled||!!line.newInvoice} onValueChange={value=>update(index,{credit:value===null?"":String(value),debit:value===null?line.debit:""})}/></td>
               <td className="col-span-2 lg:p-2"><Button type="button" size="icon" variant="ghost" disabled={!captureEnabled||lines.length<=1} aria-label="Eliminar línea" onClick={()=>setLines(current=>current.filter((_,position)=>position!==index))}><Trash2 className="h-4 w-4"/></Button></td>
             </tr>
             {line.newInvoice&&portfolio&&<tr className="block lg:table-row"><td colSpan={7} className="block p-3 lg:table-cell"><OpeningInvoiceFields businessId={businessId} partyId={line.partyId} kind={kind} lineNumber={index+1}

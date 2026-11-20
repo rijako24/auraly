@@ -842,7 +842,21 @@ selectors load a bounded page only when the user opens them. Acceptance requires
 fresh-schema and upgrade/replay tests, invoice dates and ageing at cutover,
 subsequent partial payments on both sides, duplicate/scoped/concurrent rejection,
 and no fiscal/inventory effects. The measured capture p95 for 20 warm samples was
-8.7/43.6/134.9 ms at 2/50/500 lines, always three SQL commands.
+8.6/40.6/143.7 ms at 2/50/500 lines, always three SQL commands.
+
+Opening debit/credit and invoice amounts use the existing four-decimal currency
+input. Its shared parser accepts a mobile decimal comma and pasted Colombian
+or US grouping; presentation keeps the canonical grouped-space/dot format.
+Capture retains the previous SQL decimal-parameter normalization, including
+rounding excess fractional digits; the new invoice evidence does not introduce
+a stricter amount policy for pre-existing opening commands.
+
+The real-browser DEV fixture provisions its own QA company through the native
+tenant/invitation flow rather than reopening AURALY's closed ledger. Explicit
+DEV host, QA key and authenticated-tenant guards scope its writes. Invoice
+capture, approval and activation use the actual page; partial receipts and
+egresses reuse the existing portfolio payment-menu journey. The fixture checks
+four-decimal balances, original numbers/dates, ageing and replay after posting.
 
 Deployment adds nullable evidence columns and widens the existing identified-line
 constraints to include opening sources; existing rows are not backfilled or

@@ -432,13 +432,11 @@ public sealed partial class AccountingService(
                 invoice.PartySiteId == Guid.Empty || string.IsNullOrWhiteSpace(invoice.DocumentNumber) || invoice.DocumentNumber.Length > 80 ||
                 invoice.IssuedOn == default || invoice.DueOn == default || invoice.DueOn < invoice.IssuedOn || invoice.IssuedOn >= request.EffectiveOn))
                 throw new AccountingValidationException("La factura inicial requiere tercero, sede, número, emisión anterior al corte y vencimiento válido; no puede vincular otra obligación al mismo tiempo.");
-            if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 || !IsBankMoney(line.Debit) || !IsBankMoney(line.Credit) ||
+            if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
                 (line.Debit > 0) == (line.Credit > 0))
                 throw new AccountingValidationException("Cada partida del saldo inicial requiere exactamente un débito o un crédito positivo.");
             ValidateText(line.Description, 300, "Descripción de la partida");
         }
-        if (!IsBankMoney(request.Lines.Sum(line=>line.Debit)) || !IsBankMoney(request.Lines.Sum(line=>line.Credit)))
-            throw new AccountingValidationException("Los totales de apertura exceden el importe contable permitido.");
         return store.SaveOpeningBalanceAsync(user, request, cancellationToken);
     }
 

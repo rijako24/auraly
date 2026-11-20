@@ -25,18 +25,28 @@ export async function waitForRealPosting(context: Awaited<ReturnType<typeof real
   }, { timeout: 30_000, intervals: [500, 1_000, 2_000, 5_000], message: "El documento aceptado debe terminar contabilizado una sola vez" }).toBe("Posted");
 }
 
-export async function realAccountingContext(page: Page, businessIdOverride?: string, credentials?: E2eLoginCredentials) {
+export type DevOpeningQaScope = { purpose: "OpeningBalanceQa"; tenantId: string; businessId: string; tenantKey: string };
+
+export async function realAccountingContext(page: Page, businessIdOverride?: string, credentials?: E2eLoginCredentials, openingQa?: DevOpeningQaScope) {
   test.skip(process.env.AURALY_E2E_REAL_LOGIN !== "1", "Requiere el entorno de pruebas autorizado.");
   const tenantId = process.env.AURALY_E2E_TENANT_ID;
   const businessId = businessIdOverride ?? process.env.AURALY_E2E_BUSINESS_ID;
   if(process.env.AURALY_E2E_TARGET === "dev") {
     expect(test.info().project.use.baseURL).toBe("https://proud-moss-0d9cf540f.7.azurestaticapps.net");
     expect(process.env.AURALY_API_URL).toBe("https://api-auraly-dev-w5usmo6w.azurewebsites.net");
+    if (openingQa) {
+      expect(openingQa.purpose).toBe("OpeningBalanceQa");
+      expect(openingQa.tenantKey).toMatch(/^@qa-apertura-/);
+      expect(tenantId).toBe(openingQa.tenantId);
+      expect(businessId).toBe(openingQa.businessId);
+      expect(credentials?.tenantKey ?? process.env.AURALY_E2E_TENANT_KEY).toBe(openingQa.tenantKey);
+    } else {
     expect(tenantId).toBe("a0a10000-0000-0000-0000-000000000000");
     // Explicit AURALY DEV fixtures: direct sale, Bar and Tienda. Other tenants
     // and arbitrary cloud businesses remain outside these write-enabled tests.
     expect(["a0a10000-0000-0000-0000-000000000001", "b24a3ab4-a226-4dab-bc0c-4d634e34c3fb",
       "2b8de478-3bce-4f28-b66d-3e53e5dc2c36"]).toContain(businessId);
+    }
   } else {
     for (const address of [test.info().project.use.baseURL, process.env.AURALY_API_URL]) {
       expect(address, "Esta prueba con escrituras requiere URLs locales explícitas.").toBeTruthy();
@@ -47,6 +57,7 @@ export async function realAccountingContext(page: Page, businessIdOverride?: str
   expect(businessId, "Indica la sede de la base aislada en AURALY_E2E_BUSINESS_ID.").toBeTruthy();
   const headers = { "X-Tenant-Id": tenantId!, "X-Business-Id": businessId! };
   await login(page, credentials, 60_000);
+  if (openingQa) expect(await page.evaluate(() => JSON.parse(localStorage.getItem("auth-state")!).state.user.tenantId)).toBe(openingQa.tenantId);
   await page.addInitScript(({ tenantId, businessId }) => {
     localStorage.setItem("selected_tenant_id", tenantId!);
     localStorage.setItem("selected_business_id", businessId!);

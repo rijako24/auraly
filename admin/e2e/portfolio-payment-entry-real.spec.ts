@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import type { AccountingEntry, AccountingOpenPositionPage, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
+import type { AccountingAccount, AccountingEntry, AccountingOpenPositionPage, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
+import { writeFile } from "node:fs/promises";
+import { openingPortfolioContext } from "./support/opening-portfolio-fixture";
 import type { PartySiteRoleOptionPage } from "../src/services/api/parties";
 import { proposedAccountingDate } from "../src/lib/accounting-document-date";
 import { realAccountingAuxiliary, realAccountingContext, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
@@ -8,23 +10,35 @@ import { realAccountingAuxiliary, realAccountingContext, realPartyRequest, waitF
 for (const supplier of [false, true]) {
   test(`menú real ${supplier ? "proveedor" : "cliente"}: conserva dos abonos y contabiliza una sola vez`, async ({ page }, testInfo) => {
     test.setTimeout(240_000);
-    const context = await realAccountingContext(page);
+    const initial = process.env.AURALY_E2E_DEV_OPENING_FIXTURE ? await openingPortfolioContext(page) : null;
+    const context = initial?.context ?? await realAccountingContext(page);
     const { scopedJson } = context, api = "/api/commerce/v1", kind = supplier ? "Payable" : "Receivable";
-    const name = `QA menú ${supplier ? "proveedor" : "cliente"} ${randomUUID().slice(0, 8)}`;
-    const party = await scopedJson<{ partyId: string; supplierId?: string; customerId?: string }>("POST",
+    let name: string, party: { partyId: string; supplierId?: string; customerId?: string }, roleId: string, cash: AccountingAccount | null;
+    if (initial) {
+      expect(initial.fixture.Opening).toBeTruthy();
+      const prepared = initial.fixture.Opening![kind];
+      name = prepared.name; roleId = prepared.roleId;
+      party = { partyId: prepared.partyId, ...(supplier ? { supplierId: roleId } : { customerId: roleId }) };
+      const accounts = await scopedJson<AccountingAccount[]>("GET", `${api}/accounting/accounts`);
+      cash = supplier ? accounts.find(account => account.accountId === initial.fixture.Opening!.cashAccountId)! : null;
+    } else {
+    name = `QA menú ${supplier ? "proveedor" : "cliente"} ${randomUUID().slice(0, 8)}`;
+    party = await scopedJson<{ partyId: string; supplierId?: string; customerId?: string }>("POST",
       `${api}/${supplier ? "suppliers" : "customers"}`, {
         ...await realPartyRequest(context, name),
         ...(supplier ? { purchaseEvidencePolicy: "InternalReceiptVoucher", defaultPaymentDueDays: 0 } : {}),
       });
-    const roleId = supplier ? party.supplierId! : party.customerId!;
+    roleId = supplier ? party.supplierId! : party.customerId!;
+    cash = supplier ? await realAccountingAuxiliary(context, "1109", "Asset", "Cash", "Debit") : null;
+    }
     const sites = await scopedJson<PartySiteRoleOptionPage>("GET",
       `${api}/portfolio/parties/site-options?role=${supplier ? "Supplier" : "Customer"}&roleId=${roleId}&page=1&pageSize=1`);
     expect(sites.items).toHaveLength(1);
+    if (!initial) {
     const debt = await realAccountingAuxiliary(context, supplier ? "2296" : "1395", supplier ? "Liability" : "Asset",
       kind, supplier ? "Credit" : "Debit", null, true);
     const contra = await realAccountingAuxiliary(context, supplier ? "5196" : "4196", supplier ? "Expense" : "Revenue",
       "General", supplier ? "Debit" : "Credit");
-    const cash = supplier ? await realAccountingAuxiliary(context, "1109", "Asset", "Cash", "Debit") : null;
     const openingId = randomUUID(), at = proposedAccountingDate(context.timeZone);
     const opening: SaveVoucherDraft = {
       documentId: openingId, documentType: "ManualAccountingVoucher", payloadVersion: 4, voucherTypeCode: "Accounting",
@@ -39,6 +53,8 @@ for (const supplier of [false, true]) {
     const savedOpening = await scopedJson<VoucherDraft>("PUT", `${api}/accounting/manual/drafts/${openingId}`, opening);
     await scopedJson("POST", `${api}/accounting/manual/drafts/${openingId}/send`, { rowVersion: savedOpening.rowVersion });
     await waitForRealPosting(context, openingId);
+    }
+    await scopedJson("POST", `${api}/work-sessions/current`, { businessId: context.businessId, warehouseId: null, deviceId: null });
     const positions = await scopedJson<AccountingOpenPositionPage>("GET",
       `${api}/accounting/open-positions?subledgerKind=${kind}&counterpartyRoleId=${roleId}&page=1&pageSize=10`);
     expect(positions.items).toHaveLength(2);
@@ -65,7 +81,7 @@ for (const supplier of [false, true]) {
       await row.getByLabel("Crédito de la partida", { exact: true }).fill("200");
     } else {
       await capture.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true }).click();
-      await page.getByPlaceholder("Buscar código o nombre…").fill(process.env.AURALY_E2E_CASH_FORM_NAME ?? "Efectivo");
+      await page.getByPlaceholder("Buscar código o nombre…").fill(initial?.fixture.Opening?.cashFormName ?? process.env.AURALY_E2E_CASH_FORM_NAME ?? "Efectivo");
       await page.getByRole("option").first().click();
       await capture.getByLabel("Valor de la nueva forma de pago", { exact: true }).fill("200");
       await capture.getByRole("button", { name: "Agregar forma de pago", exact: true }).click();
@@ -95,8 +111,14 @@ for (const supplier of [false, true]) {
     await scopedJson("POST", `${api}/accounting/manual/drafts/${draft.documentId}/send`, { rowVersion: sent.rowVersion });
     const final = await scopedJson<AccountingOpenPositionPage>("GET",
       `${api}/accounting/open-positions?subledgerKind=${kind}&counterpartyRoleId=${roleId}&page=1&pageSize=10`);
-    expect(positions.items.map(item => final.items.find(value => value.subledgerId === item.subledgerId)?.outstandingAmount)).toEqual([875, 925]);
+    const expected = positions.items.map((item, index) => Number((item.outstandingAmount - (index === 0 ? 125 : 75)).toFixed(4)));
+    expect(positions.items.map(item => final.items.find(value => value.subledgerId === item.subledgerId)?.outstandingAmount)).toEqual(expected);
     const replayEntry = await scopedJson<AccountingEntry>("GET", `${api}/accounting/entries/by-document/${draft.documentId}`);
     expect(replayEntry.entryId).toBe(entry.entryId);
+    if (initial) {
+      initial.fixture.Payments ??= {};
+      initial.fixture.Payments[kind] = { documentId: draft.documentId, outstanding: expected };
+      await writeFile(initial.path, JSON.stringify(initial.fixture, null, 2), "utf8");
+    }
   });
 }
