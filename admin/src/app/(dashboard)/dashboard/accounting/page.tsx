@@ -89,6 +89,7 @@ function AccountingConfigurationWorkspace(){
   const configurationReady=categoryRows.length>0&&mappedCount===requiredCategories.length&&hasCenter&&hasPeriod;
   const accountingReady=readiness.data?.status==="Ready";
   const canEditOpeningBalances=readiness.data?.canEditOpeningBalances;
+  const openingEffectiveOn=canEditOpeningBalances===false&&readiness.data?.effectiveFrom?readiness.data.effectiveFrom:effectiveFrom;
   if(!tenantId||!businessId)return <EmptyContext/>;
   return <div className="space-y-5">
     <header className="overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-cyan-950 to-teal-700 p-6 text-white shadow-lg"><div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.2em] text-cyan-200">Motor contable Auraly</p><h1 className="mt-2 text-3xl font-black">Contabilidad clara y automática</h1><p className="mt-2 max-w-2xl text-sm text-cyan-50/80">Configura una vez el PUC y revisa cómo ventas, compras, inventario, devoluciones y caja acumulan sus movimientos.</p></div>{section!=="centers"&&<Button className="h-12 bg-white text-slate-950 hover:bg-cyan-50" disabled={defaults.isPending||accountingReady} onClick={()=>defaults.mutate()}>{defaults.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Settings2 className="mr-2 h-4 w-4"/>}{configurationReady?"Verificar configuración":"Configurar Auraly"}</Button>}</div></header>
@@ -120,7 +121,7 @@ function AccountingConfigurationWorkspace(){
       <PeriodsSection tenantId={tenantId} rows={periods.data??[]} refresh={refresh}/>
     )}
     {section==="opening"&&(
-      openingRecovery.ready?<OpeningBalancesSection key={`${tenantId}:${businessId}:${effectiveFrom}`} recovery={openingRecovery} businessId={businessId} effectiveOn={effectiveFrom} setEffectiveOn={setEffectiveFrom} accounts={postingAccounts} canEditOpeningBalances={readiness.isPending?undefined:!!canEditOpeningBalances&&!activate.isPending} refresh={async()=>{
+      openingRecovery.ready?<OpeningBalancesSection key={`${tenantId}:${businessId}:${openingEffectiveOn}`} recovery={openingRecovery} businessId={businessId} effectiveOn={openingEffectiveOn} setEffectiveOn={setEffectiveFrom} accounts={postingAccounts} canEditOpeningBalances={readiness.isPending?undefined:!!canEditOpeningBalances&&!activate.isPending} refresh={async()=>{
         // An in-flight validation may have read the batch before approval.
         // Discard it before requesting the authoritative post-approval readiness.
         const queryKey=[...key,"readiness"];
@@ -147,12 +148,13 @@ function OpeningBalancesSection({recovery,businessId,effectiveOn,setEffectiveOn,
   const canConfigure=permissions?.includes("accounting.configure")??false;
   const canActivate=permissions?.includes("accounting.activate")??false;
   const queryKey=["accounting-opening-balance",businessId,effectiveOn];
-  const opening=useQuery({queryKey,queryFn:()=>accountingApi.openingBalance(effectiveOn),enabled:Boolean(businessId&&effectiveOn)});
+  const opening=useQuery({queryKey,queryFn:()=>accountingApi.openingBalance(effectiveOn),enabled:Boolean(businessId&&effectiveOn&&canEditOpeningBalances!==undefined)});
   const local=useOpeningBalanceRecovery(recovery,effectiveOn,opening.data,canConfigure?canEditOpeningBalances:false);
   const {batchId,rowVersion,description,setDescription,lines,setLines}=local;
   const [requestedPage,setPage]=useState(0),[pageSize,setPageSize]=useState(20);
   const pageCount=Math.max(1,Math.ceil(lines.length/pageSize)),pageIndex=Math.min(requestedPage,pageCount-1),offset=pageIndex*pageSize;
-  const centerLabels=useCostCenterLabels(lines.map(line=>line.costCenterId));
+  const visibleLines=lines.slice(offset,offset+pageSize);
+  const centerLabels=useCostCenterLabels(visibleLines.map(line=>line.costCenterId));
   const status=opening.data?.status??"Draft",editable=canEditOpeningBalances&&status==="Draft"&&canConfigure;
   const update=useCallback((index:number,change:Partial<OpeningDraftLine>)=>setLines(current=>current.map((line,position)=>position===index?{...line,...change}:line)),[setLines]);
   const removeLine=useCallback((index:number)=>setLines(current=>current.filter((_,position)=>position!==index)),[setLines]);
@@ -197,7 +199,7 @@ function OpeningBalancesSection({recovery,businessId,effectiveOn,setEffectiveOn,
       </div>
       <div className="border-y"><table className="block w-full text-sm lg:table">
         <thead className="hidden bg-muted/50 lg:table-header-group"><tr><th className="p-3 text-left">Cuenta PUC</th><th className="text-left">Tercero</th><th className="text-left">Centro de costo</th><th className="text-left">Descripción / factura</th><th className="text-right">Débito</th><th className="text-right">Crédito</th><th className="w-12"/></tr></thead>
-        <tbody className="block lg:table-row-group">{local.ready&&lines.slice(offset,offset+pageSize).map((line,pageRow)=><OpeningBalanceRow key={line.lineId} line={line} index={offset+pageRow} accounts={accounts} businessId={businessId} effectiveOn={effectiveOn}
+        <tbody className="block lg:table-row-group">{local.ready&&visibleLines.map((line,pageRow)=><OpeningBalanceRow key={line.lineId} line={line} index={offset+pageRow} accounts={accounts} businessId={businessId} effectiveOn={effectiveOn}
           captureEnabled={!!captureEnabled} centerLabel={line.costCenterId?centerLabels.data?.get(line.costCenterId):undefined} canRemove={lines.length>1} update={update} removeLine={removeLine}/>)}</tbody>
         <tfoot className="block border-t-2 bg-muted/30 font-bold lg:table-footer-group"><tr className="grid grid-cols-2 gap-2 p-3 lg:table-row"><td className="col-span-2 lg:p-3" colSpan={4}>Totales {balanced&&<span className="ml-2 text-emerald-700">· Cuadrado</span>}</td><td className="text-right">{auxiliaryMoney.format(debit)}</td><td className="text-right">{auxiliaryMoney.format(credit)}</td><td/></tr></tfoot>
       </table></div>

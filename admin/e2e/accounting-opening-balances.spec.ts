@@ -36,8 +36,9 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const partyId = "66666666-6666-6666-6666-666666666666";
     const siteId = "77777777-7777-7777-7777-777777777777";
     let partyReads = 0, siteReads = 0, openingReads = 0, saves = 0;
+    const centerReads:string[][]=[];
     let pauseReadiness = false, releaseReadiness: (() => void) | undefined;
-    let approvalRace=false, importedReads=0, releaseBeforeApproval: (()=>void)|undefined, releaseApproval: (()=>void)|undefined;
+    let activated=false, approvalRace=false, importedReads=0, releaseBeforeApproval: (()=>void)|undefined, releaseApproval: (()=>void)|undefined;
     let opening: AccountingOpeningBalance = {
       batchId: "88888888-8888-8888-8888-888888888888", businessId, effectiveOn: "2026-01-01", currencyCode: "COP",
       description: "Apertura de cartera", status: "Draft", rowVersion: "AQID", debitTotal: 1500, creditTotal: 1500,
@@ -75,11 +76,16 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     });
     await page.route("**/api/commerce/v1/accounting/**", async route => {
       const path = new URL(route.request().url()).pathname;
+      if(path.endsWith("/cost-centers")){
+        const ids=new URL(route.request().url()).searchParams.getAll("ids");if(ids.length)centerReads.push(ids);
+        return json(route,{items:ids.map(id=>({costCenterId:id,code:`CC-${id.slice(0,6)}`,name:"Centro QA",isActive:true})),page:1,pageSize:100,totalCount:ids.length,totalPages:1});
+      }
       if (path.endsWith("/accounts")) return json(route, [
         { accountId, code: "22050501", name: "Proveedores", accountType: "Liability", allowsPosting: true, requiresParty: true, isActive: true, semantics: { financialFunction: "Payable" } },
         { accountId: equityId, code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
       ]);
       if (path.endsWith("/readiness")) {
+        if(activated)return json(route,{status:"Ready",effectiveFrom:opening.effectiveOn,openingBalanceMode:"ImportedAndApproved",canEditOpeningBalances:false,blockingIssues:[]});
         if(approvalRace&&new URL(route.request().url()).searchParams.get("openingBalanceMode")==="ImportedAndApproved"){
           importedReads++;
           const issues=opening.status==="Draft"?["Hay un negocio activo sin saldos iniciales aprobados para la fecha efectiva."]:[];
@@ -131,11 +137,12 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     try {
       await page.reload();
       await page.getByRole("button", { name: "Saldos iniciales" }).click();
-      await expect.poll(() => openingReads).toBe(2);
       await expect.poll(() => !!releaseReadiness).toBe(true);
+      expect(openingReads).toBe(1);
     } finally { pauseReadiness = false; releaseReadiness?.(); }
     await closeOpeningNotificationHint(page);
     await expect(invoice.getByLabel("Número de factura original")).toHaveValue("");
+    expect(openingReads).toBe(2);
     await expect(save).toBeDisabled();
     expect(saves).toBe(0);
     await invoice.getByLabel("Número de factura original").fill("PROV-321");
@@ -215,7 +222,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       const invoiceLine = opening.lines[0], balance = Number((499 * 1.1254).toFixed(4));
       opening = { ...opening, batchId: randomUUID(), effectiveOn: "2026-02-01", status: "Draft", rowVersion: "TEFSR0U=", debitTotal: balance, creditTotal: balance,
         lines: [...Array.from({ length: 499 }, (_, index) => ({ ...invoiceLine, lineId: randomUUID(), lineNumber: index + 1,
-          credit: 1.1254, newInvoice: { ...invoiceLine.newInvoice!, documentNumber: `VOLUMEN-${index + 1}` } })),
+          credit: 1.1254, costCenterId:randomUUID(), newInvoice: { ...invoiceLine.newInvoice!, documentNumber: `VOLUMEN-${index + 1}` } })),
           { ...opening.lines[1], lineId: randomUUID(), lineNumber: 500, debit: balance }] };
       const card = page.getByRole("region", { name: "Saldos iniciales de la empresa", exact: true });
       await card.getByText("Fecha efectiva", { exact: true }).locator("..").getByRole("button").click();
@@ -224,6 +231,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await expect(page.locator('tr[aria-label^="Partida de apertura "]')).toHaveCount(20);
       await expect(page.getByText("1-20 de 500",{exact:true})).toBeVisible();
       await expect(page.getByLabel("Descripción de apertura 1", { exact: true })).toBeEnabled();
+      await expect(page.getByRole("combobox",{name:"Centro de costo de apertura 1",exact:true})).toContainText(`CC-${opening.lines[0].costCenterId!.slice(0,6)}`);
+      expect(centerReads).toHaveLength(1);expect(centerReads[0]).toHaveLength(20);
       await page.evaluate(() => {
         const metrics: Array<{ storageMs: number; captureMs: number }> = [];
         (window as unknown as { openingMetrics: typeof metrics }).openingMetrics = metrics;
@@ -260,6 +269,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       expect(partyReads).toBe(0); expect(siteReads).toBe(1);
       await page.getByRole("button",{name:"Última página",exact:true}).click();
       await expect(page.getByLabel("Descripción de apertura 500",{exact:true})).toHaveValue("Contrapartida");
+      await expect(page.getByRole("combobox",{name:"Centro de costo de apertura 481",exact:true})).toContainText(`CC-${opening.lines[480].costCenterId!.slice(0,6)}`);
+      expect(centerReads.map(ids=>ids.length)).toEqual([20,20,19]);
       await page.getByLabel("Descripción de apertura 500",{exact:true}).fill("Contrapartida revisada");
       const volumeKey=openingRecoveryKey(openingRecoveryScope(tenantId,"33333333-3333-3333-3333-333333333333",businessId),opening.effectiveOn);
       await expect.poll(async()=>(await localOpening(page,volumeKey))?.capture.lines[499].description).toBe("Contrapartida revisada");
@@ -281,6 +292,20 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       }finally{releaseApproval?.();releaseBeforeApproval?.();}
       await expect(page.getByRole("button",{name:"Activar contabilidad",exact:true})).toBeEnabled();
       expect(importedReads).toBe(2);
+      activated=true;opening={...opening,status:"Posted"};
+      const preferenceKey=`${openingRecoveryScope(tenantId,"33333333-3333-3333-3333-333333333333",businessId)}:selected-date`;
+      // A different device has no selected-date preference; the locked opening
+      // must use the authoritative activation date, without querying January.
+      await page.evaluate(async key=>{
+        const database=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open("auraly-catalog-work");request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)});
+        try{await new Promise<void>((resolve,reject)=>{const transaction=database.transaction("catalog-drafts","readwrite");transaction.objectStore("catalog-drafts").delete(key);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error)});}finally{database.close()}
+      },preferenceKey);
+      const readsBeforeLockedView=openingReads;
+      await page.reload();await page.getByRole("button",{name:"Saldos iniciales",exact:true}).click();
+      await expect(card.getByText("Fecha efectiva",{exact:true}).locator("..").getByRole("button")).toHaveText(/1 de febrero de 2026/);
+      await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toHaveValue("Captura de volumen 19");
+      await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toBeDisabled();
+      expect(openingReads-readsBeforeLockedView).toBe(1);
     }
   });
 }

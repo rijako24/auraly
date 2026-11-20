@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { AccountingAccount, AccountingEntry, AccountingOpeningBalance, AccountingOpenPositionPage } from "../src/services/api/accounting";
+import type { PayablesReportPage } from "../src/services/api/payables";
+import type { ReceivablesReportPage } from "../src/services/api/receivables";
 import type { PaymentMethodPage } from "../src/services/api/payment-methods";
 import { addCalendarDays, proposedAccountingDate } from "../src/lib/accounting-document-date";
 import { closeOpeningNotificationHint, openingPortfolioContext, type OpeningPartyFixture, type OpeningPortfolioFixture } from "./support/opening-portfolio-fixture";
@@ -174,6 +176,27 @@ test("apertura aprobada real: continúa la activación sin reemplazar las factur
   await activateAndVerifyOpening(page,setup,prepared!);
 });
 
+test("apertura contabilizada real: consulta la fecha oficial desde otro navegador en móvil",async({page},testInfo)=>{
+  test.setTimeout(120_000);page.setDefaultTimeout(20_000);
+  const {fixture,context}=await openingPortfolioContext(page);expect(fixture.Opening).toBeTruthy();
+  const opening=fixture.Opening!;
+  const stored=await context.scopedJson<AccountingOpeningBalance>("GET",`/api/commerce/v1/accounting/opening-balances?effectiveOn=${opening.effectiveOn}`);
+  expect(stored.status).toBe("Posted");expect(stored.batchId).toBe(opening.batchId);
+  await page.goto("/dashboard/accounting");await page.getByRole("button",{name:"Saldos iniciales",exact:true}).click();
+  await page.setViewportSize({width:390,height:844});await closeOpeningNotificationHint(page);
+  const capture=page.getByRole("region",{name:"Saldos iniciales de la empresa",exact:true});
+  const date=capture.getByText("Fecha efectiva",{exact:true}).locator("..").getByRole("button");
+  const expected=new Intl.DateTimeFormat("es-CO",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(`${opening.effectiveOn}T12:00:00Z`));
+  await expect(date).toHaveText(expected);await expect(date).toBeDisabled();
+  for(const [index,document] of opening.documents.entries()){
+    const number=capture.getByRole("region",{name:`Factura inicial de la partida ${index+1}`,exact:true}).getByLabel("Número de factura original");
+    await expect(number).toHaveValue(document.number);await expect(number).toBeDisabled();
+  }
+  await expect(capture.getByRole("button",{name:"Guardar borrador",exact:true})).toBeDisabled();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await capture.getByRole("region",{name:"Factura inicial de la partida 1",exact:true}).screenshot({path:testInfo.outputPath("posted-opening-another-browser-mobile.png")});
+});
+
 test("cartera inicial real: muestra abonos, saldos y edades del cliente y proveedor en móvil", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   page.setDefaultTimeout(20_000);
@@ -201,7 +224,7 @@ test("cartera inicial real: muestra abonos, saldos y edades del cliente y provee
       } else expect(item.notDueAmount).toBe(item.outstandingAmount);
     }
     await page.goto(`/dashboard/${supplier ? "payables" : "receivables"}`);
-    await page.getByRole("button", { name: "Reportes", exact: true }).click();
+    await page.getByRole("main").getByRole("button", { name: "Reportes", exact: true }).click();
     const viewer = page.getByRole("dialog").last();
     await viewer.getByRole("button", { name: /Detallado con saldo/ }).click();
     const selector = viewer.getByRole("combobox").first();
@@ -225,26 +248,31 @@ test("cartera inicial real: muestra abonos, saldos y edades del cliente y provee
   }
 });
 
-test("cartera existente DEV: abre los reportes generales de cliente y proveedor en móvil", async ({ page }, testInfo) => {
+for(const area of ["receivables","payables"])test(`cartera existente DEV: reporte general ${area} en móvil`, async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   page.setDefaultTimeout(20_000);
   test.skip(process.env.AURALY_E2E_TARGET !== "dev" || !!process.env.AURALY_E2E_DEV_OPENING_FIXTURE,
     "Requiere el contexto AURALY DEV original; esta prueba es de solo lectura.");
   const context = await realAccountingContext(page);
   const cutoff = proposedAccountingDate(context.timeZone).slice(0, 10);
-  for (const area of ["receivables", "payables"]) {
-    const report = await context.scopedJson<{ items: unknown[]; totalOutstanding: number }>("GET",
+  {
+    const report = await context.scopedJson<ReceivablesReportPage|PayablesReportPage>("GET",
       `/api/commerce/v1/${area}/report?consolidated=true&templateVersion=4&dateRangeVersion=2&cutoff=${cutoff}&page=1&pageSize=20`);
-    expect(Number.isFinite(report.totalOutstanding)).toBe(true);
+    if("currencyTotals" in report)expect(report.currencyTotals.every(total=>Number.isFinite(total.outstandingAmount))).toBe(true);
+    else expect(Number.isFinite(report.totalOutstanding)).toBe(true);
     await page.goto(`/dashboard/${area}`);
     const loading = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${area}/report`));
-    await page.getByRole("button", { name: "Reportes", exact: true }).click();
+    await page.getByRole("main").getByRole("button", { name: "Reportes", exact: true }).click();
     const response = await loading;
     expect(response.ok(), await response.text()).toBe(true);
     const viewer = page.getByRole("dialog").last();
     await page.setViewportSize({ width: 390, height: 844 });
     await closeOpeningNotificationHint(page);
-    await expect(viewer.getByRole("button", { name: "Consolidado general", exact: true })).toBeVisible();
+    const consolidated=page.waitForResponse(response=>new URL(response.url()).pathname.endsWith(`/${area}/report`));
+    await viewer.getByRole("button",{name:"Consolidado general",exact:true}).click();
+    const consolidatedResponse=await consolidated;expect(consolidatedResponse.ok(),await consolidatedResponse.text()).toBe(true);
+    await expect.poll(()=>viewer.getByRole("row").count()).toBeGreaterThan(1);
+    await viewer.getByRole("row").nth(1).scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await viewer.screenshot({ path: testInfo.outputPath(`existing-${area}-report-mobile.png`) });
     await viewer.getByRole("button", { name: "Cerrar", exact: true }).click();

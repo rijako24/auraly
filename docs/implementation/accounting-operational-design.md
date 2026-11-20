@@ -871,6 +871,9 @@ the selected effective date and the serialized queue; `useOpeningBalanceRecovery
 owns hydration of the form from the existing server query and local snapshot.
 Keys include tenant, actor, business and effective date. Initial loading reads
 one selected-date record and at most one capture, with no directory I/O per line.
+The opening query waits for readiness to establish whether the capture is
+editable. A locked opening uses the server activation date even on a device
+without local preferences; it performs one opening read for that date.
 Edits coalesce for 250 ms in the existing coordinator, flush on closing/hiding,
 and never save or approve on the server automatically.
 The local 500-line acceptance budget is a warm p95 below 100 ms for the committed
@@ -881,7 +884,9 @@ its rows. The existing pagination component mounts 20 capture rows at a time
 (up to 100 when selected), retaining all values and totals in the same bounded
 500-line editable aggregate. This is local form navigation, not client-side
 pagination of a remote directory/report. Adding a row opens its capture page.
-Memoized rows keep unchanged selectors intact when one line changes.
+Cost-center labels resolve only for the visible page in the existing bounded
+label resolver; hidden pages issue no directory reads. Memoized rows keep
+unchanged selectors intact when one line changes.
 Reloading and restoring the full 500-line form must finish within five seconds;
 it must add no server save or per-line directory query.
 
