@@ -421,7 +421,8 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
                 new Auraly.Api.SavePriceSegmentRequest(name, "TieredProductPrice", null,
                     [new(product, 0m, 1m, 50m, automatic, PriceInputModes.Margin),
                      new(product, 0m, 5m, 25m, false, PriceInputModes.Margin)]));
-            result.EnsureSuccessStatusCode();
+            Assert.True(result.IsSuccessStatusCode,
+                $"Crear canal {name}: {(int)result.StatusCode} {await result.Content.ReadAsStringAsync()}");
             return (await result.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
         }
         async Task<Auraly.Api.PriceSegmentItem[]> Items(Guid id) =>

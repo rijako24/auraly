@@ -162,3 +162,12 @@ La regresión dirigida cubre mezcla inicial, marcar/desmarcar, margen/precio
 conservados al preparar, recálculo al publicar, otro canal fijo, excepciones por tramo, destinos ajenos rechazados, permisos y replay.
 Rollback: revertir la vista y el parámetro opcional no requiere migrar datos;
 los flags conservan el formato y significado anteriores. No despliega producción.
+
+Verificación del 20-11-2026: el CI completo `44744887292` registró un HTTP 400
+al crear el segundo canal del caso de selección colectiva; los otros 1.199
+casos de integración pasaron. El mismo caso aislado y los 15 casos relacionados
+de `PricingVerticalSliceTests` pasaron posteriormente en una base local nueva.
+La prueba de creación conserva ahora el cuerpo de la respuesta en su fallo,
+sin cambiar el criterio de éxito ni el comportamiento del endpoint. Estos
+resultados no demuestran la causa de aquel 400 ni una corrección funcional:
+se conserva el fallo original y se ejecuta la comprobación dirigida en CI.
