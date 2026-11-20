@@ -33,8 +33,8 @@ export function useOpeningRecoveryScope(tenantId: string | null, userId: string 
   useEffect(() => {
     const flush = () => { void coordinator.flushAll().catch(() => setError(storageMessage)); };
     const visibility = () => { if (document.visibilityState === "hidden") flush(); };
-    window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", visibility);
-    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", visibility); flush(); };
+    window.addEventListener("beforeunload", flush); window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", visibility);
+    return () => { window.removeEventListener("beforeunload", flush); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", visibility); flush(); };
   }, [coordinator]);
   const setEffectiveOn = useCallback((date: string) => {
     setDate(date);

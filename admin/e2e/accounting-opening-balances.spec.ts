@@ -132,7 +132,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const localKey = openingRecoveryKey(openingRecoveryScope(tenantId, "33333333-3333-3333-3333-333333333333", businessId), opening.effectiveOn);
     await invoice.getByLabel("Número de factura original").fill("");
     await expect(save).toBeDisabled();
-    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber).toBe("");
+    // Reload while the latest edit is still inside the coalescing window.
     pauseReadiness = true;
     try {
       await page.reload();

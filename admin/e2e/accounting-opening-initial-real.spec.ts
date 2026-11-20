@@ -67,6 +67,42 @@ async function activateAndVerifyOpening(page:Page,setup:Awaited<ReturnType<typeo
   fixture.Opening=prepared;delete fixture.PreparedOpening;await save();
 }
 
+test("recarga inmediata real: conserva la última edición incompleta sin guardarla en la empresa",async({page},testInfo)=>{
+  test.setTimeout(180_000);page.setDefaultTimeout(20_000);
+  const {fixture,context,save}=await openingPortfolioContext(page);
+  test.skip(!fixture.RecoveryOnly||!!fixture.Opening,"Requiere la propia empresa QA de recuperación sin apertura financiera.");
+  let commands=0;page.on("request",request=>{if(new URL(request.url()).pathname.includes("/accounting/opening-balances")&&request.method()!=="GET")commands++});
+  const accounts=await context.scopedJson<AccountingAccount[]>("GET","/api/commerce/v1/accounting/accounts");
+  const account=accounts.find(row=>row.isActive&&row.allowsPosting&&row.semantics?.financialFunction==="Receivable")!;expect(account).toBeTruthy();
+  await page.goto("/dashboard/accounting");
+  const loading=page.waitForResponse(response=>response.request().method()==="GET"&&new URL(response.url()).pathname.endsWith("/opening-balances"));
+  await page.getByRole("button",{name:"Saldos iniciales",exact:true}).click();
+  const loaded=await loading;expect(loaded.ok()).toBe(true);expect(await loaded.json()).toBeNull();
+  const effectiveOn=new URL(loaded.url()).searchParams.get("effectiveOn")!;
+  const capture=page.getByRole("region",{name:"Saldos iniciales de la empresa",exact:true});
+  await capture.getByRole("button",{name:"Agregar factura inicial",exact:true}).click();
+  await capture.getByRole("combobox",{name:"Cuenta de apertura 1",exact:true}).click();
+  await page.getByRole("option",{name:`${account.code} · ${account.name}`,exact:true}).click();
+  let capturedBatch:string|undefined;
+  for(const width of [1440,390]){
+    await page.setViewportSize({width,height:844});await closeOpeningNotificationHint(page);
+    for(let attempt=0;attempt<3;attempt++){
+      const reference=`RECARGA-${width}-${attempt}`;
+      await capture.getByRole("region",{name:"Factura inicial de la partida 1",exact:true}).getByLabel("Número de factura original").fill(reference);
+      await page.reload();await page.getByRole("button",{name:"Saldos iniciales",exact:true}).click();await closeOpeningNotificationHint(page);
+      await expect(capture.getByRole("region",{name:"Factura inicial de la partida 1",exact:true}).getByLabel("Número de factura original")).toHaveValue(reference);
+      await expect(capture.getByRole("button",{name:"Guardar borrador",exact:true})).toBeDisabled();
+      const key=openingRecoveryKey(openingRecoveryScope(fixture.TenantId,fixture.UserId,fixture.BusinessId),effectiveOn);
+      const local=await readLocalCatalogDraft<StoredOpeningCapture>(page,key);expect(local).toBeTruthy();
+      if(capturedBatch)expect(local!.capture.batchId).toBe(capturedBatch);else capturedBatch=local!.capture.batchId;
+    }
+  }
+  expect(commands).toBe(0);
+  expect(await context.scopedJson("GET",`/api/commerce/v1/accounting/opening-balances?effectiveOn=${effectiveOn}`)).toBeNull();
+  await capture.getByRole("region",{name:"Factura inicial de la partida 1",exact:true}).screenshot({path:testInfo.outputPath("immediate-reload-incomplete-mobile.png")});
+  fixture.RecoveryOnlyPassedAtUtc=new Date().toISOString();await save();
+});
+
 test("apertura inicial real: captura facturas de cliente y proveedor desde escritorio y móvil", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
   page.setDefaultTimeout(20_000);

@@ -874,7 +874,8 @@ one selected-date record and at most one capture, with no directory I/O per line
 The opening query waits for readiness to establish whether the capture is
 editable. A locked opening uses the server activation date even on a device
 without local preferences; it performs one opening read for that date.
-Edits coalesce for 250 ms in the existing coordinator, flush on closing/hiding,
+Edits coalesce for 250 ms in the existing coordinator, flush on beforeunload
+(without blocking or prompting), pagehide and visibility hidden,
 and never save or approve on the server automatically.
 The local 500-line acceptance budget is a warm p95 below 100 ms for the committed
 IndexedDB transaction and 1.5 seconds from input to durable capture (including

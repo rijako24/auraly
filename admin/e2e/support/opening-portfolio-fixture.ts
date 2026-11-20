@@ -6,6 +6,7 @@ export type OpeningPartyFixture = { partyId: string; roleId: string; name: strin
 export type OpeningPortfolioFixture = {
   Label: string; TenantId: string; BusinessId: string; TenantKey: string; Username: string; UserId: string;
   ApiUrl: string; UiUrl: string; TimeZone: string; Database?: string;
+  RecoveryOnly?:boolean;RecoveryOnlyPassedAtUtc?:string;
   Opening?: { batchId: string; effectiveOn: string; cashAccountId: string; cashFormName: string;
     Receivable: OpeningPartyFixture; Payable: OpeningPartyFixture;
     documents: Array<{ kind: "Receivable" | "Payable"; number: string; amount: number; dueOn: string; issuedOn: string }> };
