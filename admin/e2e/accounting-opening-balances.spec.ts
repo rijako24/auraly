@@ -4,14 +4,14 @@ const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
 const permissions = ["accounting.read", "accounting.configure", "accounting.activate", "parties.read", "catalog.update", "commerce.taxation.withholdings.view", "commerce.taxation.withholdings.manage"];
 
-async function authenticate(page: Page) {
+async function authenticate(page: Page, granted = permissions) {
   await page.context().addCookies([{ name: "auth_token", value: "e2e", url: process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ tenant, business, granted }) => {
     localStorage.setItem("selected_tenant_id", tenant);
     localStorage.setItem("selected_business_id", business);
     localStorage.setItem("auraly:pwa-install-dismissed", "1");
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user: { userId: "33333333-3333-3333-3333-333333333333", tenantId: tenant, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: granted } }, version: 0 }));
-  }, { tenant: tenantId, business: businessId, granted: permissions });
+  }, { tenant: tenantId, business: businessId, granted });
 }
 
 async function json(route: Route, body: unknown) {
@@ -20,6 +20,7 @@ async function json(route: Route, body: unknown) {
 
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
   test(`captura la factura inicial y reutiliza las etiquetas sin consultas por fila ${viewport.width}`, async ({ page }, testInfo) => {
+    const granted = viewport.width === 390 ? [...permissions, "pos.approvals.read", "pos.approvals.authorize"] : permissions;
     await page.setViewportSize(viewport);
     await page.clock.setFixedTime(new Date("2026-11-19T12:00:00-05:00"));
     const accountId = "44444444-4444-4444-4444-444444444444";
@@ -40,11 +41,14 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
           newInvoicePartySiteName: null, partyName: null, partyIdentification: null },
       ],
     };
-    await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, username: "e2e", roles: ["Administrator"], permissions }));
+    await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, username: "e2e", roles: ["Administrator"], permissions: granted }));
     await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
     await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
-    await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
+    await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions: granted }));
     await page.route("**/api/commerce/v1/reference-options**", route => json(route, []));
+    await page.route("**/api/commerce/v1/pos/approvals/**", route => route.request().url().endsWith("/pending")
+      ? json(route, [])
+      : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Sin transporte push en esta prueba visual." }) }));
     await page.route("**/api/commerce/v1/portfolio/parties/site-options**", route => {
       siteReads++;
       const params = new URL(route.request().url()).searchParams;
@@ -78,8 +82,12 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       }
       return json(route, []);
     });
-    await authenticate(page);
+    await authenticate(page, granted);
     await page.goto("/dashboard/accounting");
+    if (viewport.width === 390) {
+      await page.getByRole("button", { name: "Cerrar aviso de notificaciones", exact: true }).click();
+      await expect(page.getByText("Recibe aprobaciones con Auraly cerrada", { exact: true })).not.toBeVisible();
+    }
     await page.getByRole("button", { name: "Saldos iniciales" }).click();
     const invoice = page.getByRole("region", { name: "Factura inicial de la partida 1" });
     await expect(invoice).toBeVisible();

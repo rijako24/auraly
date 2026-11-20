@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import type { AccountingAccount, AccountingEntry, AccountingOpenPositionPage, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 import { writeFile } from "node:fs/promises";
-import { openingPortfolioContext } from "./support/opening-portfolio-fixture";
+import { closeOpeningNotificationHint, openingPortfolioContext } from "./support/opening-portfolio-fixture";
 import type { PartySiteRoleOptionPage } from "../src/services/api/parties";
 import { proposedAccountingDate } from "../src/lib/accounting-document-date";
 import { realAccountingAuxiliary, realAccountingContext, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
@@ -10,6 +10,7 @@ import { realAccountingAuxiliary, realAccountingContext, realPartyRequest, waitF
 for (const supplier of [false, true]) {
   test(`menú real ${supplier ? "proveedor" : "cliente"}: conserva dos abonos y contabiliza una sola vez`, async ({ page }, testInfo) => {
     test.setTimeout(240_000);
+    page.setDefaultTimeout(20_000);
     const initial = process.env.AURALY_E2E_DEV_OPENING_FIXTURE ? await openingPortfolioContext(page) : null;
     const context = initial?.context ?? await realAccountingContext(page);
     const { scopedJson } = context, api = "/api/commerce/v1", kind = supplier ? "Payable" : "Receivable";
@@ -78,6 +79,7 @@ for (const supplier of [false, true]) {
       await row.getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true }).click();
       await page.getByPlaceholder("Buscar por código o nombre…").fill(cash!.code);
       await page.getByRole("option", { name: new RegExp(`^${cash!.code} · `) }).click();
+      await row.getByLabel("Descripción de la partida", { exact: true }).fill("Salida de efectivo para pagar las facturas seleccionadas");
       await row.getByLabel("Crédito de la partida", { exact: true }).fill("200");
     } else {
       await capture.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true }).click();
@@ -97,6 +99,7 @@ for (const supplier of [false, true]) {
     expect(selected.every(line => line.value.partyId === party.partyId && line.value.partySiteId === sites.items[0].partySiteId)).toBe(true);
     await capture.screenshot({ path: testInfo.outputPath("selected-payment-desktop.png") });
     await page.setViewportSize({ width: 390, height: 844 });
+    await closeOpeningNotificationHint(page);
     expect(await capture.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
     await capture.screenshot({ path: testInfo.outputPath("selected-payment-mobile.png") });
     const sending = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${draft.documentId}/send`));

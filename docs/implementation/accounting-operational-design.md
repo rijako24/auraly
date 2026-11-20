@@ -857,6 +857,11 @@ DEV host, QA key and authenticated-tenant guards scope its writes. Invoice
 capture, approval and activation use the actual page; partial receipts and
 egresses reuse the existing portfolio payment-menu journey. The fixture checks
 four-decimal balances, original numbers/dates, ageing and replay after posting.
+The mobile journey also reproduced a global notification hint covering the
+opening approval button. Its existing prompt now has a close icon for the
+current mounted view; closing it changes no permissions or subscriptions and
+performs no I/O. The regression dismisses it through that visible control
+before saving/approving, without forced clicks or hidden overlays.
 
 Deployment adds nullable evidence columns and widens the existing identified-line
 constraints to include opening sources; existing rows are not backfilled or

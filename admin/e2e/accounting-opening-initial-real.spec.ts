@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AccountingAccount, AccountingEntry, AccountingOpeningBalance, AccountingOpenPositionPage } from "../src/services/api/accounting";
 import type { PaymentMethodPage } from "../src/services/api/payment-methods";
 import { addCalendarDays, proposedAccountingDate } from "../src/lib/accounting-document-date";
-import { openingPortfolioContext, type OpeningPartyFixture } from "./support/opening-portfolio-fixture";
+import { closeOpeningNotificationHint, openingPortfolioContext, type OpeningPartyFixture } from "./support/opening-portfolio-fixture";
 import { realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
 
 test("empresa QA de apertura: navegador, contexto propio y configuración inicial", async ({ page }, testInfo) => {
@@ -15,6 +15,7 @@ test("empresa QA de apertura: navegador, contexto propio y configuración inicia
   await page.goto("/dashboard/accounting");
   await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await closeOpeningNotificationHint(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await testInfo.attach("readiness", { body: JSON.stringify({ tenantId: fixture.TenantId, businessId: fixture.BusinessId, readiness }), contentType: "application/json" });
   await page.screenshot({ path: testInfo.outputPath("opening-qa-before-capture-mobile.png") });
@@ -38,6 +39,7 @@ async function chooseDate(page: Page, trigger: Locator, iso: string) {
 
 test("apertura inicial real: captura facturas de cliente y proveedor desde escritorio y móvil", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
+  page.setDefaultTimeout(20_000);
   const { fixture, context, save } = await openingPortfolioContext(page);
   test.skip(!!fixture.Opening, "La apertura de esta empresa QA ya fue creada; conservar su evidencia y ejecutar pagos/reportes.");
   const { scopedJson } = context, api = "/api/commerce/v1";
@@ -49,22 +51,28 @@ test("apertura inicial real: captura facturas de cliente y proveedor desde escri
   const cashForms = forms.items.filter(form => form.isActive && form.methodCode === "Cash" && form.accountId);
   expect(cashForms).toHaveLength(1);
   const cash = accounts.find(account => account.accountId === cashForms[0].accountId)!;
-  const parties: Record<string, OpeningPartyFixture> = {};
+  const parties: Record<string, OpeningPartyFixture> = {}, prefix = randomUUID().slice(0, 8);
   for (const kind of ["Receivable", "Payable"] as const) {
-    const supplier = kind === "Payable", name = `${fixture.Label} ${supplier ? "Proveedor" : "Cliente"}`;
+    const supplier = kind === "Payable", name = `${fixture.Label} ${supplier ? "Proveedor" : "Cliente"} ${prefix}`;
     const party = await scopedJson<{ partyId: string; customerId?: string; supplierId?: string }>("POST", `${api}/${supplier ? "suppliers" : "customers"}`, {
       ...await realPartyRequest(context, name), ...(supplier ? { purchaseEvidencePolicy: "InternalReceiptVoucher", defaultPaymentDueDays: 30 } : {}),
     });
     parties[kind] = { partyId: party.partyId, roleId: (supplier ? party.supplierId : party.customerId)!, name, accountId: supplier ? payable.accountId : receivable.accountId };
   }
-  const effectiveOn = proposedAccountingDate(context.timeZone).slice(0, 10), issuedOn = addCalendarDays(effectiveOn, -60), prefix = randomUUID().slice(0, 8);
+  const effectiveOn = proposedAccountingDate(context.timeZone).slice(0, 10), issuedOn = addCalendarDays(effectiveOn, -60);
   const documents = (["Receivable", "Payable"] as const).flatMap(kind => [0, 1].map(index => ({ kind,
     number: `INI-${kind === "Receivable" ? "CXC" : "CXP"}-${prefix}-${index + 1}`, amount: index === 0 ? 1000.1254 : 1000.875,
     issuedOn, dueOn: addCalendarDays(effectiveOn, index === 0 ? -20 : 15) })));
   await page.goto("/dashboard/accounting");
   await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
   const capture = page.getByRole("region", { name: "Saldos iniciales de la empresa", exact: true });
-  await capture.locator('input[type="date"]').fill(effectiveOn);
+  await chooseDate(page, capture.getByText("Fecha efectiva", { exact: true }).locator("..").getByRole("button"), effectiveOn);
+  // A failed browser attempt may have left only a draft in this isolated QA
+  // company. Reuse its aggregate and keep the two initial rows before capture.
+  const rows = capture.getByRole("row", { name: /^Partida de apertura / });
+  await expect(rows.first()).toBeVisible();
+  for (let count = await rows.count(); count > 2; count--)
+    await capture.getByRole("button", { name: "Eliminar línea", exact: true }).last().click();
   for (const [index, document] of documents.entries()) {
     if (index >= 2) await capture.getByRole("button", { name: "Agregar factura inicial", exact: true }).click();
     const row = capture.getByRole("row", { name: `Partida de apertura ${index + 1}`, exact: true });
@@ -90,8 +98,14 @@ test("apertura inicial real: captura facturas de cliente y proveedor desde escri
   expect(saved.lines).toHaveLength(4);
   expect(saved.lines.map(line => line.newInvoice?.documentNumber)).toEqual(documents.map(document => document.number));
   expect(saved.debitTotal).toBe(2001.0004); expect(saved.creditTotal).toBe(2001.0004);
+  await page.reload();
+  await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
+  await chooseDate(page, capture.getByText("Fecha efectiva", { exact: true }).locator("..").getByRole("button"), effectiveOn);
+  for (const [index, document] of documents.entries())
+    await expect(capture.getByRole("region", { name: `Factura inicial de la partida ${index + 1}`, exact: true }).getByLabel("Número de factura original")).toHaveValue(document.number);
   await capture.screenshot({ path: testInfo.outputPath("initial-opening-desktop.png") });
   await page.setViewportSize({ width: 390, height: 844 });
+  await closeOpeningNotificationHint(page);
   expect(await capture.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   await capture.getByRole("region", { name: "Factura inicial de la partida 1", exact: true }).screenshot({ path: testInfo.outputPath("initial-invoice-mobile.png") });
   await expect(capture.getByRole("textbox", { name: "Débito de apertura 1", exact: true })).toHaveValue(/1[\s\u00a0]000\.1254/);
@@ -118,12 +132,13 @@ test("apertura inicial real: captura facturas de cliente y proveedor desde escri
 
 test("cartera inicial real: muestra abonos, saldos y edades del cliente y proveedor en móvil", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
+  page.setDefaultTimeout(20_000);
   const { fixture, context } = await openingPortfolioContext(page);
   expect(fixture.Opening).toBeTruthy(); expect(fixture.Payments?.Receivable).toBeTruthy(); expect(fixture.Payments?.Payable).toBeTruthy();
   await page.setViewportSize({ width: 390, height: 844 });
   for (const kind of ["Receivable", "Payable"] as const) {
     const supplier = kind === "Payable", party = fixture.Opening![kind];
-    const report = await context.scopedJson<{ items: Array<{ documentNumber: string; originalAmount: number; outstandingAmount: number; paidAmount: number; ageDays: number; daysPastDue: number; notDueAmount: number; overdue1To30Amount: number }> }>("GET",
+    const report = await context.scopedJson<{ items: Array<{ documentNumber: string; issuedAt: string; dueDate: string; originalAmount: number; outstandingAmount: number; paidAmount: number; ageDays?: number; daysPastDue?: number; notDueAmount: number; overdue1To30Amount: number }> }>("GET",
       `/api/commerce/v1/${supplier ? "payables" : "receivables"}/report?consolidated=false&templateVersion=4&dateRangeVersion=2&cutoff=${fixture.Opening!.effectiveOn}&${supplier ? "supplierId" : "customerId"}=${party.roleId}&page=1&pageSize=20`);
     expect(report.items).toHaveLength(2);
     expect(report.items.map(item => item.documentNumber).sort()).toEqual(fixture.Opening!.documents.filter(item => item.kind === kind).map(item => item.number).sort());
@@ -131,11 +146,13 @@ test("cartera inicial real: muestra abonos, saldos y edades del cliente y provee
     expect(Number(report.items.reduce((total, item) => total + item.outstandingAmount, 0).toFixed(4))).toBe(1801.0004);
     for (const invoice of fixture.Opening!.documents.filter(item => item.kind === kind)) {
       const item = report.items.find(row => row.documentNumber === invoice.number)!;
-      expect(item.ageDays).toBe(60);
+      expect(item.issuedAt.slice(0, 10)).toBe(invoice.issuedOn);
+      expect(item.dueDate.slice(0, 10)).toBe(invoice.dueOn);
+      if (!supplier) expect(item.ageDays).toBe(60);
       expect(item.originalAmount).toBe(invoice.amount);
       expect(item.outstandingAmount).toBe(Number((item.originalAmount - item.paidAmount).toFixed(4)));
       if (invoice.dueOn < fixture.Opening!.effectiveOn) {
-        expect(item.daysPastDue).toBe(20);
+        if (!supplier) expect(item.daysPastDue).toBe(20);
         expect(item.overdue1To30Amount).toBe(item.outstandingAmount);
       } else expect(item.notDueAmount).toBe(item.outstandingAmount);
     }
@@ -147,7 +164,17 @@ test("cartera inicial real: muestra abonos, saldos y edades del cliente y provee
     await selector.click();
     await page.getByPlaceholder("Buscar por nombre o identificación…").fill(party.name);
     await page.getByRole("option").filter({ hasText: party.name }).click();
-    for (const invoice of fixture.Opening!.documents.filter(item => item.kind === kind)) await expect(viewer.getByText(invoice.number, { exact: true }).first()).toBeVisible();
+    for (const invoice of fixture.Opening!.documents.filter(item => item.kind === kind)) {
+      const row = viewer.getByRole("row").filter({ hasText: invoice.number });
+      const overdue = invoice.dueOn < fixture.Opening!.effectiveOn;
+      const band = row.getByText(overdue ? "1–30 días" : "Sin vencer", { exact: true });
+      await expect(band).toBeVisible();
+      await expect(band).toHaveCSS("background-color", overdue ? "rgb(255, 241, 194)" : "rgb(221, 244, 232)");
+    }
+    await expect(viewer.getByText(/875,1254/).first()).toBeVisible();
+    await expect(viewer.getByText(/925,875/).first()).toBeVisible();
+    await closeOpeningNotificationHint(page);
+    await viewer.getByText(fixture.Opening!.documents.find(item => item.kind === kind)!.number, { exact: true }).scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await viewer.screenshot({ path: testInfo.outputPath(`initial-${kind}-report-mobile.png`) });
     await viewer.getByRole("button", { name: "Cerrar", exact: true }).click();

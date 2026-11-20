@@ -53,6 +53,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [activatingNotifications, setActivatingNotifications] = useState(false);
   const [backgroundPushState, setBackgroundPushState] = useState<"idle"|"checking"|"active"|"error">("idle");
   const [portalReady, setPortalReady] = useState(false);
+  const [pushHintDismissed, setPushHintDismissed] = useState(false);
 
   useEffect(() => setPortalReady(true), []);
   useEffect(() => {
@@ -393,7 +394,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
         document.body,
       )}
 
-      {portalReady && canApprove && canReceivePush && requests.length === 0 && notificationPermission === "default" && createPortal(
+      {portalReady && canApprove && canReceivePush && !pushHintDismissed && requests.length === 0 && notificationPermission === "default" && createPortal(
         <section
           role="status"
           className="fixed inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-[100] rounded-3xl border border-teal-200 bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.28)] md:hidden"
@@ -401,6 +402,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-50 text-teal-700"><Bell className="h-5 w-5" /></span>
             <div className="min-w-0 flex-1"><p className="font-bold text-slate-950">Recibe aprobaciones con Auraly cerrada</p><p className="mt-1 text-sm text-slate-600">Activa una vez las notificaciones de este teléfono.</p></div>
+            <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Cerrar aviso de notificaciones" onClick={() => setPushHintDismissed(true)}><X className="h-4 w-4" /></Button>
           </div>
           <Button className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold hover:bg-teal-800" disabled={activatingNotifications} onClick={()=>void activateNotifications()}>
             {activatingNotifications?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Bell className="mr-2 h-4 w-4"/>}Activar notificaciones
