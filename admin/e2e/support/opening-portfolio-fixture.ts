@@ -9,6 +9,7 @@ export type OpeningPortfolioFixture = {
   Opening?: { batchId: string; effectiveOn: string; cashAccountId: string; cashFormName: string;
     Receivable: OpeningPartyFixture; Payable: OpeningPartyFixture;
     documents: Array<{ kind: "Receivable" | "Payable"; number: string; amount: number; dueOn: string; issuedOn: string }> };
+  PreparedOpening?: NonNullable<OpeningPortfolioFixture["Opening"]>;
   Payments?: Record<string, { documentId: string; outstanding: number[] }>;
 };
 

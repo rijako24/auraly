@@ -120,7 +120,13 @@ function AccountingConfigurationWorkspace(){
       <PeriodsSection tenantId={tenantId} rows={periods.data??[]} refresh={refresh}/>
     )}
     {section==="opening"&&(
-      openingRecovery.ready?<OpeningBalancesSection key={`${tenantId}:${businessId}:${effectiveFrom}`} recovery={openingRecovery} businessId={businessId} effectiveOn={effectiveFrom} setEffectiveOn={setEffectiveFrom} accounts={postingAccounts} canEditOpeningBalances={readiness.isPending?undefined:!!canEditOpeningBalances&&!activate.isPending} refresh={()=>queryClient.invalidateQueries({queryKey:[...key,"readiness"]})}/>:<p role="status">Recuperando la fecha de apertura de este equipo…</p>
+      openingRecovery.ready?<OpeningBalancesSection key={`${tenantId}:${businessId}:${effectiveFrom}`} recovery={openingRecovery} businessId={businessId} effectiveOn={effectiveFrom} setEffectiveOn={setEffectiveFrom} accounts={postingAccounts} canEditOpeningBalances={readiness.isPending?undefined:!!canEditOpeningBalances&&!activate.isPending} refresh={async()=>{
+        // An in-flight validation may have read the batch before approval.
+        // Discard it before requesting the authoritative post-approval readiness.
+        const queryKey=[...key,"readiness"];
+        await queryClient.cancelQueries({queryKey});
+        await queryClient.invalidateQueries({queryKey});
+      }}/>:<p role="status">Recuperando la fecha de apertura de este equipo…</p>
     )}
     {section==="withholdings"&&<WithholdingRulesWorkspace embedded/>}
     {section==="balance"&&(

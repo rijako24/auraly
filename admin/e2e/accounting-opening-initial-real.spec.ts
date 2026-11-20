@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AccountingAccount, AccountingEntry, AccountingOpeningBalance, AccountingOpenPositionPage } from "../src/services/api/accounting";
 import type { PaymentMethodPage } from "../src/services/api/payment-methods";
 import { addCalendarDays, proposedAccountingDate } from "../src/lib/accounting-document-date";
-import { closeOpeningNotificationHint, openingPortfolioContext, type OpeningPartyFixture } from "./support/opening-portfolio-fixture";
+import { closeOpeningNotificationHint, openingPortfolioContext, type OpeningPartyFixture, type OpeningPortfolioFixture } from "./support/opening-portfolio-fixture";
 import { realAccountingContext, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
 import { openingRecoveryKey, openingRecoveryScope, type StoredOpeningCapture } from "../src/lib/accounting-opening-recovery";
 import { readLocalCatalogDraft } from "./support/local-draft-evidence";
@@ -40,11 +40,36 @@ async function chooseDate(page: Page, trigger: Locator, iso: string) {
   await page.getByRole("button", { name: label, exact: true }).click();
 }
 
+type PreparedOpening=NonNullable<OpeningPortfolioFixture["Opening"]>;
+async function activateAndVerifyOpening(page:Page,setup:Awaited<ReturnType<typeof openingPortfolioContext>>,prepared:PreparedOpening){
+  const {fixture,context,save}=setup,{scopedJson}=context,api="/api/commerce/v1";
+  await page.getByText("Cómo iniciar",{exact:true}).locator("..").getByRole("combobox").click();
+  await page.getByRole("option",{name:"Usar saldos aprobados",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Activar contabilidad",exact:true})).toBeEnabled();
+  const activating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/accounting/activate"));
+  await page.getByRole("button", { name: "Activar contabilidad", exact: true }).click();
+  const activated = await activating; expect(activated.ok(), await activated.text()).toBe(true);
+  expect(["Configuring","Ready"]).toContain((await activated.json()).status);
+  await waitForRealPosting(context, prepared.batchId);
+  const readiness=await scopedJson<{status:string}>("GET",`${api}/accounting/readiness?effectiveFrom=${prepared.effectiveOn}&openingBalanceMode=ImportedAndApproved`);
+  expect(readiness.status).toBe("Ready");
+  const entry = await scopedJson<AccountingEntry>("GET", `${api}/accounting/entries/by-document/${prepared.batchId}`);
+  expect(entry.debitTotal).toBe(2001.0004); expect(entry.creditTotal).toBe(2001.0004);
+  for (const kind of ["Receivable", "Payable"] as const) {
+    const positions = await scopedJson<AccountingOpenPositionPage>("GET", `${api}/accounting/open-positions?subledgerKind=${kind}&counterpartyRoleId=${prepared[kind].roleId}&page=1&pageSize=10`);
+    expect(positions.items).toHaveLength(2);
+    expect(positions.items.every(position => position.openingEntryId === entry.entryId)).toBe(true);
+    expect(positions.items.map(position => position.documentNumber).sort()).toEqual(prepared.documents.filter(document => document.kind === kind).map(document => document.number).sort());
+  }
+
+  fixture.Opening=prepared;delete fixture.PreparedOpening;await save();
+}
+
 test("apertura inicial real: captura facturas de cliente y proveedor desde escritorio y móvil", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
   page.setDefaultTimeout(20_000);
-  const { fixture, context, save } = await openingPortfolioContext(page);
-  test.skip(!!fixture.Opening, "La apertura de esta empresa QA ya fue creada; conservar su evidencia y ejecutar pagos/reportes.");
+  const setup=await openingPortfolioContext(page),{fixture,context,save}=setup;
+  test.skip(!!fixture.Opening||!!fixture.PreparedOpening, "Conservar la captura guardada; continuar su activación o ejecutar pagos/reportes.");
   const { scopedJson } = context, api = "/api/commerce/v1";
   const accounts = await scopedJson<AccountingAccount[]>("GET", `${api}/accounting/accounts`);
   const accountFor = (kind: string) => accounts.find(account => account.isActive && account.allowsPosting && account.semantics?.financialFunction === kind)!;
@@ -112,6 +137,9 @@ test("apertura inicial real: captura facturas de cliente y proveedor desde escri
   expect(saved.lines.map(line => line.newInvoice?.documentNumber)).toEqual(documents.map(document => document.number));
   expect(saved.debitTotal).toBe(2001.0004); expect(saved.creditTotal).toBe(2001.0004);
   await expect.poll(() => readLocalCatalogDraft(page, recoveryKey)).toBeNull();
+  fixture.PreparedOpening={batchId:saved.batchId,effectiveOn,cashAccountId:cash.accountId,cashFormName:cashForms[0].name,
+    Receivable:parties.Receivable,Payable:parties.Payable,documents};
+  await save();
   await page.reload();
   await page.getByRole("button", { name: "Saldos iniciales", exact: true }).click();
   for (const [index, document] of documents.entries())
@@ -122,25 +150,28 @@ test("apertura inicial real: captura facturas de cliente y proveedor desde escri
   expect(await capture.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   await capture.getByRole("region", { name: "Factura inicial de la partida 1", exact: true }).screenshot({ path: testInfo.outputPath("initial-invoice-mobile.png") });
   await expect(capture.getByRole("textbox", { name: "Débito de apertura 1", exact: true })).toHaveValue(/1[\s\u00a0]000\.1254/);
+  const approving=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(`/opening-balances/${saved.batchId}/approve`));
   await capture.getByRole("button", { name: "Aprobar saldos", exact: true }).click();
-  await page.getByText("Cómo iniciar", { exact: true }).locator("..").getByRole("combobox").click();
-  await page.getByRole("option", { name: "Usar saldos aprobados", exact: true }).click();
-  const activating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/accounting/activate"));
-  await page.getByRole("button", { name: "Activar contabilidad", exact: true }).click();
-  const activated = await activating; expect(activated.ok(), await activated.text()).toBe(true);
-  expect((await activated.json()).status).toBe("Ready");
-  await waitForRealPosting(context, saved.batchId);
-  const entry = await scopedJson<AccountingEntry>("GET", `${api}/accounting/entries/by-document/${saved.batchId}`);
-  expect(entry.debitTotal).toBe(2001.0004); expect(entry.creditTotal).toBe(2001.0004);
-  for (const kind of ["Receivable", "Payable"] as const) {
-    const positions = await scopedJson<AccountingOpenPositionPage>("GET", `${api}/accounting/open-positions?subledgerKind=${kind}&counterpartyRoleId=${parties[kind].roleId}&page=1&pageSize=10`);
-    expect(positions.items).toHaveLength(2);
-    expect(positions.items.every(position => position.openingEntryId === entry.entryId)).toBe(true);
-    expect(positions.items.map(position => position.documentNumber).sort()).toEqual(documents.filter(document => document.kind === kind).map(document => document.number).sort());
-  }
-  fixture.Opening = { batchId: saved.batchId, effectiveOn, cashAccountId: cash.accountId, cashFormName: cashForms[0].name,
-    Receivable: parties.Receivable, Payable: parties.Payable, documents };
-  await save();
+  const approved=await approving;expect(approved.ok(),await approved.text()).toBe(true);
+  expect((await approved.json()).status).toBe("Approved");
+  await activateAndVerifyOpening(page,setup,fixture.PreparedOpening!);
+});
+
+test("apertura aprobada real: continúa la activación sin reemplazar las facturas capturadas",async({page},testInfo)=>{
+  test.setTimeout(180_000);page.setDefaultTimeout(20_000);
+  const setup=await openingPortfolioContext(page),prepared=setup.fixture.PreparedOpening;
+  test.skip(!prepared||!!setup.fixture.Opening,"Solo continúa una captura real de QA que quedó aprobada.");
+  const stored=await setup.context.scopedJson<AccountingOpeningBalance>("GET",`/api/commerce/v1/accounting/opening-balances?effectiveOn=${prepared!.effectiveOn}`);
+  expect(stored.status).toBe("Approved");expect(stored.batchId).toBe(prepared!.batchId);
+  expect(stored.lines.map(line=>line.newInvoice?.documentNumber)).toEqual(prepared!.documents.map(document=>document.number));
+  await page.goto("/dashboard/accounting");
+  await page.getByRole("button",{name:"Saldos iniciales",exact:true}).click();
+  const capture=page.getByRole("region",{name:"Saldos iniciales de la empresa",exact:true});
+  await chooseDate(page,capture.getByText("Fecha efectiva",{exact:true}).locator("..").getByRole("button"),prepared!.effectiveOn);
+  await page.setViewportSize({width:390,height:844});await closeOpeningNotificationHint(page);
+  await expect(capture.getByRole("button",{name:"Aprobar saldos",exact:true})).toBeDisabled();
+  await capture.screenshot({path:testInfo.outputPath("approved-opening-resumed-mobile.png")});
+  await activateAndVerifyOpening(page,setup,prepared!);
 });
 
 test("cartera inicial real: muestra abonos, saldos y edades del cliente y proveedor en móvil", async ({ page }, testInfo) => {

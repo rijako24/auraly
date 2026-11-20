@@ -893,6 +893,10 @@ Approved/posted openings always project the server version. Accepted saves and
 approvals clear pending local writes through the same coordinator before they
 can recreate an obsolete snapshot; subsequent edits resume recovery. Server
 acceptance reuses its aggregate response and does not refetch that aggregate.
+After approval, the readiness owner cancels an in-flight pre-approval validation
+before its single necessary readiness refresh, so an older result cannot leave
+activation blocked. The regression holds the stale response and verifies two
+validation requests at most (the canceled read and the authoritative refresh).
 Storage errors are visible in Spanish and preserve the manual save/approve path.
 The shared store now waits for transaction completion, including abort failures,
 before reporting a write as finished. Rollback leaves only optional device keys;

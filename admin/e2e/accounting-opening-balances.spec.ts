@@ -37,6 +37,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const siteId = "77777777-7777-7777-7777-777777777777";
     let partyReads = 0, siteReads = 0, openingReads = 0, saves = 0;
     let pauseReadiness = false, releaseReadiness: (() => void) | undefined;
+    let approvalRace=false, importedReads=0, releaseBeforeApproval: (()=>void)|undefined, releaseApproval: (()=>void)|undefined;
     let opening: AccountingOpeningBalance = {
       batchId: "88888888-8888-8888-8888-888888888888", businessId, effectiveOn: "2026-01-01", currencyCode: "COP",
       description: "Apertura de cartera", status: "Draft", rowVersion: "AQID", debitTotal: 1500, creditTotal: 1500,
@@ -55,7 +56,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
     await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
     await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions: granted }));
-    await page.route("**/api/commerce/v1/reference-options**", route => json(route, []));
+    await page.route("**/api/commerce/v1/reference-options**", route => json(route, new URL(route.request().url()).pathname.endsWith("/accounting-opening-balance-mode")?[
+      {id:"zero",code:"ZeroDeclared",label:"Iniciar desde cero"},{id:"imported",code:"ImportedAndApproved",label:"Usar saldos aprobados"}]:[]));
     await page.route("**/api/commerce/v1/pos/approvals/**", route => route.request().url().endsWith("/pending")
       ? json(route, [])
       : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Sin transporte push en esta prueba visual." }) }));
@@ -78,8 +80,19 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
         { accountId: equityId, code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
       ]);
       if (path.endsWith("/readiness")) {
+        if(approvalRace&&new URL(route.request().url()).searchParams.get("openingBalanceMode")==="ImportedAndApproved"){
+          importedReads++;
+          const issues=opening.status==="Draft"?["Hay un negocio activo sin saldos iniciales aprobados para la fecha efectiva."]:[];
+          if(importedReads===1)await new Promise<void>(resolve=>{releaseBeforeApproval=resolve});
+          return json(route,{status:"Configuring",canEditOpeningBalances:true,blockingIssues:issues});
+        }
         if (pauseReadiness) await new Promise<void>(resolve => { releaseReadiness = resolve; });
         return json(route, { status: "Disabled", effectiveFrom: new URL(route.request().url()).searchParams.get("effectiveFrom"), blockingIssues: [], canEditOpeningBalances: true });
+      }
+      if(path.endsWith("/approve")){
+        if(approvalRace)await new Promise<void>(resolve=>{releaseApproval=resolve});
+        opening={...opening,status:"Approved",rowVersion:"QVBQUk9WRUQ="};
+        return json(route,opening);
       }
       if (path.endsWith("/opening-balances")) {
         if (route.request().method() === "GET") { openingReads++; return json(route, new URL(route.request().url()).searchParams.get("effectiveOn") === opening.effectiveOn ? opening : null); }
@@ -252,6 +265,22 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await expect.poll(async()=>(await localOpening(page,volumeKey))?.capture.lines[499].description).toBe("Contrapartida revisada");
       await page.getByRole("button",{name:"Primera página",exact:true}).click();
       await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toHaveValue("Captura de volumen 19");
+      await save.click();
+      await expect(page.getByRole("button",{name:"Aprobar saldos",exact:true})).toBeEnabled();
+      approvalRace=true;
+      // Approval and a mode change overlap; validation still observes Draft.
+      await page.getByRole("button",{name:"Aprobar saldos",exact:true}).click();
+      await expect.poll(()=>!!releaseApproval).toBe(true);
+      await page.getByText("Cómo iniciar",{exact:true}).locator("..").getByRole("combobox").click();
+      await page.getByRole("option",{name:"Usar saldos aprobados",exact:true}).click();
+      await expect.poll(()=>!!releaseBeforeApproval).toBe(true);
+      try {
+        releaseApproval?.();
+        await expect.poll(()=>importedReads).toBe(2);
+        await expect(page.getByRole("button",{name:"Activar contabilidad",exact:true})).toBeEnabled();
+      }finally{releaseApproval?.();releaseBeforeApproval?.();}
+      await expect(page.getByRole("button",{name:"Activar contabilidad",exact:true})).toBeEnabled();
+      expect(importedReads).toBe(2);
     }
   });
 }
