@@ -1,14 +1,14 @@
 "use client";
 
-import {Fragment,Suspense,memo,useCallback,useEffect,useMemo,useState,type ComponentProps,type FormEvent,type ReactNode} from "react";
+import {Fragment,Suspense,memo,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type ComponentProps,type FormEvent,type ReactNode} from "react";
 import {useMutation,useQuery,useQueryClient} from "@tanstack/react-query";
+import {defaultRangeExtractor,useVirtualizer} from "@tanstack/react-virtual";
 import {useSearchParams} from "next/navigation";
 import {AlertTriangle,BarChart3,BookOpen,Building2,CalendarRange,CheckCircle2,ChevronRight,Landmark,Link2,Loader2,Plus,ReceiptText,RefreshCw,Settings2,TableProperties,Trash2} from "lucide-react";
 import {toast} from "sonner";
 import {accountingApi,type AccountingAccount,type AccountingCostCenter,type AccountingOpenPosition,type AccountingOpeningInvoice,type BankAccount,type AccountMovementQuery} from "@/services/api/accounting";
 import {emptyOpeningLine,type OpeningDraftLine} from "@/lib/accounting-opening-recovery";
 import {useOpeningBalanceRecovery,useOpeningRecoveryScope,type OpeningRecoveryScope} from "@/hooks/use-opening-balance-recovery";
-import {DataTablePagination} from "@/components/tables/data-table-pagination";
 import {OpeningInvoiceFields} from "@/components/accounting/opening-invoice-fields";
 import {FormattedNumberInput} from "@/components/ui/formatted-number-input";
 import {PagedEntitySelect} from "@/components/forms/paged-entity-select";
@@ -151,10 +151,27 @@ function OpeningBalancesSection({recovery,businessId,effectiveOn,setEffectiveOn,
   const opening=useQuery({queryKey,queryFn:()=>accountingApi.openingBalance(effectiveOn),enabled:Boolean(businessId&&effectiveOn&&canEditOpeningBalances!==undefined)});
   const local=useOpeningBalanceRecovery(recovery,effectiveOn,opening.data,canConfigure?canEditOpeningBalances:false);
   const {batchId,rowVersion,description,setDescription,lines,setLines}=local;
-  const [requestedPage,setPage]=useState(0),[pageSize,setPageSize]=useState(20);
-  const pageCount=Math.max(1,Math.ceil(lines.length/pageSize)),pageIndex=Math.min(requestedPage,pageCount-1),offset=pageIndex*pageSize;
-  const visibleLines=lines.slice(offset,offset+pageSize);
-  const centerLabels=useCostCenterLabels(visibleLines.map(line=>line.costCenterId));
+  const scrollRef=useRef<HTMLDivElement>(null),pendingScroll=useRef<number|null>(null);
+  const [focusedLine,setFocusedLine]=useState<string|null>(null);
+  const focusedIndex=lines.findIndex(line=>line.lineId===focusedLine);
+  const virtualized=lines.length>=100;
+  // This mutable observer must stay outside React Compiler memoization.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer=useVirtualizer({count:lines.length,enabled:local.ready&&virtualized,getScrollElement:()=>scrollRef.current,
+    getItemKey:index=>lines[index].lineId,estimateSize:index=>lines[index].newInvoice?320:100,overscan:4,
+    rangeExtractor:range=>[...new Set([...defaultRangeExtractor(range),...(focusedIndex<0?[]:[focusedIndex-1,focusedIndex,focusedIndex+1].filter(index=>index>=0&&index<lines.length))])].sort((a,b)=>a-b)});
+  const items=virtualizer.getVirtualItems();
+  const visibleIndices=virtualized?items.map(item=>item.index):lines.map((_,index)=>index);
+  // Resolve only the visual buffer, in stable 20-line batches. Closed selectors
+  // never resolve an identity individually or read the rest of the document.
+  const labelBlocks=new Set(visibleIndices.map(index=>Math.floor(index/20)));
+  const centerLabels=useCostCenterLabels([...labelBlocks].flatMap(block=>lines.slice(block*20,block*20+20).map(line=>line.costCenterId)));
+  useLayoutEffect(()=>{
+    if(pendingScroll.current===null)return;
+    const index=pendingScroll.current;pendingScroll.current=null;
+    if(virtualized)virtualizer.scrollToIndex(index,{align:"end"});
+    else scrollRef.current?.querySelector(`[data-index="${index}"]`)?.scrollIntoView({block:"nearest"});
+  },[lines,virtualized,virtualizer]);
   const status=opening.data?.status??"Draft",editable=canEditOpeningBalances&&status==="Draft"&&canConfigure;
   const update=useCallback((index:number,change:Partial<OpeningDraftLine>)=>setLines(current=>current.map((line,position)=>position===index?{...line,...change}:line)),[setLines]);
   const removeLine=useCallback((index:number)=>setLines(current=>current.filter((_,position)=>position!==index)),[setLines]);
@@ -188,23 +205,35 @@ function OpeningBalancesSection({recovery,businessId,effectiveOn,setEffectiveOn,
       <div className="grid gap-4 p-5 lg:grid-cols-[1fr_auto]">
         <Field label="Descripción del asiento"><Input value={description} disabled={!captureEnabled} maxLength={300} onChange={event=>setDescription(event.target.value)}/></Field>
         <div className="flex flex-wrap items-end gap-2">
-          <Button type="button" variant="outline" disabled={!captureEnabled||lines.length>=500} onClick={()=>{setPage(Math.floor(lines.length/pageSize));setLines(current=>[...current,emptyOpeningLine()])}}><Plus className="mr-2 h-4 w-4"/>Agregar línea</Button>
+          <Button type="button" variant="outline" disabled={!captureEnabled||lines.length>=500} onClick={()=>{pendingScroll.current=lines.length;setLines(current=>[...current,emptyOpeningLine()])}}><Plus className="mr-2 h-4 w-4"/>Agregar línea</Button>
           <Button type="button" disabled={!captureEnabled||lines.length>=500} onClick={()=>{
             const empty=lines.findIndex(line=>!line.accountId&&!line.partyId&&!line.debit&&!line.credit&&!line.newInvoice);
             const invoice={...emptyOpeningLine(),description:"Factura inicial",newInvoice:emptyOpeningInvoice()};
-            setPage(Math.floor((empty<0?lines.length:empty)/pageSize));
+            pendingScroll.current=empty<0?lines.length:empty;
             setLines(current=>empty<0?[...current,invoice]:current.map((line,index)=>index===empty?{...invoice,lineId:line.lineId}:line));
           }}><ReceiptText className="mr-2 h-4 w-4"/>Agregar factura inicial</Button>
         </div>
       </div>
-      <div className="border-y"><table className="block w-full text-sm lg:table">
+      <div ref={scrollRef} role="region" aria-label="Partidas de saldos iniciales" className="max-h-[32rem] overflow-auto border-y" onFocusCapture={event=>{
+        const row=(event.target as HTMLElement).closest<HTMLElement>("[data-line-id]");
+        if(row)setFocusedLine(row.dataset.lineId??null);
+      }}><table className="block w-full text-sm lg:table">
         <thead className="hidden bg-muted/50 lg:table-header-group"><tr><th className="p-3 text-left">Cuenta PUC</th><th className="text-left">Tercero</th><th className="text-left">Centro de costo</th><th className="text-left">Descripción / factura</th><th className="text-right">Débito</th><th className="text-right">Crédito</th><th className="w-12"/></tr></thead>
-        <tbody className="block lg:table-row-group">{local.ready&&visibleLines.map((line,pageRow)=><OpeningBalanceRow key={line.lineId} line={line} index={offset+pageRow} accounts={accounts} businessId={businessId} effectiveOn={effectiveOn}
-          captureEnabled={!!captureEnabled} centerLabel={line.costCenterId?centerLabels.data?.get(line.costCenterId):undefined} canRemove={lines.length>1} update={update} removeLine={removeLine}/>)}</tbody>
+        {local.ready&&visibleIndices.map((index,position)=>{
+          const line=lines[index],item=items[position],previous=items[position-1];
+          const gap=virtualized?item.start-(previous?.end??0):0;
+          return <Fragment key={line.lineId}>
+            {gap>0&&<tbody aria-hidden className="block lg:table-row-group"><tr className="block lg:table-row"><td colSpan={7} className="block p-0 lg:table-cell" style={{height:gap}}/></tr></tbody>}
+            <tbody data-index={index} data-line-id={line.lineId} ref={virtualized?virtualizer.measureElement:undefined} className="block lg:table-row-group">
+              <OpeningBalanceRow line={line} index={index} accounts={accounts} businessId={businessId} effectiveOn={effectiveOn}
+                captureEnabled={!!captureEnabled} centerLabel={line.costCenterId?centerLabels.data?.get(line.costCenterId):undefined} canRemove={lines.length>1} update={update} removeLine={removeLine}/>
+            </tbody>
+          </Fragment>;
+        })}
+        {virtualized&&items.length>0&&<tbody aria-hidden className="block lg:table-row-group"><tr className="block lg:table-row"><td colSpan={7} className="block p-0 lg:table-cell" style={{height:Math.max(0,virtualizer.getTotalSize()-items[items.length-1].end)}}/></tr></tbody>}
         <tfoot className="block border-t-2 bg-muted/30 font-bold lg:table-footer-group"><tr className="grid grid-cols-2 gap-2 p-3 lg:table-row"><td className="col-span-2 lg:p-3" colSpan={4}>Totales {balanced&&<span className="ml-2 text-emerald-700">· Cuadrado</span>}</td><td className="text-right">{auxiliaryMoney.format(debit)}</td><td className="text-right">{auxiliaryMoney.format(credit)}</td><td/></tr></tfoot>
       </table></div>
-      {local.ready&&lines.length>20&&<DataTablePagination className="px-5" pageIndex={pageIndex} pageSize={pageSize} pageCount={pageCount} totalItems={lines.length}
-        onPageChange={setPage} onPageSizeChange={size=>{setPageSize(size);setPage(0)}} pageSizeOptions={[20,50,100]}/>}
+      {local.ready&&<p className="px-5 text-xs text-muted-foreground">{lines.length} partidas · Desplázate para revisar el documento completo.</p>}
       {opening.isError&&<p role="alert" className="p-5 text-destructive">No se pudieron cargar los saldos iniciales. <Button variant="link" onClick={()=>void opening.refetch()}>Reintentar</Button></p>}
       {opening.isLoading&&<p className="p-6 text-center text-sm text-muted-foreground">Cargando saldos iniciales…</p>}
       {!opening.isPending&&!opening.isError&&!local.ready&&<p role="status" className="p-6 text-center text-sm text-muted-foreground">Recuperando la captura de saldos iniciales…</p>}

@@ -100,6 +100,38 @@ test("recarga inmediata real: conserva la última edición incompleta sin guarda
   expect(commands).toBe(0);
   expect(await context.scopedJson("GET",`/api/commerce/v1/accounting/opening-balances?effectiveOn=${effectiveOn}`)).toBeNull();
   await capture.getByRole("region",{name:"Factura inicial de la partida 1",exact:true}).screenshot({path:testInfo.outputPath("immediate-reload-incomplete-mobile.png")});
+  // Volume preparation is confined to this browser's existing local draft.
+  // No invoice, opening or financial effect is created on the server.
+  const key=openingRecoveryKey(openingRecoveryScope(fixture.TenantId,fixture.UserId,fixture.BusinessId),effectiveOn);
+  const stored=(await readLocalCatalogDraft<StoredOpeningCapture>(page,key))!;
+  const source=stored.capture.lines[0];
+  stored.capture.lines=Array.from({length:500},(_,index)=>({...source,lineId:randomUUID(),description:`Volumen ${index+1}`,
+    newInvoice:index%2===0?{...source.newInvoice!,documentNumber:`VOLUMEN-${index+1}`}:null}));
+  await page.goto("/dashboard/accounting");
+  await page.evaluate(async({key,value})=>{
+    const database=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open("auraly-catalog-work");request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)});
+    try{await new Promise<void>((resolve,reject)=>{const transaction=database.transaction("catalog-drafts","readwrite");transaction.objectStore("catalog-drafts").put({key,value,updatedAt:new Date().toISOString()});transaction.oncomplete=()=>resolve();transaction.onabort=()=>reject(transaction.error);transaction.onerror=()=>reject(transaction.error)})}finally{database.close()}
+  },{key,value:stored});
+  for(const width of [1440,390]){
+    await page.setViewportSize({width,height:844});
+    await page.reload();await page.getByRole("button",{name:"Saldos iniciales",exact:true}).click();await closeOpeningNotificationHint(page);
+    await expect(capture.getByText("500 partidas · Desplázate para revisar el documento completo.",{exact:true})).toBeVisible();
+    const grid=capture.getByRole("region",{name:"Partidas de saldos iniciales",exact:true});
+    const first=grid.getByLabel("Descripción de apertura 1",{exact:true});await first.focus();
+    await grid.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+    const last=grid.getByLabel("Descripción de apertura 500",{exact:true});await expect(last).toHaveValue(width===1440?"Volumen 500":"Revisado 1440");
+    await expect(first).toBeFocused();
+    await last.fill(`Revisado ${width}`);
+    await expect.poll(async()=>(await readLocalCatalogDraft<StoredOpeningCapture>(page,key))?.capture.lines[499].description).toBe(`Revisado ${width}`);
+    expect(await grid.locator('tr[aria-label^="Partida de apertura "]').count()).toBeLessThan(30);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await grid.screenshot({path:testInfo.outputPath(`opening-500-continuous-${width}.png`)});
+    await expect(capture.getByRole("button",{name:"Agregar línea",exact:true})).toBeDisabled();
+    await expect(capture.getByRole("button",{name:"Guardar borrador",exact:true})).toBeDisabled();
+  }
+  expect(commands).toBe(0);
+  expect((await readLocalCatalogDraft<StoredOpeningCapture>(page,key))?.capture.batchId).toBe(capturedBatch);
+  expect(await context.scopedJson("GET",`/api/commerce/v1/accounting/opening-balances?effectiveOn=${effectiveOn}`)).toBeNull();
   fixture.RecoveryOnlyPassedAtUtc=new Date().toISOString();await save();
 });
 

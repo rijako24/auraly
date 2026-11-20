@@ -216,7 +216,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.getByRole("button", { name: "Saldos iniciales" }).click();
     await expect(invoice.getByLabel("Número de factura original")).toHaveValue(viewport.width === 1440 ? "MI-CAPTURA" : "OTRO-BORRADOR");
     await expect(save).toBeDisabled();
-    if (viewport.width === 1440) {
+    {
       test.setTimeout(120_000);
       const savesBeforeVolume=saves;
       const invoiceLine = opening.lines[0], balance = Number((499 * 1.1254).toFixed(4));
@@ -228,8 +228,10 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await card.getByText("Fecha efectiva", { exact: true }).locator("..").getByRole("button").click();
       await page.getByRole("button", { name: "Mes siguiente", exact: true }).click();
       await page.getByRole("button", { name: "1 de febrero de 2026", exact: true }).click();
-      await expect(page.locator('tr[aria-label^="Partida de apertura "]')).toHaveCount(20);
-      await expect(page.getByText("1-20 de 500",{exact:true})).toBeVisible();
+      const grid=page.getByRole("region",{name:"Partidas de saldos iniciales",exact:true});
+      await expect.poll(()=>page.locator('tr[aria-label^="Partida de apertura "]').count()).toBeLessThan(25);
+      await expect(page.getByText("500 partidas · Desplázate para revisar el documento completo.",{exact:true})).toBeVisible();
+      await expect(page.getByRole("button",{name:"Última página",exact:true})).toHaveCount(0);
       await expect(page.getByLabel("Descripción de apertura 1", { exact: true })).toBeEnabled();
       await expect(page.getByRole("combobox",{name:"Centro de costo de apertura 1",exact:true})).toContainText(`CC-${opening.lines[0].costCenterId!.slice(0,6)}`);
       expect(centerReads).toHaveLength(1);expect(centerReads[0]).toHaveLength(20);
@@ -263,18 +265,22 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await page.reload();
       await page.getByRole("button", { name: "Saldos iniciales" }).click();
       await expect(page.getByLabel("Descripción de apertura 1", { exact: true })).toHaveValue("Captura de volumen 19");
+      await closeOpeningNotificationHint(page);
       budget.recoveryMs = Date.now() - started;
       await writeFile(budgetPath, JSON.stringify(budget, null, 2));
       expect(budget.recoveryMs).toBeLessThan(5000);
       expect(partyReads).toBe(0); expect(siteReads).toBe(1);
-      await page.getByRole("button",{name:"Última página",exact:true}).click();
+      // Keep a focused input mounted even when scrolling to a distant invoice.
+      await page.getByLabel("Descripción de apertura 1",{exact:true}).focus();
+      await grid.evaluate(element=>{element.scrollTop=element.scrollHeight;});
       await expect(page.getByLabel("Descripción de apertura 500",{exact:true})).toHaveValue("Contrapartida");
-      await expect(page.getByRole("combobox",{name:"Centro de costo de apertura 481",exact:true})).toContainText(`CC-${opening.lines[480].costCenterId!.slice(0,6)}`);
+      await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toBeFocused();
+      await expect(page.getByRole("combobox",{name:"Centro de costo de apertura 499",exact:true})).toContainText(`CC-${opening.lines[498].costCenterId!.slice(0,6)}`);
       expect(centerReads.map(ids=>ids.length)).toEqual([20,20,19]);
       await page.getByLabel("Descripción de apertura 500",{exact:true}).fill("Contrapartida revisada");
       const volumeKey=openingRecoveryKey(openingRecoveryScope(tenantId,"33333333-3333-3333-3333-333333333333",businessId),opening.effectiveOn);
       await expect.poll(async()=>(await localOpening(page,volumeKey))?.capture.lines[499].description).toBe("Contrapartida revisada");
-      await page.getByRole("button",{name:"Primera página",exact:true}).click();
+      await grid.evaluate(element=>{element.scrollTop=0;});
       await expect(page.getByLabel("Descripción de apertura 1",{exact:true})).toHaveValue("Captura de volumen 19");
       await save.click();
       await expect(page.getByRole("button",{name:"Aprobar saldos",exact:true})).toBeEnabled();

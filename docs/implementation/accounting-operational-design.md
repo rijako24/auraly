@@ -881,15 +881,22 @@ The local 500-line acceptance budget is a warm p95 below 100 ms for the committe
 IndexedDB transaction and 1.5 seconds from input to durable capture (including
 coalescing), measured across 20 edits without concurrent builds/diagnostics.
 The form waits for the current readiness and local hydration before mounting
-its rows. The existing pagination component mounts 20 capture rows at a time
-(up to 100 when selected), retaining all values and totals in the same bounded
-500-line editable aggregate. This is local form navigation, not client-side
-pagination of a remote directory/report. Adding a row opens its capture page.
-Cost-center labels resolve only for the visible page in the existing bounded
-label resolver; hidden pages issue no directory reads. Memoized rows keep
+its rows. At 100 lines the capture uses continuous scrolling and dynamically
+measured virtual rows, retaining all values and totals in the same bounded
+500-line editable aggregate. TanStack Virtual handles variable invoice-detail
+heights on desktop and mobile; the focused row and its immediate neighbors
+remain mounted for keyboard navigation. Adding a row scrolls to its position.
+There is no pagination of the active document. Cost-center labels resolve only
+for the visual buffer in stable 20-line batches through the existing bounded
+label resolver; rows outside that buffer issue no directory reads. Memoized rows keep
 unchanged selectors intact when one line changes.
 Reloading and restoring the full 500-line form must finish within five seconds;
 it must add no server save or per-line directory query.
+The continuous-capture regression covers 500 lines on desktop and mobile,
+retains input focus across distant scrolling, edits the last line and saves
+the complete aggregate. The mobile 20-edit sample measured 6 ms committed
+storage p95, 277 ms input-to-durable p95 and 2,660 ms reload recovery, with no
+server save during capture and the same bounded label requests (20/20/19).
 
 Recovery retains incomplete invoice fields, amounts, stable batch/line IDs and
 the server row version. A different current row version or batch shows explicit
