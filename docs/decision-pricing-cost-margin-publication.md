@@ -33,6 +33,15 @@ La regla vigente es:
 - la ausencia de precio especial nunca bloquea una venta;
 - POS Edge descarga precios vendibles, pero nunca costos ni margen interno.
 
+Las consultas de costo del canal usan un único instante de `TimeProvider`, el
+mismo propietario temporal de la publicación. Ese instante se envía como
+parámetro del lote; no se mezcla con el reloj de SQL. Tanto el producto como su
+principal vinculado se resuelven en el intervalo `ValidFrom <= instante <
+ValidUntil`, conservando la versión histórica válida si una publicación terminó
+después de ese instante. No se toma una versión futura ni se agrega una espera
+para que coincidan los relojes. El costo se obtiene con una consulta por lote,
+sin lecturas por producto ni cambios de las reglas de margen y publicación.
+
 ## 2. Hallazgo exacto en Xion
 
 Xion separa funcionalmente:

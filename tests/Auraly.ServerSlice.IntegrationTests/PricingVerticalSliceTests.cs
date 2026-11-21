@@ -390,6 +390,65 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             productId, new SqlParameter("@ChannelId", channel.Id)));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Channel_cost_uses_the_publication_clock_and_its_validity_interval(bool linked)
+    {
+        var parent = Guid.NewGuid(); var product = linked ? Guid.NewGuid() : parent;
+        await SeedProductAsync(parent, $"CLOCK-{parent:N}", 10_000m);
+        if (linked) await SeedProductAsync(product, $"CLOCK-{product:N}", 5_000m);
+        var at = new DateTimeOffset(2030, 1, 2, 12, 0, 0, TimeSpan.Zero);
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        await using (var arrange = new SqlCommand("""
+            UPDATE dbo.ProductPrices SET IsActive=0,ValidUntil=@Start
+            WHERE BusinessId=@Business AND ProductId=@Parent AND IsActive=1;
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,
+              CostBasisAmount,CostBasisType,ValidFrom,ValidUntil,IsActive,CreatedAt)
+            VALUES(NEWID(),@Business,@Parent,6000,N'COP',3000,N'Manual',@Start,@Next,0,@Start),
+              (NEWID(),@Business,@Parent,12000,N'COP',6000,N'Manual',@Next,NULL,1,@Next);
+            IF @Linked=1
+              INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,
+                PriceFactor,SharesInventory,SharesPrice,IsActive,CreatedAt)
+              VALUES(NEWID(),@Tenant,@Product,@Parent,.5,0,1,1,@Start);
+            """, connection))
+        {
+            arrange.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            arrange.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            arrange.Parameters.AddWithValue("@Parent", parent); arrange.Parameters.AddWithValue("@Product", product);
+            arrange.Parameters.AddWithValue("@Start", at.AddMinutes(-1));
+            arrange.Parameters.AddWithValue("@Next", at.AddMinutes(1)); arrange.Parameters.AddWithValue("@Linked", linked);
+            await arrange.ExecuteNonQueryAsync();
+        }
+        // A publication and its immediate reader share the application clock,
+        // including when the database clock has not reached that instant yet.
+        try
+        {
+            using var reads = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                commandFilter: command => command.CommandText.Contains("WITH Requested AS", StringComparison.Ordinal));
+            var costs = await SqlPriceSegmentCostStore.LoadAsync(connection, null, fixture.BusinessId, [product], at, default);
+            Assert.Equal(linked ? 1500m : 3000m, costs[product].Amount);
+            var next = await SqlPriceSegmentCostStore.LoadAsync(connection, null, fixture.BusinessId, [product], at.AddMinutes(1), default);
+            Assert.Equal(linked ? 3000m : 6000m, next[product].Amount);
+            var before = await SqlPriceSegmentCostStore.LoadAsync(connection, null, fixture.BusinessId, [product], at.AddMinutes(-2), default);
+            Assert.Equal(0m, before[product].Amount);
+            Assert.Equal(3, reads.Count);
+        }
+        finally
+        {
+            // Synthetic future versions must not become candidates of later
+            // catalogue tests sharing this fixture.
+            await using var deactivate = new SqlCommand("""
+                UPDATE dbo.ProductLinks SET IsActive=0
+                WHERE TenantId=@Tenant AND ChildProductId=@Product AND ParentProductId=@Parent;
+                UPDATE dbo.Products SET IsActive=0 WHERE TenantId=@Tenant AND ProductId IN(@Product,@Parent);
+                """, connection);
+            deactivate.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            deactivate.Parameters.AddWithValue("@Product", product); deactivate.Parameters.AddWithValue("@Parent", parent);
+            await deactivate.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task Channel_sync_selection_updates_all_active_tiers_without_repricing_until_publication()
     {

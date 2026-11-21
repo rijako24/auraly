@@ -52,6 +52,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> SaveAsync(
         HttpContext context, SavePriceSegmentRequest request,
         SqlServerConnectionFactory connections,
+        TimeProvider timeProvider,
         IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
@@ -85,7 +86,7 @@ public static class PriceSegmentsApi
             ? await NormalizeTierItemsAsync(connection, transaction, identity.BusinessId,
                 requestedItems.Select(item => new TierInput(item.ProductId, item.Amount,
                     item.MinimumQuantity, item.TargetMarginPercent, item.AutoUpdatePrice,
-                    item.InputMode)).ToArray(), ct)
+                    item.InputMode)).ToArray(), timeProvider.GetUtcNow(), ct)
             : [];
         if (normalizedItems is null)
             return Results.Problem("El precio final debe cubrir el costo más impuestos; para actualizar por margen se requiere un costo positivo y un margen entre 0 % y menos de 100 %.", statusCode: 400);
@@ -132,6 +133,7 @@ public static class PriceSegmentsApi
 
     private static async Task<IResult> ItemsAsync(
         HttpContext context, Guid id, SqlServerConnectionFactory connections,
+        TimeProvider timeProvider,
         CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
@@ -152,7 +154,7 @@ public static class PriceSegmentsApi
                     reader.GetBoolean(7)));
         var costs = identity.Permissions.Contains(PricingPermissionCodes.ReadCostBasis)
             ? await SqlPriceSegmentCostStore.LoadAsync(connection, null, identity.BusinessId,
-                rows.Select(row => row.ProductId).Distinct().ToArray(), ct)
+                rows.Select(row => row.ProductId).Distinct().ToArray(), timeProvider.GetUtcNow(), ct)
             : [];
         return Results.Ok(rows.Select(row =>
         {
@@ -192,7 +194,7 @@ public static class PriceSegmentsApi
 
     private static async Task<IResult> ProductCostAsync(
         HttpContext context, Guid productId,
-        SqlServerConnectionFactory connections, CancellationToken ct)
+        SqlServerConnectionFactory connections, TimeProvider timeProvider, CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains(PricingPermissionCodes.ReadCostBasis) ||
@@ -200,7 +202,7 @@ public static class PriceSegmentsApi
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         var costs = await SqlPriceSegmentCostStore.LoadAsync(connection, null, identity.BusinessId,
-            [productId], ct);
+            [productId], timeProvider.GetUtcNow(), ct);
         return costs.TryGetValue(productId, out var cost)
             ? Results.Ok(new { costBasisAmount = cost.Amount,
                 salesTaxRate = cost.SalesTaxRate,
@@ -210,6 +212,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> SaveItemAsync(
         HttpContext context, Guid id, Guid productId,
         SavePriceSegmentItemRequest request, SqlServerConnectionFactory connections,
+        TimeProvider timeProvider,
         IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
@@ -230,7 +233,7 @@ public static class PriceSegmentsApi
         var normalized = await NormalizeTierItemsAsync(connection, transaction,
             identity.BusinessId, [new TierInput(productId, request.Amount,
                 request.MinimumQuantity, request.TargetMarginPercent,
-                request.AutoUpdatePrice, request.InputMode)], ct);
+                request.AutoUpdatePrice, request.InputMode)], timeProvider.GetUtcNow(), ct);
         if (normalized is null)
             return Results.Problem("El precio final debe cubrir el costo más impuestos; para actualizar por margen se requiere un costo positivo y un margen entre 0 % y menos de 100 %.", statusCode: 400);
         await using var command = Procedure("dbo.PriceSegmentItemSave", connection, transaction);
@@ -551,11 +554,11 @@ public static class PriceSegmentsApi
 
     private static async Task<IReadOnlyList<NormalizedTierItem>?> NormalizeTierItemsAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
-        IReadOnlyList<TierInput> inputs, CancellationToken ct)
+        IReadOnlyList<TierInput> inputs, DateTimeOffset asOf, CancellationToken ct)
     {
         if (inputs.Count == 0) return [];
         var costs = await SqlPriceSegmentCostStore.LoadAsync(connection, transaction, businessId,
-            inputs.Select(item => item.ProductId).Distinct().ToArray(), ct);
+            inputs.Select(item => item.ProductId).Distinct().ToArray(), asOf, ct);
         if (inputs.Any(item => !costs.ContainsKey(item.ProductId))) return null;
 
         var result = new List<NormalizedTierItem>(inputs.Count);

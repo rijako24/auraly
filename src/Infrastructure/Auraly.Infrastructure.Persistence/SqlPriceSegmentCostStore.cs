@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -10,7 +11,7 @@ public static class SqlPriceSegmentCostStore
 {
     public static async Task<Dictionary<Guid, PriceSegmentTierCost>> LoadAsync(
         SqlConnection connection, SqlTransaction? transaction, Guid businessId,
-        IReadOnlyCollection<Guid> productIds, CancellationToken ct)
+        IReadOnlyCollection<Guid> productIds, DateTimeOffset asOf, CancellationToken ct)
     {
         await using var command = new SqlCommand("""
             WITH Requested AS (
@@ -37,8 +38,9 @@ public static class SqlPriceSegmentCostStore
               SELECT TOP(1) value.CostBasisAmount,value.EffectiveMarginPercent
               FROM dbo.ProductPrices value
               WHERE value.BusinessId=@BusinessId AND value.ProductId=product.ProductId
-                AND value.IsActive=1 AND value.ValidFrom<=SYSDATETIMEOFFSET()
-                AND (value.ValidUntil IS NULL OR value.ValidUntil>SYSDATETIMEOFFSET())
+                AND (value.IsActive=1 OR value.ValidUntil IS NOT NULL)
+                AND value.ValidFrom<=@AsOf
+                AND (value.ValidUntil IS NULL OR value.ValidUntil>@AsOf)
               ORDER BY value.ValidFrom DESC,value.ProductPriceId
             ) price
             OUTER APPLY (
@@ -88,12 +90,18 @@ public static class SqlPriceSegmentCostStore
                 SELECT TOP(1) value.CostBasisAmount
                 FROM dbo.ProductPrices value
                 WHERE value.BusinessId=@BusinessId
-                  AND value.ProductId=costLink.ParentProductId AND value.IsActive=1
+                  AND value.ProductId=costLink.ParentProductId
+                  AND (value.IsActive=1 OR value.ValidUntil IS NOT NULL)
+                  AND value.ValidFrom<=@AsOf
+                  AND (value.ValidUntil IS NULL OR value.ValidUntil>@AsOf)
                 ORDER BY value.ValidFrom DESC,value.ProductPriceId
               ) parentPrice
             ) parentCost;
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        var referenceTime = command.Parameters.Add("@AsOf", SqlDbType.DateTimeOffset);
+        referenceTime.Scale = 7;
+        referenceTime.Value = asOf;
         command.Parameters.AddWithValue("@ProductIdsJson",
             JsonSerializer.Serialize(productIds));
         var costs = new Dictionary<Guid, PriceSegmentTierCost>();
