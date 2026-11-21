@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Pencil, Loader2 } from "lucide-react";
+import { Pencil, Loader2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { PaymentMethodSelect } from "@/components/payments/payment-method-select";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { dispatchesApi, type DeliveryPayment, type DispatchExecution, type DispatchPaymentReviewResult } from "@/services/api/dispatches";
 import type { PaymentMethod } from "@/services/api/payment-methods";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -24,6 +25,7 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
   data: DispatchExecution; editable: boolean; cashContent?: ReactNode;
   onChanged: (result: DispatchPaymentReviewResult) => void;
 }) {
+  const canCorrect=useAuthStore(state=>state.user?.permissions.includes("sales.payments.correct")??false);
   const [busy, setBusy] = useState<string | null>(null);
   const [correcting, setCorrecting] = useState<DeliveryPayment | null>(null);
   const [image, setImage] = useState<string | null>(null);
@@ -43,15 +45,14 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
       const verified = rows.filter(row => row.payment.verifiedAt).length;
       const expected = group === "Cash" ? data.settlement?.expectedCash ?? total : total;
       const counted = group === "Cash" ? data.settlement?.declaredCash : group === "Card" ? data.settlement?.declaredCard : data.settlement?.declaredTransfer;
-      return <details key={group} open={group === "Cash"} className="rounded-2xl border bg-card">
-        <summary className="cursor-pointer list-none p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><strong>{group === "Cash" ? "Efectivo" : group === "Card" ? "Tarjetas" : "Transferencias"} · {rows.length} {rows.length === 1 ? "factura" : "facturas"}</strong><strong>{money.format(total)}</strong></div>
+      return <details key={group} open={group === "Cash"||rows.length>0} className="group rounded-2xl border bg-card">
+        <summary className="cursor-pointer list-none p-4 [&::-webkit-details-marker]:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3"><span className="flex items-center gap-2"><ChevronDown aria-hidden className="h-5 w-5 shrink-0 transition-transform group-open:rotate-180"/><strong>{group === "Cash" ? "Efectivo" : group === "Card" ? "Tarjetas" : "Transferencias"} · {rows.length} {rows.length === 1 ? "factura" : "facturas"}</strong></span><span className="text-xs font-semibold text-teal-800">{group === "Cash" ? "Ver efectivo y documentos" : `${verified} verificados · ${rows.length-verified} pendientes`}</span></div>
           <dl className="mt-3 grid grid-cols-3 gap-2 text-xs sm:text-sm">
             <div><dt className="text-muted-foreground">Esperado</dt><dd className="mt-1 font-semibold tabular-nums">{money.format(expected)}</dd></div>
             <div><dt className="text-muted-foreground">Declarado</dt><dd className="mt-1 font-semibold tabular-nums">{counted == null ? "No declarado" : money.format(counted)}</dd></div>
             <div><dt className="text-muted-foreground">Diferencia declarada</dt><dd className={`mt-1 font-semibold tabular-nums ${counted != null && counted !== expected ? "text-amber-800" : "text-muted-foreground"}`}>{counted == null ? "Sin declaración" : money.format(counted - expected)}</dd></div>
           </dl>
-          {group !== "Cash" && <small className="mt-2 block text-muted-foreground">{verified} de {rows.length} pagos chequeados</small>}
         </summary>
         <div className="space-y-3 border-t p-3 sm:p-4">
           {group === "Cash" && cashContent}
@@ -74,7 +75,7 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
                 aria-label={`No encontrado ${document.documentNumber} ${payment.formName ?? methodName(payment.paymentMethod)}`}
                 onClick={() => void verify(payment, false)}>No encontrado</Button>
             </div>}
-            {editable && <Button size="sm" variant="outline" aria-label={`Corregir forma de pago de ${document.documentNumber}`} disabled={busy !== null} onClick={() => setCorrecting(payment)}><Pencil className="mr-2 h-4 w-4"/>Corregir</Button>}
+            {editable && canCorrect && <Button size="sm" variant="outline" aria-label={`Corregir forma de pago de ${document.documentNumber}`} disabled={busy !== null} onClick={() => setCorrecting(payment)}><Pencil className="mr-2 h-4 w-4"/>Corregir</Button>}
             {payment.correctionReason && <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-950">Original: {payment.originalFormName ?? methodName(payment.originalPaymentMethod ?? null)}. Corrección: {payment.correctionReason}</p>}
             {payment.evidenceUrl && <button type="button" className="flex items-center gap-3 rounded-xl border p-2 text-left text-sm" onClick={() => setImage(payment.evidenceReadUrl ?? payment.evidenceUrl)}>
               {/* The response signs the private references in one batch; rows do no metadata I/O. */}

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
 import { Header } from "@/components/layout/header";
@@ -16,6 +17,11 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  const main = useRef<HTMLElement>(null);
+  // The shell survives route changes. Reset its own scroll container before
+  // painting a different view; query changes keep the user's position.
+  useLayoutEffect(() => { main.current?.scrollTo({ top: 0, behavior: "instant" }); }, [pathname]);
   const setOpen = useSidebarStore((s) => s.setOpen);
   const isMobile = useMediaQuery("(max-width: 1024px)");
 
@@ -37,7 +43,7 @@ export default function DashboardLayout({
       {/* Main content area */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Header onMobileMenuClick={handleMobileMenuClick} />
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background px-3 pb-5 pt-4 sm:px-5 lg:px-8 lg:py-7">
+        <main ref={main} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background px-3 pb-5 pt-4 sm:px-5 lg:px-8 lg:py-7">
           <BusinessContextProvider>{children}</BusinessContextProvider>
         </main>
         <MobileBottomNav />

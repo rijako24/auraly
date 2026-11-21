@@ -14,7 +14,7 @@ BEGIN
     DECLARE @Series TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
     INSERT @Series VALUES
       (N'SalesInvoice',N'VTA'),(N'SalesReceipt',N'CVI'),(N'SalesDebitNote',N'NDB'),
-      (N'GoodsReceipt',N'EMC'),(N'PurchaseOrder',N'OCP'),
+      (N'GoodsReceipt',N'EMC'),(N'PurchaseOrder',N'OCP'),(N'Dispatch',N'DSP'),
       (N'SalesReturn',N'DVT'),(N'FiscalSaleCorrection',N'NCF'),
       (N'PurchaseReturn',N'DCP'),
       (N'ReceivablePayment',N'RCC'),(N'PayablePayment',N'PGP'),

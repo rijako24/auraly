@@ -11,6 +11,7 @@ type PosModalBehaviorOptions = {
   onEscape: () => void;
   escapeDisabled?: boolean;
   focusRequest?: number;
+  enabled?: boolean;
 };
 
 /**
@@ -24,6 +25,7 @@ export function usePosModalBehavior({
   onEscape,
   escapeDisabled = false,
   focusRequest = 0,
+  enabled = true,
 }: PosModalBehaviorOptions) {
   const token = useRef(Symbol("pos-modal"));
   const escapeRef = useRef(onEscape);
@@ -33,6 +35,7 @@ export function usePosModalBehavior({
   disabledRef.current = escapeDisabled;
 
   useEffect(() => {
+    if (!enabled) return;
     const currentToken = token.current;
     const entry: ModalStackEntry = {
       token: currentToken,
@@ -41,6 +44,8 @@ export function usePosModalBehavior({
     modalStack.push(entry);
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || modalStack.at(-1)?.token !== currentToken) return;
+      // A nested Radix picker/calendar owns Escape until its popup closes.
+      if (event.target instanceof Element && event.target.closest("[data-radix-popper-content-wrapper]")) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       if (!disabledRef.current) escapeRef.current();
@@ -53,9 +58,10 @@ export function usePosModalBehavior({
       if (index >= 0) modalStack.splice(index, 1);
       window.requestAnimationFrame(() => modalStack.at(-1)?.restoreFocus());
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     const focusInside = () => {
       const modal = modalRef.current;
       if (!modal || modal.contains(document.activeElement)) return;
@@ -72,5 +78,5 @@ export function usePosModalBehavior({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [focusRequest, initialFocusRef, modalRef]);
+  }, [enabled, focusRequest, initialFocusRef, modalRef]);
 }

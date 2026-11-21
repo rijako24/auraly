@@ -46,6 +46,7 @@ public sealed partial class AccountingVerticalSliceTests
         var store=scope.ServiceProvider.GetRequiredService<IDispatchStore>();
         var logistics=scope.ServiceProvider.GetRequiredService<DispatchService>();
         Task<SalesReturnAcceptance> ReturnPriorAsync()=>returns.ConfirmAsync(returnUser,$"prior-return:{request.DocumentId:N}",priorRequest);
+        var carrierId=await fixture.SeedDispatchCarrierAsync(fixture.UserId);
         if(raceAssignment)
         {
             SalesReturnAcceptance? acceptedReturn=null;
@@ -55,7 +56,7 @@ public sealed partial class AccountingVerticalSliceTests
                 catch(SalesReturnConflictException) { }
             }
             var returning=TryReturnAsync();
-            var assigning=logistics.CreateAsync(actor,new(fixture.BusinessId,new(2026,11,18),"Asignación concurrente",null,null,null,null,[request.DocumentId]),default);
+            var assigning=logistics.CreateAsync(actor,new(fixture.BusinessId,new(2026,11,18),"Asignación concurrente",null,carrierId,null,[request.DocumentId]),default);
             await Task.WhenAll(returning,assigning);
             var assigned=await assigning;
             var racedDetail=(await store.GetAsync(actor,assigned.DispatchId,default))!;
@@ -72,7 +73,7 @@ public sealed partial class AccountingVerticalSliceTests
         var candidate=Assert.Single(candidates.Items);
         Assert.Equal(remainingQuantity,candidate.PendingQuantity);
         Assert.Equal(remainingAmount,candidate.DocumentTotal);
-        var draft=await logistics.CreateAsync(actor,new(fixture.BusinessId,new(2026,11,18),"Transportador",null,null,null,null,[request.DocumentId]),default);
+        var draft=await logistics.CreateAsync(actor,new(fixture.BusinessId,new(2026,11,18),"Transportador",null,carrierId,null,[request.DocumentId]),default);
         Assert.Equal(remainingQuantity,draft.ExpectedQuantity);
         var detail=await store.GetAsync(actor,draft.DispatchId,default);
         Assert.Equal(remainingAmount,Assert.Single(detail!.Documents).DocumentTotal);
@@ -102,6 +103,6 @@ public sealed partial class AccountingVerticalSliceTests
         await AssertBalancedAsync(finalReturn.ReturnId);
         Assert.Equal(11900m,await ScalarAsync<decimal>("SELECT SUM(TotalAmount) FROM dbo.SalesReturns WHERE OriginalDocumentId=@Id",request.DocumentId));
         Assert.Empty((await store.CandidatesAsync(actor,new(1,10,request.DocumentNumber.FullNumber),default)).Items);
-        await Assert.ThrowsAsync<DispatchConflictException>(()=>logistics.CreateAsync(actor,new(fixture.BusinessId,new(2026,11,18),"Sin mercancía",null,null,null,null,[request.DocumentId]),default));
+        await Assert.ThrowsAsync<DispatchConflictException>(()=>logistics.CreateAsync(actor,new(fixture.BusinessId,new(2026,11,18),"Sin mercancía",null,carrierId,null,[request.DocumentId]),default));
     }
 }

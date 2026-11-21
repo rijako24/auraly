@@ -226,9 +226,13 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
         Assert.True(receipt.IsSuccessStatusCode, await receipt.Content.ReadAsStringAsync());
         var html = (await receipt.Content.ReadFromJsonAsync<DispatchClosureReceiptView>())!.Html;
         Assert.Contains("data-auraly-report=\"dispatch-closure\"", html);
+        Assert.Contains("data-auraly-report-version=\"2\"", html);
+        Assert.Contains("Placa:", html); Assert.Contains("Fecha del despacho:", html);
+        Assert.Contains("Documentos: 1", html); Assert.DoesNotContain("Usuario:", html);
+        Assert.DoesNotContain(fixture.UserId.ToString(), html);
         Assert.Contains("Valores declarados", html); Assert.DoesNotContain("Faltante", html);
         Assert.DoesNotContain("Efectivo esperado", html); Assert.Contains("America/Bogota", html);
-        using var reviewer=fixture.CreateAdminClient(DispatchPermissionCodes.Settle,DispatchPermissionCodes.Read,DispatchPermissionCodes.ReadAll);
+        using var reviewer=fixture.CreateAdminClient(DispatchPermissionCodes.Settle,DispatchPermissionCodes.Read,DispatchPermissionCodes.ReadAll,Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var filtered=(await reviewer.GetFromJsonAsync<DispatchPage>($"/api/commerce/v1/dispatches?page=1&pageSize=25&status=PendingSettlement&search={dispatch}"))!;
         Assert.Equal(dispatch,Assert.Single(filtered.Items).DispatchId);
         var correction=new CorrectDispatchPaymentRequest(form.PaymentMethodId,form.Version,method,

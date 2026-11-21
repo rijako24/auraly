@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -29,6 +29,7 @@ public sealed partial class SqlSalesReportingProcessor
             await using(var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,cancellationToken))
             {
                 await SqlSalesReportingJobWriter.BackfillServiceInvoicesAsync(connection,transaction,businessId,ids,timeProvider.GetUtcNow(),cancellationToken);
+                await SqlSalesReportingJobWriter.BackfillPaymentCorrectionsAsync(connection,transaction,businessId,ids,timeProvider.GetUtcNow(),cancellationToken);
                 await using var reset=new SqlCommand("""
                     INSERT #RebuildSources(Sequence,SourceDocumentId,SourceDocumentType,SourceVersion)
                     SELECT ROW_NUMBER() OVER(ORDER BY CASE WHEN r.SourceDocumentType IN(N'SalesReturn',N'PurchaseReturn') THEN 1 ELSE 0 END,
@@ -36,7 +37,11 @@ public sealed partial class SqlSalesReportingProcessor
                       r.SourceDocumentId,r.SourceDocumentType,r.SourceVersion
                     FROM reporting.SalesReportingJobs r
                     LEFT JOIN dbo.DocumentProcessingJobs j ON j.JobId=r.SourceDocumentProcessingJobId
-                    WHERE r.BusinessId=@Business AND (r.SourcePayloadJson IS NOT NULL OR j.Status=N'Completed');
+                    WHERE r.BusinessId=@Business AND (r.SourcePayloadJson IS NOT NULL OR j.Status=N'Completed')
+                      AND (r.SourceDocumentType NOT IN(N'WorkSessionClosureReconciliation',N'DispatchCashDifference') OR EXISTS(
+                        SELECT 1 FROM dbo.AccountingPostingJobs financial WHERE financial.SourceDocumentId=r.SourceDocumentId
+                          AND financial.SourceDocumentType=r.SourceDocumentType AND financial.BusinessId=r.BusinessId
+                          AND financial.Status IN(N'Posted',N'CommercialEffectsApplied')));
                     IF NOT EXISTS(SELECT 1 FROM #RebuildSources) THROW 51621,N'La sede no tiene fuentes inmutables para reconstruir.',1;
                     DELETE reporting.SalesReportPaymentFacts WHERE BusinessId=@Business;
                     DELETE reporting.SalesReportTaxFacts WHERE BusinessId=@Business;

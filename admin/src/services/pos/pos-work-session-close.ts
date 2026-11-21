@@ -71,6 +71,7 @@ const paymentMethodNames: Record<string, string> = {
   Voucher: "Bono / vale",
   Check: "Cheque",
   Withholding: "Retención",
+  PendingCollection: "Por recaudar",
 };
 
 export function workSessionPaymentMethodName(code: string): string {

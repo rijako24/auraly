@@ -235,8 +235,10 @@ for (const sample of [
 }
 
 for (const legacy of [false, true]) {
-  test(`grupos y evidencia se guardan sin sesión desde ${legacy ? "la captura legacy activada explícitamente" : "el comprobante financiero"}`, async ({ page, baseURL }) => {
+  test(`vínculos existentes y evidencia se guardan sin selector de grupos ni sesión desde ${legacy ? "la captura legacy activada explícitamente" : "el comprobante financiero"}`, async ({ page, baseURL }) => {
     const scenario = financialVoucherScenario();
+    scenario.draft.voucherTypeCode="Accounting";
+    scenario.draft.lines=scenario.draft.lines.map(line=>({...line,value:{...line.value,financialGroupId:legacy?null:scenario.documentId}}));
     let draft = legacy ? { ...scenario.draft, payloadVersion: 2, voucherTypeCode: null,
       lines: scenario.draft.lines.map(line => ({ ...line, value: { ...line.value, existingPosition: null, paymentEvidence: null } })) } : scenario.draft;
     let reads = 0, writes = 0, sessionCalls = 0, positionReads = 0;
@@ -258,7 +260,7 @@ for (const legacy of [false, true]) {
         const command = request.postDataJSON() as SaveVoucherDraft;
         expect(command.payloadVersion).toBe(4);
         expect(command.workSessionId).toBeNull();
-        expect(command.lines[0].financialGroupId).toBeTruthy();
+        expect(command.lines[0].financialGroupId??null).toBe(legacy?null:scenario.documentId);
         expect(command.lines[0].financialGroupId).toBe(command.lines[1].financialGroupId);
         expect(command.lines[1].paymentEvidence).toEqual({ cardFranchiseCode: "Visa", approvalNumber: "AP-123",
           notes: "Evidencia conservada", ...(legacy ? {} : { tenderedAmount: 100 }) });
@@ -270,8 +272,7 @@ for (const legacy of [false, true]) {
     if (legacy) await page.getByRole("button", { name: "Usar captura financiera", exact: true }).click();
     await page.getByRole("button", { name: "Detalles de la partida 2", exact: true }).click();
     let dialog = page.getByRole("dialog", { name: "Detalles de la partida 2", exact: true });
-    await dialog.getByRole("combobox", { name: "Grupo de la partida" }).click();
-    await page.getByRole("option", { name: "Crear otro grupo", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "Grupo de la partida" })).toHaveCount(0);
     await dialog.getByLabel("Autorización del pago", { exact: true }).fill("AP-123");
     await dialog.getByLabel("Observación del pago", { exact: true }).fill("Evidencia conservada");
     await dialog.getByRole("combobox", { name: "Franquicia del pago" }).click();
@@ -279,8 +280,7 @@ for (const legacy of [false, true]) {
     await dialog.getByRole("button", { name: "Cerrar detalles" }).click();
     await page.getByRole("button", { name: "Detalles de la partida 1", exact: true }).click();
     dialog = page.getByRole("dialog", { name: "Detalles de la partida 1", exact: true });
-    await dialog.getByRole("combobox", { name: "Grupo de la partida" }).click();
-    await page.getByRole("option", { name: "Grupo 1", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "Grupo de la partida" })).toHaveCount(0);
     await dialog.getByRole("button", { name: "Cerrar detalles" }).click();
     await expect(page.getByRole("button", { name: /sesión de trabajo|cierre de caja/i })).toHaveCount(0);
     await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();

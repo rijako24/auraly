@@ -54,6 +54,23 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         return store.PricingCursorAsync(device.DeviceId, device.TenantId, device.BusinessId, ct);
     }
 
+    public Task<PosSellerBootstrapPage> SellerBootstrapPageAsync(CatalogDeviceIdentity device,
+        string? cursor, int pageSize, CancellationToken ct)
+    {
+        ValidateEnrolledScope(device); ValidatePageSize(pageSize);
+        if (cursor is not null && !Guid.TryParse(cursor, out _))
+            throw new CatalogValidationException("La posición de descarga de vendedores no es válida.");
+        return store.SellerBootstrapPageAsync(device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
+    }
+
+    public Task<PosSellerDeltaPage> SellerChangesAsync(CatalogDeviceIdentity device,
+        long cursor, int pageSize, CancellationToken ct)
+    {
+        ValidateEnrolledScope(device); ValidatePageSize(pageSize);
+        if (cursor < 0) throw new CatalogValidationException("La posición de vendedores no puede ser negativa.");
+        return store.SellerChangesAsync(device.DeviceId, device.TenantId, device.BusinessId, cursor, pageSize, ct);
+    }
+
     public Task<PosCustomerBootstrapPage> CustomerBootstrapPageAsync(
         CatalogDeviceIdentity device, string? cursor, int pageSize, CancellationToken ct)
     {

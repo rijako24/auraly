@@ -21,9 +21,9 @@ public static class PartyWorkspaceApi
             await Handle(async()=>Results.Ok(await service.PageAsync(context.User.ToPartyUserIdentity(),page??1,
                 new PartyWorkspaceQuery(pageSize??25,search,role,isActive,isIncomplete,roleId,partyId),ct))));
         parties.MapGet("/role-options", async(HttpContext context,PartyWorkspaceService service,int? page,int? pageSize,
-            string role,string? search,Guid? roleId,Guid? partyId,string? partyType,CancellationToken ct)=>
+            string role,string? search,Guid? roleId,Guid? partyId,string? partyType,bool? includeInactive,CancellationToken ct)=>
             await Handle(async()=>Results.Ok(await service.RoleOptionsAsync(context.User.ToPartyUserIdentity(),page??1,
-                new PartyRoleOptionQuery(role,pageSize??25,search,roleId,partyId,PartyType:partyType),ct))));
+                new PartyRoleOptionQuery(role,pageSize??25,search,roleId,partyId,PartyType:partyType,IncludeInactive:includeInactive??false),ct))));
         parties.MapPost("/role-options", async(HttpContext context, PartyWorkspaceService service,
             PartyRoleOptionQuery query, CancellationToken ct) =>
             await Handle(async() => Results.Ok(await service.RoleOptionsAsync(

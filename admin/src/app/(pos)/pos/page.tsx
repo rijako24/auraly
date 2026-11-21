@@ -118,6 +118,7 @@ import { DianQuotaNotice } from "@/components/fiscal/dian-quota-notice";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCashDenominationDialog } from "./pos-cash-denomination-dialog";
+import { PosSellerSearchDialog } from "./pos-seller-search-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { DesktopUpdateButton } from "@/components/desktop/desktop-updater";
@@ -315,6 +316,7 @@ export default function PosPage() {
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
   const [preparationHealth, setPreparationHealth] = useState<PosPreparationHealth | null>(null);
+  const [sellerSelectionAvailable,setSellerSelectionAvailable]=useState(false);
   const [edgePermissions, setEdgePermissions] = useState<string[]>([]);
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -432,6 +434,7 @@ export default function PosPage() {
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [priceVerifierMode, setPriceVerifierMode] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [sellerSearchOpen, setSellerSearchOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [genericProductLine, setGenericProductLine] = useState<PosDraft["lines"][number] | null>(null);
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
@@ -763,6 +766,7 @@ export default function PosPage() {
             if (active) {
               setPreparationHealth(health);
               setEdgePermissions(health.permissions ?? []);
+              setSellerSelectionAvailable(health.sellerSelectionAvailable===true);
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
                 automaticRetryScheduled: health.automaticRetryScheduled ?? false,
@@ -897,6 +901,7 @@ export default function PosPage() {
       if (!active) return;
       if (client.mode === "edge") setPreparationHealth(health);
       if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
+      setSellerSelectionAvailable(client.mode!=="edge"||health.sellerSelectionAvailable===true);
       setSynchronization({
         inProgress: health.synchronizationInProgress,
         automaticRetryScheduled: health.automaticRetryScheduled ?? false,
@@ -1323,6 +1328,7 @@ export default function PosPage() {
 
   const activePosPermissions = client?.mode === "edge" ? edgePermissions : permissions;
   const canReprintSales = activePosPermissions.includes("sales.reprint");
+  const canSelectSeller = Boolean(draft) && activePosPermissions.includes("sales.create");
   const canAccessSalesReturns = activePosPermissions.includes("sales.returns.create") || activePosPermissions.includes("sales.returns.read");
   const canOpenCashDrawer = activePosPermissions
     .includes("work-sessions.cash.drawer.open") &&
@@ -1335,6 +1341,7 @@ export default function PosPage() {
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{
       if(!event.ctrlKey||event.altKey||event.metaKey||event.shiftKey)return;
+      if(document.querySelector('[data-pos-focus-surface="modal"]'))return;
       const key=event.key.toLowerCase();if((key!=="f"&&key!=="g"&&key!=="e"&&key!=="s")||
         (key==="f"&&!canReceivePortfolio)||(key==="g"&&!canPayPortfolio))return;
       event.preventDefault();event.stopPropagation();
@@ -1381,7 +1388,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !printerOpen &&
         !denominationCalculatorOpen &&
@@ -1401,7 +1408,7 @@ export default function PosPage() {
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !paymentOpen &&
         !confirmation
@@ -1415,7 +1422,7 @@ export default function PosPage() {
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !paymentOpen &&
         !confirmation
@@ -1427,7 +1434,7 @@ export default function PosPage() {
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !paymentOpen &&
         !confirmation
@@ -1439,7 +1446,7 @@ export default function PosPage() {
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !confirmation
       ) {
@@ -1472,7 +1479,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !confirmation
       ) {
@@ -1484,7 +1491,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !confirmation
       ) {
         void protectedActionHandlers.current.discount();
@@ -1496,7 +1503,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !confirmation
       ) {
@@ -1507,7 +1514,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !confirmation
       ) {
@@ -1538,7 +1545,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !printerOpen &&
         !denominationCalculatorOpen &&
@@ -1563,7 +1570,7 @@ export default function PosPage() {
     cashMovementDirection,
     closurePreview,
     confirmation,
-    customerSearchOpen,
+    customerSearchOpen, sellerSearchOpen,
     denominationCalculatorOpen,
     discountOpen,
     documentTypeOpen,
@@ -1597,7 +1604,7 @@ export default function PosPage() {
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
-        !customerSearchOpen &&
+        !customerSearchOpen && !sellerSearchOpen &&
         !discountOpen &&
         !printerOpen &&
         !denominationCalculatorOpen &&
@@ -1622,7 +1629,7 @@ export default function PosPage() {
     chargesOpen,
     closurePreview,
     confirmation,
-    customerSearchOpen,
+    customerSearchOpen, sellerSearchOpen,
     denominationCalculatorOpen,
     discountOpen,
     documentTypeOpen,
@@ -2249,6 +2256,39 @@ export default function PosPage() {
     }
   }
 
+  const searchSellers = useCallback((term: string, skip: number) => {
+    if (!client) throw new Error("La caja no está disponible.");
+    return client.searchSellers(term, skip, 20);
+  }, [client]);
+
+  async function selectSeller(sellerId: string | null) {
+    if (!client || !draft || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setDraft(await client.selectSeller(draft.draftId.value, sellerId));
+      setSellerSearchOpen(false);
+      focusScanner();
+    } catch (caught) {
+      const message=posPublicError(caught instanceof Error?caught.message:null,"No fue posible asignar el vendedor. Intenta de nuevo.")??"No fue posible asignar el vendedor.";
+      setError(message);throw new Error(message);
+    }
+    finally { setBusy(false); }
+  }
+
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.key.toLowerCase()!=="v" ||
+          !canSelectSeller || !salesReady || busy || client?.mode==="edge"&&!sellerSelectionAvailable || document.querySelector('[role="dialog"]')) return;
+      const target = event.target as HTMLElement;
+      if (target!==scanner.current && target.closest("input,textarea,[contenteditable=true]")) return;
+      event.preventDefault();
+      setSellerSearchOpen(true);
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [canSelectSeller,salesReady, busy,client?.mode,sellerSelectionAvailable]);
+
   async function selectCustomer(customer: Pick<PosCustomer, "customerId" | "partySiteId"> | null) {
     if (!client || !draft || busy) return;
     setBusy(true);
@@ -2708,6 +2748,10 @@ export default function PosPage() {
     },
     [client, salesHistoryScope],
   );
+  const searchHistoryRoleOptions=useCallback((role:"Seller"|"User",search:string,page:number,pageSize:number)=>{
+    if(!client)throw new Error("El punto de venta no está disponible.");
+    return client.searchServerHistoryRoleOptions(salesHistoryScope,role,search,page,pageSize);
+  },[client,salesHistoryScope]);
   const searchHistoryCustomers = useCallback(
     (search: string, skip: number) => client
       ? client.searchServerHistoryCustomers(salesHistoryScope, search, skip, 10)
@@ -3910,6 +3954,12 @@ export default function PosPage() {
             </div>
             {!isStore && <div className="mb-3 flex items-center gap-2">{customerSelector}{chargesAction}</div>}
             {isStore && draft?.sourceOrderId && <p className="mb-2 text-xs font-semibold text-amber-200">Pedido recuperado · ocupado por esta sesión</p>}
+            <button type="button" disabled={!canSelectSeller || !salesReady || busy || client?.mode==="edge"&&!sellerSelectionAvailable} onClick={() => setSellerSearchOpen(true)}
+              aria-label="Seleccionar vendedor" title={client?.mode==="edge"&&!sellerSelectionAvailable?"Actualiza la aplicación de caja para seleccionar vendedor":"Seleccionar vendedor · Ctrl+V"}
+              className="mb-2 flex w-full min-w-0 items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-left text-xs hover:bg-white/10 disabled:opacity-40">
+              <UserRound className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="truncate">Vendedor: {draft?.sellerName ?? (draft?.sellerId ? "Asignado al pedido" : "Automático")}</span>
+              <span className="ml-auto shrink-0 text-auraly-secondary">Ctrl+V</span>
+            </button>
             {(draft?.charges?.length ?? 0) > 0 && <div className="mb-3 space-y-2 rounded-xl bg-white/5 p-3 text-xs">{draft?.charges?.map(charge => <div key={charge.appliedChargeId} className="flex items-start justify-between gap-2"><div><b>{charge.name}</b><p className="text-auraly-secondary">{charge.invoicedAmount > 0 ? "Incluido en factura" : "Gasto"}</p></div><span className="whitespace-nowrap">{money.format(charge.amount)}</span></div>)}</div>}
             <dl className={`space-y-2 text-sm ${isStore ? "mb-2" : ""}`}>
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
@@ -4125,6 +4175,8 @@ export default function PosPage() {
         />
       )}
 
+      {sellerSearchOpen && client && <PosSellerSearchDialog busy={busy} onSearch={searchSellers}
+        onSelect={selectSeller} onCancel={() => { setSellerSearchOpen(false); focusScanner(); }} />}
       {customerSearchOpen && client && (
         <PosCustomerSearchDialog
           busy={busy}
@@ -4246,7 +4298,7 @@ export default function PosPage() {
       )}
 
       {invoiceSearchOpen && client && (
-        <PosInvoiceSearchDialog
+        <PosInvoiceSearchDialog scopeKey={workstation.businessId} onSearchRoleOptions={searchHistoryRoleOptions} timeZone={orderTimeZone} canCorrect={activePosPermissions.includes("sales.payments.correct")&&activePosPermissions.includes("work-sessions.closures.reconcile")&&activePosPermissions.includes("work-sessions.differences.read")} canCorrectDispatch={activePosPermissions.includes("sales.payments.correct")&&activePosPermissions.includes("dispatches.settle")}
           busy={busy}
 
           onSearch={searchIssuedSales}

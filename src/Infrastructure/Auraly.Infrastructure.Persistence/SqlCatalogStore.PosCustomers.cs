@@ -12,7 +12,7 @@ public sealed partial class SqlCatalogStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await EnsurePosCustomerScopeAsync(connection, deviceId, tenantId, businessId, ct);
+        await EnsurePosPartyScopeAsync(connection, deviceId, tenantId, businessId, ct);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT ISNULL(MAX(AvailableThroughCursor),0) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Configuration';";
         command.Parameters.Add(P("@BusinessId", businessId));
@@ -28,7 +28,7 @@ public sealed partial class SqlCatalogStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await EnsurePosCustomerScopeAsync(connection, deviceId, tenantId, businessId, ct);
+        await EnsurePosPartyScopeAsync(connection, deviceId, tenantId, businessId, ct);
 
         var after = Guid.TryParse(cursor, out var parsed) ? parsed : (Guid?)null;
         await using var command = connection.CreateCommand();
@@ -81,7 +81,7 @@ public sealed partial class SqlCatalogStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await EnsurePosCustomerScopeAsync(connection, deviceId, tenantId, businessId, ct);
+        await EnsurePosPartyScopeAsync(connection, deviceId, tenantId, businessId, ct);
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
             SELECT TOP (@Take)
@@ -132,7 +132,7 @@ public sealed partial class SqlCatalogStore
             changes);
     }
 
-    private static async Task EnsurePosCustomerScopeAsync(
+    private static async Task EnsurePosPartyScopeAsync(
         SqlConnection connection,
         Guid deviceId,
         Guid tenantId,

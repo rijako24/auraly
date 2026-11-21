@@ -152,9 +152,9 @@ public static class WorkSessionApi
                 context.User.ToWorkSessionIdentity(), from, to, status, page ?? 1, pageSize ?? 50, cancellationToken))));
 
         group.MapGet("/closures", async (HttpContext context, DateOnly from, DateOnly to,
-            string? status, int? page, int? pageSize, WorkSessionService service, CancellationToken cancellationToken) =>
+            string? status, int? page, int? pageSize, Guid? closureId, WorkSessionService service, CancellationToken cancellationToken) =>
             await Handle(async () => Results.Ok(await service.ListClosuresAsync(
-                context.User.ToWorkSessionIdentity(),from,to,status,page ?? 1,pageSize ?? 50,cancellationToken))));
+                context.User.ToWorkSessionIdentity(),from,to,status,page ?? 1,pageSize ?? 50,cancellationToken,closureId))));
 
         group.MapGet("/closures/{closureId:guid}/payment-verifications", async (
             HttpContext context, Guid closureId, WorkSessionService service, CancellationToken cancellationToken) =>

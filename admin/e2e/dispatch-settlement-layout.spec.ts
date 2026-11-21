@@ -32,7 +32,7 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "receiver-session" };
     else if (path.endsWith("/closures/inbox")) body = { items: [{ closureId: "close-id", type: "Dispatch", cashClosure: null,
       dispatchClosure: { dispatchId, dispatchNumber: dispatch.dispatchNumber, businessId, businessName: "Sede", driverName: "Transportador",
-        closedAt: "2026-11-17T14:00:00Z", status: "PendingReview", expectedCash: 100000, declaredCash: 100000, cashReceived: null, difference: 0 } }], page: 1, pageSize: 50, totalItems: 1 };
+        closedAt: "2026-11-17T14:00:00Z", openedAt: "2026-11-17T12:00:00Z", status: "PendingReview", expectedCash: 100000, declaredCash: 100000, cashReceived: null, difference: 0 } }], page: 1, pageSize: 50, totalItems: 1 };
     else if (path.endsWith("/settle")) {
       submitted = route.request().postDataJSON();
       body = { ...execution, status: "SettlementProcessing", settlement: { ...execution.settlement, status: "Processing" } };
@@ -56,8 +56,8 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
   await input.fill("90000"); await expect(input).toHaveValue("90.000");
   const result = dialog.getByRole("status", { name: "Resultado del efectivo" });
   await expect(result).toContainText("Faltante"); await expect(result).toContainText("10.000");
-  for (const width of [1440, 820]) {
-    await page.setViewportSize({ width, height: 1000 });
+  for (const width of [1440, 1366, 820]) {
+    await page.setViewportSize({ width, height: width===1366 ? 768 : 1000 });
     const a = await input.boundingBox(), b = await result.boundingBox();
     expect(a).not.toBeNull(); expect(b).not.toBeNull();
     expect(Math.abs(a!.y - b!.y)).toBeLessThanOrEqual(1); expect(a!.height).toBe(b!.height);

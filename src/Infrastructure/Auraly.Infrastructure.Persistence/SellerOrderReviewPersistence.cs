@@ -10,7 +10,7 @@ public sealed record EditableSellerOrder(
     int Status,
     Guid WarehouseId,
     Guid OrdersWarehouseId,
-    IReadOnlyList<EditableSellerOrderLine> Lines);
+    IReadOnlyList<EditableSellerOrderLine> Lines, Guid? SellerId = null);
 
 public sealed record EditableSellerOrderLine(
     int Position,
@@ -63,6 +63,7 @@ public static class SellerOrderReviewPersistence
         int status;
         Guid warehouseId;
         Guid ordersWarehouseId;
+        Guid? sellerId;
         var lines = new List<EditableSellerOrderLine>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
@@ -74,6 +75,7 @@ public static class SellerOrderReviewPersistence
             status = reader.GetInt32(3);
             warehouseId = reader.GetGuid(4);
             ordersWarehouseId = reader.GetGuid(5);
+            sellerId = reader.IsDBNull(6) ? null : reader.GetGuid(6);
             if (!await reader.NextResultAsync(cancellationToken))
                 return null;
             while (await reader.ReadAsync(cancellationToken))
@@ -93,7 +95,34 @@ public static class SellerOrderReviewPersistence
                 lines.Add(line);
             }
         }
-        return new EditableSellerOrder(number, customerId, partySiteId, status, warehouseId, ordersWarehouseId, lines);
+        return new EditableSellerOrder(number, customerId, partySiteId, status, warehouseId, ordersWarehouseId, lines, sellerId);
+    }
+
+    public static async Task<string?> ReadMutationReceiptAsync(SqlConnection connection, SqlTransaction transaction,
+        Guid businessId, Guid orderId, Guid userId, string key, string hash, CancellationToken ct)
+    {
+        await using var command = new SqlCommand("""
+            SELECT OrderId,UserId,RequestHash,ResultJson FROM dbo.OrderMutationReceipts WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@Business AND IdempotencyKey=@Key;
+            """, connection, transaction);
+        command.Parameters.AddRange([Parameter("@Business",businessId),Parameter("@Key",key)]);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        if (reader.GetGuid(0)!=orderId || reader.GetGuid(1)!=userId || reader.GetString(2)!=hash)
+            throw new InvalidOperationException("La clave de actualización del pedido ya se usó con otra operación.");
+        return reader.GetString(3);
+    }
+
+    public static async Task SaveMutationReceiptAsync(SqlConnection connection, SqlTransaction transaction,
+        Guid businessId, Guid orderId, Guid userId, string key, string hash, string resultJson, CancellationToken ct)
+    {
+        await using var command = new SqlCommand("""
+            INSERT dbo.OrderMutationReceipts(BusinessId,OrderId,UserId,IdempotencyKey,RequestHash,ResultJson,CreatedAt)
+            VALUES(@Business,@Order,@User,@Key,@Hash,@Result,SYSDATETIMEOFFSET());
+            """,connection,transaction);
+        command.Parameters.AddRange([Parameter("@Business",businessId),Parameter("@Order",orderId),
+            Parameter("@User",userId),Parameter("@Key",key),Parameter("@Hash",hash),Parameter("@Result",resultJson)]);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     public static async Task UpdateMetadataAsync(
@@ -104,12 +133,13 @@ public static class SellerOrderReviewPersistence
         string? notes,
         Guid userId,
         Guid? workSessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? requestedSellerId = null)
     {
         await using var command = Procedure("dbo.SellerOrderMetadataUpdate", connection, transaction);
         command.Parameters.AddRange([
             Parameter("@OrderId", orderId),
             Parameter("@BusinessId", businessId),
+            Parameter("@RequestedSellerId", requestedSellerId),
             Parameter("@Notes", notes),
             Parameter("@UserId", userId),
             Parameter("@WorkSessionId", workSessionId)
@@ -138,11 +168,12 @@ public static class SellerOrderReviewPersistence
         IReadOnlyCollection<SellerOrderReplacementLine> lines,
         Guid userId,
         Guid? workSessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? requestedSellerId = null)
     {
         await using (var update = Procedure("dbo.SellerOrderReplace", connection, transaction))
         {
             update.Parameters.AddRange([
+                Parameter("@RequestedSellerId", requestedSellerId),
                 Parameter("@Notes", notes),
                 Parameter("@CustomerId", customerId),
                 Parameter("@PartySiteId", partySiteId),

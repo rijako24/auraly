@@ -9,6 +9,35 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosDraftStoreTests
 {
     [Fact]
+    public async Task Selected_seller_survives_restart_customer_change_pause_recover_and_order_import()
+    {
+        await WithStoreAsync(async (store,path,scope,ids) =>
+        {
+            var seller=Guid.NewGuid();
+            var draft=await store.AddOrIncrementLineAsync(scope,Line(2));
+            var selected=await store.SelectSellerAsync(scope,draft.DraftId,seller,"Vendedora de prueba");
+            Assert.Equal(seller,selected.SellerId);
+            Assert.Equal("Vendedora de prueba",selected.SellerName);
+            var reopened=Store(path,ids);
+            var persisted=await reopened.GetOrCreateActiveAsync(scope);
+            Assert.Equal(selected.SellerName,persisted.SellerName);
+            await reopened.AssignPartiesAsync(draft.DraftId,Guid.NewGuid(),seller,Guid.NewGuid());
+            await reopened.SaveTemporaryAsync(draft.DraftId,"Con vendedor",null,null);
+            var recovered=await reopened.RecoverTemporaryAsync(draft.DraftId,scope);
+            Assert.Equal(seller,recovered.SellerId);
+            Assert.Equal(selected.SellerName,recovered.SellerName);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>reopened.SelectSellerAsync(
+                scope with { UserId=new UserId(Guid.NewGuid()) },recovered.DraftId,Guid.NewGuid(),"Otro"));
+            var automatic=await reopened.SelectSellerAsync(scope,recovered.DraftId,null,null);
+            Assert.Null(automatic.SellerId);Assert.Null(automatic.SellerName);
+            await reopened.SaveTemporaryAsync(automatic.DraftId,"Antes de recuperar pedido",null,null);
+            var imported=await reopened.ImportOrderAsync(scope,Guid.NewGuid(),"PED-001",Guid.NewGuid(),Guid.NewGuid(),
+                "Con vendedor",[Line(3)],sellerId:seller,sellerName:"Vendedora de prueba");
+            Assert.Equal(seller,imported.SellerId);Assert.Equal("Vendedora de prueba",imported.SellerName);
+        });
+    }
+
+    [Fact]
     public async Task Invoice_can_add_the_same_charge_definition_more_than_once()
     {
         await WithStoreAsync(async (store, path, scope, _) =>

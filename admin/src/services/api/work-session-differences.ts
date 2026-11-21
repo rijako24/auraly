@@ -70,8 +70,8 @@ export const workSessionDifferencesApi = {
     ),
   closureInbox: (from: string, to: string, status?: string, page=1, pageSize=50) =>
     apiClient.get<CashClosureInboxPage>("/commerce/v1/work-sessions/closures/inbox", { from, to, status, page, pageSize }),
-  listClosures: (from: string, to: string, status?: string, page=1, pageSize=50) =>
-    apiClient.get<WorkSessionClosurePage>("/commerce/v1/work-sessions/closures", { from, to, status, page, pageSize }),
+  listClosures: (from: string, to: string, status?: string, page=1, pageSize=50, closureId?:string) =>
+    apiClient.get<WorkSessionClosurePage>("/commerce/v1/work-sessions/closures", { from, to, status, page, pageSize, closureId }),
   listPaymentVerifications: (closureId: string, page = 1, pageSize = 100,
     paymentMethodCode?: string, movementType?: string) =>
     apiClient.get<ClosurePaymentVerificationPage>(`/commerce/v1/work-sessions/closures/${closureId}/payment-verifications/page`,
@@ -114,6 +114,6 @@ export interface ClosurePaymentCorrection { verificationKey:string; paymentMetho
 export interface ReconcileClosureRequest { lines:Array<{paymentMethodCode:string;verifiedAmount:number;isConfirmed:boolean;reasonCode:string|null}>; reclassifications:Array<{fromPaymentMethodCode:string;toPaymentMethodCode:string;amount:number}>; note:string|null; paymentVerifications:Array<{verificationKey:string;status:"Verified"|"Missing"}>; paymentCorrections?:ClosurePaymentCorrection[]; manualMovements?:ClosureManualMovement[]; chargeCashShortageToEmployee?:boolean }
 export interface ClosureReconciliation { reconciliationId:string; workSessionClosureId:string; businessId:string; status:string; accountingStatus:string }
 
-export interface DispatchClosureInboxItem { dispatchId:string; dispatchNumber:string; businessId:string; businessName:string; driverName:string; closedAt:string; status:string; expectedCash:number; declaredCash:number; cashReceived:number|null; difference:number }
+export interface DispatchClosureInboxItem { dispatchId:string; dispatchNumber:string; businessId:string; businessName:string; driverName:string; closedAt:string; openedAt:string; status:string; expectedCash:number; declaredCash:number; cashReceived:number|null; difference:number }
 export type CashClosureInboxItem = { closureId:string; type:"Cash"; cashClosure:WorkSessionClosure; dispatchClosure:null } | { closureId:string; type:"Dispatch"; cashClosure:null; dispatchClosure:DispatchClosureInboxItem };
 export interface CashClosureInboxPage { items:CashClosureInboxItem[]; page:number; pageSize:number; totalItems:number }

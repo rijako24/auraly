@@ -44,7 +44,7 @@ export function DispatchSettlementDialog({ id, onClose, onChanged, mode = "revie
   };
   const data = execution.isError ? undefined : execution.data;
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
-    <DialogContent className="flex max-h-[94dvh] w-[calc(100%-1rem)] max-w-4xl flex-col overflow-hidden p-0 [&>button]:text-white">
+    <DialogContent className="flex max-h-[94dvh] w-[calc(100%-1rem)] max-w-6xl flex-col overflow-hidden p-0 [&>button]:text-white">
       <DialogHeader className="shrink-0 border-b bg-gradient-to-r from-slate-950 to-teal-900 p-5 text-left text-white sm:p-6">
         <DialogTitle className="text-xl text-white">Recepción y liquidación del despacho</DialogTitle>
         <DialogDescription className="break-all text-slate-200">{data ? `${data.dispatchNumber} · ${data.driverName}${data.vehiclePlate ? ` · ${data.vehiclePlate}` : ""}` : "Entregas, recaudos, devoluciones y gastos del despacho."}</DialogDescription>
@@ -57,14 +57,6 @@ export function DispatchSettlementDialog({ id, onClose, onChanged, mode = "revie
             <p className="text-sm"><strong>{data.settlement ? "Cierre de despacho" : "Despacho sin cerrar"}</strong><span className="block text-muted-foreground">{dates.timeZone ? dates.formatDate(data.scheduledDate) : data.scheduledDate}</span></p>
             <Button size="sm" variant="outline" disabled={execution.isFetching} onClick={() => void execution.refetch()}><RotateCcw className="mr-2 h-4 w-4"/>Actualizar</Button>
           </div>
-          {data.settlement && <section aria-label="Declaración del transportador" className="rounded-2xl border p-4 text-sm">
-            <h3 className="font-bold">Declaración del transportador</h3>
-            <dl className="mt-3 grid gap-3 sm:grid-cols-3">
-              <div><dt className="text-muted-foreground">Efectivo</dt><dd className="mt-1 text-lg font-bold tabular-nums">{money.format(data.settlement.declaredCash)}</dd></div>
-              <div><dt className="text-muted-foreground">Tarjetas</dt><dd className="mt-1 text-lg font-bold tabular-nums">{data.settlement.declaredCard == null ? "No declarado" : money.format(data.settlement.declaredCard)}</dd></div>
-              <div><dt className="text-muted-foreground">Transferencias</dt><dd className="mt-1 text-lg font-bold tabular-nums">{data.settlement.declaredTransfer == null ? "No declarado" : money.format(data.settlement.declaredTransfer)}</dd></div>
-            </dl>
-          </section>}
           <DispatchSettlementPanel key={id} data={data} onChanged={apply} onPaymentReview={applyPaymentReview} readOnly={mode === "progress"}/>
           <section aria-label="Entregas del despacho" className="space-y-3">
             <h3 className="font-bold">Entregas y recaudos · {data.documents.length} {data.documents.length === 1 ? "documento" : "documentos"}</h3>

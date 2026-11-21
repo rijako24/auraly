@@ -18,6 +18,34 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Payment_method_corrections_require_their_own_permission_before_any_financial_read_or_write()
+    {
+        using var client=fixture.CreateUserClient(fixture.UserId,WorkSessionPermissionCodes.ReconcileClosures,
+            "dispatches.settle","sales.reprint");
+        var closure=Guid.NewGuid();
+        WorkSessionPaymentCorrection[] corrections=[new("Sale:invoice:1","Transfer",10000,"Soporte verificado",Reference:"TRF-123")];
+        using(var validation=await client.PostAsJsonAsync($"/api/commerce/v1/work-sessions/closures/{closure:D}/payment-corrections/validate",corrections))
+            Assert.Equal(HttpStatusCode.Forbidden,validation.StatusCode);
+        foreach(var request in new[]{
+            new ReconcileWorkSessionClosureRequest([new("Cash",0,true,null)],[],null,PaymentCorrections:corrections),
+            new ReconcileWorkSessionClosureRequest([new("Cash",0,true,null)],[new("Cash","Transfer",10000)],null)})
+        {
+            using var message=new HttpRequestMessage(HttpMethod.Post,$"/api/commerce/v1/work-sessions/closures/{closure:D}/reconcile") {Content=JsonContent.Create(request)};
+            message.Headers.Add("Idempotency-Key",Guid.NewGuid().ToString("N"));
+            using var response=await client.SendAsync(message);Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+        }
+        using(var dispatch=await client.PutAsJsonAsync($"/api/commerce/v1/dispatches/{Guid.NewGuid():D}/payments/{Guid.NewGuid():D}/correction",
+            new Auraly.Contracts.Dispatching.CorrectDispatchPaymentRequest(Guid.NewGuid(),1,"Cash",null,null,null,"Corrección",null)))
+            Assert.Equal(HttpStatusCode.Forbidden,dispatch.StatusCode);
+        using var scope=fixture.CreateScope();
+        var service=scope.ServiceProvider.GetRequiredService<WorkSessionService>();
+        using var counter=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+        await Assert.ThrowsAsync<WorkSessionForbiddenException>(()=>service.ValidatePaymentCorrectionsAsync(
+            new(fixture.UserId,fixture.TenantId,new HashSet<string>{WorkSessionPermissionCodes.ReconcileClosures}),closure,corrections));
+        Assert.Equal(0,counter.Count);
+    }
+
     [Theory]
     [InlineData(250)]
     [InlineData(10_000)]
@@ -173,7 +201,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
     [Fact]
     public async Task Reconciliation_rejects_an_oversized_verification_key_before_loading_the_closure()
     {
-        using var client = fixture.CreateAdminClient(WorkSessionPermissionCodes.ReconcileClosures);
+        using var client = fixture.CreateAdminClient(WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"/api/commerce/v1/work-sessions/closures/{Guid.NewGuid():D}/reconcile")
         {
@@ -935,7 +963,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
             WorkSessionPermissionCodes.Read,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
         await InsertMovementsAsync(opened.WorkSessionId, userId);
@@ -1122,7 +1150,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var closure = await CloseAsync(client, opened.WorkSessionId,
@@ -1242,7 +1270,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
             WorkSessionPermissionCodes.Read,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client, new OpenWorkSessionRequest(
             fixture.BusinessId, fixture.WarehouseId, null));
         await InsertMovementsAsync(opened.WorkSessionId, userId);
@@ -1286,7 +1314,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var documentId = Guid.NewGuid();
@@ -1415,7 +1443,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         var permissions = new[] {
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash, WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures, ReceivablesPermissionCodes.Read };
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods, ReceivablesPermissionCodes.Read };
         using var client = fixture.CreateUserClient(userId, permissions);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
@@ -1559,7 +1587,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var documentId = Guid.NewGuid();
@@ -1634,7 +1662,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var saleId = Guid.NewGuid();
@@ -1733,7 +1761,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         await using (var connection = new SqlConnection(fixture.ConnectionString))
@@ -1800,7 +1828,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var reasons = await client.GetFromJsonAsync<CashMovementReasonView[]>(
@@ -1864,7 +1892,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var customerId = await CreateCustomerAsync(userId, "Cliente de corrección");
@@ -2012,7 +2040,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null, 5_000m));
         var paymentId = Guid.NewGuid();

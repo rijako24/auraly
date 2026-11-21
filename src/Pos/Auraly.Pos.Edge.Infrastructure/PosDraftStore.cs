@@ -94,7 +94,8 @@ public sealed record PosDraft(
     IReadOnlyList<PosDraftLine> Lines,
     Guid? SourceOrderId = null,
     Guid? CustomerPartySiteId = null,
-    IReadOnlyList<AppliedInvoiceCharge>? Charges = null)
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    string? SellerName = null)
 {
     public decimal UntaxedAmount => Lines.Sum(line => line.Net) + (Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0);
     public decimal TaxAmount => Lines.Sum(line => line.Tax) + (Charges?.Sum(charge => charge.InvoicedTaxAmount) ?? 0);
@@ -198,6 +199,11 @@ public sealed partial class PosDraftStore
         if (!columns.Contains("CustomerPartySiteId"))
         {
             command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN CustomerPartySiteId TEXT NULL;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!columns.Contains("SellerName"))
+        {
+            command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN SellerName TEXT NULL;";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         columns.Clear();
@@ -335,7 +341,7 @@ public sealed partial class PosDraftStore
         Guid customerPartySiteId,
         string? observation,
         IReadOnlyList<PosDraftLineInput> lines,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Guid? sellerId = null, string? sellerName = null)
     {
         if (orderId == Guid.Empty || string.IsNullOrWhiteSpace(orderNumber) || customerId == Guid.Empty ||
             customerPartySiteId == Guid.Empty || lines.Count == 0)
@@ -374,13 +380,13 @@ public sealed partial class PosDraftStore
                 P("@WorkSessionId", scope.WorkSessionId.Value), P("@UserId", scope.UserId.Value)
             ], cancellationToken);
         var draftId = new DraftId(_idGenerator.NewId());
-        await InsertActiveAsync(connection, transaction, draftId, scope, customerId, null,
+        await InsertActiveAsync(connection, transaction, draftId, scope, customerId, sellerId,
             customerPartySiteId, cancellationToken);
         await ExecuteAsync(connection, transaction, """
-            UPDATE PosDrafts SET SourceOrderId=@OrderId,Reference=@OrderNumber,Observation=@Observation
+            UPDATE PosDrafts SET SourceOrderId=@OrderId,Reference=@OrderNumber,Observation=@Observation,SellerName=@SellerName
             WHERE DraftId=@DraftId;
             """,
-            [P("@OrderId", orderId), P("@OrderNumber", orderNumber.Trim()),
+            [P("@OrderId", orderId), P("@OrderNumber", orderNumber.Trim()), P("@SellerName",sellerName),
                 P("@Observation", Normalize(observation)), P("@DraftId", draftId.Value)],
             cancellationToken);
         var imported = lines.Select((line, index) => new
@@ -634,7 +640,7 @@ public sealed partial class PosDraftStore
         await ExecuteAsync(connection, transaction, """
             UPDATE PosDrafts
             SET CustomerPartySiteId=@CustomerPartySiteId,
-                CustomerId=@CustomerId,SellerId=@SellerId,UpdatedAt=@Now
+                CustomerId=@CustomerId,SellerName=CASE WHEN SellerId=@SellerId THEN SellerName ELSE NULL END,SellerId=@SellerId,UpdatedAt=@Now
             WHERE DraftId=@DraftId;
             """,
             [
@@ -886,13 +892,13 @@ public sealed partial class PosDraftStore
             await ExecuteAsync(connection, transaction, """
                 UPDATE PosDrafts
                 SET CustomerId=@CustomerId,CustomerPartySiteId=@CustomerPartySiteId,
-                    SellerId=@SellerId,UpdatedAt=@Now
+                    SellerId=@SellerId,SellerName=@SellerName,UpdatedAt=@Now
                 WHERE DraftId=@DraftId;
                 """,
                 [
                     P("@CustomerId", source.CustomerId),
                     P("@CustomerPartySiteId", source.CustomerPartySiteId),
-                    P("@SellerId", source.SellerId),
+                    P("@SellerId", source.SellerId), P("@SellerName", source.SellerName),
                     P("@Now", Now()), P("@DraftId", targetId.Value)
                 ],
                 cancellationToken);
@@ -900,6 +906,7 @@ public sealed partial class PosDraftStore
         // Copy the complete temporary sale in a bounded batch. Charge selections
         // keep the tariff version captured before the pause.
         await ExecuteAsync(connection, transaction, """
+            UPDATE PosDrafts SET SellerName=(SELECT SellerName FROM PosDrafts WHERE DraftId=@SourceId) WHERE DraftId=@TargetId;
             INSERT INTO PosDraftLines(
               LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,Quantity,
               BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceChannelId,Discount,Note,
@@ -1229,7 +1236,7 @@ public sealed partial class PosDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,SellerId,Status,
-                   Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId,CustomerPartySiteId
+                   Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId,CustomerPartySiteId,SellerName
             FROM PosDrafts WHERE DraftId=@DraftId;
             """;
         command.Parameters.Add(P("@DraftId", draftId.Value));
@@ -1257,7 +1264,7 @@ public sealed partial class PosDraftStore
             DateTimeOffset.Parse(reader.GetString(12), CultureInfo.InvariantCulture),
             [],
             NullableGuid(reader, 13),
-            NullableGuid(reader, 14));
+            NullableGuid(reader, 14), SellerName: NullableString(reader, 15));
 
     private static async Task<IReadOnlyList<PosDraftLine>> ReadLinesAsync(
         SqliteConnection connection,
@@ -1416,6 +1423,7 @@ public sealed partial class PosDraftStore
           CustomerId TEXT NULL,
           CustomerPartySiteId TEXT NULL,
           SellerId TEXT NULL,
+          SellerName TEXT NULL,
           Status TEXT NOT NULL CHECK(Status IN ('Active','Temporary','Consumed','Deleted')),
           Name TEXT NULL,
           Reference TEXT NULL,

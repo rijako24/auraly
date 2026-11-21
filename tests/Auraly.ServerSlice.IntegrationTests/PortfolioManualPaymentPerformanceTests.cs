@@ -625,7 +625,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
         var correctionPage = await sessions.ListClosurePaymentVerificationPageAsync(sessionUser,
             closed.WorkSessionClosureId, "Cash", "CashOut", 1, 50);
         var reviewer = sessionUser with { Permissions = sessionUser.Permissions
-            .Append(WorkSessionPermissionCodes.ReconcileClosures).ToHashSet() };
+            .Append(WorkSessionPermissionCodes.ReconcileClosures).Append(Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods).ToHashSet() };
         foreach (var correctionCount in new[] { 1, 50 })
         {
             var corrections = correctionPage.Items.Take(correctionCount).Select(item =>

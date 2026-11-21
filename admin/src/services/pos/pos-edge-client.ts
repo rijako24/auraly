@@ -143,6 +143,10 @@ export type PosIssuedSaleSummary = {
   customerIdentification: string;
   customerName: string;
   fiscalStatus: string | null;
+  payments?: Array<{paymentNumber:number;methodCode:string;amount:number;formName:string|null}>;
+  closureId?: string|null;
+  dispatchId?: string|null;
+  sellerName?: string|null;
 };
 
 export type PosIssuedSaleSearchPage = {
@@ -225,12 +229,16 @@ export type PosDraftLineUpdate = Pick<
   "lineId" | "description" | "publicUnitPrice" | "discount" | "documentUnitCost"
 >;
 
+export type PosSeller = { sellerId: string; partyId: string; code: string; name: string; identification: string | null; isActive: boolean };
+export type PosSellerPage = { items: PosSeller[]; hasMore: boolean; nextOffset: number | null };
+
 export type PosDraft = {
   draftId: DraftId;
   scope?: { businessId: string; warehouseId: string; deviceId: string; workSessionId: string; userId: string };
   customerId: string | null;
   customerPartySiteId?: string | null;
   sellerId: string | null;
+  sellerName?: string | null;
   status: string;
   name: string | null;
   reference: string | null;
@@ -273,6 +281,8 @@ export type PosIssuedSaleFilters = {
   productId: string | null;
   minimumTotal: number | null;
   maximumTotal: number | null;
+  sellerId?:string|null;
+  billedByUserId?:string|null;
 };
 
 export type PosServerHistoryScope = {
@@ -692,6 +702,7 @@ export interface PosClient {
     fiscalWarnings: string[];
     dianQuotaAvailable: boolean | null;
     identityReady: boolean;
+    sellerSelectionAvailable?: boolean;
     initialEnrollmentSessionAvailable?: boolean;
     recoverableLocalNumbering?: boolean;
     catalogStatus: string;
@@ -766,6 +777,8 @@ export interface PosClient {
   changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
   setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   updateLines(draftId: string, lines: PosDraftLineUpdate[], includesProratedDiscount?: boolean): Promise<PosDraft>;
+  searchSellers(search?: string, skip?: number, take?: number): Promise<PosSellerPage>;
+  selectSeller(draftId: string, sellerId: string | null): Promise<PosDraft>;
   selectCustomer(draftId: string, customerId: string | null, partySiteId?: string | null): Promise<PosCustomerSelection>;
   removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   discardUnpricedGenericLine(draftId: string, lineId: string): Promise<PosDraft>;
@@ -798,6 +811,7 @@ export interface PosClient {
     skip?: number,
     take?: number,
   ): Promise<PosIssuedSaleSearchPage>;
+  searchServerHistoryRoleOptions(context:PosServerHistoryScope,role:"Seller"|"User",search:string,page:number,pageSize:number):Promise<PartyRoleOptionPage>;
   searchServerHistoryCustomers(
     context: PosServerHistoryScope,
     search: string,
@@ -1011,6 +1025,7 @@ export class PosEdgeClient implements PosClient {
       fiscalWarnings: string[];
       dianQuotaAvailable: boolean | null;
       identityReady: boolean;
+    sellerSelectionAvailable?: boolean;
       initialEnrollmentSessionAvailable: boolean;
       recoverableLocalNumbering?: boolean;
       catalogStatus: string;
@@ -1460,6 +1475,14 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
+  searchSellers(search = "", skip = 0, take = 20) {
+    return this.request<PosSellerPage>(`/edge/v1/sellers?${new URLSearchParams({ search, skip:String(skip), take:String(take) })}`);
+  }
+
+  selectSeller(draftId: string, sellerId: string | null) {
+    return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/seller`, { method:"PUT", body:JSON.stringify({sellerId}) });
+  }
+
   selectCustomer(draftId: string, customerId: string | null, partySiteId: string | null = null) {
     return this.request<PosCustomerSelection>(
       `/edge/v1/drafts/${draftId}/customer`,
@@ -1538,6 +1561,7 @@ export class PosEdgeClient implements PosClient {
       ? await this.request<SellerOrderResult>(`/edge/v1/orders/${draft.sourceOrderId}`, {
           method: "PUT",
           body: JSON.stringify({
+            sellerId: draft.sellerId,
             customerId: draft.customerId,
             partySiteId: draft.customerPartySiteId,
             notes: draft.observation ?? null,
@@ -1551,6 +1575,7 @@ export class PosEdgeClient implements PosClient {
           body: JSON.stringify({
             businessId: scope.businessId,
             warehouseId: scope.warehouseId,
+            sellerId: draft.sellerId,
             customerId: draft.customerId,
             partySiteId: draft.customerPartySiteId,
             routeId: null,
@@ -1780,6 +1805,11 @@ export class PosEdgeClient implements PosClient {
         )),
       },
     ).then(mapServerIssuedSalesPage);
+  }
+
+  searchServerHistoryRoleOptions(context:PosServerHistoryScope,role:"Seller"|"User",search:string,page:number,pageSize:number) {
+    return this.request<PartyRoleOptionPage>("/edge/v1/server-history/parties/role-options",{
+      method:"POST",body:JSON.stringify({context,role,search,page,pageSize}) });
   }
 
   searchServerHistoryCustomers(

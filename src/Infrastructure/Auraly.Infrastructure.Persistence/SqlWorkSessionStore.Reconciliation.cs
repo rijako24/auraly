@@ -15,31 +15,35 @@ public sealed partial class SqlWorkSessionStore
 {
     public async Task<WorkSessionClosurePage> ListClosuresAsync(
         WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
-        int page, int pageSize, CancellationToken cancellationToken)
+        int page, int pageSize, CancellationToken cancellationToken, Guid? closureId = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         // A tenant-wide calendar report must use each business's configured
         // zone. Load that metadata once; never convert dates with a fixed UTC offset.
-        var zones=await SqlBusinessLocalDates.ReadTenantTimeZonesAsync(connection,identity.TenantId,cancellationToken);
+        var zones=closureId is null ? await SqlBusinessLocalDates.ReadTenantTimeZonesAsync(connection,identity.TenantId,cancellationToken) : new Dictionary<Guid,TimeZoneInfo>();
         var rangesJson=JsonSerializer.Serialize(zones.Select(item=>new {
             BusinessId=item.Key,StartsAt=SqlBusinessLocalDates.StartOfDay(from,item.Value),
             Until=SqlBusinessLocalDates.StartOfDay(to.AddDays(1),item.Value) }));
-        const string filter = """
+        var closurePredicate=closureId is null
+            ? "closure.ClosedAt>=calendar.StartsAt AND closure.ClosedAt<calendar.Until"
+            : "closure.WorkSessionClosureId=@ClosureId";
+        var filter = $"""
             FROM dbo.WorkSessionClosures closure
             INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
             INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
-            INNER JOIN OPENJSON(@Ranges) WITH(BusinessId uniqueidentifier,StartsAt datetimeoffset(7),Until datetimeoffset(7)) calendar
+            LEFT JOIN OPENJSON(@Ranges) WITH(BusinessId uniqueidentifier,StartsAt datetimeoffset(7),Until datetimeoffset(7)) calendar
               ON calendar.BusinessId=business.BusinessId
             LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=session.WarehouseId
             INNER JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
-            WHERE session.Kind=N'Normal' AND business.TenantId=@TenantId AND closure.ClosedAt>=calendar.StartsAt AND closure.ClosedAt<calendar.Until
+            WHERE session.Kind=N'Normal' AND business.TenantId=@TenantId AND {closurePredicate}
               AND (@Status IS NULL OR closure.ReconciliationStatus=@Status)
             """;
         int total;
         await using (var count = new SqlCommand("SELECT COUNT(*) " + filter, connection))
         {
             AddClosureSearchParameters(count, identity, rangesJson, status);
+            count.Parameters.AddWithValue("@ClosureId",(object?)closureId??DBNull.Value);
             total = Convert.ToInt32(await count.ExecuteScalarAsync(cancellationToken));
         }
         await using var command = new SqlCommand("""
@@ -58,6 +62,7 @@ public sealed partial class SqlWorkSessionStore
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             """, connection);
         AddClosureSearchParameters(command, identity, rangesJson, status);
+        command.Parameters.AddWithValue("@ClosureId",(object?)closureId??DBNull.Value);
         command.Parameters.AddWithValue("@Skip", (page - 1) * pageSize);
         command.Parameters.AddWithValue("@Take", pageSize);
         var items = new List<WorkSessionClosureListItem>();
@@ -553,6 +558,9 @@ public sealed partial class SqlWorkSessionStore
                     JsonSerializer.Serialize(payload, Json), reconciledAt, ids.NewId())], reconciledAt,
                 hasFinancialEffects ? AccountingJobRequirement.PreserveCommercialEffects : AccountingJobRequirement.AccountingEntryOnly,
                 cancellationToken) > 0;
+            if (accountingQueued && verification.Corrections.Any(item => item.MovementType == "Sale"))
+                await SqlSalesReportingJobWriter.InsertPaymentCorrectionAsync(connection, transaction, businessId, reconciliationId,
+                    "WorkSessionClosureReconciliation", ids.NewId(), reconciledAt, cancellationToken);
             if (cashShortageClaim is not null && !accountingQueued)
                 throw new WorkSessionValidationException("No se pudo registrar el documento contable del faltante.");
             await transaction.CommitAsync(cancellationToken);

@@ -4,6 +4,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.Application.Dispatching;
 using Auraly.Contracts.Dispatching;
+using Auraly.Contracts.Parties;
+using Auraly.Contracts.Routes;
+using Auraly.Application.Parties;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -17,6 +21,7 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
     public async Task Provider_timeout_rolls_back_the_dispatch_and_remains_a_provider_failure()
     {
         var dispatchId=Guid.NewGuid();
+        var carrierId=await fixture.SeedDispatchCarrierAsync();
         await using var setup=new SqlConnection(fixture.ConnectionString);
         await setup.OpenAsync();
         await using(var trigger=new SqlCommand("CREATE TRIGGER dbo.DispatchTimeoutProbe ON dbo.Dispatches AFTER INSERT AS WAITFOR DELAY '00:00:03';",setup))
@@ -24,10 +29,10 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
         try {
             var limited=new SqlConnectionStringBuilder(fixture.ConnectionString){CommandTimeout=1};
             var store=new Auraly.Infrastructure.Dispatching.SqlDispatchStore(new(
-                new Auraly.BuildingBlocks.Infrastructure.Persistence.AuralySqlConnectionSource(limited.ConnectionString)));
-            var request=new CreateDispatchRequest(fixture.BusinessId,new(2026,11,18),"Prueba de timeout",null,null,null,null,[Guid.NewGuid()]);
-            var failure=await Assert.ThrowsAsync<SqlException>(()=>store.CreateAsync(Actor(),dispatchId,$"DSP-TIMEOUT-{dispatchId:N}",
-                request,request.DriverName,null,null,DateTimeOffset.UtcNow,CancellationToken.None));
+                new Auraly.BuildingBlocks.Infrastructure.Persistence.AuralySqlConnectionSource(limited.ConnectionString)),new SqlOperationalDocumentAllocator());
+            var request=new CreateDispatchRequest(fixture.BusinessId,new(2026,11,18),"Prueba de timeout",null,carrierId,null,[Guid.NewGuid()]);
+            var failure=await Assert.ThrowsAsync<SqlException>(()=>store.CreateAsync(Actor(),dispatchId,
+                request,null,null,DateTimeOffset.UtcNow,CancellationToken.None));
             Assert.Equal(-2,failure.Number);
             await using var count=new SqlCommand("SELECT COUNT(*) FROM dbo.Dispatches WHERE DispatchId=@Id",setup);
             count.Parameters.AddWithValue("@Id",dispatchId);
@@ -39,48 +44,45 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
     }
 
     [Fact]
-    public async Task Drivers_are_paged_without_parameter_collision_and_only_eligible_users_are_returned()
+    public async Task Carrier_selector_uses_the_party_catalog_and_excludes_inactive_parties_and_roles()
     {
-        var marker = $"DRIVER-{Guid.NewGuid():N}";
-        var role = Guid.NewGuid();
-        var users = Enumerable.Range(0, 103).Select(index => new { Id = Guid.NewGuid(), Index = index }).ToArray();
+        var marker = $"CARRIER-{Guid.NewGuid():N}";
+        var carriers = Enumerable.Range(0, 103).Select(index => new { Id = Guid.NewGuid(), Party = Guid.NewGuid(), Index = index }).ToArray();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var seed = new SqlCommand("""
-            INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName) VALUES(@Role,@Tenant,@Marker,@Marker);
-            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId)
-              SELECT NEWID(),@Role,PermissionId FROM dbo.Permissions WHERE Resource=N'dispatches.delivery.execute';
-            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive)
-              SELECT Id,@Tenant,CONVERT(nvarchar(36),Id),CONVERT(nvarchar(36),Id),CONCAT(Id,N'@test.invalid'),
-                CONCAT(Id,N'@test.invalid'),@Marker,CONVERT(nvarchar(3),[Index]),CASE WHEN [Index]=101 THEN 0 ELSE 1 END
-              FROM OPENJSON(@Users) WITH(Id uniqueidentifier,[Index] int);
-            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId)
-              SELECT NEWID(),Id,@Role,CASE WHEN [Index]%2=0 THEN @Business ELSE NULL END
-              FROM OPENJSON(@Users) WITH(Id uniqueidentifier,[Index] int) WHERE [Index]<102;
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedAt)
+              SELECT Party,@Tenant,N'NaturalPerson',CONCAT(@Marker,[Index]),N'Incomplete',
+                CASE WHEN [Index]=102 THEN 0 ELSE 1 END,SYSUTCDATETIME()
+              FROM OPENJSON(@Carriers) WITH(Id uniqueidentifier,Party uniqueidentifier,[Index] int);
+            INSERT dbo.Carriers(CarrierId,TenantId,PartyId,Code,TransportationMode,IsActive,CreatedAt)
+              SELECT Id,@Tenant,Party,LEFT(CONVERT(nvarchar(36),Id),32),N'Road',
+                CASE WHEN [Index]=101 THEN 0 ELSE 1 END,SYSUTCDATETIME()
+              FROM OPENJSON(@Carriers) WITH(Id uniqueidentifier,Party uniqueidentifier,[Index] int);
             """, connection);
-        seed.Parameters.AddWithValue("@Role", role); seed.Parameters.AddWithValue("@Tenant", fixture.TenantId);
-        seed.Parameters.AddWithValue("@Business", fixture.BusinessId); seed.Parameters.AddWithValue("@Marker", marker);
-        seed.Parameters.AddWithValue("@Users", JsonSerializer.Serialize(users));
+        seed.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        seed.Parameters.AddWithValue("@Marker", marker);
+        seed.Parameters.AddWithValue("@Carriers", JsonSerializer.Serialize(carriers));
         await seed.ExecuteNonQueryAsync();
         using var client = fixture.CreateAdminClient(DispatchPermissionCodes.Create);
-        var page = (await client.GetFromJsonAsync<DispatchDriverPage>(
-            $"/api/commerce/v1/dispatches/drivers?page=1&pageSize=50&search={marker}"))!;
+        var path = $"/api/commerce/v1/parties/role-options?role=Carrier&pageSize=50&search={marker}";
+        var page = (await client.GetFromJsonAsync<PartyRoleOptionPage>(path + "&page=1"))!;
+        var next = (await client.GetFromJsonAsync<PartyRoleOptionPage>(path + "&page=2"))!;
         Assert.Equal(101, page.TotalCount); Assert.Equal(50, page.Items.Count);
-        var next = (await client.GetFromJsonAsync<DispatchDriverPage>(
-            $"/api/commerce/v1/dispatches/drivers?page=2&pageSize=50&search={marker}"))!;
-        Assert.Equal(100, page.Items.Concat(next.Items).Select(value => value.UserId).Distinct().Count());
+        Assert.Equal(100, page.Items.Concat(next.Items).Select(value => value.RoleId).Distinct().Count());
+        Assert.All(page.Items, value => Assert.Equal("Carrier", value.Role));
         var selected = page.Items.First();
-        var exact = (await client.GetFromJsonAsync<DispatchDriverPage>(
-            $"/api/commerce/v1/dispatches/drivers?userId={selected.UserId}"))!;
+        var exact = (await client.GetFromJsonAsync<PartyRoleOptionPage>(
+            $"/api/commerce/v1/parties/role-options?role=Carrier&roleId={selected.RoleId}"))!;
         Assert.Equal(selected, Assert.Single(exact.Items));
-        Assert.Empty((await client.GetFromJsonAsync<DispatchDriverPage>(
-            $"/api/commerce/v1/dispatches/drivers?userId={users[101].Id}"))!.Items);
-        Assert.Empty((await client.GetFromJsonAsync<DispatchDriverPage>(
-            $"/api/commerce/v1/dispatches/drivers?userId={users[102].Id}"))!.Items);
+        foreach (var inactive in carriers.Skip(101))
+            Assert.Empty((await client.GetFromJsonAsync<PartyRoleOptionPage>(
+                $"/api/commerce/v1/parties/role-options?role=Carrier&roleId={inactive.Id}"))!.Items);
         using var scope = fixture.CreateScope();
-        var store = scope.ServiceProvider.GetRequiredService<IDispatchStore>();
+        var store = scope.ServiceProvider.GetRequiredService<IPartyWorkspaceStore>();
         using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
-        await store.DriversAsync(Actor(), 1, 20, marker, null, CancellationToken.None);
+        await store.RoleOptionsAsync(new(fixture.UserId,fixture.TenantId,fixture.BusinessId,
+            new HashSet<string>{DispatchPermissionCodes.Create}),1,new("Carrier",20,marker),CancellationToken.None);
         Assert.Equal(1, counter.Count);
     }
 
@@ -88,6 +90,7 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
     public async Task Candidate_business_days_page_before_details_and_one_dispatch_can_group_two_source_warehouses()
     {
         var marker = $"D{Guid.NewGuid():N}"[..8];
+        var carrierId=await fixture.SeedDispatchCarrierAsync();
         var otherWarehouse = Guid.NewGuid();
         var docs = Enumerable.Range(0, 2000).Select(index => new {
             Id = Guid.NewGuid(), Index = index,
@@ -121,9 +124,49 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
         seed.Parameters.AddWithValue("@Series", fixture.OnlineSalesReceiptSeriesId); seed.Parameters.AddWithValue("@Product", fixture.ProductId);
         seed.Parameters.AddWithValue("@Docs", JsonSerializer.Serialize(docs));
         await seed.ExecuteNonQueryAsync();
+        var routes=Enumerable.Range(0,31).Select(index=>new{Id=Guid.NewGuid(),Index=index}).ToArray();
+        await using(var routeSeed=new SqlCommand("""
+          DECLARE @Party uniqueidentifier=NEWID(),@Customer uniqueidentifier=NEWID(),@Site uniqueidentifier=NEWID(),@Seller uniqueidentifier=NEWID();
+          INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedAt)
+            VALUES(@Party,@Tenant,N'NaturalPerson',N'Cliente de ruta',N'Incomplete',1,SYSUTCDATETIME());
+          INSERT dbo.Customers(CustomerId,TenantId,PartyId,IsActive,CreatedAt)
+            VALUES(@Customer,@Tenant,@Party,1,SYSUTCDATETIME());
+          INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            SELECT TOP(1) @Site,@Party,N'PRINCIPAL',N'Destino de la ruta',CountryId,AdministrativeDivisionId,CityId,N'Dirección de prueba',1,1,@User,SYSUTCDATETIME()
+            FROM dbo.PartySites ORDER BY PartySiteId;
+          INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            SELECT @Seller,@Tenant,PartyId,@Marker,N'SaleBeforeTax',N'Sale',1,SYSUTCDATETIME() FROM dbo.Carriers WHERE CarrierId=@Carrier;
+          INSERT dbo.SalesRoutes(RouteId,BusinessId,Code,Name,SellerId,IsActive,CreatedBy,CreatedAt)
+            SELECT Id,@Business,CONCAT(@Marker,[Index]),CONCAT(@Marker,N' ruta ',[Index]),@Seller,
+              CASE WHEN [Index]=30 THEN 0 ELSE 1 END,@User,SYSUTCDATETIME()
+            FROM OPENJSON(@Routes) WITH(Id uniqueidentifier,[Index] int);
+          INSERT dbo.SalesRouteStops(RouteStopId,RouteId,CustomerId,PartySiteId,Sequence,IsActive,CreatedBy,CreatedAt)
+            VALUES(NEWID(),@Route,@Customer,@Site,1,1,@User,SYSUTCDATETIME());
+          UPDATE dbo.SalesDocuments SET CustomerId=@Customer,CustomerPartySiteId=@Site WHERE DocumentId IN(@First,@Second);
+          """,connection))
+        {
+            routeSeed.Parameters.AddWithValue("@Tenant",fixture.TenantId);routeSeed.Parameters.AddWithValue("@Business",fixture.BusinessId);
+            routeSeed.Parameters.AddWithValue("@Carrier",carrierId);routeSeed.Parameters.AddWithValue("@Marker",marker);
+            routeSeed.Parameters.AddWithValue("@Routes",JsonSerializer.Serialize(routes));routeSeed.Parameters.AddWithValue("@Route",routes[0].Id);
+            routeSeed.Parameters.AddWithValue("@User",fixture.UserId);routeSeed.Parameters.AddWithValue("@First",docs[2].Id);routeSeed.Parameters.AddWithValue("@Second",docs[3].Id);
+            await routeSeed.ExecuteNonQueryAsync();
+        }
+        using(var routeClient=fixture.CreateAdminClient(DispatchPermissionCodes.Create))
+        {
+            var path=$"/api/commerce/v1/dispatches/options?pageSize=10&search={marker}";
+            var options=(await routeClient.GetFromJsonAsync<SalesRoutePage>(path+"&page=1"))!;
+            var next=(await routeClient.GetFromJsonAsync<SalesRoutePage>(path+"&page=2"))!;
+            Assert.Equal(30,options.TotalCount);Assert.Equal(10,options.Items.Count);
+            Assert.Equal(20,options.Items.Concat(next.Items).Select(row=>row.RouteId).Distinct().Count());
+            using var denied=fixture.CreateAdminClient(DispatchPermissionCodes.Read);
+            Assert.Equal(HttpStatusCode.Forbidden,(await denied.GetAsync(path)).StatusCode);
+        }
         using var scope = fixture.CreateScope();
         var store = scope.ServiceProvider.GetRequiredService<IDispatchStore>();
         var query = new DispatchCandidateQuery(1, 20, marker, From: new(2026, 11, 16), To: new(2026, 11, 16), DateRangeVersion: 2);
+        var routeOnly=await store.CandidatesAsync(Actor(),query with{RouteId=routes[0].Id},default);
+        Assert.Equal(2,routeOnly.TotalCount);Assert.Equal(docs.Skip(2).Take(2).Select(row=>row.Id).Order(),routeOnly.Items.Select(row=>row.DocumentId).Order());
+        Assert.Empty((await store.CandidatesAsync(Actor(),query with{RouteId=Guid.NewGuid()},default)).Items);
         var timings = new List<double>();
         var ids = new HashSet<Guid>();
         for (var sample = 0; sample < 9; sample++)
@@ -151,22 +194,23 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
         using var client = fixture.CreateAdminClient(DispatchPermissionCodes.Create, DispatchPermissionCodes.AttachDocuments,
             DispatchPermissionCodes.Read, DispatchPermissionCodes.ReadAll);
         var request = new CreateDispatchRequest(fixture.BusinessId, new(2026, 11, 16), "Responsable de prueba",
-            null, null, null, null, [docs[2].Id, docs[3].Id]);
+            null, carrierId, null, [docs[2].Id, docs[3].Id]);
         using var created = await client.PostAsJsonAsync("/api/commerce/v1/dispatches", request);
         Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
         var result = (await created.Content.ReadFromJsonAsync<DispatchMutationResult>())!;
+        Assert.StartsWith("DSP",result.DispatchNumber); Assert.DoesNotContain("-2026",result.DispatchNumber);
         Assert.Equal(2, result.DocumentCount); Assert.Equal(6, result.LineCount); Assert.Equal(6m, result.ExpectedQuantity);
         var detail = (await client.GetFromJsonAsync<DispatchDetail>($"/api/commerce/v1/dispatches/{result.DispatchId}"))!;
         Assert.Equal(new[] { fixture.WarehouseId, otherWarehouse }.Order(), detail.Documents.Select(value => value.WarehouseId).Order());
         await using var verify = new SqlCommand("""
-            SELECT WarehouseId FROM dbo.Dispatches WHERE DispatchId=@Dispatch;
+            SELECT WarehouseId,RouteId FROM dbo.Dispatches WHERE DispatchId=@Dispatch;
             SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId IN(@First,@Second);
             SELECT COUNT(*) FROM dbo.DispatchSourceDocuments WHERE SourceDocumentId IN(@First,@Second);
             """, connection);
         verify.Parameters.AddWithValue("@Dispatch", result.DispatchId); verify.Parameters.AddWithValue("@First", docs[2].Id); verify.Parameters.AddWithValue("@Second", docs[3].Id);
         await using (var reader = await verify.ExecuteReaderAsync())
         {
-            Assert.True(await reader.ReadAsync()); Assert.True(reader.IsDBNull(0));
+            Assert.True(await reader.ReadAsync()); Assert.True(reader.IsDBNull(0)); Assert.True(reader.IsDBNull(1));
             await reader.NextResultAsync(); Assert.True(await reader.ReadAsync()); Assert.Equal(0, reader.GetInt32(0));
             await reader.NextResultAsync(); Assert.True(await reader.ReadAsync()); Assert.Equal(2, reader.GetInt32(0));
         }
@@ -199,8 +243,46 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
             request with{SourceDocumentIds=docs.Skip(10).Take(500).Select(item=>item.Id).ToArray()});
         Assert.True(largeResponse.IsSuccessStatusCode,await largeResponse.Content.ReadAsStringAsync());
         var large=(await largeResponse.Content.ReadFromJsonAsync<DispatchMutationResult>())!;
+        // Admin pagination stays bounded before details are materialized. The
+        // summary covers the whole dispatch, not merely the visible ten rows.
+        var seenDocuments=new HashSet<Guid>(); var seenLines=new HashSet<Guid>();
+        foreach(var pageNumber in new[]{1,2})
+        {
+            await store.GetAsync(Actor(),large.DispatchId,default,new(pageNumber,10,pageNumber,10));
+            using var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+            var clock=Stopwatch.StartNew();
+            var paged=(await store.GetAsync(Actor(),large.DispatchId,default,new(pageNumber,10,pageNumber,10)))!;
+            clock.Stop();
+            Assert.Equal(4,counter.Count); Assert.Equal(10,paged.Documents.Count); Assert.Equal(10,paged.Lines.Count);
+            Assert.Equal(500,paged.Summary!.DocumentCount); Assert.Equal(1500,paged.Summary.LineCount);
+            foreach(var row in paged.Documents)Assert.True(seenDocuments.Add(row.SourceDocumentId));
+            foreach(var row in paged.Lines)Assert.True(seenLines.Add(row.DispatchLineId));
+            output.WriteLine("Dispatch detail page {0}: 10 documents / 10 lines, 4 SQL commands, {1:F2} ms",pageNumber,clock.Elapsed.TotalMilliseconds);
+            Assert.True(clock.ElapsedMilliseconds<2000);
+        }
+        var service=scope.ServiceProvider.GetRequiredService<DispatchService>();
+        var verifier=Actor() with{Permissions=new HashSet<string>{DispatchPermissionCodes.Read,DispatchPermissionCodes.Prepare,DispatchPermissionCodes.Verify}};
+        var prepared=await service.PrepareAsync(verifier,result.DispatchId,new(result.RowVersion,Guid.NewGuid().ToString("N")),default);
+        await service.StartVerificationAsync(verifier,result.DispatchId,new(prepared.RowVersion,Guid.NewGuid().ToString("N")),default);
+        var line=detail.Lines.First();
+        await using(var fractional=new SqlCommand("UPDATE dbo.DispatchLines SET AssignedQuantity=20.5 WHERE DispatchLineId=@Id",connection))
+        {fractional.Parameters.AddWithValue("@Id",line.DispatchLineId);await fractional.ExecuteNonQueryAsync();}
+        var verification=new DispatchVerificationRequest(line.DispatchLineId,20.5m,null,Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow);
+        using(var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+        {
+            var verified=await service.VerifyQuantityAsync(verifier,result.DispatchId,verification,default);
+            Assert.Equal(2,counter.Count); Assert.Equal(20.5m,verified.UpdatedLine!.VerifiedQuantity);
+            Assert.Equal("Verified",verified.UpdatedLine.Status); Assert.Equal(5,verified.PendingLineCount);
+        }
+        var replay=await service.VerifyQuantityAsync(verifier,result.DispatchId,verification,default);
+        Assert.Equal(20.5m,replay.UpdatedLine!.VerifiedQuantity);
         var deliveryStore=scope.ServiceProvider.GetRequiredService<IDispatchDeliveryStore>();
         var readerActor=Actor() with{Permissions=new HashSet<string>{DispatchPermissionCodes.ReadAll,DispatchPermissionCodes.ExecuteDeliveries},IsAdministrator=true};
+        var unrelated=readerActor with{UserId=Guid.NewGuid()};
+        Assert.Null(await deliveryStore.GetAsync(unrelated,large.DispatchId,default));
+        Assert.Empty((await store.PageAsync(unrelated,new(1,10,large.DispatchNumber,Mine:true),default)).Items);
+        Assert.NotNull(await deliveryStore.GetAsync(unrelated with{Permissions=new HashSet<string>{DispatchPermissionCodes.Settle}},large.DispatchId,default,true));
+        Assert.Null(await deliveryStore.GetAsync(readerActor with{TenantId=Guid.NewGuid()},large.DispatchId,default));
         foreach(var sample in new[]{(result.DispatchId,2),(large.DispatchId,500)})
         {
             await deliveryStore.GetAsync(readerActor,sample.DispatchId,default);

@@ -117,7 +117,7 @@ public sealed record OrderDetail(
     Guid? WarehouseId = null,
     Guid? PartySiteId = null,
     bool CustomerRequiresElectronicInvoice = false,
-    [property: JsonIgnore] byte[]? SnapshotVersion = null);
+    [property: JsonIgnore] byte[]? SnapshotVersion = null, Guid? SellerId = null, string? SellerName = null);
 
 public sealed record OrderPrintBatchRequest(IReadOnlyCollection<Guid> OrderIds);
 

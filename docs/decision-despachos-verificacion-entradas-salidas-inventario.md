@@ -1840,6 +1840,18 @@ finalización de su procesamiento financiero.
 
 ### Acuerdo de implementación: recaudo y cierre únicos (18 de noviembre)
 
+La tirilla de declaración v2 identifica transportador, placa (o ausencia explícita),
+número y fecha del despacho, cantidad de documentos y fecha de cierre en la zona
+de la sede. No imprime el GUID del usuario ni valores esperados del cierre ciego.
+El usuario sigue en la auditoría interna. La versión se congela en el JSON del
+cierre existente; reimprimir sólo representa esa versión y no ejecuta comandos.
+Los cierres anteriores sin versión conservan v1 y su contenido original. No se
+añaden tablas, viajes de lectura ni consultas de marca; los datos proceden del agregado
+autorizado ya cargado. La versión se lee en el mismo comando mediante el ID único
+del cierre; no requiere modificar el esquema. El cambio no reescribe snapshots,
+hashes, pagos o historia; el rollback requiere el binario que conozca v2 o corregir
+hacia adelante, sin cambiar el JSON aceptado.
+
 Las decisiones siguientes sustituyen las propuestas anteriores sobre atribución
 al facturador y encabezados de cierre separados. Están aprobadas por el usuario;
 su descripción no acredita implementación ni pruebas hasta cerrar la evidencia.
@@ -2356,3 +2368,59 @@ No requiere migración de datos, tablas ni reprocesamiento financiero. El rollba
 debe conservar el writer privado: volver al cargador público reproduciría el fallo
 en Azure. Los documentos anteriores siguen conservando sus referencias y sus
 huellas; no se reescriben sus archivos ni sus cierres.
+
+
+### Ajuste de captura y consulta del despacho (20 de noviembre)
+
+La ruta pasa a ser un filtro de los documentos por la sede de destino del
+cliente incluida en sus paradas activas. No se solicita ni se guarda como dato
+del encabezado de un despacho nuevo. Los despachos históricos conservan su ruta.
+La búsqueda de factura o cliente queda visible; desde/hasta, ruta y tipo de
+documento se pueden expandir y contraer sin borrar sus valores ni la selección.
+Cambiar el rango de fechas conserva la regla de limpiar la selección anterior.
+El selector de rutas reutiliza la consulta paginada de `RouteService` /
+`SqlRouteStore`, con permiso `dispatches.create`, solamente rutas activas de la
+sede autorizada y páginas de diez. Se retira la antigua proyección no paginada
+de rutas y bodegas del store de despachos. Contraer los filtros no consulta datos.
+
+El selector de transportadores consume la proyección canónica de terceros con
+rol `Carrier`, activos tanto el tercero como el rol. Al crear se resuelve su
+usuario activo vinculado y su permiso de entregas dentro de la transacción;
+no se convierte automáticamente un usuario administrativo en transportador.
+`Mis entregas` limita lectura y acceso directo al creador y al asignado. La
+revisión administrativa usa explícitamente `review=true` y `dispatches.settle`.
+
+Documentos y verificación se consultan con páginas independientes de diez,
+ordenadas y limitadas en SQL antes de materializar sus detalles. Sus totales
+corresponden al despacho completo. Verificar permite la cantidad pendiente
+completa o una cantidad parcial, incluida fraccionaria; conserva el comando
+idempotente existente y actualiza la fila y resumen devueltos por éste, sin GET
+posterior del manifiesto. El consecutivo nuevo usa `DocumentSeries` y el
+asignador operacional existente, con prefijo DSP; no renumera históricos.
+
+Evidencia local: `DispatchCaptureTests` y los cuatro casos de medios de
+`DispatchDeliveryPaymentsTests.Native_delivery_persists_its_form_and_support_once_and_rejects_stale_or_foreign_requests`
+pasan diez casos sin omisiones. Sobre 2.000 documentos / 6.000 líneas, candidatos
+mantiene dos comandos SQL y p95 de 44 ms. El detalle de 500 documentos / 1.500
+líneas devuelve diez más diez con cuatro comandos y 29/15 ms en páginas primera
+y segunda (presupuesto: menos de dos segundos). Verificar 20,5 y repetir mantiene
+una sola aplicación y dos comandos por intento. Estas cifras no corresponden a
+DEV ni sustituyen la verificación del despliegue.
+
+Rollback: conservar series, consecutivos, terceros y vínculos ya usados; no
+borrar ni renumerar documentos. Revertir presentación no revierte declaraciones,
+verificaciones ni efectos financieros. La tirilla conserva la versión congelada
+en el cierre y el renderer v1, además del nuevo v2; ningún cambio reescribe los
+cierres históricos. No se crean tablas, motores ni colas para estos ajustes.
+
+
+La corrección administrativa de una forma de pago requiere adicionalmente
+`sales.payments.correct` (Corregir medios de pago al conciliar cierres de caja y
+despachos). Las plantillas iniciales y la actualización asignan este permiso solo
+a Administrador y Administrativo; Cajero, Supervisor, Contador y Transportador no
+lo reciben. El permiso no reemplaza conciliación/liquidación ni permite editar
+facturas electrónicas. El servidor lo exige al validar correcciones, confirmar
+una conciliación que las contenga (incluida la reclasificación agregada) y corregir
+un recaudo del despacho. Las acciones de Facturas y de ambos cierres se ocultan
+sin la capacidad. La captura inicial del cobro real por el transportador conserva
+su permiso y flujo de entregas; no se convierte en una corrección administrativa.

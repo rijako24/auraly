@@ -1261,8 +1261,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
         command.CommandText = """
             SELECT draft.SalesDraftId,draft.BusinessId,draft.WarehouseId,draft.WorkSessionId,draft.UserId,
                    draft.CustomerId,draft.SellerId,draft.Status,draft.Name,draft.Reference,draft.Observation,
-                   draft.Version,draft.UpdatedAt,draft.SourceOrderId,draft.CustomerPartySiteId
+                   draft.Version,draft.UpdatedAt,draft.SourceOrderId,draft.CustomerPartySiteId,sellerParty.DisplayName
             FROM dbo.SalesDrafts draft
+            LEFT JOIN dbo.CommerceSellers seller ON seller.SellerId=draft.SellerId
+            LEFT JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId AND sellerParty.TenantId=seller.TenantId
             JOIN OPENJSON(@DraftIdsJson) WITH(DraftId uniqueidentifier '$') input
               ON input.DraftId=draft.SalesDraftId;
 
@@ -1304,7 +1306,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetInt64(11),
                 reader.GetFieldValue<DateTimeOffset>(12),
                 reader.IsDBNull(13) ? null : reader.GetGuid(13),
-                reader.IsDBNull(14) ? null : reader.GetGuid(14));
+                reader.IsDBNull(14) ? null : reader.GetGuid(14),
+                reader.IsDBNull(15) ? null : reader.GetString(15));
             lines[draftId] = [];
         }
         await reader.NextResultAsync(ct);
@@ -1346,7 +1349,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 header.UpdatedAt, draftLines, draftLines.Sum(line => line.Net) + charges.Sum(x => x.InvoicedUntaxedAmount),
                 draftLines.Sum(line => line.Tax) + charges.Sum(x => x.InvoicedTaxAmount),
                 draftLines.Sum(line => line.Total) + charges.Sum(x => x.InvoicedAmount),
-                header.SourceOrderId,header.CustomerPartySiteId,charges);
+                header.SourceOrderId,header.CustomerPartySiteId,charges,header.SellerName);
         });
     }
 
@@ -1455,7 +1458,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         long Version,
         DateTimeOffset UpdatedAt,
         Guid? SourceOrderId,
-        Guid? CustomerPartySiteId);
+        Guid? CustomerPartySiteId,
+        string? SellerName);
 
     private static void DemandAllowedQuantity(bool allowsFractionalSale, decimal quantity)
     {

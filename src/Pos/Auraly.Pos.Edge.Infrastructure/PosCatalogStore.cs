@@ -809,6 +809,11 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
           PRIMARY KEY(ProductId,Type,Value),
           FOREIGN KEY(ProductId) REFERENCES PosCatalogProducts(ProductId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosCatalogIdentifiers_Value ON PosCatalogIdentifiers(Value);
+        CREATE TABLE IF NOT EXISTS PosSellers(SellerId TEXT PRIMARY KEY,PartyId TEXT NOT NULL,Code TEXT NOT NULL,
+          Name TEXT NOT NULL,Identification TEXT NULL,IsActive INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS PosSellerStaging(SellerId TEXT PRIMARY KEY,PartyId TEXT NOT NULL,Code TEXT NOT NULL,
+          Name TEXT NOT NULL,Identification TEXT NULL,IsActive INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS IX_PosSellers_ActiveName ON PosSellers(IsActive,Name,SellerId);
         CREATE TABLE IF NOT EXISTS PosReferenceOptions(
           CatalogCode TEXT NOT NULL,
           OptionId TEXT NOT NULL,

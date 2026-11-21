@@ -4,6 +4,43 @@ import type { PaymentMethod } from "../src/services/api/payment-methods";
 import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
 import { paymentCatalogFixture } from "./support/payment-catalog";
 
+test("un excedente requiere clasificación explícita y puede conservarse como borrador", async ({page,baseURL})=>{
+  const scenario=financialVoucherScenario();
+  scenario.draft.voucherTypeCode="CashReceipt";
+  scenario.draft.lines[0].value={...scenario.draft.lines[0].value,debit:0,credit:50,
+    existingPosition:{subledgerKind:"Receivable",subledgerId:scenario.positionId}};
+  scenario.draft.lines[1].value={...scenario.draft.lines[1].value,debit:100,credit:0};
+  let draft=scenario.draft,sends=0;
+  const writes:SaveVoucherDraft[]=[];
+  await installFinancialVoucherContext(page,baseURL!,scenario);
+  await page.route("**/api/**",async route=>{
+    const request=route.request(),path=new URL(request.url()).pathname;
+    if(path.endsWith(`/manual/drafts/${draft.documentId}/send`)) {
+      sends++;await route.fulfill({status:500,json:{}});return;
+    }
+    if(path.endsWith(`/manual/drafts/${draft.documentId}`)) {
+      if(request.method()==="PUT") {
+        const value=request.postDataJSON() as SaveVoucherDraft;writes.push(value);
+        draft={...draft,...value,rowVersion:"AAAAAAAAAAI=",canSend:false,
+          lines:value.lines.map((value,index)=>({...draft.lines[index],value}))};
+      }
+      await route.fulfill({json:draft});return;
+    }
+    await route.fallback();
+  });
+  await page.goto(`/dashboard/cash-receipts?document=${draft.documentId}`);
+  await page.getByLabel("Descripción",{exact:true}).fill("Recepción mayor al abono aplicado");
+  await page.getByRole("button",{name:"Guardar comprobante",exact:true}).click();
+  await expect(page.getByRole("alert").filter({hasText:"por clasificar"})).toContainText("Anticipo");
+  expect(writes).toHaveLength(0);expect(sends).toBe(0);
+  await expect(page.getByRole("row",{name:/^Partida \d+$/})).toHaveCount(2);
+  await page.getByRole("button",{name:"Guardar borrador",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Guardar borrador",exact:true})).toBeDisabled();
+  expect(writes).toHaveLength(1);expect(sends).toBe(0);
+  expect(writes[0].lines).toHaveLength(2);
+  expect(writes[0].lines.some(line=>line.financialConceptId)).toBe(false);
+});
+
 for (const supplier of [false, true]) test(`${supplier ? "egreso" : "recibo"} conserva dos formas del catálogo y muestra la cuenta utilizada sin recargas`, async ({ page, baseURL }, testInfo) => {
   const scenario = financialVoucherScenario();
   scenario.user.permissions.push("receivables.payments.create");
@@ -60,27 +97,9 @@ for (const supplier of [false, true]) test(`${supplier ? "egreso" : "recibo"} co
     await route.fallback();
   });
   await page.goto(`/dashboard/financial-traceability?document=${draft.documentId}`);
-  if (supplier) {
-    await page.getByRole("button", { name: "Detalles de la partida 2", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: /Detalles de la partida/ });
-    await dialog.getByRole("combobox", { name: "Forma de pago de la partida", exact: true }).click();
-    await page.getByRole("option", { name: /Caja configurada 1/ }).click();
-    await dialog.getByLabel(supplier ? "Valor pagado por la forma" : "Valor recibido por la forma").fill("60");
-    await expect(dialog.getByText(/Cuenta: 1105051/)).toBeVisible();
-    await expect(dialog.getByLabel("Efectivo entregado en la partida")).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Cerrar detalles", exact: true }).click();
-    await expect(page.getByRole("row", { name: "Partida 2", exact: true }).getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true })).toBeDisabled();
-    await page.getByRole("button", { name: "Agregar forma de pago", exact: true }).click();
-    await dialog.getByRole("combobox", { name: "Forma de pago de la partida", exact: true }).click();
-    await page.getByRole("option", { name: /Caja configurada 1/ }).click();
-    await expect(dialog.getByRole("alert")).toContainText("La forma ya está en las partidas");
-    await dialog.getByRole("combobox", { name: "Forma de pago de la partida", exact: true }).click();
-    await page.getByRole("option", { name: /Caja configurada 8/ }).click();
-    await dialog.getByLabel(supplier ? "Valor pagado por la forma" : "Valor recibido por la forma").fill("40");
-    await dialog.getByRole("button", { name: "Cerrar detalles", exact: true }).click();
-  } else {
     const panel = page.getByRole("region", { name: "Formas de pago del comprobante", exact: true });
     await expect(panel).toBeVisible();
+    await expect(page.getByText("Grupo de partidas vinculadas",{exact:true})).toHaveCount(0);
     const rowCount = await page.getByRole("row", { name: /^Partida \d+$/ }).count();
     await panel.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true }).click();
     await page.keyboard.press("Escape");
@@ -107,7 +126,6 @@ for (const supplier of [false, true]) test(`${supplier ? "egreso" : "recibo"} co
     await add.getByRole("button", { name: "Agregar forma de pago", exact: true }).click();
     await expect(page.getByRole("row", { name: /^Partida \d+$/ })).toHaveCount(rowCount + 1);
     await expect(add.getByRole("button", { name: "Agregar forma de pago", exact: true })).toBeDisabled();
-  }
   await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
   expect(writes).toHaveLength(1);
@@ -120,22 +138,24 @@ for (const supplier of [false, true]) test(`${supplier ? "egreso" : "recibo"} co
   await expect(page.getByRole("region", { name: "Formas de pago utilizadas", exact: true })).toContainText("Caja utilizada · 11059901 · Auxiliar vigente al contabilizar");
   await expect(page.getByRole("row", { name: "Partida 2", exact: true })).toContainText("11059901");
   await expect(page.getByRole("region", { name: "Documentos pendientes del tercero", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("main")).toContainText("Contabilizado");
+  await expect(page.getByRole("main")).not.toContainText("Posted");
   expect(positionReads).toBe(1);
   expect(reads).toBe(1); expect(formReads).toBe(1); expect(sends).toBe(1); expect(writes).toHaveLength(1);
   await page.screenshot({ path: testInfo.outputPath("voucher-configured-forms.png"), fullPage: true });
 });
 
-for (const methodCode of ["Cash", "DebitCard", "CreditCard", "Transfer"] as const) {
-  test(`recibo captura ${methodCode} en el panel y agrega una sola partida con su evidencia`, async ({ page, baseURL }) => {
+for (const supplier of [false,true]) for (const methodCode of ["Cash", "DebitCard", "CreditCard", "Transfer"] as const) {
+  test(`${supplier ? "egreso" : "recibo"} captura ${methodCode} en el panel y agrega una sola partida con su evidencia`, async ({ page, baseURL }) => {
     const scenario = financialVoucherScenario();
-    scenario.draft.voucherTypeCode = "CashReceipt";
+    scenario.draft.voucherTypeCode = supplier ? "Disbursement" : "CashReceipt";
     scenario.draft.lines = [{ ...scenario.draft.lines[0], value: { ...scenario.draft.lines[0].value,
-      debit: 0, credit: 100, existingPosition: { subledgerKind: "Receivable", subledgerId: scenario.positionId } } }];
+      debit: supplier ? 100 : 0, credit: supplier ? 0 : 100, existingPosition: { subledgerKind: supplier ? "Payable" : "Receivable", subledgerId: scenario.positionId } } }];
     const forms: PaymentMethod[] = ["Cash", "DebitCard", "CreditCard", "Transfer"].map((code, index) => ({
       paymentMethodId: `00000000-0000-0000-0000-00000000000${index + 1}`, code: `FORMA-${index}`, name: `Medio ${code}`,
       paymentTypeId: `00000000-0000-0000-0000-00000000001${index}`, methodCode: code, typeLabel: code,
       accountId: `00000000-0000-0000-0000-00000000002${index}`, accountCode: `11050${index}`, accountName: `Cuenta ${code}`,
-      bankAccountId: null, useForSales: false, useForReceipts: true, useForSupplierPayments: false,
+      bankAccountId: null, useForSales: false, useForReceipts: true, useForSupplierPayments: true,
       useForPayroll: false, useForVouchers: false, isActive: true, sortOrder: index, version: 1, rowVersion: "AAAAAAAAAAE=",
     }));
     let draft = scenario.draft, reads = 0, formReads = 0, franchiseReads = 0;
@@ -189,7 +209,7 @@ for (const methodCode of ["Cash", "DebitCard", "CreditCard", "Transfer"] as cons
     await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(writes).toHaveLength(1);
     const payment = writes[0].lines.find(line => line.paymentEvidence?.paymentMethodId)!;
-    expect(payment.debit).toBe(100); expect(payment.credit).toBe(0);
+    expect(payment.debit).toBe(supplier ? 0 : 100); expect(payment.credit).toBe(supplier ? 100 : 0);
     expect(payment.financialGroupId).toBe(draft.documentId);
     expect(payment.reference ?? null).toBe(methodCode === "Transfer" ? "TR-123" : null);
     expect(payment.paymentEvidence?.approvalNumber ?? null).toBe(card ? "AP-123" : null);
@@ -201,7 +221,7 @@ for (const methodCode of ["Cash", "DebitCard", "CreditCard", "Transfer"] as cons
       await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
       await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
       const changed = writes[1].lines.find(line => line.lineId === payment.lineId)!;
-      expect(changed.debit).toBe(100); expect(changed.paymentEvidence?.approvalNumber).toBeNull();
+      expect(changed.debit).toBe(supplier ? 0 : 100); expect(changed.credit).toBe(supplier ? 100 : 0); expect(changed.paymentEvidence?.approvalNumber).toBeNull();
       expect(changed.paymentEvidence?.cardFranchiseCode).toBeNull();
     }
     expect(reads).toBe(1); expect(formReads).toBe(1); expect(franchiseReads).toBe(card ? 1 : 0);

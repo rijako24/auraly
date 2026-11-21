@@ -139,8 +139,8 @@ export type SalesWorkspaceContext = Omit<
 
 type ReceiptRenderContext = Pick<
   SalesWorkspaceContext,
-  "businessId" | "warehouseId"
-> & Partial<Pick<SalesWorkspaceContext, "businessName" | "warehouseName">> & {
+  "businessId"
+> & Partial<Pick<SalesWorkspaceContext, "warehouseId" | "businessName" | "warehouseName">> & {
   tenantName?: string | null;
   workSessionId?: string | null;
 };
@@ -178,6 +178,7 @@ type OnlineDraft = {
   customerId: string | null;
   customerPartySiteId: string | null;
   sellerId: string | null;
+  sellerName?: string | null;
   status: string;
   name: string | null;
   reference: string | null;
@@ -624,6 +625,7 @@ export class OnlinePosClient implements PosClient {
     );
     return {
       status: "ok",
+      sellerSelectionAvailable: true,
       serverConnected: true,
       pushConnected: true,
       deviceSeriesCode: "00",
@@ -933,6 +935,19 @@ export class OnlinePosClient implements PosClient {
     );
   }
 
+  async searchSellers(search = "", skip = 0, take = 20) {
+    const { partiesApi } = await import("@/services/api/parties");
+    const page = await partiesApi.roleOptions({ role:"Seller", search, page:Math.floor(skip/take)+1, pageSize:take });
+    return { items:page.items.map(row=>({ sellerId:row.roleId, partyId:row.partyId, code:"", name:row.displayName,
+      identification:row.identification, isActive:true })), hasMore:page.page<page.totalPages,
+      nextOffset:page.page<page.totalPages ? skip+take : null };
+  }
+
+  async selectSeller(draftId: string, sellerId: string | null) {
+    return this.mapDraft(await request<OnlineDraft>(`/api/commerce/v1/pos/drafts/${draftId}/seller`,
+      this.mutation({sellerId, expectedVersion:this.version(draftId)}, "PUT")));
+  }
+
   async selectCustomer(draftId: string, customerId: string | null, partySiteId: string | null = null) {
     const selection = await request<OnlineCustomerSelection>(
       `/api/commerce/v1/pos/drafts/${draftId}/customer`,
@@ -1140,6 +1155,11 @@ export class OnlinePosClient implements PosClient {
     take = 20,
   ) {
     return searchServerIssuedSales(context, filters, skip, take);
+  }
+
+  async searchServerHistoryRoleOptions(_context:PosServerHistoryScope,role:"Seller"|"User",search:string,page:number,pageSize:number) {
+    const {partiesApi}=await import("@/services/api/parties");
+    return partiesApi.roleOptions({role,search,page,pageSize,includeInactive:true});
   }
 
   searchServerHistoryCustomers(
@@ -1643,6 +1663,7 @@ export class OnlinePosClient implements PosClient {
       customerId: draft.customerId,
       customerPartySiteId: draft.customerPartySiteId,
       sellerId: draft.sellerId,
+      sellerName: draft.sellerName,
       status: draft.status,
       name: draft.name,
       reference: draft.reference,

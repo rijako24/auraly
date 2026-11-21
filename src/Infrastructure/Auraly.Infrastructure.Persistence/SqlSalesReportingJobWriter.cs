@@ -6,7 +6,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-internal static class SqlSalesReportingJobWriter
+internal static partial class SqlSalesReportingJobWriter
 {
     public static async Task BackfillServiceInvoicesAsync(SqlConnection connection,SqlTransaction transaction,
         Guid businessId,IAuralyIdGenerator ids,DateTimeOffset now,CancellationToken cancellationToken)

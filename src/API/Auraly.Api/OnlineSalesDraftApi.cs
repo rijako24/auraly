@@ -106,6 +106,24 @@ public static class OnlineSalesDraftApi
         var deviceHistory = endpoints.MapGroup("/api/pos/v1/history")
             .RequireAuthorization("pos.enrolled");
 
+        deviceHistory.MapPost("/parties/role-options", (HttpContext context,
+            SearchOnlineSalesHistoryRoleOptionsRequest request,
+            Auraly.Application.Parties.PartyWorkspaceService parties, CancellationToken ct) =>
+            Handle(async () =>
+            {
+                if(request.Context.BusinessId==Guid.Empty || request.Role is not ("Seller" or "User"))
+                    throw new OnlineSalesDraftValidationException("Selecciona vendedor o usuario para filtrar las facturas.");
+                var identity=context.User.ToDeviceOnlineSalesHistoryIdentity(context);
+                try
+                {
+                    return await parties.RoleOptionsAsync(new Auraly.Contracts.Parties.PartyActorIdentity(
+                        identity.UserId,identity.TenantId,request.Context.BusinessId,identity.Permissions),request.Page,
+                        new Auraly.Contracts.Parties.PartyRoleOptionQuery(request.Role,request.PageSize,request.Search,IncludeInactive:true),ct);
+                }
+                catch(Auraly.Application.Parties.PartyForbiddenException error) { throw new OnlineSalesDraftForbiddenException(error.Message); }
+                catch(Auraly.Application.Parties.PartyValidationException error) { throw new OnlineSalesDraftValidationException(error.Message); }
+            }));
+
         deviceHistory.MapPost("/customers/search", async (
             HttpContext context,
             SearchOnlineSalesHistoryOptionsRequest request,
@@ -293,6 +311,11 @@ group.MapPost("/{draftId:guid}/items", async (
                     context.User.ToOnlineSalesUserIdentity(),
                     draftId, lineId, request, IdempotencyKey(context), ct),
                 ct)));
+
+        group.MapPut("/{draftId:guid}/seller", (HttpContext context, Guid draftId,
+            SelectOnlineSalesDraftSellerRequest request, OnlineSalesDraftService service, CancellationToken ct) =>
+            Handle(() => service.SelectSellerAsync(context.User.ToOnlineSalesUserIdentity(), draftId,
+                request, context.Request.Headers["Idempotency-Key"].ToString(), ct)));
 
         group.MapPut("/{draftId:guid}/customer", async (
             HttpContext context,

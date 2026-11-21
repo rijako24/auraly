@@ -13,15 +13,23 @@ public static class DispatchClosureReceiptRenderer
         if (paperWidthMillimeters is not (58 or 80)) throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
         var closure = dispatch.Settlement ?? throw new InvalidOperationException("El despacho todavía no tiene una declaración guardada.");
         var at = closure.TransporterClosedAt ?? throw new InvalidOperationException("El cierre no conserva su fecha de declaración.");
-        var template = PosPrintTemplateCatalog.DispatchClosure;
+        var template = closure.ReceiptTemplateVersion switch
+        {
+            1 => PosPrintTemplateCatalog.DispatchClosureV1,
+            DispatchSettlementSummary.CurrentReceiptTemplateVersion => PosPrintTemplateCatalog.DispatchClosure,
+            _ => throw new InvalidOperationException("La versión de la tirilla de despacho no está disponible.")
+        };
         var date = BusinessCalendar.InZone(at,timeZone).ToString("dd/MM/yyyy HH:mm zzz", CultureInfo.InvariantCulture);
+        var identification = template.Version == 1
+            ? $"<p>Transportador: {Encode(dispatch.DriverName)}<br>Usuario: {closure.TransporterClosedBy}<br>Fecha: {Encode(date)}<br>Zona: {Encode(timeZone.Id)}</p>"
+            : $"<p>Transportador: {Encode(dispatch.DriverName)}<br>Placa: {Encode(string.IsNullOrWhiteSpace(dispatch.VehiclePlate) ? "Sin placa registrada" : dispatch.VehiclePlate)}<br>Fecha del despacho: {dispatch.ScheduledDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}<br>Documentos: {dispatch.Documents.Count.ToString(CultureInfo.InvariantCulture)}<br>Fecha de cierre: {Encode(date)}<br>Zona: {Encode(timeZone.Id)}</p>";
         // The driver's receipt deliberately contains declared amounts only. Reprinting
         // never runs closure, reconciliation, inventory or accounting commands.
         return $$"""
             <!doctype html><html lang="es" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><head><meta charset="utf-8"><title>Cierre de despacho</title>
             <style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters-6}}mm;margin:auto;font:12px/1.4 ui-monospace,Consolas,monospace;color:#111}h1{font:800 17px/1.2 Arial,sans-serif}h2{font-size:14px}header{text-align:center;border-bottom:1px dashed;padding-bottom:8px}p{overflow-wrap:anywhere}table{width:100%;border-collapse:collapse}td{padding:8px 0;border-bottom:1px dashed #999}td:last-child{text-align:right;font-weight:bold}.note{border:1px solid;padding:8px;margin-top:12px}</style></head><body>
             <header>{{(string.IsNullOrWhiteSpace(companyName)?"":$"<h1>{Encode(companyName)}</h1>")}}<h2>Cierre de despacho</h2><strong>{{Encode(dispatch.DispatchNumber)}}</strong></header>
-            <p>Transportador: {{Encode(dispatch.DriverName)}}<br>Usuario: {{closure.TransporterClosedBy}}<br>Fecha: {{Encode(date)}}<br>Zona: {{Encode(timeZone.Id)}}</p>
+            {{identification}}
             <h2>Valores declarados</h2><table><tbody><tr><td>Efectivo</td><td>{{Money(closure.DeclaredCash)}}</td></tr><tr><td>Tarjetas</td><td>{{Declared(closure.DeclaredCard)}}</td></tr><tr><td>Transferencias</td><td>{{Declared(closure.DeclaredTransfer)}}</td></tr></tbody></table>
             <p class="note">Declaración guardada. La recepción y validación administrativa se consultan en Cierres de caja.</p></body></html>
             """;

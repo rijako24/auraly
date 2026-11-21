@@ -15,6 +15,7 @@ FROM (VALUES
   (N'POS',N'ReadInventoryAvailability',N'pos.inventory.availability.read',N'Consultar existencias desde el punto de venta'),
   (N'POS',N'CollectReceivable',N'pos.receivables.payments.create',N'Registrar abonos a cartera desde punto de venta'),
   (N'POS',N'PaySupplier',N'pos.payables.payments.create',N'Registrar pagos a proveedores desde punto de venta'),
+  (N'Sales',N'CorrectPaymentMethods',N'sales.payments.correct',N'Corregir medios de pago al conciliar cierres de caja y despachos'),
   (N'Sales',N'ChangePrice',N'sales.change-price',N'Cambiar costo permitido, margen, descuento o precio de una línea de venta'),
   (N'Sales',N'ReadCostAndMargin',N'sales.lines.cost-margin.read',N'Ver costo y margen en la edición de líneas de venta'),
   (N'Sales',N'ChangeDescription',N'sales.lines.change-description',N'Editar la descripción de una línea de venta'),

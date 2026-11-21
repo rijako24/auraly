@@ -88,31 +88,26 @@ public sealed record DispatchActorIdentity(
     Guid BusinessId,
     IReadOnlySet<string> Permissions,
     bool IsAdministrator);
-public sealed record DispatchQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
+public sealed record DispatchQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null, DateOnly? From = null, DateOnly? To = null, bool Mine = false, string OrderBy = "scheduled-desc");
 public sealed record DispatchListItem(Guid DispatchId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, string Status, int DocumentCount, int LineCount, decimal ExpectedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, DateTimeOffset UpdatedAt, string RowVersion);
 public sealed record DispatchPage(IReadOnlyCollection<DispatchListItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
-public sealed record DispatchWarehouseOption(Guid WarehouseId, string Code, string Name);
-public sealed record DispatchRouteOption(Guid RouteId, string Code, string Name, string SellerName);
-public sealed record DispatchDriverOption(Guid UserId, string Name);
-public sealed record DispatchDriverPage(IReadOnlyCollection<DispatchDriverOption> Items, int Page, int PageSize, int TotalCount, int TotalPages);
-public sealed record DispatchOptions(IReadOnlyCollection<DispatchWarehouseOption> Warehouses, IReadOnlyCollection<DispatchRouteOption> Routes, IReadOnlyCollection<DispatchDriverOption> Drivers);
-
-public sealed record DispatchCandidateQuery(int Page = 1, int PageSize = 50, string? Search = null, string? DocumentType = null, DateOnly? From = null, DateOnly? To = null, Guid? WarehouseId = null, int DateRangeVersion = 1);
+public sealed record DispatchCandidateQuery(int Page = 1, int PageSize = 50, string? Search = null, string? DocumentType = null, DateOnly? From = null, DateOnly? To = null, Guid? WarehouseId = null, int DateRangeVersion = 1, Guid? RouteId = null);
 public sealed record DispatchCandidateDocument(Guid DocumentId, string DocumentType, string DocumentNumber, DateTimeOffset IssuedAt, Guid WarehouseId, string WarehouseName, Guid? CustomerId, string CustomerName, string? DeliveryAddress, string SellerName, int LineCount, decimal PendingQuantity, decimal DocumentTotal);
 public sealed record DispatchCandidatePage(IReadOnlyCollection<DispatchCandidateDocument> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
-public sealed record CreateDispatchRequest(Guid BusinessId, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, Guid? DriverUserId, Guid? RouteId, string? Notes, IReadOnlyCollection<Guid> SourceDocumentIds);
+public sealed record CreateDispatchRequest(Guid BusinessId, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, Guid? DriverCarrierId, string? Notes, IReadOnlyCollection<Guid> SourceDocumentIds);
 public sealed record AddDispatchDocumentsRequest(IReadOnlyCollection<Guid> SourceDocumentIds, string RowVersion);
 public sealed record DispatchTransitionRequest(string RowVersion, string IdempotencyKey);
 public sealed record DispatchVerificationRequest(Guid DispatchLineId, decimal QuantityDelta, string? Barcode, string IdempotencyKey, DateTimeOffset OccurredAt);
 public sealed record DeclareDispatchShortageRequest(Guid DispatchLineId, decimal Quantity, string Reason, string? Notes, string RowVersion, string IdempotencyKey);
 
-public sealed record DispatchMutationResult(Guid DispatchId, string DispatchNumber, string Status, int DocumentCount, int LineCount, decimal ExpectedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, string RowVersion);
+public sealed record DispatchMutationResult(Guid DispatchId, string DispatchNumber, string Status, int DocumentCount, int LineCount, decimal ExpectedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, string RowVersion, DispatchLineDetail? UpdatedLine = null, int PendingLineCount = 0);
+public sealed record DispatchDetailQuery(int DocumentPage = 1, int DocumentPageSize = 10, int LinePage = 1, int LinePageSize = 10);
 public sealed record DispatchDocumentDetail(Guid DispatchSourceDocumentId, Guid SourceDocumentId, string DocumentType, string DocumentNumber, Guid? CustomerId, string CustomerName, string? DeliveryAddress, string SellerName, decimal DocumentTotal, string Status, Guid WarehouseId, string WarehouseName);
 public sealed record DispatchLineDetail(Guid DispatchLineId, Guid DispatchSourceDocumentId, int SourceLineNumber, Guid ProductId, string ProductCode, string Description, decimal AssignedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, string Status, string RowVersion);
 public sealed record DispatchShortageDetail(Guid DispatchShortageId, Guid DispatchLineId, Guid ProductId, string ProductCode, string Description, decimal Quantity, string Reason, string? Notes, DateTimeOffset CreatedAt);
-public sealed record DispatchDetail(Guid DispatchId, Guid BusinessId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, Guid? RouteId, string? RouteName, string? Notes, string Status, IReadOnlyCollection<DispatchDocumentDetail> Documents, IReadOnlyCollection<DispatchLineDetail> Lines, IReadOnlyCollection<DispatchShortageDetail> Shortages, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string RowVersion);
+public sealed record DispatchDetail(Guid DispatchId, Guid BusinessId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, Guid? RouteId, string? RouteName, string? Notes, string Status, IReadOnlyCollection<DispatchDocumentDetail> Documents, IReadOnlyCollection<DispatchLineDetail> Lines, IReadOnlyCollection<DispatchShortageDetail> Shortages, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string RowVersion, DispatchMutationResult? Summary = null, DispatchDetailQuery? Pagination = null);
 
 public sealed record DispatchDeliveryPaymentInput(string ApplicationType, string? PaymentMethod, decimal Amount, string? Reference, string? EvidenceUrl,
     Guid? PaymentMethodId = null, int? PaymentMethodVersion = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
@@ -154,7 +149,11 @@ public sealed record DispatchExpenseDetail(Guid ExpenseId, string Category, deci
     Guid? ConceptId = null, Guid? AcceptedExpenseId = null, DateTimeOffset? OccurredAt = null,string? AcceptedExpenseStatus = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? EvidenceReadUrl = null);
 public sealed record DispatchSettlementSummary(decimal GrossCash, decimal ApprovedCashExpenses, decimal ExpectedCash, decimal DeclaredCash, decimal Difference, decimal DepositTotal, decimal RemainingCreditTotal, decimal CreditAdvanceTotal, decimal ReturnTotal, decimal UndeliveredTotal, decimal DispatchTotal, decimal BalanceDifference, string Status, Guid? ReceivedBy, DateTimeOffset? ReceivedAt, decimal? CashReceived = null, decimal CardTotal = 0,
-    decimal? DeclaredCard = null, decimal? DeclaredTransfer = null, Guid? TransporterClosedBy = null, DateTimeOffset? TransporterClosedAt = null, decimal PreviouslyCollectedTotal = 0);
+    decimal? DeclaredCard = null, decimal? DeclaredTransfer = null, Guid? TransporterClosedBy = null, DateTimeOffset? TransporterClosedAt = null, decimal PreviouslyCollectedTotal = 0,
+    int ReceiptTemplateVersion = 1)
+{
+    public const int CurrentReceiptTemplateVersion = 2;
+}
 public sealed record DispatchLinkedReturn(Guid ReturnId,Guid OriginalDocumentId,string DocumentNumber,decimal TotalAmount,string EconomicResolution);
 public sealed record DispatchExecutionDetail(Guid DispatchId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, string Status, IReadOnlyCollection<DispatchDeliveryDocument> Documents, IReadOnlyCollection<DispatchExpenseDetail> Expenses, DispatchSettlementSummary? Settlement, string? RowVersion = null,
     IReadOnlyCollection<DispatchLinkedReturn>? LinkedReturns = null);

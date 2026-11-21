@@ -66,6 +66,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Comercial" },
   { name: "Punto de venta", href: "/pos", icon: ReceiptText,
     anyPermissions: ["sales.create", "restaurant.attend"] },
+  { name: "Facturas", href: "/dashboard/invoices", icon: ReceiptText, permission: "sales.reprint" },
   { name: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read" },
   { name: "Cargos de facturación", href: "/dashboard/invoice-charges", icon: ReceiptText, permission: "invoice-charges.read" },
   { name: "Mis rutas", href: "/dashboard/my-routes", icon: Route, permission: "routes.read" },

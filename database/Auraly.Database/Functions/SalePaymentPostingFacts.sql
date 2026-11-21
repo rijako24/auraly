@@ -17,7 +17,8 @@ AS RETURN
       CAST(CASE WHEN correction.ProofCount=0 OR (correction.ProofCount=1
         AND (correction.AccountId IS NOT NULL OR (correction.ConfiguredPayment=0 AND correction.AccountingEntryRequired=0))
         AND correction.PostingStatus IN(N'Posted',N'CommercialEffectsApplied'))
-        THEN 1 ELSE 0 END AS bit) EffectivePaymentReady
+        THEN 1 ELSE 0 END AS bit) EffectivePaymentReady,
+      CASE WHEN correction.ProofCount=0 THEN payment.PaymentMethodName ELSE correction.PaymentMethodName END EffectiveFormName
     FROM dbo.SalesDocuments sale
     JOIN dbo.Businesses business ON business.BusinessId=sale.BusinessId AND business.TenantId=@TenantId
     JOIN dbo.SalesPayments payment ON payment.DocumentId=sale.DocumentId
@@ -38,6 +39,7 @@ AS RETURN
     OUTER APPLY(
       SELECT COUNT_BIG(*) ProofCount,MAX(corrected.TenderMethodCode) MethodCode,MAX(corrected.Amount) Amount,
         MAX(corrected.CardFranchiseCode) CardFranchiseCode,MAX(corrected.ApprovalNumber) ApprovalNumber,
+        MAX(COALESCE(binding.Name,corrected.PaymentMethodName)) PaymentMethodName,
         MAX(posted.Status) PostingStatus,MAX(CONVERT(int,posted.AccountingEntryRequired)) AccountingEntryRequired,
         MAX(CASE WHEN corrected.PaymentMethodId IS NOT NULL THEN 1 ELSE 0 END) ConfiguredPayment,
         MAX(CONVERT(nvarchar(36),CASE WHEN corrected.PaymentMethodId IS NOT NULL THEN
@@ -50,11 +52,11 @@ AS RETURN
         SourceId uniqueidentifier N'$.sourceId',SourceNumber int N'$.sourceNumber',MovementType nvarchar(32) N'$.movementType',
         CorrectionId uniqueidentifier N'$.correctionId',PaymentMethodId uniqueidentifier N'$.paymentMethodId',
         TenderMethodCode nvarchar(32) N'$.tenderMethodCode',TenderCategory nvarchar(128) N'$.tenderCategory',
-        Amount decimal(19,4) N'$.amount',CardFranchiseCode nvarchar(32) N'$.cardFranchiseCode',ApprovalNumber nvarchar(160) N'$.approvalNumber') corrected
+        PaymentMethodName nvarchar(160) N'$.paymentMethodName',Amount decimal(19,4) N'$.amount',CardFranchiseCode nvarchar(32) N'$.cardFranchiseCode',ApprovalNumber nvarchar(160) N'$.approvalNumber') corrected
       LEFT JOIN dbo.AccountingPostingJobs posted ON posted.SourceDocumentId=reconciliation.ReconciliationId
         AND posted.SourceDocumentType=N'WorkSessionClosureReconciliation' AND posted.TenantId=@TenantId AND posted.BusinessId=@BusinessId
-      OUTER APPLY(SELECT COUNT_BIG(*) ProofCount,MAX(CONVERT(nvarchar(36),applied.AccountId)) AccountId
-        FROM OPENJSON(posted.AppliedPaymentMethodsJson) WITH(SourceLineId uniqueidentifier,AccountId uniqueidentifier) applied
+      OUTER APPLY(SELECT COUNT_BIG(*) ProofCount,MAX(CONVERT(nvarchar(36),applied.AccountId)) AccountId,MAX(applied.Name) Name
+        FROM OPENJSON(posted.AppliedPaymentMethodsJson) WITH(SourceLineId uniqueidentifier,AccountId uniqueidentifier,Name nvarchar(160)) applied
         WHERE applied.SourceLineId=corrected.CorrectionId) binding
       OUTER APPLY(SELECT applied.AccountId FROM OPENJSON(posted.ResolvedAccountMappingsJson)
         WITH(Category nvarchar(128),AccountId uniqueidentifier) applied WHERE applied.Category=corrected.TenderCategory) target

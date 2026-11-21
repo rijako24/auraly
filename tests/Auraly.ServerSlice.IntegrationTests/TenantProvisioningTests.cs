@@ -341,6 +341,24 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Payment_correction_permission_seed_upgrades_existing_roles_idempotently_without_granting_cashiers()
+    {
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        var script=await File.ReadAllTextAsync(Path.Combine(ServerSliceFixture.FindRepositoryRoot(),"database","Auraly.Database","Scripts","Seeds","SeedDefaultBusinessRoles.sql"));
+        for(var attempt=0;attempt<2;attempt++)
+        {
+            await using var seed=new SqlCommand(script,connection);await seed.ExecuteNonQueryAsync();
+            foreach(var role in new[]{"ADMINISTRATOR","ADMINISTRATIVE"})
+                Assert.True(await RoleHasPermissionAsync(fixture.TenantId,role,CommercePermissionCodes.SalesCorrectPaymentMethods));
+            foreach(var role in new[]{"CASHIER","SUPERVISOR","ACCOUNTANT"})
+                Assert.False(await RoleHasPermissionAsync(fixture.TenantId,role,CommercePermissionCodes.SalesCorrectPaymentMethods));
+        }
+        await using var count=new SqlCommand("SELECT COUNT(*) FROM dbo.RolePermissions assigned JOIN dbo.Permissions permission ON permission.PermissionId=assigned.PermissionId JOIN dbo.AppRoles role ON role.RoleId=assigned.RoleId WHERE role.TenantId=@Tenant AND permission.Resource=@Permission",connection);
+        count.Parameters.AddWithValue("@Tenant",fixture.TenantId);count.Parameters.AddWithValue("@Permission",CommercePermissionCodes.SalesCorrectPaymentMethods);
+        Assert.Equal(2,Convert.ToInt32(await count.ExecuteScalarAsync()));
+    }
+
+    [Fact]
     public async Task Provision_and_accept_invitation_creates_a_complete_usable_tenant()
     {
         var geography = await ReadGeographyAsync();
@@ -383,6 +401,10 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal("Configuring", await ReadAccountingStatusAsync(result.TenantId));
         Assert.Equal(6, state.Roles);
+        foreach(var role in new[]{"ADMINISTRATOR","ADMINISTRATIVE"})
+            Assert.True(await RoleHasPermissionAsync(result.TenantId,role,CommercePermissionCodes.SalesCorrectPaymentMethods));
+        foreach(var role in new[]{"CASHIER","SUPERVISOR","ACCOUNTANT","SELLER"})
+            Assert.False(await RoleHasPermissionAsync(result.TenantId,role,CommercePermissionCodes.SalesCorrectPaymentMethods));
         foreach (var role in new[] { "ADMINISTRATOR", "ADMINISTRATIVE", "WAITER" })
             foreach (var permission in new[] {
                 "restaurant.attend", "restaurant.commands.read", "restaurant.commands.manage" })

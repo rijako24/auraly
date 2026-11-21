@@ -53,7 +53,7 @@ public sealed partial class SqlWorkSessionStore
                    WHERE reconciliation.WorkSessionClosureId=closure.WorkSessionClosureId))
                 ORDER BY job.CreatedAt DESC),N'AccountingDisabled'),
               dispatch.DispatchId,dispatch.DispatchNumber,dispatch.DriverName,settlement.Status,
-              settlement.ExpectedCash,settlement.DeclaredCash,settlement.CashReceived,settlement.CashDifference
+              settlement.ExpectedCash,settlement.DeclaredCash,settlement.CashReceived,settlement.CashDifference,dispatchSession.OpenedAt
             FROM (SELECT * FROM #ClosureHeaders ORDER BY ClosedAt DESC,Kind,ClosureId DESC
               OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY) selected
             INNER JOIN dbo.Businesses business ON business.BusinessId=selected.BusinessId
@@ -62,6 +62,7 @@ public sealed partial class SqlWorkSessionStore
             LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=session.WarehouseId
             LEFT JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
             LEFT JOIN dispatch.Closures settlement ON selected.Kind=N'Dispatch' AND settlement.DispatchSettlementId=selected.ClosureId
+            LEFT JOIN dbo.WorkSessions dispatchSession ON dispatchSession.WorkSessionId=settlement.WorkSessionId
             LEFT JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=settlement.DispatchId
             ORDER BY selected.ClosedAt DESC,selected.Kind,selected.ClosureId DESC;
             """, connection);
@@ -85,7 +86,7 @@ public sealed partial class SqlWorkSessionStore
                 items.Add(new(id, "Dispatch", null, new(reader.GetGuid(20), reader.GetString(21),
                     reader.GetGuid(2), reader.GetString(3), reader.GetString(22), reader.GetDateTimeOffset(4),
                     reader.GetString(23), reader.GetDecimal(24), reader.GetDecimal(25),
-                    reader.IsDBNull(26) ? null : reader.GetDecimal(26), reader.GetDecimal(27))));
+                    reader.IsDBNull(26) ? null : reader.GetDecimal(26), reader.GetDecimal(27), reader.GetDateTimeOffset(28))));
             else
                 items.Add(new(id, "Cash", new(id, reader.GetGuid(6), reader.GetGuid(2), reader.GetString(3),
                     reader.IsDBNull(7) ? null : reader.GetGuid(7), reader.IsDBNull(8) ? null : reader.GetString(8),

@@ -9,6 +9,11 @@ public sealed class PosSalesHistoryServerClient(
     HttpClient http,
     PosDeviceCredentials credentials)
 {
+    public Task<Auraly.Contracts.Parties.PartyRoleOptionPage> SearchRoleOptionsAsync(
+        SearchOnlineSalesHistoryRoleOptionsRequest request, PosLocalUserSession user, CancellationToken ct) =>
+        SendAsync<Auraly.Contracts.Parties.PartyRoleOptionPage>(HttpMethod.Post,
+            "api/pos/v1/history/parties/role-options",request,user,ct);
+
     public Task<OnlineSalesCustomerPage> SearchCustomersAsync(
         SearchOnlineSalesHistoryOptionsRequest request,
         PosLocalUserSession user,

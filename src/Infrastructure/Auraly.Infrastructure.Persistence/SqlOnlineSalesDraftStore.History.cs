@@ -1,4 +1,5 @@
 using System.Data;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
@@ -177,12 +178,13 @@ public sealed partial class SqlOnlineSalesDraftStore
             (SqlTransaction)await connection.BeginTransactionAsync(
                 IsolationLevel.ReadCommitted,
                 cancellationToken);
-        var businessId = await ResolveHistoryBusinessAsync(
+        var historyScope = await ResolveHistoryScopeAsync(
             connection,
             transaction,
             user,
             request.Context,
             cancellationToken);
+        var businessId = historyScope.BusinessId;
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -191,7 +193,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                    COALESCE(
                      NULLIF(JSON_VALUE(payload.PayloadJson,'$.commercialSnapshot.customerName'),N''),
                      NULLIF(JSON_VALUE(payload.PayloadJson,'$.ublSnapshot.customer.registrationName'),N''),
-                     N'Consumidor final') CustomerName
+                     N'Consumidor final') CustomerName, d.CollectionMode, d.WorkSessionId,d.SellerNameSnapshot
+            INTO #HistoryPage
             FROM dbo.SalesDocuments d
             JOIN dbo.DocumentProcessingPayloads payload
               ON payload.DocumentId=d.DocumentId
@@ -199,10 +202,12 @@ public sealed partial class SqlOnlineSalesDraftStore
              AND payload.BusinessId=d.BusinessId
             WHERE d.BusinessId=@BusinessId
               AND ISNULL(JSON_VALUE(payload.PayloadJson,'$.fiscalHabilitationOnly'),N'false')<>N'true'
+              AND (@SellerId IS NULL OR d.SellerIdSnapshot=@SellerId)
+              AND (@BilledBy IS NULL OR d.SoldByUserId=@BilledBy)
               AND (@CustomerId IS NULL OR
                    (d.CustomerId=@CustomerId AND d.CustomerPartySiteId=@PartySiteId))
               AND (@From IS NULL OR d.IssuedAt>=@From)
-              AND (@ToExclusive IS NULL OR d.IssuedAt<@ToExclusive)
+              AND (@To IS NULL OR d.IssuedAt<@To)
               AND (@MinimumTotal IS NULL OR d.PayableAmount>=@MinimumTotal)
               AND (@MaximumTotal IS NULL OR d.PayableAmount<=@MaximumTotal)
               AND (@ProductId IS NULL OR EXISTS(
@@ -214,14 +219,53 @@ public sealed partial class SqlOnlineSalesDraftStore
                    OR d.CustomerIdentification LIKE @Contains)
             ORDER BY d.IssuedAt DESC,d.DocumentId DESC
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
+            SELECT page.*,closure.WorkSessionClosureId,assigned.DispatchId,assigned.DispatchCount
+            INTO #HistoryContext
+            FROM #HistoryPage page
+            LEFT JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionId=page.WorkSessionId AND page.CollectionMode=N'Session'
+            OUTER APPLY(SELECT COUNT_BIG(*) DispatchCount,TRY_CONVERT(uniqueidentifier,MIN(CONVERT(nvarchar(36),source.DispatchId))) DispatchId FROM dbo.DispatchSourceDocuments source
+              JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=source.DispatchId AND dispatch.BusinessId=@BusinessId
+              WHERE source.SourceDocumentId=page.DocumentId AND dispatch.Status<>N'Cancelled') assigned
+            ;
+            IF EXISTS(SELECT 1 FROM #HistoryContext WHERE DispatchCount>1)
+              THROW 51000,N'Una factura pertenece a varios despachos activos. Revisa su asignación.',1;
+            SELECT * FROM #HistoryContext ORDER BY IssuedAt DESC,DocumentId DESC;
+            SELECT DISTINCT page.DispatchId INTO #ConfirmedHistoryDispatch FROM #HistoryContext page
+            JOIN dbo.WorkSessions session ON session.DispatchId=page.DispatchId AND session.Kind=N'Dispatch'
+            JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionId=session.WorkSessionId
+            JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=closure.WorkSessionClosureId
+              AND job.SourceDocumentType=N'DispatchCashDifference' AND job.TenantId=@TenantId AND job.BusinessId=@BusinessId
+              AND job.Status IN(N'Posted',N'CommercialEffectsApplied');
+            SELECT page.DocumentId,payment.PaymentNumber,CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveMethodCode ELSE original.MethodCode END MethodCode,
+              CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveAmount ELSE payment.Amount END Amount,
+              CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveFormName ELSE original.PaymentMethodName END FormName
+            FROM #HistoryPage page CROSS APPLY accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,page.DocumentId) payment
+            JOIN dbo.SalesPayments original ON original.DocumentId=page.DocumentId AND original.PaymentNumber=payment.PaymentNumber
+            WHERE page.CollectionMode=N'Session' AND payment.EffectiveAmount<>0
+            UNION ALL
+            SELECT page.DocumentId,payment.PaymentNumber,payment.MethodCode,payment.Amount+payment.RoundingAdjustment,payment.PaymentMethodName
+            FROM #HistoryPage page JOIN dbo.SalesPayments payment ON payment.DocumentId=page.DocumentId
+            WHERE page.CollectionMode=N'Dispatch' AND payment.Amount+payment.RoundingAdjustment<>0
+              AND NOT EXISTS(SELECT 1 FROM #HistoryContext context JOIN #ConfirmedHistoryDispatch confirmed ON confirmed.DispatchId=context.DispatchId WHERE context.DocumentId=page.DocumentId)
+            UNION ALL
+            SELECT page.DocumentId,CAST(ROW_NUMBER() OVER(PARTITION BY page.DocumentId ORDER BY payment.PaymentId) AS int),payment.MethodCode,payment.Amount,payment.FormName
+            FROM #ConfirmedHistoryDispatch confirmed CROSS APPLY dispatch.EffectivePayments(confirmed.DispatchId) payment
+            JOIN dbo.DispatchSourceDocuments source ON source.DispatchSourceDocumentId=payment.DispatchSourceDocumentId
+            JOIN #HistoryPage page ON page.DocumentId=source.SourceDocumentId
+            WHERE page.CollectionMode=N'Dispatch' AND payment.ApplicationType=N'InvoicePayment' AND payment.Amount<>0
+            UNION ALL
+            SELECT page.DocumentId,0,N'Credit',sale.CreditAmount,sale.CreditPaymentMethodName
+            FROM #HistoryPage page JOIN dbo.SalesDocuments sale ON sale.DocumentId=page.DocumentId
+            WHERE sale.CreditAmount>0
+            ORDER BY DocumentId,PaymentNumber;
             """;
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
             P("@BusinessId", businessId),
             P("@CustomerId", request.CustomerId),
             P("@PartySiteId", request.PartySiteId),
-            P("@From", request.From?.ToDateTime(TimeOnly.MinValue)),
-            P("@ToExclusive", request.To?.AddDays(1).ToDateTime(TimeOnly.MinValue)),
+            P("@SellerId", request.SellerId), P("@BilledBy", request.BilledByUserId),
+            P("@TenantId", user.TenantId),
             P("@ProductId", request.ProductId),
             P("@MinimumTotal", request.MinimumTotal),
             P("@MaximumTotal", request.MaximumTotal),
@@ -230,6 +274,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             P("@Skip", request.Skip),
             P("@Take", request.Take + 1)
         ]);
+        SqlBusinessLocalDates.BindDateRange(command,request.From,request.To,historyScope.Zone,request.DateRangeVersion);
         var items = new List<OnlineSalesIssuedSale>();
         await using (var reader =
                      await command.ExecuteReaderAsync(cancellationToken))
@@ -245,8 +290,21 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.GetDecimal(5),
                     reader.GetString(6),
                     reader.GetString(8),
-                    reader.IsDBNull(7) ? null : reader.GetString(7)));
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    ClosureId:reader.IsDBNull(12)?null:reader.GetGuid(12),
+                    DispatchId:reader.GetString(9)=="Dispatch"&&!reader.IsDBNull(13)?reader.GetGuid(13):null,
+                    SellerName:reader.IsDBNull(11)?null:reader.GetString(11)));
             }
+            await reader.NextResultAsync(cancellationToken);
+            var payments=new Dictionary<Guid,List<OnlineSalesHistoryPayment>>();
+            while(await reader.ReadAsync(cancellationToken))
+            {
+                var id=reader.GetGuid(0);
+                if(!payments.TryGetValue(id,out var values)) payments[id]=values=[];
+                values.Add(new(reader.GetInt32(1),reader.GetString(2),reader.GetDecimal(3),reader.IsDBNull(4)?null:reader.GetString(4)));
+            }
+            for(var index=0;index<items.Count;index++)
+                items[index]=items[index] with { Payments=payments.GetValueOrDefault(items[index].DocumentId)??[] };
         }
         var hasMore = items.Count > request.Take;
         if (hasMore)
@@ -347,7 +405,11 @@ public sealed partial class SqlOnlineSalesDraftStore
         return recorded;
     }
 
-    private static async Task<Guid> ResolveHistoryBusinessAsync(
+    private static async Task<Guid> ResolveHistoryBusinessAsync(SqlConnection connection,SqlTransaction transaction,
+        OnlineSalesUserIdentity user,OnlineSalesHistoryContext requested,CancellationToken ct) =>
+        (await ResolveHistoryScopeAsync(connection,transaction,user,requested,ct)).BusinessId;
+
+    private static async Task<(Guid BusinessId,TimeZoneInfo Zone)> ResolveHistoryScopeAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         OnlineSalesUserIdentity user,
@@ -357,7 +419,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT BusinessId
+            SELECT BusinessId,TimeZone
             FROM dbo.Businesses
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1;
             """;
@@ -365,9 +427,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             P("@BusinessId", requested.BusinessId),
             P("@TenantId", user.TenantId)
         ]);
-        return await command.ExecuteScalarAsync(cancellationToken) is Guid businessId
-            ? businessId
-            : throw new OnlineSalesDraftForbiddenException(
-                "La sede no pertenece al tenant autenticado.");
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        if(!await reader.ReadAsync(cancellationToken))
+            throw new OnlineSalesDraftForbiddenException("La sede no pertenece al tenant autenticado.");
+        return(reader.GetGuid(0),TimeZoneInfo.FindSystemTimeZoneById(reader.GetString(1)));
     }
 }

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Auraly.Contracts.Authentication;
+using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
@@ -39,6 +40,40 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
     private readonly UnavailableServerHandler _serverHandler = new();
     private HttpClient Client =>
         _client ?? throw new InvalidOperationException("The test host has not started.");
+
+    [Fact]
+    public async Task Seller_selection_and_paged_search_work_offline_and_reject_foreign_drafts()
+    {
+        var catalog=_factory!.Services.GetRequiredService<PosCatalogStore>();
+        var seller=new PosSeller(Guid.NewGuid(),Guid.NewGuid(),"VEN-QA","Vendedora sin conexión","100200",true);
+        await catalog.BeginSellerBootstrapAsync();await catalog.ApplySellerBootstrapPageAsync(new(0,null,false,[seller]));
+        var draft=(await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active"))!;
+        var serverCalls=_serverHandler.Count;
+        var page=(await Client.GetFromJsonAsync<PosSellerPage>("/edge/v1/sellers?skip=0&take=20&search=Vendedora"))!;
+        Assert.Equal(seller,Assert.Single(page.Items));
+        using(var selected=await Client.PutAsJsonAsync($"/edge/v1/drafts/{draft.DraftId.Value:D}/seller",new SelectSellerRequest(seller.SellerId)))
+        {
+            selected.EnsureSuccessStatusCode();var value=(await selected.Content.ReadFromJsonAsync<PosDraft>())!;
+            Assert.Equal(seller.SellerId,value.SellerId);Assert.Equal(seller.Name,value.SellerName);
+        }
+        Assert.Equal(seller.SellerId,(await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active"))!.SellerId);
+        Assert.Equal(serverCalls,_serverHandler.Count);
+        using(var missingSeller=await Client.PutAsJsonAsync($"/edge/v1/drafts/{draft.DraftId.Value:D}/seller",new SelectSellerRequest(Guid.NewGuid())))
+            Assert.Equal(HttpStatusCode.BadRequest,missingSeller.StatusCode);
+        using(var missingDraft=await Client.PutAsJsonAsync($"/edge/v1/drafts/{Guid.NewGuid():D}/seller",new SelectSellerRequest(null)))
+            Assert.Equal(HttpStatusCode.Conflict,missingDraft.StatusCode);
+        var drafts=_factory.Services.GetRequiredService<PosDraftStore>();
+        var foreign=await drafts.GetOrCreateActiveAsync(draft.Scope with
+        {
+            UserId = new UserId(Guid.NewGuid()),
+            WorkSessionId = new WorkSessionId(Guid.NewGuid())
+        });
+        using(var forbidden=await Client.PutAsJsonAsync($"/edge/v1/drafts/{foreign.DraftId.Value:D}/seller",new SelectSellerRequest(seller.SellerId)))
+            Assert.Equal(HttpStatusCode.Forbidden,forbidden.StatusCode);
+        using(var invalidPage=await Client.GetAsync("/edge/v1/sellers?skip=-1&take=20"))Assert.Equal(HttpStatusCode.BadRequest,invalidPage.StatusCode);
+        using(var cleared=await Client.PutAsJsonAsync($"/edge/v1/drafts/{draft.DraftId.Value:D}/seller",new SelectSellerRequest(null)))
+        {cleared.EnsureSuccessStatusCode();Assert.Null((await cleared.Content.ReadFromJsonAsync<PosDraft>())!.SellerId);}
+    }
 
     [Fact]
     public async Task Provisional_closure_rows_remain_removable_after_a_retry()

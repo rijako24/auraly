@@ -423,6 +423,50 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
         await Assert.ThrowsAsync<SalesReportingValidationException>(()=>reporting.ExploreAsync(user,new(filter with {TableIds=[tableA]})));
         Assert.DoesNotContain((await reporting.GetContextAsync(user)).Groupings,option=>option.Code is "table" or "waiter");
 
+        // Header sorting must apply to the whole filtered set before the first page.
+        var metrics = new Dictionary<string, Func<SalesReportExplorerRow, decimal?>> {
+            ["quantity"] = r => r.Measures.Quantity, ["gross"] = r => r.Measures.GrossSales,
+            ["discount"] = r => r.Measures.Discounts, ["sales"] = r => r.Measures.SalesBeforeReturns,
+            ["returns"] = r => r.Measures.Returns, ["net"] = r => r.Measures.NetUntaxed,
+            ["tax"] = r => r.Measures.Tax, ["total"] = r => r.Measures.NetTotal,
+            ["cost"] = r => r.Measures.RecognizedCost, ["profit"] = r => r.Measures.Profit,
+            ["margin"] = r => r.Measures.MarginPercent
+        };
+        foreach (var kind in new[]{("sales","document"),("impact","customer"),("products","product"),("supplier","supplier")})
+        {
+            var orderedRequest = new SalesReportExplorerRequest(filter, Module:kind.Item1, GroupBy:kind.Item2, PageSize:100);
+            var baseline = await reporting.ExploreAsync(user, orderedRequest);
+            Assert.NotEmpty(baseline.Items);
+            var fields = new Dictionary<string, Func<SalesReportExplorerRow, decimal?>>(metrics);
+            if (kind.Item1 == "sales") {
+                fields["date"] = r => r.OccurredAt?.UtcTicks;
+                fields["rounding"] = r => r.RoundingAdjustment;
+                fields["official"] = r => r.OfficialTotal;
+            }
+            if (kind.Item1 == "products") {
+                fields["sales-participation"] = r => r.SalesParticipationPercent;
+                fields["profit-participation"] = r => r.ProfitParticipationPercent;
+            }
+            if (kind.Item1 == "supplier") {
+                fields["buyers"] = r => r.Measures.Customers;
+                fields["coverage"] = r => r.Supplier!.PenetrationPercent;
+                fields["purchase-receipts"] = r => r.Supplier!.PurchaseReceipts;
+                fields["purchase-returns"] = r => r.Supplier!.PurchaseReturns;
+                fields["purchase-net"] = r => r.Supplier!.NetPurchases;
+                fields["purchase-total"] = r => r.Supplier!.PurchasesWithTax;
+                fields["sales-purchase-ratio"] = r => r.Supplier!.SalesPurchaseRatio;
+            }
+            foreach (var field in fields)
+            foreach (var direction in new[]{"asc","desc"})
+            {
+                var sorted = await reporting.ExploreAsync(user, orderedRequest with {OrderBy=field.Key+"-"+direction, PageSize=1});
+                var expected = direction=="asc" ? baseline.Items.Select(field.Value).Order().First() : baseline.Items.Select(field.Value).OrderDescending().First();
+                Assert.Equal(expected, field.Value(Assert.Single(sorted.Items)));
+                Assert.Equal(baseline.TotalCount, sorted.TotalCount);
+                Assert.Equal(baseline.Totals, sorted.Totals);
+            }
+        }
+
         static void Reconcile(SalesReportMeasures totals,IReadOnlyList<SalesReportExplorerRow> rows,bool compareQuantity=true)
         {
             Assert.Equal(totals.GrossSales,rows.Sum(row=>row.Measures.GrossSales));Assert.Equal(totals.Discounts,rows.Sum(row=>row.Measures.Discounts));

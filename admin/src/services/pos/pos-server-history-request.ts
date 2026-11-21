@@ -16,6 +16,10 @@ export type ServerIssuedSalePage = {
     customerIdentification: string;
     customerName: string;
     fiscalStatus: string | null;
+    payments?: Array<{paymentNumber:number;methodCode:string;amount:number;formName:string|null}>;
+    closureId?: string|null;
+    dispatchId?: string|null;
+    sellerName?: string|null;
   }>;
   hasMore: boolean;
   nextOffset: number | null;
@@ -30,6 +34,7 @@ export function buildServerIssuedSalesSearchRequest(
   return {
     context,
     ...filters,
+    dateRangeVersion: 2,
     from: filters.from || null,
     to: filters.to || null,
     skip,

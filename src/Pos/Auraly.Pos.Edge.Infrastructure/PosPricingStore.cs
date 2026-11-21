@@ -863,6 +863,10 @@ public sealed partial class PosCatalogStore
             while (await reader.ReadAsync(ct)) stateColumns.Add(reader.GetString(1));
         foreach (var migration in new Dictionary<string, string>(StringComparer.Ordinal)
         {
+            ["SellerCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN SellerCursor INTEGER NULL;",
+            ["SellerBootstrapActive"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN SellerBootstrapActive INTEGER NOT NULL DEFAULT 0;",
+            ["SellerBootstrapNextCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN SellerBootstrapNextCursor TEXT NULL;",
+            ["SellerBootstrapThroughCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN SellerBootstrapThroughCursor INTEGER NULL;",
             ["CustomerBootstrapActive"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN CustomerBootstrapActive INTEGER NOT NULL DEFAULT 0;",
             ["CustomerBootstrapNextCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN CustomerBootstrapNextCursor TEXT NULL;",
             ["CustomerBootstrapThroughCursor"] = "ALTER TABLE PosPricingSynchronizationState ADD COLUMN CustomerBootstrapThroughCursor INTEGER NULL;"

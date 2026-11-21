@@ -22,7 +22,8 @@ CREATE PROCEDURE [dbo].[SellerOrderCreate]
     @Number NVARCHAR(300),
     @ExternalStatus NVARCHAR(100),
     @IdempotencyKey NVARCHAR(200),
-    @LinesJson NVARCHAR(MAX)
+    @LinesJson NVARCHAR(MAX),
+    @RequestedSellerId UNIQUEIDENTIFIER = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -46,6 +47,16 @@ BEGIN
       IF @SellerId IS NOT NULL AND @SellerId<>@RouteSellerId
         THROW 51300,'La ruta no pertenece al vendedor autenticado.',1;
       SET @SellerId=@RouteSellerId;
+    END;
+    IF @RequestedSellerId IS NOT NULL
+    BEGIN
+      IF NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers seller JOIN dbo.Parties party
+          ON party.PartyId=seller.PartyId AND party.TenantId=seller.TenantId
+          WHERE seller.SellerId=@RequestedSellerId AND seller.TenantId=@TenantId AND seller.IsActive=1 AND party.IsActive=1)
+        THROW 51300,N'El vendedor no está activo en esta empresa.',1;
+      IF @RouteId IS NOT NULL AND @RequestedSellerId<>@SellerId
+        THROW 51300,N'El vendedor seleccionado debe coincidir con la ruta del pedido.',1;
+      SET @SellerId=@RequestedSellerId;
     END;
     IF NOT EXISTS(
       SELECT 1

@@ -21,7 +21,7 @@ import { VoucherPendingDocuments } from "./voucher-pending-documents";
 import { createVoucherPositionLine } from "@/lib/voucher-payment-preparation";
 import { VoucherFiscalDialog } from "./voucher-fiscal-dialog";
 import { accountingDateAtNoon, proposedAccountingDate } from "@/lib/accounting-document-date";
-import { accountingReversalStatusLabel } from "@/lib/accounting-labels";
+import { accountingStatusLabel, accountingReversalStatusLabel } from "@/lib/accounting-labels";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { PartySelect } from "@/components/parties/party-role-select";
 import { SupplierSiteSelect } from "@/components/parties/supplier-site-select";
@@ -102,12 +102,13 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const [chosenPartyId, setChosenPartyId] = useState("");
   const [mainParty, setMainParty] = useState({ name: initial?.mainPartyName ?? preparation?.mainPartyName ?? null, identification: initial?.mainPartyIdentification ?? preparation?.mainPartyIdentification ?? null });
   const voucherTypes = useReferenceOptions("accounting-voucher-type", form.payloadVersion === 4);
-  const inlinePaymentVoucher = form.payloadVersion === 4 && form.voucherTypeCode === "CashReceipt";
+  const cashReceipt = form.payloadVersion === 4 && form.voucherTypeCode === "CashReceipt";
+  const inlinePaymentVoucher = form.payloadVersion === 4 && (cashReceipt || form.voucherTypeCode === "Disbursement");
   const receiptInvoiceIds = new Set(lines.filter(line => line.value.existingPosition?.subledgerKind === "Receivable" &&
     !line.value.existingPosition.reversesTransactionId && line.value.credit > 0).map(line => line.value.existingPosition!.subledgerId));
   const paymentLines = lines.flatMap((line, index) => line.value.paymentEvidence && !line.value.existingPosition && !line.value.financialConceptId ? [{ line, index }] : []);
-  const receiptAttributionConflict = inlinePaymentVoucher && receiptInvoiceIds.size > 1 && paymentLines.length > 1;
-  const paymentAddBlockReason = inlinePaymentVoucher && receiptInvoiceIds.size > 1 && paymentLines.length > 0
+  const receiptAttributionConflict = cashReceipt && receiptInvoiceIds.size > 1 && paymentLines.length > 1;
+  const paymentAddBlockReason = cashReceipt && receiptInvoiceIds.size > 1 && paymentLines.length > 0
     ? "Este recibo aplica a varias facturas y admite una sola forma de pago. Puedes cambiar o quitar la existente." : undefined;
   const franchises = useReferenceOptions("card-franchise", !inlinePaymentVoucher && detailLineId !== null);
   const directions = useReferenceOptions("accounting-adjustment-direction", !!form.adjustment);
@@ -126,7 +127,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     description: `${obligationPartyName} · Disponible ${money.format(obligation.data.availableAmount)}` };
   const readOnly = !!saved?.sentAt || !permissions.includes("accounting.manual.create");
   const statusLabel = accountingReversalStatusLabel(saved?.reversalDocumentId,saved?.reversalStatus)
-    ?? (saved ? statuses.data?.find(item => item.code === saved.status)?.label ?? saved.status : "Nueva captura");
+    ?? (saved ? statuses.data?.find(item => item.code === saved.status)?.label ?? accountingStatusLabel(saved.status) : "Nueva captura");
   const postedEntryButton = saved?.row.entryId && <Button variant="secondary" onClick={() => setEntryOpen(true)}><FileText className="mr-2 h-4 w-4" />Ver comprobante contabilizado</Button>;
   const busy = phase !== null || fiscalBusy;
   const detailIndex = lines.findIndex(line => line.value.lineId === detailLineId);
@@ -135,7 +136,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const paymentUsage = form.voucherTypeCode === "CashReceipt" ? "Receipts" : form.voucherTypeCode === "Disbursement" ? "SupplierPayments"
     : paymentOutgoing ? "VoucherPayments" : "VoucherReceipts";
   const appliedPayments = new Map(saved?.appliedPaymentMethods?.map(item => [item.sourceLineId, item]));
-  const financialGroups = [...new Set(lines.map(line => line.value.financialGroupId).filter((id): id is string => !!id))];
   // These options are the captured document lines, not another portfolio fetch.
   const adjustmentTargets = lines.filter(line => line.value.lineId && line.value.partyId === form.mainPartyId &&
     line.value.existingPosition && !line.value.existingPosition.reversesTransactionId &&
@@ -184,6 +184,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   const debit = lines.reduce((sum, line) => sum + line.value.debit, 0);
   const credit = lines.reduce((sum, line) => sum + line.value.credit, 0);
+  const difference = debit-credit;
+  const differencePending = Math.abs(difference)>0.00001;
   const rowHeight = 80;
   const start = lines.length >= 100 ? Math.max(0, Math.floor(scrollTop / rowHeight) - 4) : 0;
   const end = lines.length >= 100 ? Math.min(lines.length, start + 24) : lines.length;
@@ -276,6 +278,12 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   }
   async function saveAndPost() {
     if (busy || saved?.sentAt) return;
+    if (!form.adjustment && differencePending) {
+      setError(cashReceipt && difference>0
+        ? `Faltan ${money.format(difference)} por clasificar. Si recibiste ese excedente, selecciona explícitamente el concepto Anticipo y su valor; también puedes corregir el importe recibido o aplicado. No se ha creado un anticipo automático.`
+        : `El comprobante tiene una diferencia de ${money.format(Math.abs(difference))}. Revisa los importes o agrega el concepto que corresponda antes de guardar el comprobante definitivo.`);
+      return;
+    }
     const current = dirty || !saved ? await persistDraft() : saved;
     if (!current) return;
     if (!current.canSend) {
@@ -405,8 +413,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       partyIdentification: line.value.partyId ? line.partyIdentification : mainParty.identification,
       value: { ...line.value, partyId: line.value.partyId ?? form.mainPartyId ?? null,
       financialGroupId: inlinePaymentVoucher ? groupId : line.value.financialGroupId,
-      debit: capture ? capture.amount : line.value.debit,
-      credit: capture ? 0 : line.value.credit,
+      debit: capture ? form.voucherTypeCode === "Disbursement" ? 0 : capture.amount : line.value.debit,
+      credit: capture ? form.voucherTypeCode === "Disbursement" ? capture.amount : 0 : line.value.credit,
       reference: inlinePaymentVoucher ? method.methodCode === "Transfer" ? capture?.reference ?? (sameType ? line.value.reference : null) : null : line.value.reference,
       accountId: method.accountId, description: line.value.description || method.name,financialConceptId:null,financialConceptTargetLineId:null,
       paymentEvidence: { ...line.value.paymentEvidence, paymentMethodId: method.paymentMethodId,
@@ -423,7 +431,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   }
 
   function addPositionLines(added: VoucherDraftLineView[]) {
-    if (inlinePaymentVoucher && paymentLines.length > 1 && new Set([...receiptInvoiceIds,
+    if (cashReceipt && paymentLines.length > 1 && new Set([...receiptInvoiceIds,
       ...added.filter(line => line.value.existingPosition?.subledgerKind === "Receivable" && line.value.credit > 0)
         .map(line => line.value.existingPosition!.subledgerId)]).size > 1) {
       setError("Este recibo tiene varias formas de pago y admite una sola factura. Retira las formas adicionales para agregar otra factura."); return;
@@ -601,7 +609,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         </div>}
       </section>
       {inlinePaymentVoucher && <>
-        <VoucherPaymentForms tenantId={tenantId} businessId={businessId}
+        <VoucherPaymentForms tenantId={tenantId} businessId={businessId} direction={form.voucherTypeCode === "Disbursement" ? "outgoing" : "incoming"}
           lines={paymentLines}
           applied={appliedPayments} disabled={busy} readOnly={readOnly}
           addBlockReason={paymentAddBlockReason}
@@ -624,7 +632,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
           {form.payloadVersion === 4 && !inlinePaymentVoucher && !fiscalDocument && <Button variant="outline" disabled={!form.mainPartyId || lines.length >= 500} onClick={addPaymentForm}>Agregar forma de pago</Button>}
           <Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null,financialGroupId:defaultFinancialGroupId},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div></div>
         {form.payloadVersion===4&&!fiscalDocument&&!readOnly&&<section aria-label="Agregar concepto financiero" className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-          <div className="space-y-1"><Label>Concepto</Label><FinancialConceptSelect value={chosenConcept?.financialConceptId??""}
+          <div className="space-y-1"><Label>Concepto adicional (opcional)</Label><FinancialConceptSelect value={chosenConcept?.financialConceptId??""}
             usage={form.voucherTypeCode==="CashReceipt"?"Receipts":form.voucherTypeCode==="Disbursement"?"SupplierPayments":"Vouchers"}
             selectedOption={chosenConcept?{value:chosenConcept.financialConceptId,label:`${chosenConcept.code} · ${chosenConcept.name}`,description:`${chosenConcept.accountCode} · ${chosenConcept.accountName} · ${chosenConcept.sideLabel}`}:null}
             disabled={busy||!form.mainPartyId} onChange={concept=>{setChosenConcept(concept);setConceptTargetLineId(null);}}/></div>
@@ -680,7 +688,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       </fieldset>}
     </fieldset>
     <footer className="sticky bottom-0 z-20 flex flex-wrap items-center gap-4 rounded-2xl border bg-background p-4 shadow-lg">
-      <div className="min-w-0 flex-1 basis-full text-sm sm:basis-0">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={Math.abs(debit - credit) > 0.00001 ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(debit - credit)} · {lines.length} partidas</p></>}
+      <div className="min-w-0 flex-1 basis-full text-sm sm:basis-0">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={differencePending ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(difference)} · {lines.length} partidas</p></>}
         <p className="text-muted-foreground">{saved?.status === "Posted" ? "Comprobante contabilizado: contenido inmutable." : saved?.sentAt ? "Comprobante aceptado; consulta su estado contable. El contenido está congelado." : "Guarda un borrador para seguir editando, o guarda el comprobante definitivo para contabilizarlo."}</p></div>
       <Button variant="outline" disabled={busy} onClick={close}>{modal ? closeLabel : "Volver"}</Button>
       {saved && !dirty && <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{phase === "refresh" ? "Consultando estado…" : "Actualizar estado"}</Button>}
@@ -750,8 +758,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
           catch (value) { setError(value instanceof Error ? value.message : "No se pudo cambiar el vencimiento."); }
         }} /><p className="text-xs text-muted-foreground">Solo al abrir una cuenta por pagar o cobrar. Un anticipo no lleva vencimiento.</p></div>
         </>}
-        {!inlinePaymentVoucher && <div className="space-y-2 sm:col-span-2"><Label>Grupo de partidas vinculadas</Label><Select value={detailLine.value.financialGroupId ?? "auto"} disabled={busy || readOnly || !!detailLine.value.financialConceptTargetLineId || lines.some(line=>line.value.financialConceptTargetLineId===detailLineId)} onValueChange={value => updateValue(detailIndex, { financialGroupId: value === "auto" ? null : value === "new" ? crypto.randomUUID() : value })}>
-          <SelectTrigger aria-label="Grupo de la partida"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">Automático para un solo tercero</SelectItem>{financialGroups.map((id, index) => <SelectItem key={id} value={id}>Grupo {index + 1}</SelectItem>)}<SelectItem value="new">Crear otro grupo</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Para varios pagos o cruces, asigna el mismo grupo a sus obligaciones y contrapartidas.</p></div>}
         {detailLine.value.existingPosition && <div className="rounded-xl border p-3 text-sm sm:col-span-2"><p>Documento vinculado: {detailLine.value.reference ?? detailLine.value.existingPosition.subledgerId}</p><Button variant="link" disabled={lines.some(line=>line.value.financialConceptTargetLineId===detailLineId)} onClick={() => updateValue(detailIndex, { existingPosition: null })}>Quitar vínculo con el documento</Button></div>}
         {!inlinePaymentVoucher && <>
         <div className="space-y-2"><Label htmlFor="line-payment-approval">Autorización del pago</Label><Input id="line-payment-approval" maxLength={100} value={detailLine.value.paymentEvidence?.approvalNumber ?? ""} onChange={event => updateEvidence({ approvalNumber: event.target.value || null })} /></div>

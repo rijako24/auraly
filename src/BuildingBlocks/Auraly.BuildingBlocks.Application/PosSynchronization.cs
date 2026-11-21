@@ -4,6 +4,7 @@ public static class PosSynchronizationStreams
 {
     public const string Catalog = "Catalog";
     public const string Customers = "Customers";
+    public const string Sellers = "Sellers";
     public const string Security = "Security";
     public const string FiscalStatus = "FiscalStatus";
     public const string FiscalProvisioning = "FiscalProvisioning";

@@ -1,4 +1,5 @@
 using Auraly.Application.DocumentProcessing;
+using Auraly.Contracts.Authorization;
 using Auraly.Domain.WorkSessions;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Contracts.Dispatching;
@@ -60,7 +61,7 @@ public interface IWorkSessionStore
         CancellationToken cancellationToken);
     Task<WorkSessionClosurePage> ListClosuresAsync(
         WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
-        int page, int pageSize, CancellationToken cancellationToken);
+        int page, int pageSize, CancellationToken cancellationToken, Guid? closureId = null);
     Task<CashClosureInboxPage> ListClosureInboxAsync(
         WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
         int page, int pageSize, CancellationToken cancellationToken);
@@ -335,11 +336,11 @@ public sealed class WorkSessionService(
 
     public Task<WorkSessionClosurePage> ListClosuresAsync(
         WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
-        int page, int pageSize, CancellationToken cancellationToken = default)
+        int page, int pageSize, CancellationToken cancellationToken = default, Guid? closureId = null)
     {
         Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
         ValidateClosureSearch(from, to, status, page, pageSize);
-        return store.ListClosuresAsync(identity,from,to,status,page,pageSize,cancellationToken);
+        return store.ListClosuresAsync(identity,from,to,status,page,pageSize,cancellationToken,closureId);
     }
 
     public Task<CashClosureInboxPage> ListClosureInboxAsync(
@@ -407,9 +408,11 @@ public sealed class WorkSessionService(
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken = default)
     {
         Demand(identity,WorkSessionPermissionCodes.ReconcileClosures);
+        if(request.PaymentCorrections is { Count: > 0 } || request.Reclassifications is { Count: > 0 })
+            Demand(identity,CommercePermissionCodes.SalesCorrectPaymentMethods);
         if (closureId==Guid.Empty || string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length>128)
             throw new WorkSessionValidationException("El cierre y la clave idempotente son obligatorios.");
-        if (request.Lines.Count==0 || request.Lines.Any(line=>string.IsNullOrWhiteSpace(line.PaymentMethodCode) ||
+        if (request.Lines is null || request.Reclassifications is null || request.Lines.Count==0 || request.Lines.Any(line=>string.IsNullOrWhiteSpace(line.PaymentMethodCode) ||
                 (line.PaymentMethodCode.Equals("Cash",StringComparison.OrdinalIgnoreCase) && line.VerifiedAmount<0)) ||
             request.Reclassifications.Any(line=>line.Amount<=0) || request.Note?.Trim().Length>500)
             throw new WorkSessionValidationException("Los valores de conciliación no son válidos.");
@@ -442,6 +445,7 @@ public sealed class WorkSessionService(
         IReadOnlyList<WorkSessionPaymentCorrection> corrections, CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.ReconcileClosures);
+        Demand(identity, CommercePermissionCodes.SalesCorrectPaymentMethods);
         if (closureId == Guid.Empty || corrections.Count == 0)
             throw new WorkSessionValidationException("Selecciona un comprobante del cierre para corregir.");
         ValidatePaymentCorrections(corrections);

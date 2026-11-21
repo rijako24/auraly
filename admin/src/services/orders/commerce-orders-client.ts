@@ -70,6 +70,8 @@ export type CommerceOrderDetail = CommerceOrderListItem & {
   paymentStatus: string | null;
   lines: CommerceOrderLine[];
   warehouseId: string | null;
+  sellerId?: string | null;
+  sellerName?: string | null;
 };
 
 export type CommerceOrderPrintLine = {

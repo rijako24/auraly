@@ -84,3 +84,20 @@ CREATE INDEX [IX_OrderInvoiceLinks_Business_Created]
     ON [dbo].[OrderInvoiceLinks] ([BusinessId], [CreatedAt])
     INCLUDE ([OrderId], [DocumentId], [OperationId]);
 GO
+
+-- Immutable command receipts: no job/lease/state machine; owned by SellerOrderWriter.
+CREATE TABLE [dbo].[OrderMutationReceipts] (
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [IdempotencyKey] NVARCHAR(160) NOT NULL,
+    [OrderId] UNIQUEIDENTIFIER NOT NULL,
+    [UserId] UNIQUEIDENTIFIER NOT NULL,
+    [RequestHash] CHAR(64) NOT NULL,
+    [ResultJson] NVARCHAR(MAX) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [PK_OrderMutationReceipts] PRIMARY KEY ([BusinessId],[IdempotencyKey]),
+    CONSTRAINT [FK_OrderMutationReceipts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [FK_OrderMutationReceipts_Order] FOREIGN KEY ([OrderId]) REFERENCES [dbo].[Orders]([OrderId]),
+    CONSTRAINT [FK_OrderMutationReceipts_User] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers]([UserId]),
+    CONSTRAINT [CK_OrderMutationReceipts_Result] CHECK (ISJSON([ResultJson])=1)
+);
+GO

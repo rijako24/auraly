@@ -96,8 +96,7 @@ for (const supplier of [false, true]) for (const kind of ["advance", "general", 
     await expect(page.getByRole("button", { name: "Eliminar partida 1", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Detalles de la partida 3", exact: true }).click();
     await expect(page.getByRole("combobox", { name: "Documento ajustado", exact: true })).toContainText("FACT-1");
-    if (supplier) await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toBeDisabled();
-    else await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Cerrar detalles", exact: true }).click();
   }
   await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
@@ -214,11 +213,19 @@ test("la bandeja filtra por el concepto de las partidas, incluso inactivo, media
   });
   await page.goto("/dashboard/cash-receipts");
   await expect(page.getByText("No hay documentos para estos filtros.", { exact: true })).toBeVisible(); expect(options).toBe(0);
+  await page.getByRole("button",{name:"Filtros de documentos",exact:true}).click();
+  expect(queries).toHaveLength(1);
   await page.getByRole("combobox", { name: "Concepto financiero", exact: true }).click();
   await page.getByRole("option", { name: /Anticipo elegido/ }).click();
   await expect(page.getByText("RC-CONCEPTO", { exact: true })).toBeVisible();
   expect(queries).toHaveLength(2); expect(queries[1].searchParams.get("financialConceptId")).toBe(conceptId);
   expect(queries[1].searchParams.get("voucherTypeCode")).toBe("CashReceipt");
+  await page.getByRole("button",{name:"Filtros de documentos",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"Concepto financiero",exact:true})).toHaveCount(0);
+  await expect(page.getByText("RC-CONCEPTO",{exact:true})).toBeVisible();
+  expect(queries).toHaveLength(2);
+  await page.getByRole("button",{name:"Filtros de documentos",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"Concepto financiero",exact:true})).toContainText(concept.name);
   await page.getByRole("button", { name: "Quitar selección de Concepto financiero", exact: true }).click();
   await expect(page.getByText("No hay documentos para estos filtros.", { exact: true })).toBeVisible();
   // The unchanged unfiltered page is already authoritative in this journey.

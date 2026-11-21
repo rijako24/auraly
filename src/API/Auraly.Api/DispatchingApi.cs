@@ -17,32 +17,26 @@ public static class DispatchingApi
             .RequireAuthorization();
 
         group.MapGet("", async (ClaimsPrincipal principal, int page, int pageSize,
-            string? search, string? status, DateOnly? from, DateOnly? to,
+            string? search, string? status, DateOnly? from, DateOnly? to, bool? mine, string? orderBy,
             DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.PageAsync(principal.ToDispatchIdentity(),
-                new(page == 0 ? 1 : page, pageSize == 0 ? 25 : pageSize, search, status, from, to), ct), Results.Ok));
-
-        group.MapGet("/options", async (ClaimsPrincipal principal, DispatchService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.OptionsAsync(principal.ToDispatchIdentity(), ct), Results.Ok));
-
-        group.MapGet("/drivers", async (ClaimsPrincipal principal, int? page, int? pageSize,
-            string? search, Guid? userId, DispatchService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.DriversAsync(principal.ToDispatchIdentity(),
-                page ?? 1, pageSize ?? 30, search, userId, ct), Results.Ok));
+                new(page == 0 ? 1 : page, pageSize == 0 ? 25 : pageSize, search, status, from, to, mine ?? false, orderBy ?? "scheduled-desc"), ct), Results.Ok));
 
         group.MapGet("/delivery-reasons", async (ClaimsPrincipal principal, string type,
             DispatchDeliveryService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.ReasonsAsync(principal.ToDispatchIdentity(), type, ct), Results.Ok));
 
         group.MapGet("/candidates", async (ClaimsPrincipal principal, int page, int pageSize,
-            string? search, string? documentType, DateOnly? from, DateOnly? to, Guid? warehouseId, int? dateRangeVersion,
+            string? search, string? documentType, DateOnly? from, DateOnly? to, Guid? warehouseId, int? dateRangeVersion, Guid? routeId,
             DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.CandidatesAsync(principal.ToDispatchIdentity(),
-                new(page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, search, documentType, from, to, warehouseId, dateRangeVersion ?? 1), ct), Results.Ok));
+                new(page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, search, documentType, from, to, warehouseId, dateRangeVersion ?? 1, routeId), ct), Results.Ok));
 
         group.MapGet("/{dispatchId:guid}", async (ClaimsPrincipal principal, Guid dispatchId,
+            int? documentPage, int? documentPageSize, int? linePage, int? linePageSize,
             DispatchService service, CancellationToken ct) =>
-            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct), Results.Ok));
+            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct,
+                new(documentPage ?? 1, documentPageSize ?? 10, linePage ?? 1, linePageSize ?? 10)), Results.Ok));
 
         group.MapGet("/{dispatchId:guid}/report", async (ClaimsPrincipal principal, Guid dispatchId,
             bool includePrices, DispatchService service, CancellationToken ct) =>
@@ -77,9 +71,9 @@ public static class DispatchingApi
             DeclareDispatchShortageRequest request, DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.DeclareShortageAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
 
-        group.MapGet("/{dispatchId:guid}/execution", async (ClaimsPrincipal principal, Guid dispatchId,
+        group.MapGet("/{dispatchId:guid}/execution", async (ClaimsPrincipal principal, Guid dispatchId, bool? review,
             DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
-            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct), Results.Ok,
+            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct, review ?? false), Results.Ok,
                 result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)));
 
         group.MapPut("/{dispatchId:guid}/delivery-results", async (ClaimsPrincipal principal, Guid dispatchId,

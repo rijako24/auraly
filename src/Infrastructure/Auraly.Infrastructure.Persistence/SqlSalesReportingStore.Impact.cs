@@ -1,4 +1,4 @@
-﻿using Auraly.Contracts.Sales;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -25,9 +25,7 @@ public sealed partial class SqlSalesReportingStore
     {
         if(request.CustomerActivity is not ("all" or "buyers" or "without-purchase"))
             throw new SalesReportingValidationException("El filtro de actividad del cliente no es válido.");
-        var order=request.OrderBy switch {"net-desc"=>"NetUntaxed DESC","net-asc"=>"NetUntaxed ASC",
-            "label"=>"Label ASC","profit-desc"=>"Profit DESC","quantity-desc"=>"Quantity DESC",
-            _=>throw new SalesReportingValidationException("El orden no es válido.")};
+        var order=ExplorerOrder(request.OrderBy, details: false);
         var comparison=ComparisonRange(request);
         var comparisonSql=comparison is null?$"SELECT {ExplorerMeasures} FROM #Activity a WHERE 1=0;":$"""
             SELECT {ExplorerMeasures} {ComparisonSource(ExplorerSource)}

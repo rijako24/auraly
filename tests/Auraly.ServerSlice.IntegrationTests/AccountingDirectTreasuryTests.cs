@@ -82,7 +82,7 @@ public sealed class AccountingDirectTreasuryTests(ServerSliceFixture fixture)
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
             AccountingPermissionCodes.Retry,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close, WorkSessionPermissionCodes.ManageCash,
-            WorkSessionPermissionCodes.ReconcileClosures, WorkSessionPermissionCodes.ReadCashDifferences);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods, WorkSessionPermissionCodes.ReadCashDifferences);
         using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
         using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
             new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();

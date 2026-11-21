@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Auraly.Application.Sales;
+using Xunit.Abstractions;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -12,8 +16,166 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
+public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Invoice_history_filters_and_pages_before_payment_enrichment_with_constant_SQL_budget()
+    {
+        // Read-model load only; native issuing and payment corrections have their
+        // own end-to-end tests. Never run these seeded rows through a writer.
+        var marker=$"H{Guid.NewGuid():N}"[..8];
+        var dispatchId=Guid.NewGuid();
+        var seller=Guid.NewGuid();
+        var rows=Enumerable.Range(0,2000).Select(index=>new { Id=Guid.NewGuid(), Index=index }).ToArray();
+        await ExecuteAsync("""
+            DECLARE @Rows TABLE(Id uniqueidentifier PRIMARY KEY,[Index] int);
+            INSERT @Rows SELECT Id,[Index] FROM OPENJSON(@Json) WITH(Id uniqueidentifier,[Index] int);
+            DECLARE @At datetimeoffset='2026-11-20T12:00:00+00:00';
+            INSERT dbo.SalesDocuments(DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
+              DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,DocumentType,IdempotencyKey,
+              PayloadHash,IssuedAt,CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,ProcessingStatus,
+              ReceivedAt,SellerIdSnapshot,SellerNameSnapshot,SoldByUserId)
+            SELECT Id,@Business,@Warehouse,N'Online',@Series,CONCAT(@Marker,N'-',[Index]),@Marker,N'QA',[Index]+1,
+              N'SalesReceipt',CONVERT(nvarchar(36),Id),HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),
+              DATEADD(second,[Index],@At),N'222222222222',10000,0,10000,N'Completed',@At,
+              CASE WHEN [Index]%2=0 THEN @Seller END,N'Vendedor de prueba',@User FROM @Rows;
+            DECLARE @Sequence bigint=(SELECT ISNULL(MAX(ProcessingSequence),0) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business);
+            INSERT dbo.DocumentProcessingJobs(JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
+            SELECT NEWID(),@Business,@Sequence+[Index]+1,Id,N'SalesReceipt',N'Completed',@At,@At FROM @Rows;
+            INSERT dbo.DocumentProcessingPayloads(DocumentId,DocumentType,BusinessId,PayloadJson,PayloadHash,AcceptedAt)
+            SELECT Id,N'SalesReceipt',@Business,N'{"commercialSnapshot":{"customerName":"Cliente de prueba"}}',
+              HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),@At FROM @Rows;
+            INSERT dbo.SalesPayments(DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt,PaymentMethodName)
+            SELECT Id,n.Number,N'Cash',2000,@At,CONCAT(N'Caja ',n.Number)
+            FROM @Rows CROSS JOIN(VALUES(1),(2),(3),(4),(5)) n(Number);
+            INSERT dbo.Dispatches(DispatchId,TenantId,BusinessId,DispatchNumber,ScheduledDate,DriverUserId,DriverName,Status,CreatedBy,CreatedAt,UpdatedAt)
+            VALUES(@Dispatch,@Tenant,@Business,CONCAT(@Marker,N'-DSP'),CONVERT(date,@At),@User,N'Transportador QA',N'Draft',@User,@At,@At);
+            INSERT dbo.DispatchSourceDocuments(DispatchSourceDocumentId,DispatchId,SourceDocumentId,SourceDocumentType,
+              DocumentNumberSnapshot,CustomerNameSnapshot,SellerNameSnapshot,DocumentTotalSnapshot,CreditAmountSnapshot,CreatedAt)
+            SELECT NEWID(),@Dispatch,Id,N'SalesReceipt',CONCAT(@Marker,N'-',[Index]),N'Cliente QA',N'Vendedor QA',10000,0,@At
+            FROM @Rows WHERE [Index] IN(1998,1996);
+            UPDATE sale SET CollectionMode=N'Dispatch' FROM dbo.SalesDocuments sale JOIN @Rows input ON input.Id=sale.DocumentId WHERE input.[Index]=1996;
+
+            """,new("@Business",fixture.BusinessId),new("@Warehouse",fixture.WarehouseId),
+            new("@Series",fixture.OnlineSalesReceiptSeriesId),new("@User",fixture.UserId),
+            new("@Seller",seller),new("@Marker",marker),new("@Json",JsonSerializer.Serialize(rows)),
+            new("@Tenant",fixture.TenantId),new("@Dispatch",dispatchId));
+        using var scope=fixture.CreateScope();
+        var store=scope.ServiceProvider.GetRequiredService<IOnlineSalesHistoryStore>();
+        var actor=new OnlineSalesUserIdentity(fixture.UserId,fixture.TenantId,new HashSet<string>{CommercePermissionCodes.SalesReprint});
+        var request=new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),marker,Take:20,
+            From:new(2026,11,20),To:new(2026,11,20),DateRangeVersion:2,SellerId:seller,BilledByUserId:fixture.UserId);
+        await store.SearchAsync(actor,request,CancellationToken.None);
+        var times=new List<double>();var pages=new List<OnlineSalesIssuedSalePage>();
+        var database=new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        for(var attempt=0;attempt<8;attempt++)
+        {
+            using var counter=new InventoryBalanceProcessingTests.CommandCounter(database);
+            var watch=Stopwatch.StartNew();
+            var page=await store.SearchAsync(actor,request with { Skip=attempt%2*20 },CancellationToken.None);
+            times.Add(watch.Elapsed.TotalMilliseconds);pages.Add(page);
+            Assert.Equal(2,counter.Count);Assert.Equal(20,page.Items.Count);Assert.True(page.HasMore);
+            Assert.All(page.Items,row=>{Assert.Equal(5,row.Payments!.Count);Assert.Equal(row.Total,row.Payments.Sum(payment=>payment.Amount));});
+        }
+        Assert.Null(pages[0].Items.Single(row=>row.DocumentId==rows[1998].Id).DispatchId);
+        Assert.Equal(dispatchId,pages[0].Items.Single(row=>row.DocumentId==rows[1996].Id).DispatchId);
+        Assert.Empty(pages[0].Items.Select(row=>row.DocumentId).Intersect(pages[1].Items.Select(row=>row.DocumentId)));
+        var p95=times.OrderBy(value=>value).ElementAt((int)Math.Ceiling(times.Count*.95)-1);
+        output.WriteLine($"Invoice history:2000 documents/10000 payments;20 rows;2 SQL commands + read transaction begin/commit; first={times[0]:F2}ms,next={times[1]:F2}ms,p95={p95:F2}ms;budget=750ms.");
+        Assert.True(p95<750,$"Invoice history p95 {p95:F2}ms exceeds750ms.");
+    }
+
+    [Fact]
+    public async Task Optional_seller_selection_is_tenant_scoped_versioned_idempotent_and_kept_in_native_upload()
+    {
+        var sellerId=Guid.NewGuid();var partyId=Guid.NewGuid();var otherTenant=Guid.NewGuid();var otherSeller=Guid.NewGuid();
+        await ExecuteAsync("""
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@Party,@Tenant,N'NaturalPerson',N'Vendedora POS',N'Complete',1,@User,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@Seller,@Tenant,@Party,@Code,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Tenants(TenantId,TenantKey,Name,Email,IsActive,CreatedAt)
+            VALUES(@OtherTenant,CONCAT(N'@seller-',REPLACE(CONVERT(nvarchar(36),@OtherTenant),N'-',N'')),N'Ajeno',CONCAT(@OtherTenant,N'@test.local'),1,SYSUTCDATETIME());
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedAt)
+            VALUES(@OtherSeller,@OtherTenant,N'NaturalPerson',N'Vendedor ajeno',N'Complete',1,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@OtherSeller,@OtherTenant,@OtherSeller,N'V-AJENO',N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            """,new("@Tenant",fixture.TenantId),new("@Seller",sellerId),new("@Party",partyId),new("@User",fixture.UserId),
+            new("@Code",$"V-{sellerId:N}"[..32]),new("@OtherTenant",otherTenant),new("@OtherSeller",otherSeller));
+        await ExecuteAsync("""
+            IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE UserId=@User AND PartyId IS NULL)
+            BEGIN
+              DECLARE @Party uniqueidentifier=NEWID();
+              INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+              SELECT @Party,TenantId,N'NaturalPerson',COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(FirstName,N' ',LastName))),N''),Username),
+                N'Complete',1,UserId,SYSDATETIMEOFFSET() FROM dbo.AppUsers WHERE UserId=@User;
+              UPDATE dbo.AppUsers SET PartyId=@Party WHERE UserId=@User;
+            END;
+            """,new SqlParameter("@User",fixture.UserId));
+        using var client=fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate,CommercePermissionCodes.SalesReprint);
+        var session=await fixture.OpenWorkSessionAsync(client);
+        var draft=await OpenAsync(client,session.WorkSessionId);
+        using var first=Mutation(HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/seller",
+            new SelectOnlineSalesDraftSellerRequest(sellerId,draft.Version));
+        var key=first.Headers.GetValues("Idempotency-Key").Single();
+        using var response=await client.SendAsync(first);response.EnsureSuccessStatusCode();
+        var selected=(await response.Content.ReadFromJsonAsync<OnlineSalesDraft>())!;
+        Assert.Equal(sellerId,selected.SellerId);Assert.Equal("Vendedora POS",selected.SellerName);
+        Assert.Equal(draft.Version+1,selected.Version);
+        using var replay=Mutation(HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/seller",
+            new SelectOnlineSalesDraftSellerRequest(sellerId,draft.Version));
+        replay.Headers.Remove("Idempotency-Key");replay.Headers.Add("Idempotency-Key",key);
+        using var replayResponse=await client.SendAsync(replay);replayResponse.EnsureSuccessStatusCode();
+        Assert.Equal(selected.Version,(await replayResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>())!.Version);
+        using var forbidden=Mutation(HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/seller",
+            new SelectOnlineSalesDraftSellerRequest(otherSeller,selected.Version));
+        using var forbiddenResponse=await client.SendAsync(forbidden);Assert.Equal(HttpStatusCode.BadRequest,forbiddenResponse.StatusCode);
+        using var options=await client.GetAsync("/api/commerce/v1/parties/role-options?role=Seller&page=1&pageSize=20&search=Vendedora%20POS");
+        options.EnsureSuccessStatusCode();Assert.Contains(sellerId.ToString(),await options.Content.ReadAsStringAsync());
+        using var uploader=fixture.CreateClient();
+        var sale=fixture.CreateUniqueValidRequest() with { SellerId=sellerId };
+        using var upload=fixture.CreateUploadMessage(sale);using var uploaded=await uploader.SendAsync(upload);
+        Assert.True(uploaded.IsSuccessStatusCode,await uploaded.Content.ReadAsStringAsync());
+        using(var history=await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+            new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),sale.DocumentNumber.FullNumber,Take:10,DateRangeVersion:2,SellerId:sellerId,BilledByUserId:fixture.UserId)))
+        {
+            Assert.True(history.IsSuccessStatusCode,await history.Content.ReadAsStringAsync());
+            var row=Assert.Single((await history.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>())!.Items);
+            Assert.Equal(sale.DocumentId,row.DocumentId);Assert.Equal("Vendedora POS",row.SellerName);Assert.NotEmpty(row.Payments!);
+            Assert.Equal(sale.CommercialSnapshot.PayableAmount,row.Payments!.Sum(payment=>payment.Amount));
+        }
+        foreach(var filters in new[]{(Seller:(Guid?)Guid.NewGuid(),BilledBy:(Guid?)fixture.UserId),
+            (Seller:(Guid?)sellerId,BilledBy:(Guid?)Guid.NewGuid())})
+        {
+            using var filtered=await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+                new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),sale.DocumentNumber.FullNumber,
+                    SellerId:filters.Seller,BilledByUserId:filters.BilledBy));
+            filtered.EnsureSuccessStatusCode();Assert.Empty((await filtered.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>())!.Items);
+        }
+        using(var reader=fixture.CreateAdminClient(CommercePermissionCodes.SalesReprint))
+        {
+            foreach(var role in new[]{("Seller",sellerId),("User",fixture.UserId)})
+            {
+                using var optionsResponse=await reader.GetAsync($"/api/commerce/v1/parties/role-options?role={role.Item1}&roleId={role.Item2:D}&page=1&pageSize=10");
+                optionsResponse.EnsureSuccessStatusCode();Assert.Contains(role.Item2.ToString(),await optionsResponse.Content.ReadAsStringAsync());
+            }
+            using var employeeOptions=await reader.GetAsync("/api/commerce/v1/parties/role-options?role=Employee&page=1&pageSize=10");
+            Assert.Equal(HttpStatusCode.Forbidden,employeeOptions.StatusCode);
+        }
+        Assert.Equal(sellerId,await ScalarAsync<Guid>("SELECT SellerIdSnapshot FROM dbo.SalesDocuments WHERE DocumentId=@Id;",new SqlParameter("@Id",sale.DocumentId)));
+        using var repeat=fixture.CreateUploadMessage(sale);using var repeated=await uploader.SendAsync(repeat);repeated.EnsureSuccessStatusCode();
+        Assert.Equal(1,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@Id;",new SqlParameter("@Id",sale.DocumentId)));
+        await ExecuteAsync("UPDATE dbo.CommerceSellers SET IsActive=0 WHERE SellerId=@Id;",new SqlParameter("@Id",sellerId));
+        using(var inactiveFilter=await client.GetAsync($"/api/commerce/v1/parties/role-options?role=Seller&roleId={sellerId:D}&includeInactive=true&pageSize=10"))
+        {inactiveFilter.EnsureSuccessStatusCode();Assert.Contains(sellerId.ToString(),await inactiveFilter.Content.ReadAsStringAsync());}
+        using var inactive=Mutation(HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/seller",
+            new SelectOnlineSalesDraftSellerRequest(sellerId,selected.Version));
+        using var inactiveResponse=await client.SendAsync(inactive);Assert.Equal(HttpStatusCode.BadRequest,inactiveResponse.StatusCode);
+        var automatic=await MutateAsync<OnlineSalesDraft>(client,HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/seller",
+            new SelectOnlineSalesDraftSellerRequest(null,selected.Version));
+        Assert.Null(automatic.SellerId);Assert.Null(automatic.SellerName);
+    }
+
     [Fact]
     public async Task Enrolled_pos_downloads_scoped_promotion_and_applies_it_from_sqlite_offline()
     {

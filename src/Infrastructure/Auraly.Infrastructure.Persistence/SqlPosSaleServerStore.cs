@@ -47,6 +47,8 @@ public sealed partial class SqlPosSaleServerStore(
               AND s.EmitterKind=N'Device'
               AND a.FiscalAuthorizationId=@FiscalAuthorizationId
               AND b.TenantId=@TenantId
+              AND (@SelectedSellerId IS NULL OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller
+                WHERE seller.SellerId=@SelectedSellerId AND seller.TenantId=@TenantId))
               AND b.IsActive=1
               AND w.IsActive=1
               AND u.IsActive=1
@@ -81,6 +83,7 @@ public sealed partial class SqlPosSaleServerStore(
         command.Parameters.AddWithValue("@DocumentConsecutive", request.DocumentNumber.Consecutive);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
         command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@SelectedSellerId", (object?)request.SellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
@@ -116,7 +119,9 @@ public sealed partial class SqlPosSaleServerStore(
               AND ds.Prefix=@Prefix AND ds.SeriesCode=@SeriesCode
               AND @Consecutive BETWEEN ds.RangeStart AND ds.RangeEnd
               AND ds.IsOfflineCapable=1 AND ds.IsActive=1
-              AND b.IsActive=1 AND w.IsActive=1 AND w.UseForSales=1 AND u.IsActive=1 AND d.IsActive=1;
+              AND b.IsActive=1 AND w.IsActive=1 AND w.UseForSales=1 AND u.IsActive=1 AND d.IsActive=1
+              AND (@SelectedSellerId IS NULL OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller
+                WHERE seller.SellerId=@SelectedSellerId AND seller.TenantId=@TenantId));
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -124,6 +129,7 @@ public sealed partial class SqlPosSaleServerStore(
         command.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@SelectedSellerId", (object?)request.SellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         command.Parameters.AddWithValue("@DeviceId", request.DeviceId);
@@ -607,8 +613,9 @@ public sealed partial class SqlPosSaleServerStore(
             LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=customer.PartyId
             LEFT JOIN dbo.Orders originalOrder ON originalOrder.OrderId=@SourceOrderId AND originalOrder.BusinessId=@BusinessId
             LEFT JOIN dbo.CommerceSellers seller ON seller.TenantId=businessValue.TenantId
-              AND ((@SourceOrderId IS NOT NULL AND seller.SellerId=originalOrder.SellerId)
-                OR (@SourceOrderId IS NULL AND seller.PartyId=actor.PartyId))
+              AND ((@SelectedSellerId IS NOT NULL AND seller.SellerId=@SelectedSellerId)
+                OR (@SelectedSellerId IS NULL AND ((@SourceOrderId IS NOT NULL AND seller.SellerId=originalOrder.SellerId)
+                  OR (@SourceOrderId IS NULL AND seller.PartyId=actor.PartyId))))
             LEFT JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
             WHERE document.DocumentId=@DocumentId;
             """;
@@ -634,6 +641,7 @@ public sealed partial class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@SourceMode", request.SourceMode);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
         sqlCommand.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
+        sqlCommand.Parameters.Add("@SelectedSellerId", SqlDbType.UniqueIdentifier).Value = (object?)request.SellerId ?? DBNull.Value;
         sqlCommand.Parameters.AddWithValue("@SourceOrderId", (object?)request.SourceOrderId ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@DocumentNumber", request.DocumentNumber.FullNumber);
         sqlCommand.Parameters.AddWithValue("@DocumentPrefix", request.DocumentNumber.Prefix);

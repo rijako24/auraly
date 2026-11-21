@@ -6,11 +6,9 @@ namespace Auraly.Application.Dispatching;
 public interface IDispatchStore
 {
     Task<DispatchPage> PageAsync(DispatchActorIdentity actor, DispatchQuery query, CancellationToken ct);
-    Task<DispatchOptions> OptionsAsync(DispatchActorIdentity actor, CancellationToken ct);
-    Task<DispatchDriverPage> DriversAsync(DispatchActorIdentity actor, int page, int pageSize, string? search, Guid? userId, CancellationToken ct);
     Task<DispatchCandidatePage> CandidatesAsync(DispatchActorIdentity actor, DispatchCandidateQuery query, CancellationToken ct);
-    Task<DispatchDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct);
-    Task<DispatchMutationResult> CreateAsync(DispatchActorIdentity actor, Guid dispatchId, string dispatchNumber, CreateDispatchRequest request, string driverName, string? vehiclePlate, string? notes, DateTimeOffset now, CancellationToken ct);
+    Task<DispatchDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct, DispatchDetailQuery? query = null);
+    Task<DispatchMutationResult> CreateAsync(DispatchActorIdentity actor, Guid dispatchId, CreateDispatchRequest request, string? vehiclePlate, string? notes, DateTimeOffset now, CancellationToken ct);
     Task<DispatchMutationResult> AddDocumentsAsync(DispatchActorIdentity actor, Guid dispatchId, IReadOnlyCollection<Guid> documentIds, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
     Task<DispatchMutationResult> RemoveDocumentAsync(DispatchActorIdentity actor, Guid dispatchId, Guid sourceDocumentId, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
     Task<DispatchMutationResult> TransitionAsync(DispatchActorIdentity actor, Guid dispatchId, string targetStatus, byte[] rowVersion, string idempotencyKey, DateTimeOffset now, CancellationToken ct);
@@ -23,25 +21,11 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
 {
     public Task<DispatchPage> PageAsync(DispatchActorIdentity actor, DispatchQuery query, CancellationToken ct)
     {
-        Require(actor, DispatchPermissionCodes.Read);
+        RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.ExecuteDeliveries);
         Page(query.Page, query.PageSize);
         Status(query.Status);
         if (query.From.HasValue && query.To < query.From) throw new DispatchValidationException("El rango de fechas no es válido.");
         return store.PageAsync(actor, query with { Search = Text(query.Search, 160) }, ct);
-    }
-
-    public Task<DispatchOptions> OptionsAsync(DispatchActorIdentity actor, CancellationToken ct)
-    {
-        RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.Create);
-        return store.OptionsAsync(actor, ct);
-    }
-
-    public Task<DispatchDriverPage> DriversAsync(DispatchActorIdentity actor, int page,
-        int pageSize, string? search, Guid? userId, CancellationToken ct)
-    {
-        RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.Create);
-        Page(page, pageSize);
-        return store.DriversAsync(actor, page, pageSize, Text(search, 160), userId, ct);
     }
 
     public Task<DispatchCandidatePage> CandidatesAsync(DispatchActorIdentity actor, DispatchCandidateQuery query, CancellationToken ct)
@@ -56,24 +40,23 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
         return store.CandidatesAsync(actor, query with { Search = Text(query.Search, 160) }, ct);
     }
 
-    public async Task<DispatchDetail> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct)
+    public async Task<DispatchDetail> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct, DispatchDetailQuery? query = null)
     {
         Require(actor, DispatchPermissionCodes.Read); Required(dispatchId, "DispatchId");
-        return await store.GetAsync(actor, dispatchId, ct) ?? throw new DispatchNotFoundException("El despacho no existe en la empresa autorizada.");
+        query ??= new(); Page(query.DocumentPage, query.DocumentPageSize); Page(query.LinePage, query.LinePageSize);
+        return await store.GetAsync(actor, dispatchId, ct, query) ?? throw new DispatchNotFoundException("El despacho no existe en la empresa autorizada.");
     }
 
     public Task<DispatchMutationResult> CreateAsync(DispatchActorIdentity actor, CreateDispatchRequest request, CancellationToken ct)
     {
         Require(actor, DispatchPermissionCodes.Create); Scope(actor, request.BusinessId);
-        var driver = RequiredText(request.DriverName, 160, "DriverName");
         var plate = Text(request.VehiclePlate, 24)?.ToUpperInvariant();
         var notes = Text(request.Notes, 500);
         UniqueDocuments(request.SourceDocumentIds);
         var id = ids.NewId();
-        // UUIDv7 prefixes share their timestamp. Truncating that prefix can
-        // collide for two dispatches created together; retain the full identity.
-        var number = $"DSP-{request.ScheduledDate:yyyyMMdd}-{id:N}".ToUpperInvariant();
-        return store.CreateAsync(actor, id, number, request, driver, plate, notes, time.GetUtcNow(), ct);
+        if (request.DriverCarrierId is not Guid carrier || carrier == Guid.Empty)
+            throw new DispatchValidationException("Selecciona un tercero con rol Transportador.");
+        return store.CreateAsync(actor, id, request, plate, notes, time.GetUtcNow(), ct);
     }
 
     public Task<DispatchMutationResult> AddDocumentsAsync(DispatchActorIdentity actor, Guid dispatchId, AddDispatchDocumentsRequest request, CancellationToken ct)

@@ -44,7 +44,7 @@ public sealed class SqlDocumentProcessingCompletionObserver(
                     signal.DocumentType, cancellationToken);
 
             if (signal.EconomicEffectsEnabled &&
-                SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+                SalesReportingProcessingPolicy.SupportsCommercial(signal.DocumentType))
                 await reporting.RequestProjectionAsync(
                     signal.BusinessId, signal.DocumentId,
                     signal.DocumentType, cancellationToken);

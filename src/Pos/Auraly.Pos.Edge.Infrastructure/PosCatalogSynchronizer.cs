@@ -103,6 +103,7 @@ public sealed class PosCatalogSynchronizer(
         {
             await SynchronizeConfigurationCoreAsync(cancellationToken, initialSynchronization: true);
             await SynchronizeCustomersCoreAsync(cancellationToken);
+            await SynchronizeSellersCoreAsync(cancellationToken);
             await store.PromoteBootstrapAsync(cancellationToken);
             progress?.Publish();
         }
@@ -178,6 +179,48 @@ public sealed class PosCatalogSynchronizer(
                     events?.CustomerReceived(customer, previous);
             }
             await store.ApplyCustomerChangesAsync(page, cancellationToken);
+            progress?.Publish();
+            cursor = page.ToCursor;
+            if (!page.HasMore) break;
+        }
+    }
+
+    public async Task SynchronizeSellersAsync(CancellationToken cancellationToken = default)
+    {
+        await synchronizationGate.WaitAsync(cancellationToken);
+        try
+        {
+            await store.InitializeAsync(cancellationToken);
+            await SynchronizeSellersCoreAsync(cancellationToken);
+        }
+        finally { synchronizationGate.Release(); }
+    }
+
+    private async Task SynchronizeSellersCoreAsync(CancellationToken ct)
+    {
+        var state = await store.SellerSynchronizationStateAsync(ct);
+        if (state.Cursor is null)
+        {
+            if (!state.Bootstrapping) await store.BeginSellerBootstrapAsync(ct);
+            var next = state.Next;
+            while (true)
+            {
+                var path = $"api/pos/v1/sellers/bootstrap?{ScopeQuery}&pageSize=1000";
+                if (next is not null) path += $"&cursor={Uri.EscapeDataString(next)}";
+                var page = await SendAsync<PosSellerBootstrapPage>(HttpMethod.Get, path, null, ct);
+                await store.ApplySellerBootstrapPageAsync(page, ct);
+                progress?.Publish();
+                if (!page.HasMore) break;
+                next = page.NextCursor;
+            }
+            state = await store.SellerSynchronizationStateAsync(ct);
+        }
+        var cursor = state.Cursor ?? throw new InvalidDataException("No se completó la descarga de vendedores.");
+        while (true)
+        {
+            var page = await SendAsync<PosSellerDeltaPage>(HttpMethod.Get,
+                $"api/pos/v1/sellers/changes?{ScopeQuery}&cursor={cursor}&pageSize=1000", null, ct);
+            await store.ApplySellerChangesAsync(page, ct);
             progress?.Publish();
             cursor = page.ToCursor;
             if (!page.HasMore) break;

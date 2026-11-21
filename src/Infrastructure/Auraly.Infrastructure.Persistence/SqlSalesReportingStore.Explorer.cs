@@ -99,6 +99,37 @@ public sealed partial class SqlSalesReportingStore
         ("ReturnsWithTax","COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.TotalAmount ELSE 0 END),0)"),
         ("ReturnedTax","COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.TaxAmount ELSE 0 END),0)")
     ];
+    private static string ExplorerOrder(string value, bool supplier = false, bool details = true)
+    {
+        if (value == "label") return "Label ASC";
+        var separator = value.LastIndexOf('-');
+        if (separator < 1 || value[(separator + 1)..] is not ("asc" or "desc"))
+            throw new SalesReportingValidationException("El orden no es válido.");
+        var column = value[..separator] switch
+        {
+            "label" => "Label", "quantity" => "Quantity", "gross" => "GrossSales",
+            "discount" => "Discounts", "sales" => "(NetUntaxed+Returns)", "net" => "NetUntaxed", "returns" => "Returns",
+            "tax" => "Tax", "total" => "NetTotal", "cost" => "RecognizedCost", "profit" => "Profit",
+            "margin" => "(Profit*100.0/NULLIF(NetUntaxed,0))",
+            "date" when details => "OccurredAt",
+            "rounding" when details => "SortRounding",
+            "official" when details => "SortOfficial",
+            "sales-participation" => "(NetUntaxed/NULLIF((SELECT SUM(a.UntaxedAmount) FROM #Activity a),0))",
+            "profit-participation" => "(Profit/NULLIF((SELECT SUM(a.UntaxedAmount-a.RecognizedCostAmount) FROM #Activity a),0))",
+            "buyers" when supplier => "Customers",
+            "coverage" when supplier => "Customers",
+            "purchase-receipts" when supplier => "PurchaseReceipts",
+            "purchase-returns" when supplier => "PurchaseReturns",
+            "purchase-net" when supplier => "PurchaseNet",
+            "purchase-total" when supplier => "PurchaseTotal",
+            "sales-purchase-ratio" when supplier => "(NetUntaxed/NULLIF(PurchaseNet,0))",
+            "previous-sales" when supplier => "PreviousSales",
+            "previous-purchases" when supplier => "PreviousPurchases",
+            _ => throw new SalesReportingValidationException("El orden no es válido.")
+        };
+        return column + (value.EndsWith("-asc", StringComparison.Ordinal) ? " ASC" : " DESC");
+    }
+
     private static string ExplorerMeasures=>MeasuresSql();
     private static string MeasuresSql(params string[] names)=>string.Join(",\n",(names.Length==0
         ?MeasureDefinitions:names.Select(name=>MeasureDefinitions.Single(measure=>measure.Name==name)))
@@ -183,12 +214,7 @@ public sealed partial class SqlSalesReportingStore
             """:"";
         var source=ExplorerSource+drill+(request.Module is "products" or "supplier"?" AND a.ItemKind=N'Product'":"")+composition+
             (productScope?" AND EXISTS(SELECT 1 FROM #ProductCohort eligible WHERE eligible.ProductId=a.ProductId)":"");
-        var order=request.OrderBy switch
-        {
-            "net-desc"=>"NetUntaxed DESC", "net-asc"=>"NetUntaxed ASC", "label"=>"Label ASC",
-            "profit-desc"=>"Profit DESC", "quantity-desc"=>"Quantity DESC",
-            _=>throw new SalesReportingValidationException("El orden no es válido.")
-        };
+        var order=ExplorerOrder(request.OrderBy);
         var activity=productScope?"""
             SELECT a.* INTO #Activity FROM #ProductActivity a
             WHERE a.WithinDrill=1 AND EXISTS(SELECT 1 FROM #ProductCohort eligible WHERE eligible.ProductId=a.ProductId);
@@ -234,12 +260,16 @@ public sealed partial class SqlSalesReportingStore
             {movementKeysSql}
             CREATE UNIQUE CLUSTERED INDEX IX_MovementKeys ON #MovementKeys(SourceDocumentId,SourceDocumentType);
             {moneySql}
-            SELECT grouped.* INTO #Page FROM(
+            SELECT grouped.*,sortMoney.SortRounding,sortMoney.SortOfficial INTO #Page FROM(
               SELECT a.GroupKey,MAX(a.GroupLabel) Label,{groupMeasures},
                 MAX(CONVERT(nvarchar(36),a.FactId)) FactKey,MAX(a.ItemKind) ItemKind,
                 MAX(a.DocumentNumber) DocumentNumber,MAX(a.DocumentType) DocumentType,MAX(a.OccurredAt) OccurredAt,MAX(a.MovementType) MovementType
               FROM #Activity a GROUP BY a.GroupKey
-            ) grouped ORDER BY {order},GroupKey
+            ) grouped LEFT JOIN(
+              SELECT m.OriginalSaleDocumentId,SUM(m.RoundingAdjustmentAmount) SortRounding,SUM(m.OfficialTotal) SortOfficial
+              FROM #DocumentMoney m GROUP BY m.OriginalSaleDocumentId
+            ) sortMoney ON sortMoney.OriginalSaleDocumentId=TRY_CONVERT(uniqueidentifier,grouped.GroupKey)
+            ORDER BY {order},GroupKey
               OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT g.GroupKey,g.Label,g.Documents,g.Customers,g.Quantity,g.GrossSales,g.Discounts,g.Returns,
               g.NetUntaxed,g.Tax,g.NetTotal,g.RecognizedCost,g.Profit,g.MissingCostLines,g.FactKey,g.ItemKind,

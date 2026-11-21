@@ -283,7 +283,7 @@ public sealed record CashClosureInboxItem(
 public sealed record DispatchClosureInboxItem(
     Guid DispatchId, string DispatchNumber, Guid BusinessId, string BusinessName,
     string DriverName, DateTimeOffset ClosedAt, string Status,
-    decimal ExpectedCash, decimal DeclaredCash, decimal? CashReceived, decimal Difference);
+    decimal ExpectedCash, decimal DeclaredCash, decimal? CashReceived, decimal Difference, DateTimeOffset OpenedAt);
 
 public sealed record CashClosureInboxPage(
     IReadOnlyList<CashClosureInboxItem> Items, int Page, int PageSize, int TotalItems);

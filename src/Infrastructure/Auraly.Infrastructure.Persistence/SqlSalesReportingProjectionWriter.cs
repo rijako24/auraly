@@ -38,6 +38,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         await InsertSaleDocumentAsync(
             session, value, seller, localDate, recognizedCost, now, cancellationToken);
         await InsertSalePaymentFactsAsync(session, value, localDate.Date, now, cancellationToken);
+        var paymentDelta=await RefreshSalePaymentFactsAsync(session,value.TenantId,value.BusinessId,[value.DocumentId],false,now,cancellationToken);
         await InsertSaleTaxFactsAsync(session, value, localDate.Date, now, cancellationToken,localDate.Hour);
         await ApplyDimensionDeltasAsync(session,value.BusinessId,value.DocumentId,value.CommercialSnapshot.DocumentType,1,now,cancellationToken,
             value.TenantId,localDate.Date,value.CommercialSnapshot.PayableRoundingAmount);
@@ -60,7 +61,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
             netCost: recognizedCost.Amount,
             grossProfit: value.CommercialSnapshot.UntaxedAmount - recognizedCost.Amount,
             creditSales: credit,
-            collected: value.Payments.Sum(payment => payment.CollectedAmount),
+            collected: value.Payments.Sum(payment => payment.CollectedAmount)+paymentDelta,
             refunded: 0,
             now, cancellationToken,unknownCostDocumentCount:recognizedCost.Complete?0:1);
         await RefreshProductRotationAsync(session, value.BusinessId, value.DocumentId,

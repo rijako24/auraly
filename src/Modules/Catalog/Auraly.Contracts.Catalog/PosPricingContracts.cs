@@ -99,3 +99,11 @@ public sealed record PosResolvedPrice(
     decimal PromotionDiscount = 0,
     IReadOnlyCollection<Guid>? PromotionIds = null,
     decimal? ReferenceAmount = null);
+
+// Minimal operational mirror of the canonical Parties Seller role.
+public sealed record PosSeller(Guid SellerId, Guid PartyId, string Code, string Name, string? Identification, bool IsActive);
+public sealed record PosSellerBootstrapPage(long ThroughCursor, string? NextCursor, bool HasMore, IReadOnlyList<PosSeller> Sellers);
+public sealed record PosSellerDelta(long Version, Guid SellerId, PosSeller? Seller);
+public sealed record PosSellerDeltaPage(long FromCursor, long ToCursor, bool HasMore, IReadOnlyList<PosSellerDelta> Changes);
+
+public sealed record PosSellerPage(IReadOnlyList<PosSeller> Items, bool HasMore, int? NextOffset);

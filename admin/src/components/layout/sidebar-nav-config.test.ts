@@ -61,7 +61,7 @@ test("cashier inventory availability does not expose the inventory workspace", (
 
   assert.deepEqual(
     authorizedNavigationItems(cashierPermissions).map((item) => item.name),
-    ["Punto de venta", "Pedidos"],
+    ["Punto de venta", "Facturas", "Pedidos"],
   );
 });
 

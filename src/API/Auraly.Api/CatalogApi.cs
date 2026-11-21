@@ -155,6 +155,15 @@ public static class CatalogApi
                     context.User.ToCatalogDeviceIdentity(businessId, warehouseId), ct)
             })));
 
+        pos.MapGet("/sellers/bootstrap", (HttpContext context, PosCatalogService service,
+            Guid businessId, Guid warehouseId, string? cursor, int? pageSize, CancellationToken ct) =>
+            Handle(async () => Results.Ok(await service.SellerBootstrapPageAsync(
+                context.User.ToCatalogDeviceIdentity(businessId, warehouseId), cursor, pageSize ?? 500, ct))));
+        pos.MapGet("/sellers/changes", (HttpContext context, PosCatalogService service,
+            Guid businessId, Guid warehouseId, long? cursor, int? pageSize, CancellationToken ct) =>
+            Handle(async () => Results.Ok(await service.SellerChangesAsync(
+                context.User.ToCatalogDeviceIdentity(businessId, warehouseId), cursor ?? 0, pageSize ?? 500, ct))));
+
         pos.MapGet("/customers/bootstrap", async (
             HttpContext context, PosCatalogService service, Guid businessId, Guid warehouseId,
             string? cursor, int? pageSize, CancellationToken ct) =>

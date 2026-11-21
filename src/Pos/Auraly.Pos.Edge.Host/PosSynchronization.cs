@@ -17,9 +17,10 @@ public enum PosSynchronizationTrigger
     Manual = 16,
     FiscalProvisioning = 32,
     Customers = 64,
+    Sellers = 512,
     Configuration = 128,
     AutomaticRetry = 256,
-    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning | Customers | Configuration
+    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning | Customers | Sellers | Configuration
 }
 
 public sealed class PosSynchronizationSignal
@@ -179,6 +180,9 @@ internal sealed class PosSynchronizationWork(
                     PosSynchronizationTrigger.Customers,
                     "clientes",
                     () => catalog.SynchronizeCustomersAsync(cancellationToken)));
+            if (!initialPreparation && trigger.HasFlag(PosSynchronizationTrigger.Sellers))
+                pending.Add(new PosSynchronizationLane(PosSynchronizationTrigger.Sellers, "vendedores",
+                    () => catalog.SynchronizeSellersAsync(cancellationToken)));
             if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
             {
                 pending.Add(new PosSynchronizationLane(
@@ -628,6 +632,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         {
             PosSynchronizationStreams.Catalog => PosSynchronizationTrigger.Catalog,
             PosSynchronizationStreams.Customers => PosSynchronizationTrigger.Customers,
+            PosSynchronizationStreams.Sellers => PosSynchronizationTrigger.Sellers,
             PosSynchronizationStreams.Security => PosSynchronizationTrigger.Security,
             PosSynchronizationStreams.FiscalStatus => PosSynchronizationTrigger.FiscalStatus,
             PosSynchronizationStreams.FiscalProvisioning => PosSynchronizationTrigger.FiscalProvisioning,
@@ -689,6 +694,7 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
                 var masterDataRequested = (trigger & (
                     PosSynchronizationTrigger.Catalog |
                     PosSynchronizationTrigger.Customers |
+                    PosSynchronizationTrigger.Sellers |
                     PosSynchronizationTrigger.Configuration |
                     PosSynchronizationTrigger.Security)) != PosSynchronizationTrigger.None;
                 if (result.Succeeded)

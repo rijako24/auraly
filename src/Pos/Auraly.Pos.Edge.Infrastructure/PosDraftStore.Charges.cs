@@ -78,7 +78,7 @@ public sealed partial class PosDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,SellerId,Status,
-              Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId,CustomerPartySiteId,DraftId
+              Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId,CustomerPartySiteId,SellerName,DraftId
             FROM PosDrafts WHERE DraftId IN (SELECT value FROM json_each(@Ids));
             SELECT LineId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,Quantity,
               BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceChannelId,Discount,Note,
@@ -93,7 +93,7 @@ public sealed partial class PosDraftStore
         var headers = new Dictionary<DraftId, PosDraft>();
         while (await reader.ReadAsync(ct))
         {
-            var id = new DraftId(Guid.Parse(reader.GetString(15)));
+            var id = new DraftId(Guid.Parse(reader.GetString(16)));
             headers.Add(id, ReadHeader(id, reader));
         }
         var lines = headers.ToDictionary(x => x.Key, _ => new List<PosDraftLine>());

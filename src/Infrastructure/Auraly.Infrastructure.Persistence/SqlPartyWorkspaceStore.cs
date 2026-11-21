@@ -556,7 +556,7 @@ public sealed partial class SqlPartyWorkspaceStore(
     private static async Task<Guid?> FindSupplierIdAsync(SqlConnection c,SqlTransaction t,Guid party,Guid business,CancellationToken ct)
     { await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="SELECT SupplierId FROM dbo.Suppliers WITH(UPDLOCK,HOLDLOCK) WHERE PartyId=@Party AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Business)";x.Parameters.AddRange([P("@Party",party),P("@Business",business)]);return await x.ExecuteScalarAsync(ct) as Guid?; }
 
-    private async Task EnqueuePosPartyChangeAsync(
+    internal static async Task EnqueuePosPartyChangeAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
         Guid partyId, DateTimeOffset now, CancellationToken ct)
     {
@@ -576,6 +576,13 @@ public sealed partial class SqlPartyWorkspaceStore(
               WHERE BusinessId=business.BusinessId AND Stream=N'Customers'
             ) latest
             WHERE customer.TenantId=@TenantId AND customer.PartyId=@PartyId;
+
+            INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,EntityType,EntityId,ChangeKind)
+            SELECT NEWID(),business.BusinessId,N'Sellers',ISNULL(latest.CursorValue,0)+1,@Now,N'Seller',seller.SellerId,N'Upsert'
+            FROM dbo.CommerceSellers seller JOIN dbo.Businesses business ON business.TenantId=seller.TenantId AND business.IsActive=1
+            OUTER APPLY(SELECT MAX(AvailableThroughCursor) CursorValue FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=business.BusinessId AND Stream=N'Sellers') latest
+            WHERE seller.TenantId=@TenantId AND seller.PartyId=@PartyId;
 
             INSERT dbo.PosSynchronizationOutboxMessages
               (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)

@@ -1319,20 +1319,30 @@ public sealed class OrderRecoveryTests(
                    }))
             Assert.Equal(System.Net.HttpStatusCode.Conflict, crossedSite.StatusCode);
 
-        using var response = await client.PutAsJsonAsync(
-            $"/api/commerce/v1/seller-orders/{orderId:D}",
-            new
-            {
-                customerId = updatedCustomerId,
-                partySiteId = updatedPartySiteId,
-                notes = "Pedido actualizado desde el POS",
-                idempotencyKey = Guid.NewGuid().ToString("N"),
-                workSessionId = workSession.WorkSessionId,
-                lines = replacementLines,
-            });
+        var updateBody = new
+        {
+            sellerId,
+            customerId = updatedCustomerId,
+            partySiteId = updatedPartySiteId,
+            notes = "Pedido actualizado desde el POS",
+            idempotencyKey = Guid.NewGuid().ToString("N"),
+            workSessionId = workSession.WorkSessionId,
+            lines = replacementLines,
+        };
+        using var response = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}",updateBody);
         Assert.True(
             response.IsSuccessStatusCode,
             $"La actualización del pedido respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+
+        // Editing notes must retain an existing seller even if its catalog role was deactivated later.
+        await ExecuteAsync("UPDATE dbo.CommerceSellers SET IsActive=0 WHERE SellerId=@Id;",new SqlParameter("@Id",sellerId));
+        using var later = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}",
+            updateBody with { notes="Segunda edición confirmada", idempotencyKey=Guid.NewGuid().ToString("N") });
+        Assert.True(later.IsSuccessStatusCode,await later.Content.ReadAsStringAsync());
+        using var replay = await client.PutAsJsonAsync($"/api/commerce/v1/seller-orders/{orderId:D}",updateBody);
+        Assert.True(replay.IsSuccessStatusCode,await replay.Content.ReadAsStringAsync());
+        Assert.Equal(await response.Content.ReadAsStringAsync(),await replay.Content.ReadAsStringAsync());
+        Assert.Equal(2,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.OrderMutationReceipts WHERE OrderId=@Id;",new SqlParameter("@Id",orderId)));
 
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -1363,7 +1373,7 @@ public sealed class OrderRecoveryTests(
         Assert.Equal(2_500m, reader.GetDecimal(8));
         Assert.Equal(22_500m, reader.GetDecimal(9));
         Assert.Equal(2m, reader.GetDecimal(10));
-        Assert.Equal("Pedido actualizado desde el POS", reader.GetString(11));
+        Assert.Equal("Segunda edición confirmada", reader.GetString(11));
         await reader.DisposeAsync();
         await command.DisposeAsync();
         await connection.DisposeAsync();

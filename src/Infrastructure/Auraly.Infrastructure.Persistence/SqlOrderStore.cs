@@ -238,11 +238,13 @@ public sealed class SqlOrderStore(
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
-              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit),o.RowVersion
+              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit),o.RowVersion,o.SellerId,sellerParty.DisplayName
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.Customers customer
               ON customer.CustomerId=o.CustomerId AND customer.TenantId=b.TenantId
+            LEFT JOIN dbo.CommerceSellers selectedSeller ON selectedSeller.SellerId=o.SellerId AND selectedSeller.TenantId=b.TenantId
+            LEFT JOIN dbo.Parties sellerParty ON sellerParty.PartyId=selectedSeller.PartyId AND sellerParty.TenantId=b.TenantId
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId AND pt.BusinessId=o.BusinessId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
@@ -300,7 +302,9 @@ public sealed class SqlOrderStore(
             WarehouseId = header.IsDBNull(28) ? (Guid?)null : header.GetGuid(28),
             PartySiteId = header.IsDBNull(29) ? (Guid?)null : header.GetGuid(29),
             RequiresElectronicInvoice = header.GetBoolean(30),
-            SnapshotVersion = (byte[])header.GetValue(31)
+            SnapshotVersion = (byte[])header.GetValue(31),
+            SellerId = header.IsDBNull(32) ? (Guid?)null : header.GetGuid(32),
+            SellerName = NullableString(header,33)
         };
         await header.CloseAsync();
 
@@ -372,7 +376,7 @@ public sealed class SqlOrderStore(
             values.PaymentStatus, values.CreatedAt,
             OrderRules.CanInvoice(storedStatus, values.Confirmed, hasInvoice),
             values.DocumentId, claim, lines, values.WarehouseId, values.PartySiteId,
-            values.RequiresElectronicInvoice, values.SnapshotVersion);
+            values.RequiresElectronicInvoice, values.SnapshotVersion, values.SellerId, values.SellerName);
     }
 
     public async Task<IReadOnlyDictionary<Guid, OrderDetail>> GetBatchAsync(
@@ -401,12 +405,14 @@ public sealed class SqlOrderStore(
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
-              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit),o.RowVersion
+              o.PartySiteId,CAST(COALESCE(customer.RequiresElectronicInvoice,0) AS bit),o.RowVersion,o.SellerId,sellerParty.DisplayName
             FROM @Selected selected
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.Customers customer
               ON customer.CustomerId=o.CustomerId AND customer.TenantId=b.TenantId
+            LEFT JOIN dbo.CommerceSellers selectedSeller ON selectedSeller.SellerId=o.SellerId AND selectedSeller.TenantId=b.TenantId
+            LEFT JOIN dbo.Parties sellerParty ON sellerParty.PartyId=selectedSeller.PartyId AND sellerParty.TenantId=b.TenantId
             LEFT JOIN dbo.PaymentTransactions pt ON pt.PaymentTransactionId=o.PaymentTransactionId AND pt.BusinessId=o.BusinessId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
@@ -498,7 +504,7 @@ public sealed class SqlOrderStore(
                 reader.IsDBNull(28) ? null : reader.GetGuid(28),
                 reader.IsDBNull(29) ? null : reader.GetGuid(29),
                 reader.GetBoolean(30),
-                (byte[])reader.GetValue(31)));
+                (byte[])reader.GetValue(31), reader.IsDBNull(32)?null:reader.GetGuid(32), NullableString(reader,33)));
         }
 
         var lines = headers.Keys.ToDictionary(id => id, _ => new List<OrderLine>());
@@ -1081,7 +1087,7 @@ public sealed class SqlOrderStore(
         Guid? WarehouseId,
         Guid? PartySiteId,
         bool CustomerRequiresElectronicInvoice,
-        byte[] SnapshotVersion)
+        byte[] SnapshotVersion, Guid? SellerId, string? SellerName)
     {
         public OrderDetail ToDetail(IReadOnlyList<OrderLine> lines) => new(
             Id, BusinessId, Number, Status, Source, CustomerId,
@@ -1090,6 +1096,6 @@ public sealed class SqlOrderStore(
             PaymentStatus, CreatedAt,
             OrderRules.CanInvoice(StoredStatus, Confirmed, DocumentId is not null),
             DocumentId, Claim, lines, WarehouseId, PartySiteId,
-            CustomerRequiresElectronicInvoice, SnapshotVersion);
+            CustomerRequiresElectronicInvoice, SnapshotVersion, SellerId, SellerName);
     }
 }

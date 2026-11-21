@@ -28,7 +28,7 @@ public sealed partial class PayablesVerticalSliceTests
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure, AccountingPermissionCodes.ManualCreate,
             AccountingPermissionCodes.ManualSend, AccountingPermissionCodes.Retry, PayablesPermissionCodes.Read,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close, WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var at = new DateTimeOffset(2026, 8, 2, 9, 0, 0, TimeSpan.FromHours(-5));
         var receipt = new ConfirmGoodsReceiptRequest(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
             fixture.SupplierId, $"CONTADO-{Guid.NewGuid():N}", at, at, true, at, "COP", "Compra de contado, pago separado",

@@ -28,7 +28,7 @@ public sealed partial class AccountingVerticalSliceTests
         var userId = await fixture.CreateWorkSessionUserAsync("commercial-closure-refund");
         var identity = new WorkSessionIdentity(userId, fixture.TenantId,
             new HashSet<string> { WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
-                WorkSessionPermissionCodes.ReadCashDifferences, WorkSessionPermissionCodes.ReconcileClosures }, fixture.BusinessId);
+                WorkSessionPermissionCodes.ReadCashDifferences, WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods }, fixture.BusinessId);
         var sessionId = Guid.NewGuid();
         await sessions.RegisterDeviceOpenAsync(identity,
             new(userId, sessionId, fixture.BusinessId, new DateTimeOffset(2026, 7, 27, 10, 0, 0, TimeSpan.Zero)), fixture.DeviceId);
@@ -44,7 +44,7 @@ public sealed partial class AccountingVerticalSliceTests
         var closure = await sessions.CloseFromDeviceAsync(identity, sessionId, Guid.NewGuid().ToString("N"),
             new CloseWorkSessionRequest(11900, null, fixture.UserId, [new("Cash", 11900), new("Card", 0), new("Transfer", 0)]));
         using var reviewer = fixture.CreateUserClient(userId, WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var page = (await reviewer.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId}/payment-verifications/page?page=1&pageSize=100"))!;
         var item = Assert.Single(page.Items, value => value.SourceId == sale.DocumentId);
@@ -63,6 +63,11 @@ public sealed partial class AccountingVerticalSliceTests
         await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>().ProcessAsync(
             reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, default);
         Assert.Equal("CommercialEffectsApplied", await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", reconciliation.ReconciliationId));
+        var reporting = scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>();
+        await reporting.ProcessAsync(sale.DocumentId, "SalesInvoice", fixture.BusinessId, 1, default);
+        await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
+        Assert.Equal("DebitCard", await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+        Assert.Equal(11900m, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
         var returnIdentity = new SalesReturnUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
             new HashSet<string> { SalesReturnPermissionCodes.Create });
         var query = scope.ServiceProvider.GetRequiredService<SalesReturnQueryService>();
@@ -99,7 +104,7 @@ public sealed partial class AccountingVerticalSliceTests
     [InlineData("Cash", "Transfer", false, false, false, false, true)]
     public async Task Closure_native_form_correction_preserves_invoice_and_uses_actual_accounts_once(
         string originalType, string targetType, bool sameAccount, bool remapTarget, bool sameForm, bool actualBlindCount,
-        bool refundBeforeCorrection = false)
+        bool refundBeforeCorrection = false, bool verifyReporting = false)
     {
         using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, CatalogPermissionCodes.Update);
@@ -112,7 +117,7 @@ public sealed partial class AccountingVerticalSliceTests
         var sessionId = Guid.NewGuid();
         var identity = new WorkSessionIdentity(userId, fixture.TenantId,
             new HashSet<string> { WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
-                WorkSessionPermissionCodes.ReadCashDifferences, WorkSessionPermissionCodes.ReconcileClosures }, fixture.BusinessId);
+                WorkSessionPermissionCodes.ReadCashDifferences, WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods }, fixture.BusinessId);
         using var scope = fixture.CreateScope();
         var sessions = scope.ServiceProvider.GetRequiredService<WorkSessionService>();
         await sessions.RegisterDeviceOpenAsync(identity,
@@ -146,7 +151,7 @@ public sealed partial class AccountingVerticalSliceTests
             new CloseWorkSessionRequest(cash, null, fixture.UserId,
                 [new("Cash", cash), new("Transfer", originalType == "Transfer" || actualBlindCount ? collectionTotal : 0), new("Card", card ? collectionTotal : 0)]));
         using var reviewer = fixture.CreateUserClient(userId, WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures);
+            WorkSessionPermissionCodes.ReconcileClosures, Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId}";
         var page = (await reviewer.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(path + "/payment-verifications/page?page=1&pageSize=100"))!;
         var item = Assert.Single(page.Items, item => item.SourceId == sale.DocumentId);
@@ -282,6 +287,27 @@ public sealed partial class AccountingVerticalSliceTests
             using var result = await reviewer.SendAsync(replay);
             Assert.True(result.IsSuccessStatusCode, await result.Content.ReadAsStringAsync());
             Assert.True((await result.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>())!.IdempotentReplay);
+        }
+        if (verifyReporting)
+        {
+            var reporting = scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>();
+            // The reporting signal can precede the original sale projection.
+            await reporting.ProcessAsync(sale.DocumentId, "SalesInvoice", fixture.BusinessId, 1, default);
+            await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
+            using(var historyClient=fixture.CreateAdminClient("sales.reprint"))
+            using(var history=await historyClient.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+                new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),sale.DocumentNumber.FullNumber,Take:10,DateRangeVersion:2)))
+            {
+                Assert.True(history.IsSuccessStatusCode,await history.Content.ReadAsStringAsync());
+                var row=Assert.Single((await history.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>())!.Items);
+                var tender=Assert.Single(row.Payments!);Assert.Equal(targetType,tender.MethodCode);
+                Assert.Equal(target.Name,tender.FormName);Assert.Equal(11900m,tender.Amount);
+                Assert.Equal(closure.WorkSessionClosureId,row.ClosureId);
+            }
+            Assert.Equal(targetType, await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+            Assert.Equal(11900m, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+            await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
         }
         Assert.Equal(sourceSignature, await ScalarAsync<string>("SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',PayloadJson),2) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesInvoice'", sale.DocumentId));
         Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id", sale.DocumentId));

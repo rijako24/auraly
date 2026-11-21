@@ -14,7 +14,7 @@ public sealed class SqlRouteStore(
     TimeProvider timeProvider) : IRouteStore
 {
     public async Task<SalesRoutePage> PageAsync(
-        RouteActorIdentity actor, SalesRouteQuery query, CancellationToken ct)
+        RouteActorIdentity actor, SalesRouteQuery query, CancellationToken ct, bool includeAllSellers = false)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -24,8 +24,6 @@ public sealed class SqlRouteStore(
             INNER JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.TenantId=business.TenantId
             INNER JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
             LEFT JOIN dbo.SalesZones zone ON zone.ZoneId=route.ZoneId AND zone.BusinessId=route.BusinessId
-            OUTER APPLY(SELECT COUNT(*) StopCount FROM dbo.SalesRouteStops stop WHERE stop.RouteId=route.RouteId AND stop.IsActive=1) stops
-            OUTER APPLY(SELECT COUNT(*) ScheduleCount FROM dbo.SalesRouteSchedules schedule WHERE schedule.RouteId=route.RouteId AND schedule.IsActive=1) schedules
             WHERE route.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@Search IS NULL OR route.Code LIKE '%'+@Search+'%' OR route.Name LIKE '%'+@Search+'%'
                    OR seller.Code LIKE '%'+@Search+'%' OR sellerParty.DisplayName LIKE '%'+@Search+'%'
@@ -34,8 +32,8 @@ public sealed class SqlRouteStore(
               AND (@ZoneId IS NULL OR route.ZoneId=@ZoneId)
               AND (@IsActive IS NULL OR route.IsActive=@IsActive)
               AND (@DayOfWeek IS NULL OR EXISTS(SELECT 1 FROM dbo.SalesRouteSchedules daySchedule WHERE daySchedule.RouteId=route.RouteId AND daySchedule.DayOfWeek=@DayOfWeek AND daySchedule.IsActive=1))
-              AND (@PreparationStatus IS NULL OR @PreparationStatus=CASE WHEN schedules.ScheduleCount>0 AND stops.StopCount>0 THEN N'Ready' ELSE N'Draft' END)
-              AND (@ReadAll=1 OR EXISTS(
+              AND (@PreparationStatus IS NULL OR @PreparationStatus=CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesRouteSchedules schedule WHERE schedule.RouteId=route.RouteId AND schedule.IsActive=1) AND EXISTS(SELECT 1 FROM dbo.SalesRouteStops stop WHERE stop.RouteId=route.RouteId AND stop.IsActive=1) THEN N'Ready' ELSE N'Draft' END)
+              AND (@AllSellers=1 OR @ReadAll=1 OR EXISTS(
                     SELECT 1 FROM dbo.AppUsers currentUser
                     INNER JOIN dbo.CommerceSellers currentSeller ON currentSeller.PartyId=currentUser.PartyId AND currentSeller.TenantId=@TenantId AND currentSeller.IsActive=1
                     WHERE currentUser.UserId=@UserId AND currentUser.TenantId=@TenantId AND currentSeller.SellerId=route.SellerId))
@@ -43,21 +41,28 @@ public sealed class SqlRouteStore(
         int total;
         await using (var count = new SqlCommand("SELECT COUNT(*) " + source, connection))
         {
-            AddQuery(count, actor, query);
+            AddQuery(count, actor, query); count.Parameters.AddWithValue("@AllSellers",includeAllSellers);
             total = Convert.ToInt32(await count.ExecuteScalarAsync(ct));
         }
         await using var command = new SqlCommand("""
-            SELECT route.RouteId,route.Code,route.Name,route.SellerId,sellerParty.DisplayName,
-              route.ZoneId,zone.Name,route.IsActive,
+            WITH page AS (
+              SELECT route.*,sellerParty.DisplayName SellerName,zone.Name ZoneName
+            """ + Environment.NewLine + source + Environment.NewLine + """
+              ORDER BY route.Name,route.RouteId
+              OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY
+            )
+            SELECT route.RouteId,route.Code,route.Name,route.SellerId,route.SellerName,
+              route.ZoneId,route.ZoneName,route.IsActive,
               CASE WHEN schedules.ScheduleCount>0 AND stops.StopCount>0 THEN N'Ready' ELSE N'Draft' END,
               stops.StopCount,COALESCE(route.UpdatedAt,route.CreatedAt),route.RowVersion,
               (SELECT STRING_AGG(CONVERT(nvarchar(1),schedule.DayOfWeek),N',') WITHIN GROUP(ORDER BY schedule.DayOfWeek)
                FROM dbo.SalesRouteSchedules schedule WHERE schedule.RouteId=route.RouteId AND schedule.IsActive=1)
-            """ + Environment.NewLine + source + Environment.NewLine + """
-            ORDER BY route.Name,route.RouteId
-            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
+            FROM page route
+            OUTER APPLY(SELECT COUNT(*) StopCount FROM dbo.SalesRouteStops stop WHERE stop.RouteId=route.RouteId AND stop.IsActive=1) stops
+            OUTER APPLY(SELECT COUNT(*) ScheduleCount FROM dbo.SalesRouteSchedules schedule WHERE schedule.RouteId=route.RouteId AND schedule.IsActive=1) schedules
+            ORDER BY route.Name,route.RouteId;
             """, connection);
-        AddQuery(command, actor, query);
+        AddQuery(command, actor, query); command.Parameters.AddWithValue("@AllSellers",includeAllSellers);
         command.Parameters.AddWithValue("@Skip", (query.Page - 1) * query.PageSize);
         command.Parameters.AddWithValue("@Take", query.PageSize);
         var items = new List<SalesRouteListItem>();

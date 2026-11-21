@@ -87,7 +87,7 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
         if (request.Search?.Length > 120)
             throw new OnlineSalesDraftValidationException(
                 "La búsqueda admite máximo 120 caracteres.");
-        if ((request.CustomerId is null) != (request.PartySiteId is null) ||
+        if (request.SellerId==Guid.Empty || request.BilledByUserId==Guid.Empty || request.DateRangeVersion is not (1 or 2) || (request.CustomerId is null) != (request.PartySiteId is null) ||
             request.From > request.To ||
             request.To == DateOnly.MaxValue ||
             request.MinimumTotal < 0 || request.MaximumTotal < 0 ||

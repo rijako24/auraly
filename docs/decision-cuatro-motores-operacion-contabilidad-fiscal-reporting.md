@@ -167,6 +167,29 @@ Para ventas mantiene una proyección física versionada con:
 - costo reconocido congelado;
 - totales diarios conciliables.
 
+Las correcciones de medios confirmadas en conciliación de caja o despacho
+son fuentes financieras inmutables del mismo motor de Reporting. Su aceptación
+se registra en `SalesReportingJobs` junto al trabajo financiero, pero la señal
+se publica después de su confirmación financiera. Reporting reemplaza únicamente
+los hechos de pago de las ventas afectadas por los medios efectivos confirmados;
+no agrega otra venta ni modifica impuestos, costos, inventario o documentos fiscales.
+El efecto neto de cambiar efectivo por transferencia es restar del primero y sumar
+al segundo. Las fuentes originales y la corrección conservan su evidencia histórica.
+
+La fecha analítica conserva la fecha local congelada de la venta. Las entregas
+parciales o no entregadas reflejan solo el recaudo efectivo; la devolución conserva
+su propia proyección. Los cobros de cartera y anticipos no se convierten en ventas.
+La proyección original consulta la misma evidencia confirmada si llega después de
+la corrección. Los reintentos terminados devuelven el estado ya proyectado; el rebuild
+explícito recupera las fuentes financieras históricas mediante el writer existente.
+Las reclasificaciones agregadas sin factura identificada conservan su alcance de caja
+y no inventan una distribución por factura.
+
+El despliegue debe ejecutar el rebuild canónico de Reporting después de migrar para
+actualizar los medios de correcciones históricas. El rollback de la aplicación no
+revierte asientos ni recaudos: el modelo de lectura se reconstruye con la versión
+a restaurar. No se reprocesan operaciones ni se alteran fuentes financieras.
+
 La granularidad inicial es híbrida y deliberadamente mínima:
 
 | Proyección | Grano | Uso |

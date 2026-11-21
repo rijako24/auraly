@@ -768,7 +768,7 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-center">
+          <div className="flex flex-col gap-2 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4">
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
                 <Checkbox
@@ -790,9 +790,7 @@ export function OrdersWorkspace({
                 {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
                 Imprimir ({selectedOrders.length})
               </Button>
-            </div>
-            <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-center xl:justify-end">
-              <div className="w-full min-w-0 sm:w-[22rem] xl:w-[20rem]">
+              <div className="ml-auto w-full min-w-0 sm:w-[20rem]">
                 <div
                   className="grid w-full min-w-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:grid-cols-2"
                   aria-label="Tipo de documento para los pedidos seleccionados"
@@ -823,7 +821,9 @@ export function OrdersWorkspace({
                   </button>
                 </div>
               </div>
-              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center xl:justify-end">
+            </div>
+            <div className="min-w-0">
+              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
                 {onConfigurePrinting && (
                   <Button type="button" variant="outline" size="icon"
                     title="Configurar plantillas e impresoras"
@@ -857,7 +857,7 @@ export function OrdersWorkspace({
                   }}
                   getOption={(item) => ({ value: item.paymentMethodId, label: item.name, description: item.code })}
                   ariaLabel="Forma de pago del lote" placeholder="Forma de pago"
-                  className="w-full sm:w-64" wrapLabels
+                  className="h-9 w-full sm:w-44 [&>span:first-child]:truncate [&>span:first-child]:whitespace-nowrap" wrapLabels
                   contentClassName="w-[min(28rem,calc(100vw-2rem))]"
                   searchPlaceholder="Buscar forma de pago…" disabled={working || selectingAll || !connected}
                 />}

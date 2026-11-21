@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowUp, Banknote, Camera, Check, ChevronRight, CircleDollarSign, CreditCard, Map, MapPin, PackageCheck, PackageX, Plus, Printer, ReceiptText, RefreshCw, Route, Search, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Banknote, Camera, Check, ChevronRight, CircleDollarSign, CreditCard, Map, MapPin, PackageCheck, PackageX, Plus, Printer, ReceiptText, RefreshCw, Route, Search, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { calculateSalesReturnSelection, estimateSalesReturnTotal } from "@/components/returns/sales-return-calculation";
 import { PaymentMethodSelect } from "@/components/payments/payment-method-select";
@@ -41,7 +41,7 @@ export function TransportDispatchApp({canExecute=false}:{canExecute?:boolean}){
   const owner=prefix.join(":");
   const [selection,setSelection]=useState<{owner:string;dispatch:DispatchListItem}|null>(null);
   const selected=selection?.owner===owner?selection.dispatch:null;
-  const query=useQuery({queryKey:deliveriesKey,queryFn:()=>dispatchesApi.page({page:1,pageSize:50}),enabled:Boolean(tenant&&business&&user&&!selected),refetchOnWindowFocus:false,refetchOnReconnect:false});
+  const query=useQuery({queryKey:deliveriesKey,queryFn:()=>dispatchesApi.page({page:1,pageSize:50,mine:true}),enabled:Boolean(tenant&&business&&user&&!selected),refetchOnWindowFocus:false,refetchOnReconnect:false});
   const rows=query.isError?undefined:query.data;
   if(selected)return <DispatchExecutionWorkspace dispatch={selected} canExecute={canExecute} onBack={()=>setSelection(null)}/>;
   return <div className="mx-auto max-w-5xl space-y-5 pb-24">
@@ -273,7 +273,6 @@ function DispatchExpensesPanel({data,onExpense}:{data:DispatchExecution;onExpens
 export function DispatchSettlementPanel({data,onChanged,onPaymentReview,readOnly=false}:{data:DispatchExecution;onChanged:(updated:DispatchExecution)=>void;onPaymentReview:(updated:DispatchPaymentReviewResult)=>void;readOnly?:boolean}){
   const summary=data.settlement;
   const cashCollected=data.documents.flatMap(item=>item.payments).filter(item=>item.paymentMethod==="Cash").reduce((sum,item)=>sum+item.amount,0);
-  const depositsCollected=data.documents.flatMap(item=>item.payments).filter(item=>item.paymentMethod==="Deposit"||item.paymentMethod==="Transfer").reduce((sum,item)=>sum+item.amount,0);
   const returnsTotal=data.documents.reduce((sum,document)=>sum+(document.returnTotal??0),0);
   const expectedCash=summary?.expectedCash??cashCollected;
   const [cash,setCash]=useState(()=>formatMoneyValue(summary?.cashReceived??summary?.declaredCash??expectedCash,4));
@@ -306,7 +305,7 @@ export function DispatchSettlementPanel({data,onChanged,onPaymentReview,readOnly
   const cashLocked=readOnly||processing||data.status==="SettlementAttention"||data.status==="Closed";
   const cashContent=(
     <Card className="overflow-hidden rounded-3xl"><CardContent className="space-y-5 p-5">
-      <div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Cuadre comercial obligatorio</p><p className={`text-3xl font-black ${(summary?.balanceDifference??0)===0?"text-emerald-600":"text-red-600"}`}>{money.format(summary?.balanceDifference??0)}</p></div><span className={`rounded-2xl p-3 ${(summary?.balanceDifference??0)===0?"bg-emerald-50 text-emerald-600":"bg-red-50 text-red-600"}`}><ShieldCheck className="h-7 w-7"/></span></div>
+      {summary&&summary.balanceDifference!==0&&<p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">El despacho tiene una diferencia comercial de {money.format(summary.balanceDifference)}. Revisa entregas, devoluciones y recaudos antes de aceptar.</p>}
       <div className="grid items-end gap-4 sm:grid-cols-2">
         <div className="min-w-0 space-y-2"><Label htmlFor={`dispatch-received-${data.dispatchId}`} className="block text-sm leading-5">Efectivo físico recibido</Label>
           <div className="relative"><span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-xl font-semibold text-muted-foreground">$</span>
@@ -330,9 +329,7 @@ export function DispatchSettlementPanel({data,onChanged,onPaymentReview,readOnly
     </CardContent></Card>
   );
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <MoneyCard icon={Banknote} label="Efectivo recaudado" value={summary?.grossCash??cashCollected}/>
-      <MoneyCard icon={ReceiptText} label="Transferencias" value={summary?.depositTotal??depositsCollected}/>
+    <div className="grid gap-3 sm:grid-cols-2">
       <MoneyCard icon={PackageCheck} label="Devoluciones" value={summary?.returnTotal??returnsTotal}/>
       <MoneyCard icon={CircleDollarSign} label="Gastos aprobados" value={summary?.approvedCashExpenses??0}/>
     </div>

@@ -146,6 +146,7 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
                 """, [P("@BusinessId",businessId),P("@OperationId",operationId),P("@Role",role),P("@RoleId",roleId),
                 new SqlParameter("@RequestHash",System.Data.SqlDbType.Binary,32)
                   { Value=(object?)requestHash??DBNull.Value },P("@Now",now)], ct);
+            await SqlPartyWorkspaceStore.EnqueuePosPartyChangeAsync(connection,transaction,businessId,resolvedPartyId,now,ct);
             await transaction.CommitAsync(ct);
             return new(roleId, resolvedPartyId, role, false);
         }

@@ -12,6 +12,11 @@ public sealed record AccountingProcessingSignal(
     Guid DocumentId,
     string DocumentType);
 
+public interface IAccountingPostingCompletionObserver
+{
+    Task ObserveAsync(Guid tenantId, Guid businessId, Guid documentId, string documentType, CancellationToken cancellationToken);
+}
+
 public interface IAccountingProcessingSignalPublisher
 {
     Task PublishAsync(

@@ -7,7 +7,7 @@ const businessId = "22222222-2222-2222-2222-222222222222";
 const userId = "33333333-3333-3333-3333-333333333333";
 const closureId = "44444444-4444-4444-4444-444444444444";
 const saleId = "55555555-5555-5555-5555-555555555555";
-const permissions = ["dashboard.read", "work-sessions.differences.read", "work-sessions.closures.reconcile", "sales.returns.read", "sales.returns.create", "sales.returns.confirm", "invoice-charges.read", "invoice-charges.configure"];
+const permissions = ["dashboard.read", "work-sessions.differences.read", "work-sessions.closures.reconcile","sales.payments.correct", "sales.returns.read", "sales.returns.create", "sales.returns.confirm", "invoice-charges.read", "invoice-charges.configure"];
 
 const json = (route: Route, body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 

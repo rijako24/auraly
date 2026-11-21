@@ -15,9 +15,9 @@ export interface VoucherPaymentCapture {
   amount: number; reference: string | null; approvalNumber: string | null; cardFranchiseCode: string | null;
 }
 
-export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
+export function VoucherPaymentForms({ tenantId, businessId, lines, applied, direction = "incoming",
   disabled, readOnly, canAdd, addBlockReason, onSelect, onChange, onEvidence, onRemove }: {
-  tenantId: string | null; businessId: string;
+  tenantId: string | null; businessId: string; direction?: "incoming" | "outgoing";
   lines: ReadonlyArray<{ line: VoucherDraftLineView; index: number }>;
   applied: ReadonlyMap<string, VoucherAppliedPaymentMethod>;
   disabled: boolean; readOnly: boolean; canAdd: boolean;
@@ -27,6 +27,8 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
   onEvidence: (index: number, patch: Partial<VoucherPaymentEvidence>) => void;
   onRemove: (index: number) => void;
 }) {
+  const outgoing=direction === "outgoing";
+  const usage=outgoing?"SupplierPayments":"Receipts";
   // A candidate is not a document line until Add is explicitly pressed.
   const [candidate, setCandidate] = useState<PaymentMethod | null>(null);
   const [capture, setCapture] = useState<VoucherPaymentCapture>({ amount: 0, reference: null, approvalNumber: null, cardFranchiseCode: null });
@@ -38,7 +40,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
     : candidate?.methodCode === "Transfer" && !capture.reference?.trim();
   return <section aria-label="Formas de pago del comprobante" className="space-y-4 rounded-2xl border bg-card p-5">
     <div><h2 className="font-semibold">Formas de pago</h2><p className="text-sm text-muted-foreground">
-      Selecciona dónde ingresa el dinero y su valor. Cada forma se refleja en las partidas.</p></div>
+      {outgoing?"Selecciona de dónde sale el dinero y su valor.":"Selecciona dónde ingresa el dinero y su valor."} Cada forma se refleja en las partidas.</p></div>
     {lines.map(({ line, index }, ordinal) => {
       const evidence = line.value.paymentEvidence!;
       const used = applied.get(line.value.lineId!);
@@ -47,17 +49,17 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
       return <fieldset key={line.value.lineId} disabled={disabled || readOnly}
         aria-label={`Forma de pago ${ordinal + 1}`} className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
         <div className="space-y-1"><Label>Forma de pago</Label>
-          <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage="Receipts"
+          <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage={usage}
             value={evidence.paymentMethodId ?? ""} name={used?.name ?? evidence.paymentMethodName}
             accountLabel={`${used?.accountCode ?? line.accountCode} · ${used?.accountName ?? line.accountName}`}
             ariaLabel={`Forma de pago ${ordinal + 1}`} disabled={disabled || readOnly}
             onChange={method => onSelect(method, index)} />
           <p className="text-xs text-muted-foreground">Cuenta: {used?.accountCode ?? line.accountCode} · {used?.accountName ?? line.accountName}</p>
         </div>
-        <div className="space-y-1"><Label>Valor recibido</Label>
-          <FormattedNumberInput kind="currency" ariaLabel={`Valor recibido por la forma ${ordinal + 1}`}
-            value={line.value.debit}
-            onValueChange={amount => onChange(index, { debit: amount ?? 0, credit: 0 })} />
+        <div className="space-y-1"><Label>{outgoing?"Valor pagado":"Valor recibido"}</Label>
+          <FormattedNumberInput kind="currency" ariaLabel={`${outgoing?"Valor pagado":"Valor recibido"} por la forma ${ordinal + 1}`}
+            value={outgoing?line.value.credit:line.value.debit}
+            onValueChange={amount => onChange(index, outgoing?{debit:0,credit:amount??0}:{debit:amount??0,credit:0})} />
         </div>
         {transfer && <div className="space-y-1"><Label htmlFor={`transfer-${line.value.lineId}`}>Referencia de transferencia</Label>
           <Input id={`transfer-${line.value.lineId}`} maxLength={100} value={line.value.reference ?? ""}
@@ -87,7 +89,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
     {!readOnly && addBlockReason && <p role="status" className="text-sm text-muted-foreground">{addBlockReason}</p>}
     {!readOnly && <fieldset disabled={disabled || !canAdd || !!addBlockReason} aria-label="Agregar forma de pago" className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
       <div className="space-y-1"><Label>{lines.length ? "Otra forma de pago (opcional)" : "Forma de pago"}</Label>
-      <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage="Receipts"
+      <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage={usage}
         value={candidate?.paymentMethodId ?? ""} name={candidate?.name}
         accountLabel={candidate ? `${candidate.accountCode} · ${candidate.accountName}` : null}
         ariaLabel="Seleccionar forma de pago" disabled={disabled || !canAdd || !!addBlockReason}
@@ -96,7 +98,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
           setCapture(previous => ({ amount: previous.amount, reference: null, approvalNumber: null, cardFranchiseCode: null }));
         }} />
       {candidate && <p className="text-xs text-muted-foreground">Cuenta: {candidate.accountCode} · {candidate.accountName}</p>}</div>
-      <div className="space-y-1"><Label>Valor recibido</Label>
+      <div className="space-y-1"><Label>{outgoing?"Valor pagado":"Valor recibido"}</Label>
         <FormattedNumberInput kind="currency" ariaLabel="Valor de la nueva forma de pago" value={capture.amount}
           onValueChange={amount => setCapture(previous => ({ ...previous, amount: amount ?? 0 }))} /></div>
       {candidate?.methodCode === "Transfer" && <div className="space-y-1"><Label htmlFor="new-payment-reference">Referencia de transferencia</Label>

@@ -16,11 +16,26 @@ CREATE PROCEDURE [dbo].[SellerOrderReplace]
     @RequiresStockReview BIT,
     @LinesJson NVARCHAR(MAX),
     @UserId UNIQUEIDENTIFIER,
-    @WorkSessionId UNIQUEIDENTIFIER = NULL
+    @WorkSessionId UNIQUEIDENTIFIER = NULL,
+    @RequestedSellerId UNIQUEIDENTIFIER = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
+    IF @RequestedSellerId IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM dbo.Orders currentOrder WHERE currentOrder.OrderId=@OrderId
+        AND currentOrder.BusinessId=@BusinessId AND currentOrder.SellerId=@RequestedSellerId)
+    BEGIN
+      IF NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers seller JOIN dbo.Parties party
+          ON party.PartyId=seller.PartyId AND party.TenantId=seller.TenantId
+          JOIN dbo.Businesses business ON business.TenantId=seller.TenantId AND business.BusinessId=@BusinessId
+          WHERE seller.SellerId=@RequestedSellerId AND seller.IsActive=1 AND party.IsActive=1)
+        THROW 51300,N'El vendedor no está activo en esta empresa.',1;
+      IF EXISTS(SELECT 1 FROM dbo.Orders orders JOIN dbo.SalesRoutes route ON route.RouteId=orders.RouteId
+          WHERE orders.OrderId=@OrderId AND orders.BusinessId=@BusinessId AND route.SellerId<>@RequestedSellerId)
+        THROW 51300,N'El vendedor seleccionado debe coincidir con la ruta del pedido.',1;
+    END;
+
     DECLARE @Subtotal DECIMAL(19,4), @DiscountTotal DECIMAL(19,4);
     SELECT @Subtotal=SUM(j.Quantity*j.UnitPrice),
            @DiscountTotal=SUM(j.DiscountAmount)
@@ -29,7 +44,7 @@ BEGIN
         DiscountAmount DECIMAL(19,4) '$.discountAmount') j;
 
     UPDATE dbo.Orders
-    SET CustomerId=@CustomerId,PartySiteId=@PartySiteId,CustomerNameSnapshot=@CustomerName,
+    SET SellerId=COALESCE(@RequestedSellerId,SellerId), CustomerId=@CustomerId,PartySiteId=@PartySiteId,CustomerNameSnapshot=@CustomerName,
         CustomerDocumentSnapshot=@CustomerIdentification,CustomerEmailSnapshot=@CustomerEmail,
         CustomerPhoneSnapshot=@CustomerPhone,DeliveryAddressSnapshot=@CustomerAddress,
         Notes=@Notes,Subtotal=@Subtotal,DiscountTotal=@DiscountTotal,Total=@Total,

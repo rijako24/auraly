@@ -27,6 +27,10 @@ public interface ICatalogStore
         bool includeOtherBusinesses, CancellationToken ct);
     Task<PosPricingSnapshot> PricingSnapshotAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, CancellationToken ct);
     Task<long> PricingCursorAsync(Guid deviceId, Guid tenantId, Guid businessId, CancellationToken ct);
+    Task<PosSellerBootstrapPage> SellerBootstrapPageAsync(Guid deviceId, Guid tenantId, Guid businessId,
+        string? cursor, int pageSize, CancellationToken ct);
+    Task<PosSellerDeltaPage> SellerChangesAsync(Guid deviceId, Guid tenantId, Guid businessId,
+        long cursor, int pageSize, CancellationToken ct);
     Task<PosCustomerBootstrapPage> CustomerBootstrapPageAsync(
         Guid deviceId, Guid tenantId, Guid businessId, string? cursor, int pageSize, CancellationToken ct);
     Task<PosCustomerDeltaPage> CustomerChangesAsync(

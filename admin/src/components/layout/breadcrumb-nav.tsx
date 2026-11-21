@@ -14,6 +14,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 const pathLabels: Record<string, string> = {
+  invoices: "Facturas",
   dashboard: "Resumen comercial",
   analytics: "Analítica de ventas",
   reports: "Reportes",

@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of ["Cash", "DebitCard", "CreditCard", "Transfer"]) {
-  test(`corregir recaudo ${type} de ${documentType} exige forma y soporte sin cambiar importe`, async ({ page, baseURL }) => {
+for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of ["Cash", "DebitCard", "CreditCard", "Transfer"]) for(const canCorrect of type==="Cash"&&documentType==="SalesReceipt"?[true,false]:[true]) {
+  test(`corregir recaudo ${type} de ${documentType} exige forma y soporte sin cambiar importe ${canCorrect?"con permiso":"sin permiso"}`, async ({ page, baseURL }) => {
     const tenantId = "11111111-1111-1111-1111-111111111111", businessId = "22222222-2222-2222-2222-222222222222";
-    const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "AURALY", username: "reviewer", firstName: "Revisor", lastName: "Prueba", roles: [], permissions: ["work-sessions.differences.read", "work-sessions.closures.reconcile"] };
+    const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "AURALY", username: "reviewer", firstName: "Revisor", lastName: "Prueba", roles: [], permissions: ["work-sessions.differences.read", "work-sessions.closures.reconcile",...(canCorrect?["sales.payments.correct"]:[])] };
     await page.context().addCookies([{ name: "auth_token", value: "e2e", url: baseURL!, httpOnly: true }]);
     await page.addInitScript(({ tenantId, businessId, user }) => {
       localStorage.setItem("selected_tenant_id", tenantId); localStorage.setItem("selected_business_id", businessId);
@@ -38,6 +38,7 @@ for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of 
     await page.getByRole("button", { name: "Conciliar", exact: true }).click();
     const parent = page.getByRole("dialog", { name: "Conciliar cierre", exact: true });
     await parent.getByRole("button", { name: /Facturas y comprobantes/ }).first().click();
+    if(!canCorrect){await expect(parent.getByRole("button",{name:"Corregir",exact:true})).toHaveCount(0);return;}
     await parent.getByRole("button", { name: "Corregir", exact: true }).first().click();
     const editor = page.getByRole("dialog", { name: "Corregir medio de recaudo", exact: true });
     if (documentType === "SalesInvoice") await expect(editor).toContainText("La factura electrónica emitida se conserva");

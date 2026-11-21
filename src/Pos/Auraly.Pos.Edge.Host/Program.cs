@@ -67,6 +67,7 @@ public sealed record DiscountRequest(decimal Discount);
 public sealed record UpdateDraftLinesRequest(
     IReadOnlyList<UpdateSalesDraftLineRequest> Lines,
     bool IncludesProratedDiscount = false);
+public sealed record SelectSellerRequest(Guid? SellerId);
 public sealed record SelectCustomerRequest(Guid? CustomerId, Guid? PartySiteId = null);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 public sealed record DirectPrintReceiptRequest(
@@ -808,6 +809,7 @@ public static class PosEdgeHostApplication
                 fiscalWarnings,
                 permissions = user?.Permissions ?? Array.Empty<string>(),
                 identityReady,
+                sellerSelectionAvailable = true,
                 initialEnrollmentSessionAvailable =
                     enrollments.Load()?.InitialOfflineAccess is not null,
                 catalogStatus = catalogStatus.Status,
@@ -978,6 +980,28 @@ public static class PosEdgeHostApplication
             catch(ArgumentException error) { return Results.Problem(error.Message,statusCode:400); }
             catch(InvalidDataException error) { return Results.Problem(error.Message,statusCode:409); }
         });
+        edge.MapGet("/sellers", async (string? search, int? skip, int? take,
+            PosCatalogStore catalog, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            if (!sessions.Required().Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            try { return Results.Ok(await catalog.SearchSellersAsync(search, skip ?? 0, take ?? 20, ct)); }
+            catch(ArgumentException) { return Results.Problem("La página solicitada de vendedores no es válida.",statusCode:400); }
+            catch(InvalidOperationException error) { return Results.Problem(error.Message,statusCode:409); }
+        });
+        edge.MapPut("/drafts/{draftId:guid}/seller", async (Guid draftId, SelectSellerRequest request,
+            PosCatalogStore catalog, PosDraftStore drafts, PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            var user = sessions.Required();
+            if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            var seller = request.SellerId is { } id ? await catalog.GetSellerAsync(id, ct) : null;
+            if (request.SellerId.HasValue && seller is not { IsActive:true })
+                return Results.BadRequest(new { detail="El vendedor no está activo en los datos de esta caja. Actualiza los datos." });
+            try { return Results.Ok(await drafts.SelectSellerAsync(context.ScopeFor(user), new DraftId(draftId),
+                seller?.SellerId, seller?.Name, ct)); }
+            catch(UnauthorizedAccessException error) { return Results.Problem(error.Message,statusCode:403); }
+            catch(InvalidOperationException error) { return Results.Problem(error.Message,statusCode:409); }
+        });
         edge.MapGet("/customers", async (
             string? search,
             int? skip,
@@ -1073,6 +1097,9 @@ public static class PosEdgeHostApplication
             });
         });
 
+        edge.MapPost("/server-history/parties/role-options", (SearchOnlineSalesHistoryRoleOptionsRequest request,
+            PosSalesHistoryServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            ServerHistoryResult(() => server.SearchRoleOptionsAsync(request,RequiredSalesHistoryUser(sessions),ct)));
         edge.MapPost("/server-history/customers/search", async (
             SearchOnlineSalesHistoryOptionsRequest request,
             PosSalesHistoryServerClient server,
@@ -1260,7 +1287,7 @@ public static class PosEdgeHostApplication
                                 DocumentUnitCost: line.DocumentUnitCost,
                                 PromotionDiscount: promotion ? line.DiscountAmount : 0m,
                                 PublicLineTotal: line.LineTotal);
-                        }).ToArray(), ct);
+                        }).ToArray(), ct, order.SellerId, order.SellerName);
                 }
                 catch (Exception importError)
                 {

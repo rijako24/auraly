@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
     <ProjectReference Include="..\..\Dispatching\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
     <ProjectReference Include="..\..\..\Pos\Auraly.Pos.Printing\Auraly.Pos.Printing.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />

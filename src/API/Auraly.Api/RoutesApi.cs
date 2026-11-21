@@ -8,6 +8,11 @@ public static class RoutesApi
 {
     public static IEndpointRouteBuilder MapRoutesApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/dispatches/options", async (ClaimsPrincipal principal,
+            int? page, int? pageSize, string? search, RouteService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.DispatchFilterOptionsAsync(principal.ToRouteIdentity(),page??1,pageSize??10,search,token),Results.Ok))
+            .RequireAuthorization();
+
         var routes = endpoints.MapGroup("/api/commerce/v1/routes").RequireAuthorization("routes.user");
 
         routes.MapGet("", async (

@@ -147,13 +147,14 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
 
             UPDATE dbo.SalesDrafts
             SET CustomerId=@CustomerId,CustomerPartySiteId=@PartySiteId,SourceOrderId=@OrderId,
+                SellerId=(SELECT source.SellerId FROM dbo.Orders source WHERE source.OrderId=@OrderId AND source.BusinessId=@BusinessId),
                 Reference=@Reference,UpdatedAt=@Now
             WHERE SalesDraftId=@DraftId;
             """,
             [
                 P("@CustomerId", request.CustomerId),
                 P("@PartySiteId", request.PartySiteId),
-                P("@OrderId", request.SourceOrderId),
+                P("@OrderId", request.SourceOrderId), P("@BusinessId", state.BusinessId),
                 P("@Reference", request.OrderNumber.Trim()),
                 P("@Now", time.GetUtcNow()),
                 P("@DraftId", draftId)

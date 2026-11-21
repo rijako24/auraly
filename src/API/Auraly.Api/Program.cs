@@ -204,6 +204,7 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlDispatchCashDifferenceD
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddScoped<SqlAccountingPostingProcessor>();
+builder.Services.AddScoped<IAccountingPostingCompletionObserver, SqlAccountingReportingCompletionObserver>();
 builder.Services.AddSingleton<IAccountingProcessingSignalGate, SqlAccountingProcessingSignalGate>();
 builder.Services.AddScoped<SqlSalesReportingProjectionWriter>();
 builder.Services.AddScoped<SqlSalesReportingProcessor>();
@@ -492,6 +493,7 @@ builder.Services.AddScoped<InventoryOperationService>();
 builder.Services.AddScoped<InventoryPhysicalCountService>();
 builder.Services.AddScoped<IRouteStore, SqlRouteStore>();
 builder.Services.AddScoped<RouteService>();
+builder.Services.AddScoped<Auraly.BuildingBlocks.Infrastructure.Persistence.IOperationalDocumentNumberAllocator, SqlOperationalDocumentAllocator>();
 builder.Services.AddScoped<IDispatchStore, SqlDispatchStore>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<IDispatchDeliveryStore, SqlDispatchDeliveryStore>();

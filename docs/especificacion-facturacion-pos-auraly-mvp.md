@@ -952,3 +952,74 @@ El módulo de facturación del MVP tendrá **paridad funcional operativa** con X
 Apartados, cotizaciones, remisiones, domicilios, puntos, bonos especializados, balanza y cheques posfechados se conservarán en el diseño y motor mediante capacidades activables. Si alguno es usado por el primer negocio piloto, su interfaz se incluye antes de declarar ese piloto terminado.
 
 El MVP no debe salir con un POS “bonito” pero operacionalmente inferior al sistema que reemplaza. La referencia de éxito es que un cajero experimentado pueda atender la misma fila, con menos pasos y sin perder ninguna acción esencial.
+
+
+## Vendedor opcional y consulta independiente de facturas — 20 de noviembre de 2026
+
+La selección de vendedor pertenece al borrador canónico de Sales. El panel de venta
+muestra «Vendedor: nombre» debajo del cliente; el selector consulta exclusivamente
+terceros con rol Seller activo del tenant. Es opcional: «Automático» conserva la
+atribución nativa del pedido de origen o del usuario cuando exista. No se asigna
+un vendedor ficticio a documentos históricos. La factura conserva SellerIdSnapshot
+y SellerNameSnapshot en SalesDocuments, distintos del usuario que facturó.
+
+La selección viaja al guardar/actualizar un pedido y al recuperarlo, pausar una venta
+o emitirla. La caja instalada consulta la réplica local de vendedores mediante el
+mismo sincronizador, outbox, señales push y preparación de catálogo existentes:
+stream Sellers, páginas de 1000, staging atómico con checkpoint y deltas por cursor.
+No hay otro worker ni cola. PosSellers/PosSellerStaging son maestros locales SQLite;
+la autoridad sigue siendo CommerceSellers/Parties. Una venta emitida offline conserva
+el ID; al subir se exige identidad del mismo tenant, permitiendo que el maestro haya
+sido desactivado después de emitir. Una selección nueva exige vendedor activo.
+La disponibilidad de esta función se comunica en health para que una caja anterior
+continúe facturando y solicite actualización antes de ofrecer el nuevo selector.
+
+SellerOrderWriter conserva la única escritura de pedidos. OrderMutationReceipts
+es una constancia inmutable de comandos terminados, sin lease, estados ni procesador:
+clave por empresa, hash del pedido/usuario/solicitud y resultado. Se confirma en la
+misma transacción. Repetir A después de editar B devuelve A y no modifica B, inventario
+ni claims. El camino de metadatos tiene cuatro comandos SQL acotados al pedido.
+
+«Facturas» en el menú y la consulta del POS comparten la misma vista y API de historial.
+La página se limita en SQL antes de enriquecer sus pagos; cada fila muestra las formas
+configuradas, sus importes y vendedor, con acciones de detalle e impresión como iconos.
+La consulta tiene dos comandos SQL más inicio y confirmación de la transacción de lectura,
+sin HTTP/SQL por factura. El presupuesto de p95 es 750 ms para páginas de 20
+sobre 2000 documentos con 10000 pagos, medido sin carga concurrente. Las pantallas nuevas envían
+DateRangeVersion=2 (días de la sede); el contrato anterior mantiene su calendario UTC.
+La marca se prepara una vez al entrar; una caja preparada conserva su copia protegida,
+y la impresión reutiliza los renderizadores y datos originales, sin repetir emisión.
+
+«Corregir pago» solo se ofrece para SalesReceipt con `sales.payments.correct`
+y el permiso de consultar/conciliar su cierre o liquidar su despacho. Abre su
+cierre existente de caja o despacho según el dueño del recaudo. Una venta ya
+cobrada en caja conserva su cierre de caja aunque se haya incluido en un despacho.
+Allí se capturan forma, franquicia, referencia y
+motivo y se confirma la operación financiera canónica. No crea otra ruta de corrección
+ni cambia una factura electrónica. Si la sesión normal todavía está abierta, la acción
+explica que requiere su cierre. La selección puntual de cierre se filtra por ID en la
+consulta canónica, conserva autorización por tenant y evita consultar calendarios de
+otras sedes (tres comandos SQL: conteo, página de uno y totales).
+
+El historial consulta los medios efectivos confirmados por contabilidad o efectos
+comerciales; antes de esa confirmación conserva el pago original. No depende de que
+Reporting haya procesado aún su señal. Las filas financieras originales, la factura,
+su UBL y los importes históricos permanecen inmutables.
+
+La actualización es aditiva: no renumera ni reconstruye facturas, pagos o vendedores
+históricos. Un rollback conserva las nuevas columnas/constancias y los documentos ya
+aceptados. Antes de bajar un receptor a una versión que ignore SellerId deben drenarse
+las subidas de las cajas nuevas; con ventas offline pendientes se conserva el receptor
+compatible y se corrige hacia adelante. No se descartan metadatos para forzar un downgrade.
+
+
+La consulta de Facturas combina vendedor (SellerIdSnapshot), usuario que facturó
+(SoldByUserId), cliente/sede, número interno o DIAN y rango de días de la sede.
+Vendedor y usuario son filtros independientes; usan opciones paginadas del catálogo
+canónico Parties en sus roles Seller/User, con acceso mínimo de sales.reprint.
+Estos filtros incluyen identidades desactivadas para poder consultar el historial;
+la selección de un vendedor nuevo en la venta sigue limitada a identidades activas.
+No precargan terceros al abrir la página ni al expandir los filtros. Los filtros se
+aplican sobre SalesDocuments antes del límite de página y del detalle de pagos.
+La aplicación instalada transporta esa misma consulta de opciones por su entrada
+existente de historial y delega en PartyWorkspaceService; no mantiene otro catálogo.

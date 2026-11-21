@@ -1,10 +1,18 @@
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
+using System.Data.Common;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public static class SqlOperationalDocumentAllocator
+public sealed class SqlOperationalDocumentAllocator : IOperationalDocumentNumberAllocator
 {
+    Task<AuralyDocumentNumberAssignment> IOperationalDocumentNumberAllocator.AllocateAsync(
+        DbConnection connection, DbTransaction transaction, Guid businessId, string documentType,
+        DateTimeOffset now, CancellationToken cancellationToken) =>
+        AllocateNumberAsync((SqlConnection)connection, (SqlTransaction)transaction,
+            businessId, documentType, now, cancellationToken);
+
     public static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(SqlConnection connection,
         SqlTransaction transaction, Guid businessId, string documentType, DateTimeOffset now, CancellationToken ct) =>
         (await AllocateNumbersAsync(connection, transaction, businessId, documentType, 1, now, ct))[0];

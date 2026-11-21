@@ -28,7 +28,7 @@ test("vincula un reembolso real sin cargar devoluciones por cada venta ni volver
     else if(path.endsWith("/execution-context/businesses"))body=[{tenantId:tenant,businessId:business,name:"Sede",timeZone:"America/Bogota"}];
     else if(path.endsWith("/execution-context/access"))body={tenantId:tenant,businessId:business,roles:[],permissions:user.permissions};
     else if(path.endsWith("/work-sessions/current"))body={workSessionId:"receiver-session"};
-    else if(path.endsWith("/closures/inbox"))body={items:[{closureId:"close-id",type:"Dispatch",cashClosure:null,dispatchClosure:{dispatchId,dispatchNumber:"DSP-101",businessId:business,businessName:"Sede",driverName:"Transportador",closedAt:"2026-11-18T14:00:00Z",status:"PendingReview",expectedCash:0,declaredCash:0,cashReceived:null,difference:0}}],page:1,pageSize:50,totalItems:1};
+    else if(path.endsWith("/closures/inbox"))body={items:[{closureId:"close-id",type:"Dispatch",cashClosure:null,dispatchClosure:{dispatchId,dispatchNumber:"DSP-101",businessId:business,businessName:"Sede",driverName:"Transportador",closedAt:"2026-11-18T14:00:00Z",openedAt:"2026-11-18T12:00:00Z",status:"PendingReview",expectedCash:0,declaredCash:0,cashReceived:null,difference:0}}],page:1,pageSize:50,totalItems:1};
     else if(path.endsWith("/sales-returns")){
       returnReads++;expect(url.searchParams.get("originalDocumentId")).toBe(sale);expect(url.searchParams.get("status")).toBe("Processed");
       body={items:[{returnId:refund,documentNumber:"DEV-101",originalDocumentId:sale,originalDocumentNumber:"CVI-101",economicResolution:"Refund",totalAmount:5000,status:"Processed"}],page:1,pageSize:10,totalCount:1,totalPages:1};

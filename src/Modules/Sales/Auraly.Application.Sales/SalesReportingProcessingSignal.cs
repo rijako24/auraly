@@ -41,7 +41,12 @@ public sealed class SalesReportingProcessingCoordinator(
 
 public static class SalesReportingProcessingPolicy
 {
-    public static bool Supports(string? documentType) =>
+    public static bool Supports(string? documentType) => SupportsCommercial(documentType) || IsPaymentCorrection(documentType);
+
+    public static bool IsPaymentCorrection(string? documentType) =>
+        documentType is "WorkSessionClosureReconciliation" or "DispatchCashDifference";
+
+    public static bool SupportsCommercial(string? documentType) =>
         documentType is "SalesInvoice" or "SalesReceipt" or "SalesReturn" or
             "GoodsReceipt" or "PurchaseReturn" or "ServiceInvoice";
 }

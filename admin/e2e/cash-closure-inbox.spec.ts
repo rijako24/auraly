@@ -7,7 +7,7 @@ test("cierres abre modales distintos para caja y despacho sin cargar detalles oc
   await page.context().addCookies([{name:"auth_token",value:"e2e",url:baseURL!,httpOnly:true}]);
   await page.addInitScript(({tenantId,businessId,user})=>{localStorage.setItem("selected_tenant_id",tenantId);localStorage.setItem("selected_business_id",businessId);localStorage.setItem("auth-state",JSON.stringify({state:{isAuthenticated:true,user},version:0}));},{tenantId,businessId,user});
   const cash={workSessionClosureId:"cash-id",workSessionId:"session-id",businessId,businessName:"Sede",warehouseName:"Bodega",userId:user.userId,userName:"Cajero prueba",openedAt:"2026-11-17T12:00:00Z",closedAt:"2026-11-17T14:00:00Z",salesCount:1,creditSalesCount:0,returnCount:0,totalSales:100000,totalRefunds:0,netAmount:100000,reconciliationStatus:"Pending",accountingStatus:"AccountingDisabled",paymentTotals:[]};
-  const dispatch={dispatchId:"dispatch-id",dispatchNumber:"DSP-PRUEBA",businessId,businessName:"Sede",driverName:"Transportador prueba",closedAt:"2026-11-17T14:00:00Z",status:"PendingReview",expectedCash:50000,declaredCash:50000,cashReceived:null,difference:0};
+  const dispatch={dispatchId:"dispatch-id",dispatchNumber:"DSP-PRUEBA",businessId,businessName:"Sede",driverName:"Transportador prueba",openedAt:"2026-11-17T12:00:00Z",closedAt:"2026-11-17T14:00:00Z",status:"PendingReview",expectedCash:50000,declaredCash:50000,cashReceived:null,difference:0};
   const execution={...dispatch,scheduledDate:"2026-11-17",status:"PendingSettlement",vehiclePlate:"ABC123",expenses:[{expenseId:"expense-1",category:"Peaje",amount:1000,description:"Paso por peaje",approvalStatus:"Rejected",approvedAmount:0}],settlement:{grossCash:50000,approvedCashExpenses:0,expectedCash:50000,declaredCash:50000,difference:0,depositTotal:0,remainingCreditTotal:0,creditAdvanceTotal:0,returnTotal:0,undeliveredTotal:0,dispatchTotal:50000,balanceDifference:0,status:"PendingReview"},documents:[{dispatchSourceDocumentId:"document-1",documentNumber:"FVL-123",customerName:"Cliente entrega",documentTotal:50000,deliveryStatus:"Delivered",deliveryAddress:"Dirección del cliente",payments:[{paymentId:"payment-1",applicationType:"InvoicePayment",paymentMethod:"Cash",amount:50000}],returns:[],lines:[]}]};
   let executionReads=0,cashDetailReads=0,inboxReads=0;
   await page.route("**/api/**",async route=>{
@@ -24,11 +24,13 @@ test("cierres abre modales distintos para caja y despacho sin cargar detalles oc
   });
   await page.goto("/dashboard/cash-differences");
   await expect(page.getByRole("cell",{name:"Despacho",exact:true})).toBeVisible();
+  await expect(page.getByRole("row").filter({has:page.getByRole("cell",{name:"Despacho",exact:true})})).toContainText(/Inició.*7:00/);
   expect(executionReads).toBe(0);expect(cashDetailReads).toBe(0);expect(inboxReads).toBe(1);
   await page.getByRole("button",{name:"Ver despacho",exact:true}).click();
   const dispatchDialog=page.getByRole("dialog",{name:"Recepción y liquidación del despacho"});
+  await expect(dispatchDialog.getByRole("button",{name:/Corregir forma de pago/})).toHaveCount(0);
   await expect(dispatchDialog).toContainText("DSP-PRUEBA");await expect(dispatchDialog).toContainText("Transportador prueba");
-  await expect(dispatchDialog).toContainText("Declaración del transportador");await expect(dispatchDialog).toContainText("Peaje");
+  await expect(dispatchDialog.getByRole("region",{name:"Recaudos por forma de pago"})).toContainText("Declarado");await expect(dispatchDialog).toContainText("Peaje");
   await dispatchDialog.getByRole("region",{name:"Entregas del despacho"}).getByText("FVL-123 · Cliente entrega",{exact:true}).click();
   await expect(dispatchDialog).toContainText("Dirección del cliente");
   expect(executionReads).toBe(1);expect(cashDetailReads).toBe(0);expect(inboxReads).toBe(1);

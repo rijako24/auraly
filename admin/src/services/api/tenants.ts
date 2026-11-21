@@ -215,7 +215,7 @@ export const tenantsApi = {
   preparePrintBrandingForWorkspaceEntry: () => {
     clearPrintBranding();
     // Brand preparation belongs to workspace entry, never to sale confirmation.
-    void getPrintBranding().catch(error => {
+    return getPrintBranding().catch(error => {
       console.warn("No se pudo preparar el logo; la impresión usará el nombre de la empresa.", error);
     });
   },

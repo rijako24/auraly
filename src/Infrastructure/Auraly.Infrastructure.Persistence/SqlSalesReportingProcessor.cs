@@ -1,4 +1,7 @@
 using System.Data;
+using System.Text.Json;
+using Auraly.Contracts.Dispatching;
+using Auraly.Contracts.WorkSessions;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Sales;
@@ -81,6 +84,27 @@ public sealed partial class SqlSalesReportingProcessor(
                     ValidateSourceIdentity(value.TenantId,value.BusinessId,value.DocumentId,source.TenantId,businessId,documentId);
                     if(value.CommercialSnapshot.DocumentType!=documentType)throw new InvalidOperationException("El tipo de la fuente no corresponde al trabajo de reporting.");
                     await projectionWriter.ProjectSaleAsync(session,value,cancellationToken);
+                }
+                else if(SalesReportingProcessingPolicy.IsPaymentCorrection(documentType))
+                {
+                    var json=new JsonSerializerOptions(JsonSerializerDefaults.Web);
+                    Guid tenant,owner,id; Guid[] sales; Guid? dispatchId=null;
+                    if(documentType==WorkSessionAccountingDocumentTypes.ClosureReconciliation)
+                    {
+                        var value=JsonSerializer.Deserialize<WorkSessionClosureReconciliationPayload>(source.Payload,json)
+                            ?? throw new InvalidOperationException("La corrección de caja no es válida.");
+                        tenant=value.TenantId;owner=value.BusinessId;id=value.ReconciliationId;
+                        sales=(value.PaymentCorrections??[]).Where(item=>item.MovementType=="Sale").Select(item=>item.SourceId).Distinct().ToArray();
+                    }
+                    else
+                    {
+                        var value=JsonSerializer.Deserialize<DispatchCashDifferencePayload>(source.Payload,json)
+                            ?? throw new InvalidOperationException("La conciliación de despacho no es válida.");
+                        tenant=value.TenantId;owner=value.BusinessId;id=value.DispatchSettlementId;dispatchId=value.DispatchId;
+                        sales=(value.Collections??[]).Select(item=>item.SourceDocumentId).Distinct().ToArray();
+                    }
+                    ValidateSourceIdentity(tenant,owner,id,source.TenantId,businessId,documentId);
+                    await projectionWriter.ProjectPaymentCorrectionAsync(session,tenant,businessId,documentId,documentType,sales,cancellationToken,dispatchId);
                 }
                 else if(documentType==ServiceInvoiceDocumentTypes.ServiceInvoice)
                 {
@@ -186,6 +210,10 @@ public sealed partial class SqlSalesReportingProcessor(
             WHERE r.SourceDocumentId=@DocumentId
               AND r.SourceDocumentType=@DocumentType
               AND r.BusinessId=@BusinessId AND r.SourceVersion=@SourceVersion
+              AND (r.SourceDocumentType NOT IN(N'WorkSessionClosureReconciliation',N'DispatchCashDifference') OR EXISTS(
+                SELECT 1 FROM dbo.AccountingPostingJobs financial WHERE financial.SourceDocumentId=r.SourceDocumentId
+                  AND financial.SourceDocumentType=r.SourceDocumentType AND financial.BusinessId=r.BusinessId AND financial.TenantId=b.TenantId
+                  AND financial.Status IN(N'Posted',N'CommercialEffectsApplied')))
               AND ((r.SourceDocumentProcessingJobId IS NULL AND r.SourcePayloadJson IS NOT NULL)
                 OR j.Status=N'Completed');
             """;

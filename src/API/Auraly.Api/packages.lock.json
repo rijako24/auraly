@@ -913,6 +913,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )"
         }
       },
@@ -1076,6 +1077,7 @@
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
           "Auraly.Domain.WorkSessions": "[1.0.0, )",

@@ -33,5 +33,7 @@ public sealed class SqlDispatchCashDifferenceDocumentHandler(
         await SqlAccountingPostingJobWriter.InsertAsync(
             sessions.Current.Connection, sessions.Current.Transaction, document, payload.OccurredAt, ids, timeProvider,
             cancellationToken, AccountingJobRequirement.PreserveCommercialEffects);
+        await SqlSalesReportingJobWriter.InsertPaymentCorrectionAsync(sessions.Current.Connection, sessions.Current.Transaction,
+            document.BusinessId.Value, document.DocumentId.Value, DocumentType, ids.NewId(), timeProvider.GetUtcNow(), cancellationToken);
     }
 }

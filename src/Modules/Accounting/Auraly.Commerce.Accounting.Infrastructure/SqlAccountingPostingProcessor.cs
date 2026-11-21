@@ -23,7 +23,8 @@ public sealed partial class SqlAccountingPostingProcessor(
     AccountingSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider,
-    IPosSynchronizationOutboxDispatcher synchronization)
+    IPosSynchronizationOutboxDispatcher synchronization,
+    IAccountingPostingCompletionObserver completion)
 {
     public async Task ProcessAsync(
         Guid documentId,
@@ -52,6 +53,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await transaction.CommitAsync(cancellationToken);
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
+                await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
                 return;
             }
 
@@ -73,6 +75,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await transaction.CommitAsync(cancellationToken);
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
+                await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
                 return;
             }
 
@@ -262,6 +265,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await transaction.CommitAsync(cancellationToken);
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
+                await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
                 return;
             }
             // A free receipt can move physical units without a monetary effect.
@@ -275,6 +279,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await transaction.CommitAsync(cancellationToken);
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
+                await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
                 return;
             }
             var lines = AccountingJournal.Validate(proposedLines);
@@ -287,6 +292,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             await transaction.CommitAsync(cancellationToken);
             await synchronization.DispatchPendingAsync(
                 source.TenantId, source.BusinessId, CancellationToken.None);
+            await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
         }
         catch (Exception error)
         {

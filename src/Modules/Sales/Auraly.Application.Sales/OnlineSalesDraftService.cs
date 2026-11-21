@@ -56,6 +56,9 @@ public interface IOnlineSalesDraftStore
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesDraft> SelectSellerAsync(OnlineSalesUserIdentity user, Guid draftId,
+        Guid? sellerId, long expectedVersion, string idempotencyKey, CancellationToken cancellationToken);
+
     Task<OnlineSalesCustomerSelection> SelectCustomerAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -270,6 +273,18 @@ public sealed class OnlineSalesDraftService(
                 "La línea es obligatoria.");
         return await drafts.RemoveLineAsync(
             user, draftId, lineId, request.ExpectedVersion,
+            idempotencyKey, cancellationToken);
+    }
+
+    public Task<OnlineSalesDraft> SelectSellerAsync(OnlineSalesUserIdentity user, Guid draftId,
+        SelectOnlineSalesDraftSellerRequest request, string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (request.SellerId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException("El vendedor seleccionado no es válido.");
+        return drafts.SelectSellerAsync(user, draftId, request.SellerId, request.ExpectedVersion,
             idempotencyKey, cancellationToken);
     }
 

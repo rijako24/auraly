@@ -65,7 +65,7 @@ public sealed partial class AccountingVerticalSliceTests
     [InlineData("SalesReceipt", "Transfer", false, false, "Partial", 0, false, 0, false, false, "PendingCollection")]
     [InlineData("SalesReceipt", "Cash", false, false, "NotDelivered", 0, false, 0, false, false, "PendingCollection")]
     public async Task Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
-        string documentType, string method, bool sameForm, bool remap, string returnCase = "None", decimal creditPortion = 0, bool refundAfterCollection = false, decimal cashDifference = 0, bool previouslyCollected = false, bool splitCash = false, string originalMethod = "Cash", bool remapFormBeforeCollection = false, bool restartDuringLease = false)
+        string documentType, string method, bool sameForm, bool remap, string returnCase = "None", decimal creditPortion = 0, bool refundAfterCollection = false, decimal cashDifference = 0, bool previouslyCollected = false, bool splitCash = false, string originalMethod = "Cash", bool remapFormBeforeCollection = false, bool restartDuringLease = false, bool verifyReporting = false, bool projectBeforeSettlement = true, bool rebuildReporting = false)
     {
         using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, CatalogPermissionCodes.Update);
@@ -147,6 +147,12 @@ public sealed partial class AccountingVerticalSliceTests
         }
         var gross=creditPortion>0||previouslyCollected?11900m:10000m;
         await AssertBalancedAsync(sale);
+        if (verifyReporting && projectBeforeSettlement)
+        {
+            using var reportingScope = fixture.CreateScope();
+            await reportingScope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>()
+                .ProcessAsync(sale, documentType, fixture.BusinessId, 1, default);
+        }
         var originalHash = await ScalarAsync<byte[]>("SELECT PayloadHash FROM dbo.SalesDocuments WHERE DocumentId=@Id", sale);
         // Creation checks the persisted role, independently of HTTP claims.
         await using (var authorizationConnection = new SqlConnection(fixture.ConnectionString))
@@ -169,10 +175,11 @@ public sealed partial class AccountingVerticalSliceTests
         var actor = new DispatchActorIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
             new HashSet<string>{DispatchPermissionCodes.Create,DispatchPermissionCodes.Read,DispatchPermissionCodes.ReadAll,
                 DispatchPermissionCodes.Prepare,DispatchPermissionCodes.Release,DispatchPermissionCodes.ExecuteDeliveries,DispatchPermissionCodes.Settle}, true);
+        var carrierId=await fixture.SeedDispatchCarrierAsync(fixture.UserId);
         var draft = await logistics.CreateAsync(actor, new(fixture.BusinessId, new(2026,11,18), "Transportador de prueba", null,
-            fixture.UserId, null, null, [sale]), default);
+            carrierId, null, [sale]), default);
         var otherDraft = await logistics.CreateAsync(actor, new(fixture.BusinessId, new(2026,11,18), "Transportador de prueba", null,
-            fixture.UserId, null, null, [otherEmission.DocumentId.Value]), default);
+            carrierId, null, [otherEmission.DocumentId.Value]), default);
         Assert.NotEqual(draft.DispatchNumber, otherDraft.DispatchNumber);
         var prepared = await logistics.PrepareAsync(actor, draft.DispatchId, new(draft.RowVersion, Guid.NewGuid().ToString("N")), default);
         await logistics.ReleaseAsync(actor, draft.DispatchId, new(prepared.RowVersion, Guid.NewGuid().ToString("N")), default);
@@ -471,6 +478,42 @@ public sealed partial class AccountingVerticalSliceTests
                 Assert.Equal(0m,Assert.Single((await query.GetReturnableSaleAsync(returnUser,sale))!.Payments).AvailableAmount);
                 Assert.Equal(gross,await ScalarAsync<decimal>("SELECT SUM(Amount) FROM dbo.SalesReturnSettlements WHERE OriginalDispatchPaymentId=@Id",payment.PaymentId));
                 Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",sale));
+            }
+            if (verifyReporting)
+            {
+                var reporting = scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>();
+                await reporting.ProcessAsync(sale, documentType, fixture.BusinessId, 1, default);
+                await reporting.ProcessAsync(closure, DispatchAccountingDocumentTypes.CashDifference, fixture.BusinessId, 1, default);
+                async Task AssertReportingAsync()
+                {
+                    Assert.Equal("Projected", await ScalarAsync<string>("SELECT Status FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'DispatchCashDifference'", closure));
+                    Assert.Equal(collected, await ScalarAsync<decimal>("SELECT COALESCE(SUM(Amount),0) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale));
+                    Assert.Equal(collected, await ScalarAsync<decimal>("SELECT CollectedAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Id", sale));
+                    Assert.Equal(collected == 0 ? 0 : 1, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale));
+                    if (collected > 0)
+                        Assert.Equal(method, await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale));
+                    Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", sale));
+                }
+                var saleNumber=await ScalarAsync<string>("SELECT DocumentNumber FROM dbo.SalesDocuments WHERE DocumentId=@Id",sale);
+                using(var historyClient=fixture.CreateAdminClient("sales.reprint"))
+                using(var history=await historyClient.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+                    new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),saleNumber,Take:10,DateRangeVersion:2)))
+                {
+                    Assert.True(history.IsSuccessStatusCode,await history.Content.ReadAsStringAsync());
+                    var row=Assert.Single((await history.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>())!.Items);
+                    Assert.Equal(draft.DispatchId,row.DispatchId);
+                    Assert.Equal(collected,row.Payments!.Where(value=>value.MethodCode!="Credit").Sum(value=>value.Amount));
+                    if(collected>0)Assert.All(row.Payments!.Where(value=>value.MethodCode!="Credit"),value=>Assert.Equal(method,value.MethodCode));
+                }
+                await AssertReportingAsync();
+                await reporting.ProcessAsync(closure, DispatchAccountingDocumentTypes.CashDifference, fixture.BusinessId, 1, default);
+                await reporting.ProcessAsync(sale, documentType, fixture.BusinessId, 1, default);
+                await AssertReportingAsync();
+                if (rebuildReporting)
+                {
+                    await reporting.RebuildAsync(fixture.TenantId, fixture.BusinessId, default);
+                    await AssertReportingAsync();
+                }
             }
             Assert.Equal(originalHash, await ScalarAsync<byte[]>("SELECT PayloadHash FROM dbo.SalesDocuments WHERE DocumentId=@Id", sale));
         }

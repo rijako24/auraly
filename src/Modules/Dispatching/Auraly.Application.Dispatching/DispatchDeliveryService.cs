@@ -1,4 +1,5 @@
 using Auraly.Contracts.Dispatching;
+using Auraly.Contracts.Authorization;
 using Auraly.BuildingBlocks.Domain.Payments;
 
 namespace Auraly.Application.Dispatching;
@@ -6,7 +7,7 @@ namespace Auraly.Application.Dispatching;
 public interface IDispatchDeliveryStore
 {
     Task<IReadOnlyList<DispatchReasonOption>> ReasonsAsync(DispatchActorIdentity actor, string reasonType, CancellationToken ct);
-    Task<DispatchExecutionDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct);
+    Task<DispatchExecutionDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct, bool administrative = false);
     Task<DispatchExecutionDetail> RecordAsync(DispatchActorIdentity actor, Guid dispatchId, RecordDispatchDeliveryRequest request, CancellationToken ct);
     Task<DispatchExecutionDetail> ReorderAsync(DispatchActorIdentity actor, Guid dispatchId, ReorderDispatchDocumentsRequest request, byte[] rowVersion, CancellationToken ct);
     Task<DispatchExecutionDetail> RecordExpenseAsync(DispatchActorIdentity actor, Guid dispatchId, DispatchExpenseInput request, CancellationToken ct);
@@ -26,11 +27,12 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
         return store.ReasonsAsync(actor, reasonType, ct);
     }
 
-    public async Task<DispatchExecutionDetail> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct)
+    public async Task<DispatchExecutionDetail> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct, bool administrative = false)
     {
         RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.ExecuteDeliveries, DispatchPermissionCodes.Settle);
         Required(dispatchId, "DispatchId");
-        return await store.GetAsync(actor, dispatchId, ct)
+        if(administrative)Require(actor,DispatchPermissionCodes.Settle);
+        return await store.GetAsync(actor, dispatchId, ct, administrative)
             ?? throw new DispatchNotFoundException("El despacho no está asignado o no existe.");
     }
 
@@ -138,6 +140,7 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
         Guid paymentId, CorrectDispatchPaymentRequest request, CancellationToken ct)
     {
         Require(actor, DispatchPermissionCodes.Settle); Required(dispatchId, "DispatchId"); Required(paymentId, "PaymentId");
+        Require(actor, CommercePermissionCodes.SalesCorrectPaymentMethods);
         Required(request.PaymentMethodId, "PaymentMethodId");
         ValidateNativeTender(new(request.MethodCode, 1, Reference: request.Reference,
             CardFranchiseCode: request.CardFranchiseCode, ApprovalNumber: request.ApprovalNumber,

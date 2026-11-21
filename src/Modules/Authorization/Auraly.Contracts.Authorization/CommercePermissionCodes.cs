@@ -12,6 +12,7 @@ public static class CommercePermissionCodes
     public const string SalesProratedDiscount = "sales.lines.prorated-discount";
     public const string SalesBelowCost = "sales.below-cost";
     public const string SalesReprint = "sales.reprint";
+    public const string SalesCorrectPaymentMethods = "sales.payments.correct";
     public const string SalesRemoveLine = "sales.lines.remove";
     public const string SalesRestartDraft = "sales.drafts.restart";
     public const string SalesDeletePausedDraft = "sales.drafts.paused.delete";

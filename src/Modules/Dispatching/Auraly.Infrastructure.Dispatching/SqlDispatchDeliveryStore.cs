@@ -20,14 +20,14 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
         return result;
     }
 
-    public async Task<DispatchExecutionDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct)
+    public async Task<DispatchExecutionDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct, bool administrative = false)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(ct);
         await using var header=new SqlCommand("""
           SELECT DispatchId,DispatchNumber,ScheduledDate,DriverName,VehiclePlate,Status,RowVersion
           FROM dbo.Dispatches WHERE DispatchId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId
-            AND (@ReadAll=1 OR @Settle=1 OR DriverUserId=@UserId);
-        """,connection); Scope(header,actor,dispatchId);
+            AND (DriverUserId=@UserId OR CreatedBy=@UserId OR (@Administrative=1 AND @Settle=1));
+        """,connection); Scope(header,actor,dispatchId);header.Parameters.AddWithValue("@Administrative",administrative);
         Guid id;string number,driver,status,rowVersion;DateOnly date;string? plate;
         await using(var reader=await header.ExecuteReaderAsync(ct))
         { if(!await reader.ReadAsync(ct))return null;id=reader.GetGuid(0);number=reader.GetString(1);date=DateOnly.FromDateTime(reader.GetDateTime(2));driver=reader.GetString(3);plate=NullableString(reader,4);status=reader.GetString(5);rowVersion=Convert.ToBase64String((byte[])reader[6]); }
@@ -98,10 +98,13 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
 
         DispatchSettlementSummary? settlement=null;
         await using(var command=new SqlCommand("""
-          SELECT ExpectedCash,DeclaredCash,CashDifference,DepositTotal,CreditDocumentTotal,CreditAdvanceTotal,ReturnTotal,Status,ReceivedBy,ReceivedAt,CashReceived,DeclaredCard,DeclaredTransfer,TransporterClosedBy,TransporterClosedAt,(SELECT PreviouslyCollectedTotal FROM dispatch.PaymentTotals(@Id))
-          FROM dispatch.Closures WHERE DispatchId=@Id;
+          SELECT closed.ExpectedCash,closed.DeclaredCash,closed.CashDifference,closed.DepositTotal,closed.CreditDocumentTotal,closed.CreditAdvanceTotal,closed.ReturnTotal,closed.Status,closed.ReceivedBy,closed.ReceivedAt,closed.CashReceived,closed.DeclaredCard,closed.DeclaredTransfer,closed.TransporterClosedBy,closed.TransporterClosedAt,(SELECT PreviouslyCollectedTotal FROM dispatch.PaymentTotals(@Id)),
+            COALESCE(CONVERT(int,JSON_VALUE(snapshot.ReceiptSnapshotJson,'$.receiptTemplateVersion')),1)
+          FROM dispatch.Closures closed
+          JOIN dbo.WorkSessionClosures snapshot ON snapshot.WorkSessionClosureId=closed.DispatchSettlementId
+          WHERE closed.DispatchId=@Id;
         """,connection))
-        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);if(await reader.ReadAsync(ct)){var expected=reader.GetDecimal(0);var deposits=reader.GetDecimal(3);var remainingCredit=reader.GetDecimal(4);var advances=reader.GetDecimal(5);var returnTotal=reader.GetDecimal(6);var undelivered=documents.Where(value=>value.DeliveryStatus==DeliveryStatuses.NotDelivered).Sum(value=>value.DocumentTotal);var cards=payments.Values.SelectMany(value=>value).Where(value=>value.PaymentMethod is "DebitCard" or "CreditCard").Sum(value=>value.Amount);var balance=dispatchTotal-(grossCash+deposits+cards+remainingCredit+returnTotal+undelivered+reader.GetDecimal(15));settlement=new(grossCash,approvedExpenses,expected,reader.GetDecimal(1),reader.GetDecimal(2),deposits,remainingCredit,advances,returnTotal,undelivered,dispatchTotal,balance,reader.GetString(7),NullableGuid(reader,8),reader.IsDBNull(9)?null:reader.GetDateTimeOffset(9),NullableDecimal(reader,10),cards,NullableDecimal(reader,11),NullableDecimal(reader,12),NullableGuid(reader,13),reader.GetDateTimeOffset(14),reader.GetDecimal(15)); } }
+        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);if(await reader.ReadAsync(ct)){var expected=reader.GetDecimal(0);var deposits=reader.GetDecimal(3);var remainingCredit=reader.GetDecimal(4);var advances=reader.GetDecimal(5);var returnTotal=reader.GetDecimal(6);var undelivered=documents.Where(value=>value.DeliveryStatus==DeliveryStatuses.NotDelivered).Sum(value=>value.DocumentTotal);var cards=payments.Values.SelectMany(value=>value).Where(value=>value.PaymentMethod is "DebitCard" or "CreditCard").Sum(value=>value.Amount);var balance=dispatchTotal-(grossCash+deposits+cards+remainingCredit+returnTotal+undelivered+reader.GetDecimal(15));settlement=new(grossCash,approvedExpenses,expected,reader.GetDecimal(1),reader.GetDecimal(2),deposits,remainingCredit,advances,returnTotal,undelivered,dispatchTotal,balance,reader.GetString(7),NullableGuid(reader,8),reader.IsDBNull(9)?null:reader.GetDateTimeOffset(9),NullableDecimal(reader,10),cards,NullableDecimal(reader,11),NullableDecimal(reader,12),NullableGuid(reader,13),reader.GetDateTimeOffset(14),reader.GetDecimal(15),reader.GetInt32(16)); } }
         return new(id,number,date,driver,plate,status,documents,expenses,settlement,rowVersion,linkedReturns);
     }
 
@@ -360,7 +363,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF @@TRANCOUNT>0 ROLLBACK;
             THROW;
           END CATCH
-        """,connection);Scope(command,actor,dispatchId);command.Parameters.AddWithValue("@ExpenseId",expenseId);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
+        """,connection);Scope(command,actor,dispatchId);command.Parameters.AddWithValue("@ExpenseId",expenseId);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct,administrative:true))!;
     }
 
     public async Task<DispatchExecutionDetail> CloseRouteAsync(DispatchActorIdentity actor, Guid dispatchId, CloseDispatchRouteRequest request, CancellationToken ct)
@@ -396,7 +399,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             EXEC worksessions.DispatchSessionEnsure @TenantId,@BusinessId,@Id,@UserId,0,@Session OUTPUT;
             DECLARE @Snapshot nvarchar(max)=(SELECT @Closure workSessionClosureId,@Session workSessionId,
               @Id dispatchId,@UserId closedByUserId,@ClosedAt closedAt,@Declared declaredCash,
-              @CardDeclared declaredCard,@TransferDeclared declaredTransfer FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
+              @CardDeclared declaredCard,@TransferDeclared declaredTransfer,@ReceiptTemplateVersion receiptTemplateVersion FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
             DECLARE @Totals nvarchar(max)=(SELECT method paymentMethodCode,amount salesAmount,
               CONVERT(decimal(19,4),0) refundAmount,CONVERT(decimal(19,4),0) otherAmount,
               amount netAmount,counted countedAmount,counted-amount difference
@@ -418,7 +421,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF @@TRANCOUNT>0 ROLLBACK;
             THROW;
           END CATCH
-        """,connection);Scope(command,actor,dispatchId);Money(command,"@Declared",request.DeclaredCash);Money(command,"@CardDeclared",request.DeclaredCard!.Value);Money(command,"@TransferDeclared",request.DeclaredTransfer!.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
+        """,connection);Scope(command,actor,dispatchId);command.Parameters.AddWithValue("@ReceiptTemplateVersion",DispatchSettlementSummary.CurrentReceiptTemplateVersion);Money(command,"@Declared",request.DeclaredCash);Money(command,"@CardDeclared",request.DeclaredCard!.Value);Money(command,"@TransferDeclared",request.DeclaredTransfer!.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
     }
 
     public async Task<DispatchExecutionDetail> SettleAsync(DispatchActorIdentity actor, Guid dispatchId, SettleDispatchRequest request, CancellationToken ct)
@@ -544,7 +547,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF @@TRANCOUNT>0 ROLLBACK;
             THROW;
           END CATCH
-        """,connection);Scope(command,actor,dispatchId);Money(command,"@Cash",request.CashReceived);command.Parameters.Add("@ReturnIds",SqlDbType.NVarChar,-1).Value=request.ReturnIds is {Count:>0} ? JsonSerializer.Serialize(request.ReturnIds.Order()) : DBNull.Value;command.Parameters.AddWithValue("@DifferenceForm",(object?)request.CashDifferencePaymentMethodId??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
+        """,connection);Scope(command,actor,dispatchId);Money(command,"@Cash",request.CashReceived);command.Parameters.Add("@ReturnIds",SqlDbType.NVarChar,-1).Value=request.ReturnIds is {Count:>0} ? JsonSerializer.Serialize(request.ReturnIds.Order()) : DBNull.Value;command.Parameters.AddWithValue("@DifferenceForm",(object?)request.CashDifferencePaymentMethodId??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct,administrative:true))!;
     }
 
     private static void Scope(SqlCommand command,DispatchActorIdentity actor,Guid id){command.Parameters.AddWithValue("@TenantId",actor.TenantId);command.Parameters.AddWithValue("@BusinessId",actor.BusinessId);command.Parameters.AddWithValue("@UserId",actor.UserId);command.Parameters.AddWithValue("@ReadAll",actor.Permissions.Contains(DispatchPermissionCodes.ReadAll));command.Parameters.AddWithValue("@Settle",actor.Permissions.Contains(DispatchPermissionCodes.Settle));command.Parameters.AddWithValue("@IsAdministrator",actor.IsAdministrator);command.Parameters.AddWithValue("@Id",id);}

@@ -339,7 +339,7 @@ public sealed class PosSaleCompletionService(
                 customer?.Name,
                 draft.CustomerPartySiteId, draft.Charges,
                 CustomerAddress: receiptCustomerSite?.AddressLine,
-                CustomerPhone: receiptCustomerSite?.Phone),
+                CustomerPhone: receiptCustomerSite?.Phone, SellerId:draft.SellerId),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;

@@ -29,10 +29,11 @@ public sealed class PosSaleCompletionServiceTests
             await fixture.Sales.ProvisionDocumentSeriesAsync(new(Guid.NewGuid(), fixture.Scope.DeviceId,
                 PosSaleDocumentTypes.Receipt, "CVI", "03", 8, 100, 99999));
             var orderId = Guid.NewGuid();
+            var sellerId = Guid.NewGuid();
             var draft = await fixture.Drafts.ImportOrderAsync(fixture.Scope, orderId, "PED-1",
                 Guid.NewGuid(), Guid.NewGuid(), null,
                 [new(new ProductId(Guid.NewGuid()), "PED", "Producto del pedido", "EA", "01", 19m,
-                    1m, 10000m, 10000m, "COP", "BusinessDefault")]);
+                    1m, 10000m, 10000m, "COP", "BusinessDefault")],sellerId:sellerId,sellerName:"Vendedora offline");
             var payment = new OfflineSalePayment(method, draft.PayableAmount,
                 Reference: method == "Transfer" ? "TR-1" : null,
                 CardFranchiseCode: method is "DebitCard" or "CreditCard" ? "Visa" : null,
@@ -42,6 +43,7 @@ public sealed class PosSaleCompletionServiceTests
             var issued = await fixture.CompleteAsync(draft.DraftId, [payment], documentType: PosSaleDocumentTypes.Receipt);
             var snapshot = PosSaleContractSerializer.Deserialize(Assert.Single(await fixture.Sales.GetPendingOutboxAsync()).Payload);
             Assert.Equal(orderId, snapshot.SourceOrderId);
+            Assert.Equal(sellerId,snapshot.SellerId);
             Assert.Equal(SaleCollectionMode.Dispatch, snapshot.CollectionMode);
             Assert.Equal(SaleCollectionMode.Dispatch, Assert.Single(await fixture.Sales.ReadWorkSessionSalesAsync(snapshot.WorkSessionId)).CollectionMode);
             Assert.Null(snapshot.FiscalSnapshot);
@@ -53,8 +55,9 @@ public sealed class PosSaleCompletionServiceTests
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
 
             // Old queued order payloads omitted custody. Their exact serialization remains stable.
-            var legacy = snapshot with { CollectionMode = SaleCollectionMode.Session };
+            var legacy = snapshot with { CollectionMode = SaleCollectionMode.Session, SellerId=null };
             var oldJson = PosSaleContractSerializer.Serialize(legacy);
+            Assert.DoesNotContain("sellerId",oldJson,StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("collectionMode", oldJson, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(SaleCollectionMode.Session, PosSaleContractSerializer.Deserialize(oldJson).CollectionMode);
             Assert.Equal(oldJson, PosSaleContractSerializer.Serialize(PosSaleContractSerializer.Deserialize(oldJson)));

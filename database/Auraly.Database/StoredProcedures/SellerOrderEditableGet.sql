@@ -8,7 +8,7 @@ BEGIN
     SET NOCOUNT ON;
     SELECT o.ExternalDocumentNumber,o.CustomerId,o.PartySiteId,o.Status,
            COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.WarehouseId'))),
-           COALESCE(o.OrdersWarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.ordersWarehouseId')))
+           COALESCE(o.OrdersWarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.ordersWarehouseId'))),o.SellerId
     FROM dbo.Orders o WITH(UPDLOCK,HOLDLOCK)
     WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId AND o.Source=1
       AND NOT EXISTS(SELECT 1 FROM dbo.OrderInvoiceLinks link WHERE link.OrderId=o.OrderId);

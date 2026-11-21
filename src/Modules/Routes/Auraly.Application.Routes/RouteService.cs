@@ -6,7 +6,7 @@ namespace Auraly.Application.Routes;
 
 public interface IRouteStore
 {
-    Task<SalesRoutePage> PageAsync(RouteActorIdentity actor, SalesRouteQuery query, CancellationToken ct);
+    Task<SalesRoutePage> PageAsync(RouteActorIdentity actor, SalesRouteQuery query, CancellationToken ct, bool includeAllSellers = false);
     Task<SalesRouteDetail?> GetAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct);
     Task<RouteOptions> OptionsAsync(RouteActorIdentity actor, CancellationToken ct);
     Task<RouteCandidatePage> CandidateSitesAsync(RouteActorIdentity actor, Guid? routeId, RouteCandidateQuery query, CancellationToken ct);
@@ -37,6 +37,15 @@ public sealed class RouteService(
         if (query.PreparationStatus is not null && query.PreparationStatus is not ("Draft" or "Ready" or "AttentionRequired"))
             throw new RouteValidationException("El estado de preparación no es válido.");
         return store.PageAsync(actor, query with { Search = query.Search?.Trim() }, ct);
+    }
+
+    public Task<SalesRoutePage> DispatchFilterOptionsAsync(RouteActorIdentity actor, int page, int pageSize, string? search, CancellationToken ct)
+    {
+        Require(actor, "dispatches.create");
+        if(page<1 || pageSize is <1 or >100 || (long)(page-1)*pageSize>int.MaxValue)
+            throw new RouteValidationException("La página o el tamaño de página están fuera del rango permitido.");
+        if(search?.Length>160)throw new RouteValidationException("La búsqueda no puede superar 160 caracteres.");
+        return store.PageAsync(actor,new(page,pageSize,search?.Trim(),IsActive:true),ct,includeAllSellers:true);
     }
 
     public async Task<SalesRouteDetail> GetAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)

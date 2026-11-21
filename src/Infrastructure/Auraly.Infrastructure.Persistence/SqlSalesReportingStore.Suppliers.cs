@@ -1,4 +1,4 @@
-﻿using Auraly.Contracts.Sales;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -16,9 +16,7 @@ public sealed partial class SqlSalesReportingStore
     private static async Task<SalesReportExplorerPage> ExploreSuppliersAsync(SqlConnection connection,
         SalesReportingUserIdentity user,SalesReportExplorerRequest request,Guid? requiredSupplierId,CancellationToken cancellationToken)
     {
-        var order=request.OrderBy switch {"net-desc"=>"NetUntaxed DESC","net-asc"=>"NetUntaxed ASC",
-            "label"=>"Label ASC","profit-desc"=>"Profit DESC","quantity-desc"=>"Quantity DESC",
-            _=>throw new SalesReportingValidationException("El orden no es válido.")};
+        var order=ExplorerOrder(request.OrderBy, supplier: true, details: false);
         var source=ExplorerSource+" AND a.ItemKind=N'Product'";
         var comparison=ComparisonRange(request);
         var previousSql=comparison is null?"""

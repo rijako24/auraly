@@ -34,6 +34,8 @@ public sealed record UpdateSalesDraftLineRequest(
     decimal Discount,
     decimal DocumentUnitCost = 0);
 
+public sealed record SelectOnlineSalesDraftSellerRequest(Guid? SellerId, long ExpectedVersion);
+
 public sealed record SelectOnlineSalesDraftCustomerRequest(
     Guid? CustomerId,
     long ExpectedVersion,
@@ -161,7 +163,8 @@ public sealed record OnlineSalesDraft(
     decimal PayableAmount,
     Guid? SourceOrderId = null,
     Guid? CustomerPartySiteId = null,
-    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    string? SellerName = null);
 
 public sealed record OnlineSalesInventoryIssue(
     Guid LineId,
@@ -183,6 +186,9 @@ public sealed record GetOnlineSalesCustomerRequest(
 
 public sealed record OnlineSalesHistoryContext(Guid BusinessId);
 
+public sealed record SearchOnlineSalesHistoryRoleOptionsRequest(OnlineSalesHistoryContext Context, string Role,
+    string? Search = null, int Page = 1, int PageSize = 20);
+
 public sealed record SearchOnlineSalesHistoryOptionsRequest(
     OnlineSalesHistoryContext Context,
     string? Search = null,
@@ -200,7 +206,10 @@ public sealed record SearchOnlineSalesIssuedSalesRequest(
     DateOnly? To = null,
     Guid? ProductId = null,
     decimal? MinimumTotal = null,
-    decimal? MaximumTotal = null);
+    decimal? MaximumTotal = null,
+    int DateRangeVersion = 1,
+    Guid? SellerId = null,
+    Guid? BilledByUserId = null);
 
 public sealed record OnlineSalesIssuedSale(
     Guid DocumentId,
@@ -211,7 +220,15 @@ public sealed record OnlineSalesIssuedSale(
     decimal Total,
     string CustomerIdentification,
     string CustomerName,
-    string? FiscalStatus);
+    string? FiscalStatus,
+    IReadOnlyList<OnlineSalesHistoryPayment>? Payments = null,
+    Guid? ClosureId = null,
+    Guid? DispatchId = null,
+    string? SellerName = null);
+
+public sealed record OnlineSalesHistoryPayment(int PaymentNumber,string MethodCode,decimal Amount,string? FormName);
+
+
 
 public sealed record OnlineSalesIssuedSalePage(
     IReadOnlyList<OnlineSalesIssuedSale> Items,
