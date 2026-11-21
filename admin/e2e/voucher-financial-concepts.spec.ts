@@ -12,115 +12,47 @@ function definition(supplier = false, advance = true): FinancialConcept {
     useForReceipts: !supplier, useForSupplierPayments: supplier, useForVouchers: true, isActive: true, sortOrder: 10, rowVersion: "AAAAAAAAAAE=" };
 }
 
-for (const supplier of [false, true]) for (const kind of ["advance", "general", "invoiceAndGeneral", "invoiceReduction"]) test(`${supplier ? "egreso" : "recibo"}: agrega concepto ${kind} sólo por su valor explícito y conserva el resultado`, async ({ page, baseURL }, testInfo) => {
-  const advance = kind === "advance", reduction = kind === "invoiceReduction", withInvoice = kind === "invoiceAndGeneral" || reduction;
-  const money = reduction ? 216696.06 : withInvoice ? 216800 : 100, conceptAmount = withInvoice ? 51.97 : 100;
-  const scenario = financialVoucherScenario(), concept = definition(supplier, advance);
-  if (reduction) Object.assign(concept, { name: "Reducción elegida", sideCode: supplier ? "Credit" : "Debit", sideLabel: supplier ? "Crédito" : "Débito" });
-  scenario.draft.voucherTypeCode = supplier ? "Disbursement" : "CashReceipt";
-  const treasury = scenario.draft.lines[1];
-  treasury.value = { ...treasury.value, debit: supplier ? 0 : money, credit: supplier ? money : 0,
-    paymentEvidence: { tenderedAmount: money } };
-  if (withInvoice) {
-    scenario.user.permissions.push("receivables.payments.create");
-    const invoice = scenario.draft.lines[0];
-    invoice.value = { ...invoice.value, debit: supplier ? 216748.03 : 0, credit: supplier ? 0 : 216748.03,
-      existingPosition: { subledgerKind: supplier ? "Payable" : "Receivable", subledgerId: scenario.positionId } };
-    invoice.accountCode = supplier ? "22050501" : "13050501";
-    invoice.accountName = supplier ? "Proveedor" : "Cliente";
-  } else scenario.draft.lines = [treasury];
-  let current = scenario.draft, reads = 0, conceptReads = 0, writes = 0, sends = 0;
-  await installFinancialVoucherContext(page, baseURL!, scenario);
-  await page.route("**/api/**", async route => {
-    const request = route.request(), url = new URL(request.url()), path = url.pathname;
-    if (path.endsWith("/financial-concepts")) {
-      conceptReads++; expect(url.searchParams.get("usage")).toBe(supplier ? "SupplierPayments" : "Receipts");
-      await route.fulfill({ json: { items: [concept], page: 1, pageSize: 10, totalCount: 1 } }); return;
-    }
-    if (path.endsWith(`/accounting/manual/drafts/${scenario.documentId}`)) {
-      if (request.method() === "GET") reads++;
-      else {
-        writes++; const capture = request.postDataJSON() as SaveVoucherDraft;
-        const selected = capture.lines.find(line => line.financialConceptId === conceptId)!;
-        expect(capture.lines).toHaveLength(withInvoice ? 3 : 2); expect(selected.accountId).toBe(concept.accountId);
-        expect(selected.debit).toBe(supplier !== reduction ? conceptAmount : 0); expect(selected.credit).toBe(supplier !== reduction ? 0 : conceptAmount);
-        expect(selected.financialConceptTargetLineId ?? null).toBe(reduction ? scenario.draft.lines[0].value.lineId : null);
-        if (withInvoice) {
-          expect(capture.lines[0].existingPosition?.subledgerId).toBe(scenario.positionId);
-          expect(capture.lines[0].debit + capture.lines[0].credit).toBe(216748.03);
-          expect(capture.lines[1].debit + capture.lines[1].credit).toBe(money);
-        }
-        expect(capture.lines.every(line => line.financialGroupId === scenario.documentId)).toBe(true);
-        current = { ...current, ...capture, rowVersion: "AAAAAAAAAAI=", lines: capture.lines.map(value => ({ value,
-          accountCode: value.financialConceptId ? concept.accountCode : scenario.draft.lines.find(line => line.value.lineId === value.lineId)?.accountCode ?? null,
-          accountName: value.financialConceptId ? concept.accountName : scenario.draft.lines.find(line => line.value.lineId === value.lineId)?.accountName ?? null,
-          partyName: "Tercero", partyIdentification: null, costCenterName: null,
-          financialConceptCode: value.financialConceptId ? concept.code : null, financialConceptName: value.financialConceptId ? concept.name : null,
-          financialConceptSideCode: value.financialConceptId ? concept.sideCode : null })) };
+for (const supplier of [false,true]) for (const width of [1366,390]) test(`${supplier?"egreso":"recibo"}: captura directa sin selector de conceptos en ${width}`,async({page,baseURL},testInfo)=>{
+  await page.setViewportSize({width,height:width===390?844:768});
+  const scenario=financialVoucherScenario();scenario.draft.voucherTypeCode=supplier?"Disbursement":"CashReceipt";
+  if(!supplier){
+    scenario.draft.lines[0].value={...scenario.draft.lines[0].value,debit:0,credit:100,existingPosition:{subledgerKind:"Receivable",subledgerId:scenario.positionId}};
+    scenario.draft.lines[1].value={...scenario.draft.lines[1].value,debit:100,credit:0};
+  }
+  let current=scenario.draft,conceptReads=0,writes=0;
+  await installFinancialVoucherContext(page,baseURL!,scenario);
+  await page.route("**/api/**",async route=>{
+    const request=route.request(),path=new URL(request.url()).pathname;
+    if(path.endsWith("/financial-concepts")){conceptReads++;await route.fulfill({json:{items:[],page:1,pageSize:10,totalCount:0}});return;}
+    if(path.endsWith(`/accounting/manual/drafts/${scenario.documentId}`)){
+      if(request.method()==="PUT"){
+        writes++;const capture=request.postDataJSON() as SaveVoucherDraft;
+        expect(capture.lines).toHaveLength(3);
+        expect(capture.lines[0].description).toBe("Partida editada directamente");
+        expect(capture.lines[0].accountId).toBe(scenario.draft.lines[0].value.accountId);
+        expect(capture.lines.every(line=>!line.financialConceptId)).toBe(true);
+        current={...current,...capture,lines:capture.lines.map((value,index)=>({...current.lines[index],value})),rowVersion:"AAAAAAAAAAI="};
       }
-      await route.fulfill({ json: current }); return;
-    }
-    if (path.endsWith(`/accounting/manual/drafts/${scenario.documentId}/send`)) {
-      sends++; current = { ...current, sentAt: "2026-11-10T12:00:00Z", status: "Posted", canEdit: false, canSend: false,
-        row: { ...current.row, status: "Posted" }, financialEffects: { positions: advance ? [{}] : [], payments: advance || withInvoice ? [{}] : [],
-          directMovements: advance || withInvoice ? [] : [{}], creditApplications: [] } };
-      await route.fulfill({ json: current }); return;
+      await route.fulfill({json:current});return;
     }
     await route.fallback();
   });
-  await page.goto(`${supplier ? "/dashboard/financial-traceability" : "/dashboard/cash-receipts"}?document=${scenario.documentId}`);
-  await expect(page.getByRole("button", { name: "Agregar concepto", exact: true })).toBeDisabled();
-  expect(conceptReads).toBe(0);
-  await page.getByRole("combobox", { name: "Concepto financiero", exact: true }).click();
-  await page.getByRole("option", { name: new RegExp(concept.name) }).click();
-  await expect(page.getByText(`Cuenta: ${concept.accountCode} · ${concept.accountName} · ${concept.sideLabel}`, { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Agregar concepto", exact: true })).toBeDisabled();
-  await page.getByRole("textbox", { name: "Valor del concepto financiero", exact: true }).fill(String(conceptAmount));
-  if (reduction) {
-    await page.getByRole("button", { name: "Agregar concepto", exact: true }).click();
-    await expect(page.getByText("Selecciona la partida del documento que reduce este concepto.", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Documento que ajusta el concepto", exact: true }).click();
-    await expect(page.getByRole("option", { name: "Sin documento vinculado", exact: true })).toBeFocused();
-    await page.keyboard.press("End");
-    await expect(page.getByRole("option").filter({ hasText: "FACT-1" })).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("combobox", { name: "Documento que ajusta el concepto", exact: true })).toContainText("FACT-1");
+  await page.goto(`/dashboard/${supplier?"financial-traceability":"cash-receipts"}?document=${scenario.documentId}`);
+  await expect(page.getByRole("region",{name:"Formas de pago del comprobante",exact:true})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Agregar concepto financiero",exact:true})).toHaveCount(0);
+  await expect(page.getByRole("combobox",{name:"Concepto financiero",exact:true})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"Agregar concepto",exact:true})).toHaveCount(0);
+  await page.getByRole("row",{name:"Partida 1",exact:true}).getByRole("textbox",{name:"Descripción de la partida",exact:true}).fill("Partida editada directamente");
+  await page.getByRole("button",{name:"Agregar partida",exact:true}).click();
+  await page.getByRole("row",{name:"Partida 3",exact:true}).getByRole("textbox",{name:"Descripción de la partida",exact:true}).fill("Partida por completar");
+  await page.getByRole("button",{name:"Guardar borrador",exact:true}).click();
+  await expect.poll(()=>writes).toBe(1);expect(conceptReads).toBe(0);
+  if(width===390){
+    const table=page.getByRole("table").filter({has:page.getByRole("columnheader",{name:"Cuenta PUC",exact:true})});
+    const grid=await table.boundingBox(),footer=await page.locator("footer").last().boundingBox();
+    expect(footer!.y,"Las acciones no deben cubrir las partidas en móvil").toBeGreaterThanOrEqual(grid!.y+grid!.height);
   }
-  await page.getByRole("button", { name: "Agregar concepto", exact: true }).click();
-  const lineNumber = withInvoice ? 3 : 2;
-  const row = page.getByRole("row", { name: `Partida ${lineNumber}`, exact: true });
-  await expect(row.getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true })).toBeDisabled();
-  await expect(row.getByRole("button", { name: `Intercambiar débito y crédito de la partida ${lineNumber}`, exact: true })).toBeDisabled();
-  await expect(row.getByRole("textbox", { name: supplier !== reduction ? "Crédito de la partida" : "Débito de la partida", exact: true })).toBeDisabled();
-  if (reduction) {
-    await expect(page.getByRole("button", { name: "Eliminar partida 1", exact: true })).toBeDisabled();
-    await page.getByRole("button", { name: "Detalles de la partida 3", exact: true }).click();
-    await expect(page.getByRole("combobox", { name: "Documento ajustado", exact: true })).toContainText("FACT-1");
-    await expect(page.getByRole("combobox", { name: "Grupo de la partida", exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "Cerrar detalles", exact: true }).click();
-  }
-  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
-  await expect.poll(() => writes).toBe(1);
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-  await expect.poll(() => sends).toBe(1);
-  await expect(page.getByRole("region", { name: "Agregar concepto financiero", exact: true })).toHaveCount(0);
-  await expect(page.getByText(`${concept.code} · ${concept.name}`, { exact: true })).toBeVisible();
-  if (withInvoice) {
-    const amount = page.getByRole("row", { name: "Partida 1", exact: true })
-      .getByRole("textbox", { name: supplier ? "Débito de la partida" : "Crédito de la partida", exact: true });
-    await expect(amount).toHaveValue("216 748.03");
-    await amount.scrollIntoViewIfNeeded();
-    const measured = await amount.evaluate(element => {
-      const input = element as HTMLInputElement, style = getComputedStyle(input);
-      const context = document.createElement("canvas").getContext("2d")!;
-      context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-      return { text: context.measureText(input.value).width,
-        available: input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) };
-    });
-    expect(measured.available, "El importe completo debe poder leerse sin recortar sus decimales").toBeGreaterThanOrEqual(measured.text);
-  }
-  expect(reads).toBe(1); expect(writes).toBe(1); expect(conceptReads).toBe(1);
-  await page.screenshot({ path: testInfo.outputPath("financial-concept-in-voucher.png"), fullPage: true });
+  await page.screenshot({path:testInfo.outputPath("voucher-without-concept-shortcut.png"),fullPage:true});
 });
 
 test("500 partidas con conceptos extensos conservan filas uniformes y permiten consultar la última", async ({ page, baseURL }) => {
@@ -156,43 +88,6 @@ test("500 partidas con conceptos extensos conservan filas uniformes y permiten c
   await expect(last.getByTitle(`${concept.code} · ${concept.name}`, { exact: true })).toHaveCount(1);
   expect(await page.getByRole("row", { name: /^Partida \d+$/ }).count()).toBeLessThanOrEqual(24);
   expect(reads).toBe(1);
-});
-
-test("agregar un concepto conserva los datos de una partida incompleta", async ({ page, baseURL }) => {
-  const scenario = financialVoucherScenario(), concept = definition(false, false);
-  scenario.draft.voucherTypeCode = "CashReceipt";
-  const partial = scenario.draft.lines[0];
-  partial.value = { ...partial.value, accountId: null, description: "", debit: 0, credit: 0,
-    existingPosition: null, paymentEvidence: null, financialGroupId: null, reference: "Referencia por completar" };
-  partial.accountCode = null; partial.accountName = null; scenario.draft.lines = [partial];
-  let writes = 0;
-  await installFinancialVoucherContext(page, baseURL!, scenario);
-  await page.route("**/api/**", async route => {
-    const request = route.request(), path = new URL(request.url()).pathname;
-    if (path.endsWith("/financial-concepts")) {
-      await route.fulfill({ json: { items: [concept], page: 1, pageSize: 10, totalCount: 1 } }); return;
-    }
-    if (path.endsWith(`/accounting/manual/drafts/${scenario.documentId}`) && request.method() === "GET") {
-      await route.fulfill({ json: scenario.draft }); return;
-    }
-    if (path.endsWith(`/accounting/manual/drafts/${scenario.documentId}`) && request.method() === "PUT") {
-      writes++; const capture = request.postDataJSON() as SaveVoucherDraft;
-      expect(capture.lines).toHaveLength(2);
-      expect(capture.lines[0]).toMatchObject({ lineId: partial.value.lineId, accountId: null,
-        partyId: partial.value.partyId, reference: "Referencia por completar", description: "Partida pendiente" });
-      await route.fulfill({ json: { ...scenario.draft, ...capture, lines: capture.lines.map(value => ({ ...partial, value })) } }); return;
-    }
-    await route.fallback();
-  });
-  await page.goto(`/dashboard/cash-receipts?document=${scenario.documentId}`);
-  await page.getByRole("combobox", { name: "Concepto financiero", exact: true }).click();
-  await page.getByRole("option", { name: new RegExp(concept.name) }).click();
-  await page.getByRole("textbox", { name: "Valor del concepto financiero", exact: true }).fill("100");
-  await page.getByRole("button", { name: "Agregar concepto", exact: true }).click();
-  await expect(page.getByRole("row", { name: "Partida 2", exact: true })).toBeVisible();
-  await page.getByRole("row", { name: "Partida 1", exact: true }).getByLabel("Descripción de la partida", { exact: true }).fill("Partida pendiente");
-  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
-  await expect.poll(() => writes).toBe(1);
 });
 
 test("la bandeja filtra por el concepto de las partidas, incluso inactivo, mediante su identidad", async ({ page, baseURL }) => {

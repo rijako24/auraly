@@ -27,8 +27,6 @@ import { PartySelect } from "@/components/parties/party-role-select";
 import { SupplierSiteSelect } from "@/components/parties/supplier-site-select";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
-import { FinancialConceptSelect } from "./financial-concept-select";
-import type { FinancialConcept } from "@/services/api/financial-concepts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -96,9 +94,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const [fiscalOpen, setFiscalOpen] = useState(false);
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [detailLineId, setDetailLineId] = useState<string | null>(null);
-  const [chosenConcept,setChosenConcept]=useState<FinancialConcept|null>(null);
-  const [conceptAmount,setConceptAmount]=useState<number|null>(null);
-  const [conceptTargetLineId,setConceptTargetLineId]=useState<string|null>(null);
   const [chosenPartyId, setChosenPartyId] = useState("");
   const [mainParty, setMainParty] = useState({ name: initial?.mainPartyName ?? preparation?.mainPartyName ?? null, identification: initial?.mainPartyIdentification ?? preparation?.mainPartyIdentification ?? null });
   const voucherTypes = useReferenceOptions("accounting-voucher-type", form.payloadVersion === 4);
@@ -143,10 +138,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
      line.value.existingPosition.subledgerKind === "Payable" && line.value.debit > 0 && line.value.credit === 0));
   const compatibleTargets = (side:string|null|undefined) => adjustmentTargets.filter(line =>
     line.value.existingPosition!.subledgerKind === (side === "Debit" ? "Receivable" : "Payable"));
-  const chosenTargets = chosenConcept?.financialFunction === "General" ? compatibleTargets(chosenConcept.sideCode) : [];
-  const requiresConceptTarget = chosenConcept?.financialFunction === "General" && chosenTargets.length > 0 &&
-    (form.voucherTypeCode === "CashReceipt" && chosenConcept.sideCode === "Debit" ||
-     form.voucherTypeCode === "Disbursement" && chosenConcept.sideCode === "Credit");
   const targetLabel = (line:VoucherDraftLineView) => `${line.value.reference || line.value.description || line.value.existingPosition!.subledgerId} · ${money.format(line.value.debit + line.value.credit)}`;
   const creditGroups = new Set(lines.filter(line => line.value.existingPosition?.subledgerKind === "CustomerCredit" ||
     line.value.existingPosition?.subledgerKind === "SupplierCredit").map(line => line.value.financialGroupId).filter(Boolean));
@@ -202,7 +193,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     setDirty(true);
   }
   function change(patch: Partial<SaveVoucherDraft>) {
-    if(patch.voucherTypeCode&&patch.voucherTypeCode!==form.voucherTypeCode)setChosenConcept(null);
     setForm(current => ({ ...current, ...patch, fiscalCapture: Object.hasOwn(patch, "fiscalCapture") ? patch.fiscalCapture
       : patch.voucherTypeCode && patch.voucherTypeCode !== current.voucherTypeCode ? null
       : current.fiscalCapture ? { ...current.fiscalCapture, calculationHash: null } : null }));
@@ -280,8 +270,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     if (busy || saved?.sentAt) return;
     if (!form.adjustment && differencePending) {
       setError(cashReceipt && difference>0
-        ? `Faltan ${money.format(difference)} por clasificar. Si recibiste ese excedente, selecciona explícitamente el concepto Anticipo y su valor; también puedes corregir el importe recibido o aplicado. No se ha creado un anticipo automático.`
-        : `El comprobante tiene una diferencia de ${money.format(Math.abs(difference))}. Revisa los importes o agrega el concepto que corresponda antes de guardar el comprobante definitivo.`);
+        ? `Faltan ${money.format(difference)} por clasificar. Si recibiste ese excedente como anticipo, agrega una partida con la cuenta de anticipo correspondiente y su valor; también puedes corregir el importe recibido o aplicado. No se ha creado un anticipo automático.`
+        : `El comprobante tiene una diferencia de ${money.format(Math.abs(difference))}. Revisa los importes o agrega la partida con su cuenta y valor antes de guardar el comprobante definitivo.`);
       return;
     }
     const current = dirty || !saved ? await persistDraft() : saved;
@@ -368,32 +358,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       return empty < 0 ? [...grouped, prepared] : grouped.map((item, index) => index === empty ? prepared : item);
     });
     setDefaultFinancialGroupId(groupId); setDetailLineId(prepared.value.lineId!); markChanged();
-  }
-
-  function addFinancialConcept() {
-    if(!chosenConcept||!conceptAmount||!form.mainPartyId||busy||readOnly||lines.length>=500)return;
-    const target=chosenTargets.find(line=>line.value.lineId===conceptTargetLineId);
-    if(requiresConceptTarget&&!target){setError("Selecciona la partida del documento que reduce este concepto.");return;}
-    const groupId=target?.value.financialGroupId??defaultFinancialGroupId??(target||form.voucherTypeCode==="CashReceipt"||form.voucherTypeCode==="Disbursement"?form.documentId:null);
-    const line=newLine();
-    const prepared:VoucherDraftLineView={...line,accountCode:chosenConcept.accountCode,accountName:chosenConcept.accountName,
-      partyName:mainParty.name,partyIdentification:mainParty.identification,financialConceptCode:chosenConcept.code,financialConceptName:chosenConcept.name,financialConceptSideCode:chosenConcept.sideCode,
-      value:{...line.value,accountId:chosenConcept.accountId,partyId:form.mainPartyId,description:chosenConcept.name,
-        financialConceptId:chosenConcept.financialConceptId,financialGroupId:groupId,financialConceptTargetLineId:target?.value.lineId??null,
-        debit:chosenConcept.sideCode==="Debit"?conceptAmount:0,credit:chosenConcept.sideCode==="Credit"?conceptAmount:0}};
-    setLines(current=>[...groupUnassignedLines(current.filter(hasLineCapture),groupId),prepared]);
-    if(groupId)setDefaultFinancialGroupId(groupId);
-    setConceptAmount(null);setError(null);markChanged();
-  }
-
-  function selectLineConcept(concept:FinancialConcept|null){
-    if(!concept||!detailLine||readOnly||busy||detailLine.value.existingPosition||detailLine.value.paymentEvidence)return;
-    const amount=detailLine.value.debit+detailLine.value.credit;
-    updateLine(detailIndex,{accountCode:concept.accountCode,accountName:concept.accountName,financialConceptCode:concept.code,financialConceptName:concept.name,
-      financialConceptSideCode:concept.sideCode,value:{...detailLine.value,accountId:concept.accountId,financialConceptId:concept.financialConceptId,
-        financialConceptTargetLineId:concept.financialFunction==="General"&&compatibleTargets(concept.sideCode).some(line=>line.value.lineId===detailLine.value.financialConceptTargetLineId)?detailLine.value.financialConceptTargetLineId:null,
-        description:!detailLine.value.description||detailLine.value.description===detailLine.financialConceptName?concept.name:detailLine.value.description,
-        debit:concept.sideCode==="Debit"?amount:0,credit:concept.sideCode==="Credit"?amount:0}});
   }
 
   function selectPaymentForm(method: PaymentMethod, requestedIndex = detailIndex, capture?: VoucherPaymentCapture) {
@@ -631,21 +595,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><h2 className="font-semibold">Partidas del comprobante</h2><p className="text-sm text-muted-foreground">{supportCancellation ? "Partidas inversas del asiento original. Para cambiar el origen, selecciona otro soporte." : "Edita cada partida en su fila. D = débito, C = crédito. Puedes guardar un comprobante incompleto."}</p></div><div className="flex flex-wrap gap-2">
           {form.payloadVersion === 4 && !inlinePaymentVoucher && !fiscalDocument && <Button variant="outline" disabled={!form.mainPartyId || lines.length >= 500} onClick={addPaymentForm}>Agregar forma de pago</Button>}
           <Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null,financialGroupId:defaultFinancialGroupId},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div></div>
-        {form.payloadVersion===4&&!fiscalDocument&&!readOnly&&<section aria-label="Agregar concepto financiero" className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-          <div className="space-y-1"><Label>Concepto adicional (opcional)</Label><FinancialConceptSelect value={chosenConcept?.financialConceptId??""}
-            usage={form.voucherTypeCode==="CashReceipt"?"Receipts":form.voucherTypeCode==="Disbursement"?"SupplierPayments":"Vouchers"}
-            selectedOption={chosenConcept?{value:chosenConcept.financialConceptId,label:`${chosenConcept.code} · ${chosenConcept.name}`,description:`${chosenConcept.accountCode} · ${chosenConcept.accountName} · ${chosenConcept.sideLabel}`}:null}
-            disabled={busy||!form.mainPartyId} onChange={concept=>{setChosenConcept(concept);setConceptTargetLineId(null);}}/></div>
-          <div className="space-y-1"><Label>Valor</Label><FormattedNumberInput kind="currency" ariaLabel="Valor del concepto financiero" value={conceptAmount??""} onValueChange={setConceptAmount}/></div>
-          <Button className="self-end" variant="outline" disabled={busy||!chosenConcept||!conceptAmount||!form.mainPartyId||lines.length>=500} onClick={addFinancialConcept}>Agregar concepto</Button>
-          {chosenConcept&&<p className="text-xs text-muted-foreground sm:col-span-3">Cuenta: {chosenConcept.accountCode} · {chosenConcept.accountName} · {chosenConcept.sideLabel}</p>}
-          {chosenConcept?.financialFunction==="General"&&(requiresConceptTarget||chosenTargets.length>0)&&<div className="space-y-1 sm:col-span-3">
-            <Label>Documento que ajusta el concepto</Label><Select value={conceptTargetLineId??"none"} disabled={busy} onValueChange={value=>setConceptTargetLineId(value==="none"?null:value)}>
-              <SelectTrigger aria-label="Documento que ajusta el concepto"><SelectValue/></SelectTrigger><SelectContent>
-                <SelectItem value="none">Sin documento vinculado</SelectItem>{chosenTargets.map(line=><SelectItem key={line.value.lineId} value={line.value.lineId!}>{targetLabel(line)}</SelectItem>)}
-              </SelectContent></Select><p className="text-xs text-muted-foreground">Elige la partida que reduce el concepto. No se distribuye ni se convierte una diferencia en anticipo automáticamente.</p>
-          </div>}
-        </section>}
         {!!saved?.appliedPaymentMethods?.length && <section aria-label="Formas de pago utilizadas" className="space-y-1 border-b p-4 text-sm">
           <p className="font-medium">Formas y cuentas utilizadas al contabilizar</p>
           {saved.appliedPaymentMethods.map(method => <p key={method.sourceLineId}>{method.name} · {method.accountCode} · {method.accountName}</p>)}
@@ -687,7 +636,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         </tbody></table></div>
       </fieldset>}
     </fieldset>
-    <footer className="sticky bottom-0 z-20 flex flex-wrap items-center gap-4 rounded-2xl border bg-background p-4 shadow-lg">
+    <footer className="relative z-20 flex flex-wrap items-center gap-4 rounded-2xl border bg-background p-4 shadow-lg sm:sticky sm:bottom-0">
       <div className="min-w-0 flex-1 basis-full text-sm sm:basis-0">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={differencePending ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(difference)} · {lines.length} partidas</p></>}
         <p className="text-muted-foreground">{saved?.status === "Posted" ? "Comprobante contabilizado: contenido inmutable." : saved?.sentAt ? "Comprobante aceptado; consulta su estado contable. El contenido está congelado." : "Guarda un borrador para seguir editando, o guarda el comprobante definitivo para contabilizarlo."}</p></div>
       <Button variant="outline" disabled={busy} onClick={close}>{modal ? closeLabel : "Volver"}</Button>
@@ -717,11 +666,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {!inlinePaymentVoucher && franchises.isError && <p role="alert" className="text-sm text-destructive">No se pudieron cargar las franquicias. <Button variant="link" onClick={() => void franchises.refetch()}>Reintentar franquicias</Button></p>}
       <fieldset disabled={busy || readOnly} className="grid gap-4 sm:grid-cols-2">
-        {detailLine.value.financialConceptId&&<div className="space-y-2 sm:col-span-2"><Label>Concepto de la partida</Label><FinancialConceptSelect
-          value={detailLine.value.financialConceptId} allowClear={false} disabled={busy||readOnly}
-          usage={form.voucherTypeCode==="CashReceipt"?"Receipts":form.voucherTypeCode==="Disbursement"?"SupplierPayments":"Vouchers"}
-          selectedOption={{value:detailLine.value.financialConceptId,label:`${detailLine.financialConceptCode} · ${detailLine.financialConceptName}`}}
-          onChange={selectLineConcept}/></div>}
+        {detailLine.value.financialConceptId&&<p className="text-sm text-muted-foreground sm:col-span-2">Concepto registrado: {detailLine.financialConceptCode} · {detailLine.financialConceptName}</p>}
         {detailLine.value.financialConceptId&&detailLine.value.financialConceptTargetLineId&&<div className="space-y-2 sm:col-span-2">
           <Label>Documento ajustado</Label><Select value={detailLine.value.financialConceptTargetLineId??"none"} disabled={busy||readOnly} onValueChange={value=>{
             if(value==="none"){updateValue(detailIndex,{financialConceptTargetLineId:null});return;}

@@ -4620,7 +4620,18 @@ propietario. El selector transitorio `PaymentMethodContractVersion=1` fue la
 preparación de los clientes anteriores; su retirada coordinada se describe en
 14.4. No sustituye la comprobación de esos consumidores ni certifica producción.
 
-### 14.8 Conceptos financieros por partida — catálogo y captura local
+### 14.8 Conceptos financieros por partida — catálogo y evidencia conservada
+
+Decisión de interfaz del 20-11-2026: se retiran el atajo «Agregar concepto» y
+los selectores de conceptos del recibo de caja y del comprobante manual.
+La captura nueva utiliza las cuentas y valores de las partidas, junto con el
+panel en línea de formas de pago. No consulta el catálogo de conceptos al
+editar. El catálogo de configuración y el filtro de trazabilidad se conservan;
+las partidas ya vinculadas muestran su concepto como información, conservando
+su identidad, cuenta, valores y vínculos. No se migran ni reescriben documentos.
+Los conceptos de Gastos y de Nómina pertenecen a sus propios catálogos.
+La semántica contractual que sigue se conserva para fuentes ya capturadas y
+consumidores existentes; no habilita un selector en estos dos formularios.
 
 El catálogo del tenant se administra mediante Catalog en
 `reference.FinancialConcepts`. No reemplaza `BusinessReasons`/motivos de caja
@@ -4662,8 +4673,8 @@ abonos y cruces, sin reservar dos veces el ajuste aplicado. El processor aplica
 ajustes individuales e incorporados mediante `ApplyPortfolioAdjustmentsAsync`,
 el writer existente `PortfolioBalanceChangesSql` y la historia de cartera, por
 lote y en la misma transacción que pago, sesión y asiento. No crea otro pago,
-saldo, worker ni tabla de reservas. El selector utiliza las partidas ya capturadas
-y no consulta cartera nuevamente. El cálculo fiscal de retenciones continúa
+saldo, worker ni tabla de reservas. El vínculo de un ajuste conservado utiliza
+las partidas ya capturadas y no consulta cartera nuevamente. El cálculo fiscal de retenciones continúa
 fuera de esta extensión: un nombre General no representa una tasa fiscal.
 El cruce asistido muestra el importe restante después de los conceptos ya
 capturados y limita su selección a ese importe. Si divide una partida, conserva

@@ -31,7 +31,8 @@ test("un excedente requiere clasificación explícita y puede conservarse como b
   await page.goto(`/dashboard/cash-receipts?document=${draft.documentId}`);
   await page.getByLabel("Descripción",{exact:true}).fill("Recepción mayor al abono aplicado");
   await page.getByRole("button",{name:"Guardar comprobante",exact:true}).click();
-  await expect(page.getByRole("alert").filter({hasText:"por clasificar"})).toContainText("Anticipo");
+  await expect(page.getByRole("alert").filter({hasText:"por clasificar"})).toContainText("cuenta de anticipo");
+  await expect(page.getByRole("alert").filter({hasText:"por clasificar"})).not.toContainText("concepto");
   expect(writes).toHaveLength(0);expect(sends).toBe(0);
   await expect(page.getByRole("row",{name:/^Partida \d+$/})).toHaveCount(2);
   await page.getByRole("button",{name:"Guardar borrador",exact:true}).click();
