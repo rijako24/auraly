@@ -4630,6 +4630,9 @@ editar. El catálogo de configuración y el filtro de trazabilidad se conservan;
 las partidas ya vinculadas muestran su concepto como información, conservando
 su identidad, cuenta, valores y vínculos. No se migran ni reescriben documentos.
 Los conceptos de Gastos y de Nómina pertenecen a sus propios catálogos.
+Los bloques de formas de pago mantienen una columna de ancho acotado en móvil,
+incluidos nombres y auxiliares largos, tanto en borradores como contabilizados.
+El desplazamiento horizontal de las partidas permanece dentro de su grilla.
 La semántica contractual que sigue se conserva para fuentes ya capturadas y
 consumidores existentes; no habilita un selector en estos dos formularios.
 

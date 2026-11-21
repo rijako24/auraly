@@ -4,6 +4,29 @@ import type { PaymentMethod } from "../src/services/api/payment-methods";
 import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
 import { paymentCatalogFixture } from "./support/payment-catalog";
 
+for (const supplier of [false, true]) for (const posted of [false, true]) test(`formas largas en móvil: ${supplier ? "egreso" : "recibo"} ${posted ? "contabilizado" : "borrador"} conserva el ancho de la página`, async ({page,baseURL},info)=>{
+  await page.setViewportSize({width:390,height:844});
+  const scenario=financialVoucherScenario();
+  scenario.draft.voucherTypeCode=supplier?"Disbursement":"CashReceipt";
+  scenario.draft.lines[0]={...scenario.draft.lines[0],accountCode:supplier?"22050501":"13050501",accountName:supplier?"Proveedor":"Cliente",
+    value:{...scenario.draft.lines[0].value,debit:supplier?100:0,credit:supplier?0:100,existingPosition:{subledgerKind:supplier?"Payable":"Receivable",subledgerId:scenario.positionId}}};
+  const forms=paymentCatalogFixture({Cash:"Caja operativa adicional para verificar nombres completos",DebitCard:"Tarjeta débito adicional para verificar nombres completos",CreditCard:"Tarjeta crédito adicional para verificar nombres completos",Transfer:"Transferencia bancaria adicional para verificar nombres completos"},supplier).forms;
+  const prototype=scenario.draft.lines[1];
+  scenario.draft.lines=[scenario.draft.lines[0],...forms.map((form,index)=>({...prototype,accountCode:"110505000000000000000001",accountName:"Cuenta utilizada por el medio de pago",
+    value:{...prototype.value,lineId:`bbbbbbbb-bbbb-bbbb-bbbb-${String(index+1).padStart(12,"0")}`,debit:supplier?0:25,credit:supplier?25:0,
+      paymentEvidence:{tenderedAmount:25,paymentMethodId:form.paymentMethodId,paymentMethodTypeCode:form.methodCode,paymentMethodName:form.name,paymentMethodCode:form.code,paymentMethodVersion:form.version,cardFranchiseCode:"Visa",approvalNumber:"APROBACION-MOVIL",notes:null}}}))];
+  if(posted){scenario.draft.sentAt="2026-11-21T06:00:00Z";scenario.draft.status="Posted";scenario.draft.canEdit=false;scenario.draft.row.status="Posted";}
+  await installFinancialVoucherContext(page,baseURL!,scenario);
+  await page.route(`**/manual/drafts/${scenario.documentId}`,route=>route.fulfill({json:scenario.draft}));
+  await page.goto(`/dashboard/${supplier?"financial-traceability":"cash-receipts"}?document=${scenario.documentId}`);
+  const panel=page.getByRole("region",{name:"Formas de pago del comprobante",exact:true});await expect(panel).toBeVisible();
+  await expect(panel.getByRole("group",{name:"Forma de pago 1",exact:true})).toBeVisible();
+  await expect.poll(()=>page.getByRole("main").evaluate(main=>main.scrollWidth-main.clientWidth)).toBeLessThanOrEqual(1);
+  for(const fieldset of await panel.locator("fieldset").all()) expect(await fieldset.evaluate(e=>e.getBoundingClientRect().width<=e.parentElement!.clientWidth)).toBe(true);
+  await panel.getByRole("group",{name:"Forma de pago 2",exact:true}).scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("voucher-long-payments-mobile.png"),fullPage:true});
+});
+
 test("un excedente requiere clasificación explícita y puede conservarse como borrador", async ({page,baseURL})=>{
   const scenario=financialVoucherScenario();
   scenario.draft.voucherTypeCode="CashReceipt";

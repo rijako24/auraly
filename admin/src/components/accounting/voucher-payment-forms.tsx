@@ -47,7 +47,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied, dire
       const card = evidence.paymentMethodTypeCode === "DebitCard" || evidence.paymentMethodTypeCode === "CreditCard";
       const transfer = evidence.paymentMethodTypeCode === "Transfer";
       return <fieldset key={line.value.lineId} disabled={disabled || readOnly}
-        aria-label={`Forma de pago ${ordinal + 1}`} className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
+        aria-label={`Forma de pago ${ordinal + 1}`} className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4 sm:grid-cols-2">
         <div className="space-y-1"><Label>Forma de pago</Label>
           <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage={usage}
             value={evidence.paymentMethodId ?? ""} name={used?.name ?? evidence.paymentMethodName}
@@ -87,7 +87,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied, dire
       </fieldset>;
     })}
     {!readOnly && addBlockReason && <p role="status" className="text-sm text-muted-foreground">{addBlockReason}</p>}
-    {!readOnly && <fieldset disabled={disabled || !canAdd || !!addBlockReason} aria-label="Agregar forma de pago" className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
+    {!readOnly && <fieldset disabled={disabled || !canAdd || !!addBlockReason} aria-label="Agregar forma de pago" className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4 sm:grid-cols-2">
       <div className="space-y-1"><Label>{lines.length ? "Otra forma de pago (opcional)" : "Forma de pago"}</Label>
       <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage={usage}
         value={candidate?.paymentMethodId ?? ""} name={candidate?.name}
