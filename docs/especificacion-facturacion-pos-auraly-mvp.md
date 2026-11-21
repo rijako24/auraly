@@ -979,6 +979,8 @@ es una constancia inmutable de comandos terminados, sin lease, estados ni proces
 clave por empresa, hash del pedido/usuario/solicitud y resultado. Se confirma en la
 misma transacción. Repetir A después de editar B devuelve A y no modifica B, inventario
 ni claims. El camino de metadatos tiene cuatro comandos SQL acotados al pedido.
+La consulta y el guardado de esa constancia usan SellerOrderMutationReceiptGet y
+SellerOrderMutationReceiptSave, siguiendo los procedimientos del mismo flujo.
 
 «Facturas» en el menú y la consulta del POS comparten la misma vista y API de historial.
 La página se limita en SQL antes de enriquecer sus pagos; cada fila muestra las formas

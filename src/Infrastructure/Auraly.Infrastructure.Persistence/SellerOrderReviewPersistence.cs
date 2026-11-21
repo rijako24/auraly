@@ -101,11 +101,8 @@ public static class SellerOrderReviewPersistence
     public static async Task<string?> ReadMutationReceiptAsync(SqlConnection connection, SqlTransaction transaction,
         Guid businessId, Guid orderId, Guid userId, string key, string hash, CancellationToken ct)
     {
-        await using var command = new SqlCommand("""
-            SELECT OrderId,UserId,RequestHash,ResultJson FROM dbo.OrderMutationReceipts WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@Business AND IdempotencyKey=@Key;
-            """, connection, transaction);
-        command.Parameters.AddRange([Parameter("@Business",businessId),Parameter("@Key",key)]);
+        await using var command = Procedure("dbo.SellerOrderMutationReceiptGet", connection, transaction);
+        command.Parameters.AddRange([Parameter("@BusinessId",businessId),Parameter("@IdempotencyKey",key)]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
         if (reader.GetGuid(0)!=orderId || reader.GetGuid(1)!=userId || reader.GetString(2)!=hash)
@@ -116,12 +113,9 @@ public static class SellerOrderReviewPersistence
     public static async Task SaveMutationReceiptAsync(SqlConnection connection, SqlTransaction transaction,
         Guid businessId, Guid orderId, Guid userId, string key, string hash, string resultJson, CancellationToken ct)
     {
-        await using var command = new SqlCommand("""
-            INSERT dbo.OrderMutationReceipts(BusinessId,OrderId,UserId,IdempotencyKey,RequestHash,ResultJson,CreatedAt)
-            VALUES(@Business,@Order,@User,@Key,@Hash,@Result,SYSDATETIMEOFFSET());
-            """,connection,transaction);
-        command.Parameters.AddRange([Parameter("@Business",businessId),Parameter("@Order",orderId),
-            Parameter("@User",userId),Parameter("@Key",key),Parameter("@Hash",hash),Parameter("@Result",resultJson)]);
+        await using var command = Procedure("dbo.SellerOrderMutationReceiptSave", connection, transaction);
+        command.Parameters.AddRange([Parameter("@BusinessId",businessId),Parameter("@OrderId",orderId),
+            Parameter("@UserId",userId),Parameter("@IdempotencyKey",key),Parameter("@RequestHash",hash),Parameter("@ResultJson",resultJson)]);
         await command.ExecuteNonQueryAsync(ct);
     }
 

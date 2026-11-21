@@ -27,62 +27,80 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture, ITe
         var dispatchId=Guid.NewGuid();
         var seller=Guid.NewGuid();
         var rows=Enumerable.Range(0,2000).Select(index=>new { Id=Guid.NewGuid(), Index=index }).ToArray();
-        await ExecuteAsync("""
-            DECLARE @Rows TABLE(Id uniqueidentifier PRIMARY KEY,[Index] int);
-            INSERT @Rows SELECT Id,[Index] FROM OPENJSON(@Json) WITH(Id uniqueidentifier,[Index] int);
-            DECLARE @At datetimeoffset='2026-11-20T12:00:00+00:00';
-            INSERT dbo.SalesDocuments(DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
-              DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,DocumentType,IdempotencyKey,
-              PayloadHash,IssuedAt,CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,ProcessingStatus,
-              ReceivedAt,SellerIdSnapshot,SellerNameSnapshot,SoldByUserId)
-            SELECT Id,@Business,@Warehouse,N'Online',@Series,CONCAT(@Marker,N'-',[Index]),@Marker,N'QA',[Index]+1,
-              N'SalesReceipt',CONVERT(nvarchar(36),Id),HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),
-              DATEADD(second,[Index],@At),N'222222222222',10000,0,10000,N'Completed',@At,
-              CASE WHEN [Index]%2=0 THEN @Seller END,N'Vendedor de prueba',@User FROM @Rows;
-            DECLARE @Sequence bigint=(SELECT ISNULL(MAX(ProcessingSequence),0) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business);
-            INSERT dbo.DocumentProcessingJobs(JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
-            SELECT NEWID(),@Business,@Sequence+[Index]+1,Id,N'SalesReceipt',N'Completed',@At,@At FROM @Rows;
-            INSERT dbo.DocumentProcessingPayloads(DocumentId,DocumentType,BusinessId,PayloadJson,PayloadHash,AcceptedAt)
-            SELECT Id,N'SalesReceipt',@Business,N'{"commercialSnapshot":{"customerName":"Cliente de prueba"}}',
-              HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),@At FROM @Rows;
-            INSERT dbo.SalesPayments(DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt,PaymentMethodName)
-            SELECT Id,n.Number,N'Cash',2000,@At,CONCAT(N'Caja ',n.Number)
-            FROM @Rows CROSS JOIN(VALUES(1),(2),(3),(4),(5)) n(Number);
-            INSERT dbo.Dispatches(DispatchId,TenantId,BusinessId,DispatchNumber,ScheduledDate,DriverUserId,DriverName,Status,CreatedBy,CreatedAt,UpdatedAt)
-            VALUES(@Dispatch,@Tenant,@Business,CONCAT(@Marker,N'-DSP'),CONVERT(date,@At),@User,N'Transportador QA',N'Draft',@User,@At,@At);
-            INSERT dbo.DispatchSourceDocuments(DispatchSourceDocumentId,DispatchId,SourceDocumentId,SourceDocumentType,
-              DocumentNumberSnapshot,CustomerNameSnapshot,SellerNameSnapshot,DocumentTotalSnapshot,CreditAmountSnapshot,CreatedAt)
-            SELECT NEWID(),@Dispatch,Id,N'SalesReceipt',CONCAT(@Marker,N'-',[Index]),N'Cliente QA',N'Vendedor QA',10000,0,@At
-            FROM @Rows WHERE [Index] IN(1998,1996);
-            UPDATE sale SET CollectionMode=N'Dispatch' FROM dbo.SalesDocuments sale JOIN @Rows input ON input.Id=sale.DocumentId WHERE input.[Index]=1996;
-
-            """,new("@Business",fixture.BusinessId),new("@Warehouse",fixture.WarehouseId),
-            new("@Series",fixture.OnlineSalesReceiptSeriesId),new("@User",fixture.UserId),
-            new("@Seller",seller),new("@Marker",marker),new("@Json",JsonSerializer.Serialize(rows)),
-            new("@Tenant",fixture.TenantId),new("@Dispatch",dispatchId));
-        using var scope=fixture.CreateScope();
-        var store=scope.ServiceProvider.GetRequiredService<IOnlineSalesHistoryStore>();
-        var actor=new OnlineSalesUserIdentity(fixture.UserId,fixture.TenantId,new HashSet<string>{CommercePermissionCodes.SalesReprint});
-        var request=new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),marker,Take:20,
-            From:new(2026,11,20),To:new(2026,11,20),DateRangeVersion:2,SellerId:seller,BilledByUserId:fixture.UserId);
-        await store.SearchAsync(actor,request,CancellationToken.None);
-        var times=new List<double>();var pages=new List<OnlineSalesIssuedSalePage>();
-        var database=new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
-        for(var attempt=0;attempt<8;attempt++)
+        try
         {
-            using var counter=new InventoryBalanceProcessingTests.CommandCounter(database);
-            var watch=Stopwatch.StartNew();
-            var page=await store.SearchAsync(actor,request with { Skip=attempt%2*20 },CancellationToken.None);
-            times.Add(watch.Elapsed.TotalMilliseconds);pages.Add(page);
-            Assert.Equal(2,counter.Count);Assert.Equal(20,page.Items.Count);Assert.True(page.HasMore);
-            Assert.All(page.Items,row=>{Assert.Equal(5,row.Payments!.Count);Assert.Equal(row.Total,row.Payments.Sum(payment=>payment.Amount));});
+            await ExecuteAsync("""
+                DECLARE @Rows TABLE(Id uniqueidentifier PRIMARY KEY,[Index] int);
+                INSERT @Rows SELECT Id,[Index] FROM OPENJSON(@Json) WITH(Id uniqueidentifier,[Index] int);
+                DECLARE @At datetimeoffset='2026-11-20T12:00:00+00:00';
+                INSERT dbo.SalesDocuments(DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
+                  DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,DocumentType,IdempotencyKey,
+                  PayloadHash,IssuedAt,CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,ProcessingStatus,
+                  ReceivedAt,SellerIdSnapshot,SellerNameSnapshot,SoldByUserId)
+                SELECT Id,@Business,@Warehouse,N'Online',@Series,CONCAT(@Marker,N'-',[Index]),@Marker,N'QA',[Index]+1,
+                  N'SalesReceipt',CONVERT(nvarchar(36),Id),HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),
+                  DATEADD(second,[Index],@At),N'222222222222',10000,0,10000,N'Completed',@At,
+                  CASE WHEN [Index]%2=0 THEN @Seller END,N'Vendedor de prueba',@User FROM @Rows;
+                DECLARE @Sequence bigint=(SELECT ISNULL(MAX(ProcessingSequence),0) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business);
+                INSERT dbo.DocumentProcessingJobs(JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
+                SELECT NEWID(),@Business,@Sequence+[Index]+1,Id,N'SalesReceipt',N'Completed',@At,@At FROM @Rows;
+                INSERT dbo.DocumentProcessingPayloads(DocumentId,DocumentType,BusinessId,PayloadJson,PayloadHash,AcceptedAt)
+                SELECT Id,N'SalesReceipt',@Business,N'{"commercialSnapshot":{"customerName":"Cliente de prueba"}}',
+                  HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),@At FROM @Rows;
+                INSERT dbo.SalesPayments(DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt,PaymentMethodName)
+                SELECT Id,n.Number,N'Cash',2000,@At,CONCAT(N'Caja ',n.Number)
+                FROM @Rows CROSS JOIN(VALUES(1),(2),(3),(4),(5)) n(Number);
+                INSERT dbo.Dispatches(DispatchId,TenantId,BusinessId,DispatchNumber,ScheduledDate,DriverUserId,DriverName,Status,CreatedBy,CreatedAt,UpdatedAt)
+                VALUES(@Dispatch,@Tenant,@Business,CONCAT(@Marker,N'-DSP'),CONVERT(date,@At),@User,N'Transportador QA',N'Draft',@User,@At,@At);
+                INSERT dbo.DispatchSourceDocuments(DispatchSourceDocumentId,DispatchId,SourceDocumentId,SourceDocumentType,
+                  DocumentNumberSnapshot,CustomerNameSnapshot,SellerNameSnapshot,DocumentTotalSnapshot,CreditAmountSnapshot,CreatedAt)
+                SELECT NEWID(),@Dispatch,Id,N'SalesReceipt',CONCAT(@Marker,N'-',[Index]),N'Cliente QA',N'Vendedor QA',10000,0,@At
+                FROM @Rows WHERE [Index] IN(1998,1996);
+                UPDATE sale SET CollectionMode=N'Dispatch' FROM dbo.SalesDocuments sale JOIN @Rows input ON input.Id=sale.DocumentId WHERE input.[Index]=1996;
+
+                """,new("@Business",fixture.BusinessId),new("@Warehouse",fixture.WarehouseId),
+                new("@Series",fixture.OnlineSalesReceiptSeriesId),new("@User",fixture.UserId),
+                new("@Seller",seller),new("@Marker",marker),new("@Json",JsonSerializer.Serialize(rows)),
+                new("@Tenant",fixture.TenantId),new("@Dispatch",dispatchId));
+            using var scope=fixture.CreateScope();
+            var store=scope.ServiceProvider.GetRequiredService<IOnlineSalesHistoryStore>();
+            var actor=new OnlineSalesUserIdentity(fixture.UserId,fixture.TenantId,new HashSet<string>{CommercePermissionCodes.SalesReprint});
+            var request=new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),marker,Take:20,
+                From:new(2026,11,20),To:new(2026,11,20),DateRangeVersion:2,SellerId:seller,BilledByUserId:fixture.UserId);
+            await store.SearchAsync(actor,request,CancellationToken.None);
+            var times=new List<double>();var pages=new List<OnlineSalesIssuedSalePage>();
+            var database=new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+            for(var attempt=0;attempt<8;attempt++)
+            {
+                using var counter=new InventoryBalanceProcessingTests.CommandCounter(database);
+                var watch=Stopwatch.StartNew();
+                var page=await store.SearchAsync(actor,request with { Skip=attempt%2*20 },CancellationToken.None);
+                times.Add(watch.Elapsed.TotalMilliseconds);pages.Add(page);
+                Assert.Equal(2,counter.Count);Assert.Equal(20,page.Items.Count);Assert.True(page.HasMore);
+                Assert.All(page.Items,row=>{Assert.Equal(5,row.Payments!.Count);Assert.Equal(row.Total,row.Payments.Sum(payment=>payment.Amount));});
+            }
+            Assert.Null(pages[0].Items.Single(row=>row.DocumentId==rows[1998].Id).DispatchId);
+            Assert.Equal(dispatchId,pages[0].Items.Single(row=>row.DocumentId==rows[1996].Id).DispatchId);
+            Assert.Empty(pages[0].Items.Select(row=>row.DocumentId).Intersect(pages[1].Items.Select(row=>row.DocumentId)));
+            var p95=times.OrderBy(value=>value).ElementAt((int)Math.Ceiling(times.Count*.95)-1);
+            output.WriteLine($"Invoice history:2000 documents/10000 payments;20 rows;2 SQL commands + read transaction begin/commit; first={times[0]:F2}ms,next={times[1]:F2}ms,p95={p95:F2}ms;budget=750ms.");
+            Assert.True(p95<750,$"Invoice history p95 {p95:F2}ms exceeds750ms.");
         }
-        Assert.Null(pages[0].Items.Single(row=>row.DocumentId==rows[1998].Id).DispatchId);
-        Assert.Equal(dispatchId,pages[0].Items.Single(row=>row.DocumentId==rows[1996].Id).DispatchId);
-        Assert.Empty(pages[0].Items.Select(row=>row.DocumentId).Intersect(pages[1].Items.Select(row=>row.DocumentId)));
-        var p95=times.OrderBy(value=>value).ElementAt((int)Math.Ceiling(times.Count*.95)-1);
-        output.WriteLine($"Invoice history:2000 documents/10000 payments;20 rows;2 SQL commands + read transaction begin/commit; first={times[0]:F2}ms,next={times[1]:F2}ms,p95={p95:F2}ms;budget=750ms.");
-        Assert.True(p95<750,$"Invoice history p95 {p95:F2}ms exceeds750ms.");
+        finally
+        {
+            // Synthetic history jobs do not reserve the operational cursor.
+            // Remove them before other tests exercise the canonical writer.
+            await ExecuteAsync("""
+                DECLARE @Rows TABLE(Id uniqueidentifier PRIMARY KEY);
+                INSERT @Rows SELECT Id FROM OPENJSON(@Json) WITH(Id uniqueidentifier);
+                DELETE dbo.DispatchSourceDocuments WHERE DispatchId=@Dispatch;
+                DELETE dbo.Dispatches WHERE DispatchId=@Dispatch;
+                DELETE payload FROM dbo.DocumentProcessingPayloads payload JOIN @Rows source ON source.Id=payload.DocumentId;
+                DELETE job FROM dbo.DocumentProcessingJobs job JOIN @Rows source ON source.Id=job.DocumentId;
+                DELETE payment FROM dbo.SalesPayments payment JOIN @Rows source ON source.Id=payment.DocumentId;
+                DELETE document FROM dbo.SalesDocuments document JOIN @Rows source ON source.Id=document.DocumentId;
+                """,new("@Json",JsonSerializer.Serialize(rows)),new("@Dispatch",dispatchId));
+        }
     }
 
     [Fact]

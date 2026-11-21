@@ -65,13 +65,14 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Theory]
-    [InlineData("pos-installer", "database,api,function,admin,pos-installer", 0)]
+    // Every installer publication restarts the API to activate its descriptor.
+    [InlineData("pos-installer", "database,api,function,admin,pos-installer", 1)]
     [InlineData("pos-installer", "pos-installer", 1)]
     [InlineData("api", "api", 1)]
     [InlineData("api", "database,api,function,admin,pos-installer", 1)]
     [InlineData("function", "function", 0)]
     [InlineData("api,pos-installer", "database,api,function,admin,pos-installer", 1)]
-    public async Task Installer_health_wait_respects_the_coordinated_database_cutover(
+    public async Task Installer_publication_waits_for_the_restarted_api_in_every_release_scope(
         string components, string recordedScope, int expectedChecks)
     {
         var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
