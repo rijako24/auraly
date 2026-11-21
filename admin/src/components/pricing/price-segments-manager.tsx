@@ -284,7 +284,7 @@ export function PriceSegmentsManager() {
     </Card>
 
     <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-      <DialogContent className="max-h-[92dvh] max-w-4xl overflow-y-auto">
+      <DialogContent className="max-h-[92dvh] max-w-4xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nuevo canal de precios</DialogTitle>
           <DialogDescription>Elige el modo y configura el canal completo antes de guardarlo.</DialogDescription>
@@ -310,7 +310,7 @@ export function PriceSegmentsManager() {
     </Dialog>
 
     <Dialog open={Boolean(createProduct)} onOpenChange={(open) => { if (!open) { setCreateProduct(null); setCreateProductPrices([]); } }}>
-      <DialogContent className="max-h-[92dvh] max-w-4xl overflow-y-auto">
+      <DialogContent className="max-h-[92dvh] max-w-4xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         {createProduct && <>
           <DialogHeader><DialogTitle>Precios por cantidad</DialogTitle><DialogDescription>{createProduct.productName} · {createProduct.productCode || "Sin código"}</DialogDescription></DialogHeader>
           <div className="space-y-3">
@@ -332,11 +332,11 @@ export function PriceSegmentsManager() {
     </Dialog>
 
     <Dialog open={Boolean(selected) && detailOpen} onOpenChange={(open) => { setDetailOpen(open); if (!open) { setSelected(null); setEditingChannel(false); } }}>
-      <DialogContent className="max-h-[92dvh] max-w-5xl overflow-y-auto">
+      <DialogContent className="max-h-[92dvh] max-w-5xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         {selected && <>
           <DialogHeader>
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary"><Radio className="h-5 w-5" /></span><div><DialogTitle>{editingChannel ? "Editar canal de precios" : selected.name}</DialogTitle><DialogDescription>{selected.code} · {selected.customerCount} cliente(s) · {selected.isActive ? "Activo" : "Inactivo"}</DialogDescription></div></div>
+            <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
+              <div className="flex min-w-0 items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Radio className="h-5 w-5" /></span><div className="min-w-0 break-words"><DialogTitle>{editingChannel ? "Editar canal de precios" : selected.name}</DialogTitle><DialogDescription>{selected.code} · {selected.customerCount} cliente(s) · {selected.isActive ? "Activo" : "Inactivo"}</DialogDescription></div></div>
               {!editingChannel && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={Boolean(loadingReportId)} onClick={() => void openProductPriceReport(selected)}><FileText className="mr-2 h-4 w-4" />Lista de precios</Button>{canManage && <Button type="button" onClick={() => setEditingChannel(true)}><Pencil className="mr-2 h-4 w-4" />Editar canal</Button>}</div>}
             </div>
           </DialogHeader>
@@ -345,7 +345,7 @@ export function PriceSegmentsManager() {
             <div className="space-y-3"><Label>Modo de precio</Label><div className="grid gap-2 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" disabled={!editingChannel || saveChannel.isPending} variant={channelStrategy === mode.value ? "default" : "outline"} className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); }}>{mode.label}</Button>)}</div>{requiresChannelValue(channelStrategy) && <div className="space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput disabled={!editingChannel || saveChannel.isPending} kind="percent" allowNegative={allowsNegativeChannelValue(channelStrategy)} value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}<p className="text-xs text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
           </section>
           {channelStrategy === "TieredProductPrice" && <section className="space-y-4 rounded-2xl border bg-muted/15 p-4">
-            <div className="flex items-center justify-between gap-3"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Un producto puede tener varias escalas por cantidad.</p></div>{editingChannel && canManage && <Button onClick={() => { setDetailOpen(false); setDraft({ ...emptyDraft(), autoUpdatePrice: storedSyncPrice === true }); }}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}</div>
+            <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Un producto puede tener varias escalas por cantidad.</p></div>{editingChannel && canManage && <Button onClick={() => { setDetailOpen(false); setDraft({ ...emptyDraft(), autoUpdatePrice: storedSyncPrice === true }); }}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}</div>
             <SynchronizePrices checked={syncPrice} disabled={!editingChannel || items.isLoading || saveChannel.isPending || !(items.data?.length)} onChange={(checked) => { setSyncPriceChange(checked); setItemSyncChanges({}); }} />
             <div className="overflow-x-auto rounded-xl border bg-background"><table className="w-full min-w-[690px] text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th><th className="px-4 py-3 text-right">Margen</th><th className="px-4 py-3 text-center">Sincronizar</th>{editingChannel && <th className="w-24" />}</tr></thead><tbody>
               {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right font-medium">{formatCurrency(item.amount)}</td><td className="px-4 py-3 text-right">{item.targetMarginPercent === null ? "—" : `${item.targetMarginPercent.toLocaleString("es-CO")} %`}</td><td className="px-4 py-3 text-center"><Checkbox checked={itemSync(item)} disabled={!editingChannel || saveChannel.isPending || item.targetMarginPercent === null && !itemSync(item)} aria-label={`Sincronizar ${item.productName} desde ${item.minimumQuantity} unidades`} onCheckedChange={(checked) => setItemSyncChanges((current) => ({ ...current, [itemSyncKey(item)]: { productId: item.productId, minimumQuantity: item.minimumQuantity, autoUpdatePrice: checked === true } }))} /></td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
@@ -393,7 +393,7 @@ function PriceItemDialog({ segment, draft, onChange, onPreview, onSave, saving }
   const isNew = draft?.originalMinimumQuantity === null;
 
   return <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open) onChange(null); }}>
-    <DialogContent className="max-h-[92dvh] max-w-3xl overflow-y-auto">
+    <DialogContent className="max-h-[92dvh] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
       {draft && segment && <>
         <DialogHeader><DialogTitle>{isNew ? "Agregar producto" : "Editar condición"}</DialogTitle><DialogDescription>Define el precio y la cantidad desde la cual aplica.</DialogDescription></DialogHeader>
         <div className="space-y-4">

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function login(page: Page) {
   const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -9,6 +9,19 @@ async function login(page: Page) {
     localStorage.setItem("selected_business_id", business);
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user: { userId: "33333333-3333-3333-3333-333333333333", tenantId: tenant, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.cost-basis.read", "pricing.segments.read", "pricing.segments.manage"] } }, version: 0 }));
   }, { tenantId, businessId });
+}
+
+async function expectMobileDialogFits(page: Page, dialog: Locator) {
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await dialog.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return [...element.children].every(child => {
+      const childBounds = child.getBoundingClientRect();
+      return childBounds.left >= bounds.left && childBounds.right <= bounds.right;
+    });
+  })).toBe(true);
+  await page.setViewportSize(viewport);
 }
 
 test("canales administra precios por cantidad, modos calculados e informes", async ({ page }) => {
@@ -126,9 +139,11 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(pricesDialog.getByText(/Aceite vegetal 3000 ml/)).toBeVisible();
   await expect(pricesDialog.getByText("Costo base de la sede:", { exact: false })).toBeVisible();
   await expect(pricesDialog.getByRole("checkbox")).toHaveCount(0);
+  await expectMobileDialogFits(page, pricesDialog);
   await pricesDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-editor.png" });
   await pricesDialog.locator("#new-channel-product-minimum-0").fill("3");
   await pricesDialog.getByRole("button", { name: "Agregar precios" }).click();
+  await expectMobileDialogFits(page, createDialog);
   await createDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-canal.png" });
   await createDialog.getByRole("button", { name: /Crear canal · 1 precios/ }).click();
   await expect(createDialog).toBeHidden();
@@ -141,6 +156,11 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(detailDialog.getByRole("button", { name: "Agregar producto" })).toHaveCount(0);
   await expect(detailDialog.getByRole("button", { name: "Precios por producto y cantidad" })).toBeVisible();
   await expect(detailDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
+  await expectMobileDialogFits(page, detailDialog);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await detailDialog.getByRole("button", { name: "Editar canal" }).scrollIntoViewIfNeeded();
+  await expect(detailDialog.getByRole("button", { name: "Editar canal" })).toBeInViewport();
+  await page.setViewportSize({ width: 1366, height: 768 });
   await detailDialog.getByRole("button", { name: "Editar canal" }).click();
   const editDialog = page.getByRole("dialog", { name: "Editar canal de precios" });
   const synchronizeAll = editDialog.getByRole("checkbox", { name: "Sincronizar precio de todos los productos" });
