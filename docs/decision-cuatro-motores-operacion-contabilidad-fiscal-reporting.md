@@ -190,6 +190,19 @@ actualizar los medios de correcciones históricas. El rollback de la aplicación
 revierte asientos ni recaudos: el modelo de lectura se reconstruye con la versión
 a restaurar. No se reprocesan operaciones ni se alteran fuentes financieras.
 
+La migración de fuentes operacionales históricas conserva el vínculo al trabajo
+operacional existente. Antes de planificar el DACPAC, completa únicamente los
+vínculos ausentes cuya sede, documento, tipo y hash coinciden con el payload
+canónico y su trabajo. No cambia estados, importes, hashes ni payloads y es
+idempotente. Si falta un origen verificable, detiene el despliegue para revisar
+el dato; no crea una fuente ni vuelve a confirmar el documento. La restricción
+de la cola exige una referencia operacional o un JSON propio válido, excluyendo
+el caso de ambos nulos. El backfill posterior usa esa misma referencia al crear
+trabajos históricos faltantes. El rollback conserva estos vínculos y los hechos
+pueden reconstruirse con el motor canónico, sin revertir movimientos financieros.
+La retirada de tipos operacionales obsoletos conserva `ServiceInvoice`, que ya
+pertenece a esta cola y tiene su propia fuente inmutable.
+
 La granularidad inicial es híbrida y deliberadamente mínima:
 
 | Proyección | Grano | Uso |

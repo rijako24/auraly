@@ -23,8 +23,8 @@ WHERE NOT EXISTS
 
 INSERT reporting.SalesReportingJobs
   (SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,
-   SourcePayloadHash,Status,AttemptCount,CreatedAt,StartedAt,CompletedAt)
-SELECT NEWID(),p.BusinessId,p.DocumentId,p.DocumentType,p.PayloadHash,
+   SourcePayloadHash,SourceDocumentProcessingJobId,Status,AttemptCount,CreatedAt,StartedAt,CompletedAt)
+SELECT NEWID(),p.BusinessId,p.DocumentId,p.DocumentType,p.PayloadHash,j.JobId,
        CASE WHEN
          (p.DocumentType IN(N'SalesInvoice',N'SalesReceipt') AND EXISTS
             (SELECT 1 FROM reporting.SalesReportDocuments d

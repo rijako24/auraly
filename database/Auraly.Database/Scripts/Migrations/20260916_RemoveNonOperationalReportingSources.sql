@@ -4,7 +4,8 @@ BEGIN TRANSACTION;
 DELETE reporting.SalesReportingJobs
 WHERE SourceDocumentType IN
 (
-    N'ServiceInvoice',
+    -- ServiceInvoice now owns a canonical immutable source in this same queue.
+    -- Preserve it on every deployment; only obsolete non-reporting kinds retire.
     N'SellerOrder',
     N'RouteVisit',
     N'CommercialCoveragePlan'

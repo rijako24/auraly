@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Auraly.Contracts.Sales;
 using Auraly.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -18,6 +19,115 @@ public sealed class HistoricalSalesReportingCollection : ICollectionFixture<Serv
 [Trait("EngineCertification", "Reporting")]
 public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(0)] // Existing job without its source reference.
+    [InlineData(1)] // Historical table before the source columns existed.
+    [InlineData(2)] // Historical completed operation without a reporting job.
+    public async Task Reporting_source_upgrade_preserves_history_and_rebuilds_once(int historicalShape)
+    {
+        var sale=fixture.CreateValidRequest(9_560+historicalShape);
+        using(var upload=fixture.CreateUploadMessage(sale))
+        using(var response=await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        var before=await ReportingMigrationFingerprintAsync(connection);
+        await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@Id",sale.DocumentId);
+        command.CommandText=historicalShape switch {
+            0=>"ALTER TABLE reporting.SalesReportingJobs DROP CONSTRAINT CK_SalesReportingJobs_SourceShape; UPDATE reporting.SalesReportingJobs SET SourceDocumentProcessingJobId=NULL WHERE SourceDocumentId=@Id;",
+            1=>"ALTER TABLE reporting.SalesReportingJobs DROP CONSTRAINT CK_SalesReportingJobs_SourceShape,FK_SalesReportingJobs_Source; ALTER TABLE reporting.SalesReportingJobs DROP COLUMN SourceDocumentProcessingJobId,SourcePayloadJson;",
+            _=>"DELETE reporting.SalesReportingJobs WHERE SourceDocumentId=@Id;"
+        };
+        await command.ExecuteNonQueryAsync();
+        try
+        {
+            var elapsed=System.Diagnostics.Stopwatch.StartNew();
+            await fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection);
+            Assert.True(elapsed.Elapsed<TimeSpan.FromSeconds(5),$"Source migration exceeded its local budget: {elapsed.Elapsed}.");
+            await fixture.ReapplySchemaAsync();
+            command.CommandText="SELECT CONVERT(varchar(36),SourceDocumentProcessingJobId)+'|'+CONVERT(varchar(18),RowVersion,1) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id;";
+            var reference=Assert.IsType<string>(await command.ExecuteScalarAsync());
+            Assert.NotEmpty(reference.Split('|')[0]);
+            await fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection);
+            Assert.Equal(reference,await command.ExecuteScalarAsync());
+            Assert.Equal(before,await ReportingMigrationFingerprintAsync(connection));
+
+            // SQL CHECK must reject both-null sources, rather than accept UNKNOWN.
+            command.CommandText="UPDATE reporting.SalesReportingJobs SET SourceDocumentProcessingJobId=NULL,SourcePayloadJson=NULL WHERE SourceDocumentId=@Id;";
+            var rejected=await Assert.ThrowsAsync<SqlException>(()=>command.ExecuteNonQueryAsync());Assert.Equal(547,rejected.Number);
+            using var scope=fixture.CreateScope();var processor=scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
+            for(var replay=0;replay<2;replay++)
+            {
+                await processor.RebuildAsync(fixture.TenantId,fixture.BusinessId,default);
+                command.CommandText="SELECT COUNT(*) FROM reporting.SalesReportDocuments WHERE DocumentId=@Id;";
+                Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
+                Assert.Equal(before,await ReportingMigrationFingerprintAsync(connection));
+            }
+        }
+        finally
+        {
+            await fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection);
+            await fixture.ReapplySchemaAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Reporting_source_upgrade_rejects_an_unverifiable_hash_without_partial_changes()
+    {
+        var sales=new[]{fixture.CreateValidRequest(9_563),fixture.CreateValidRequest(9_564)};
+        foreach(var sale in sales)
+        {
+            using var upload=fixture.CreateUploadMessage(sale);using var accepted=await fixture.CreateClient().SendAsync(upload);
+            Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
+        }
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        var before=await ReportingMigrationFingerprintAsync(connection);
+        await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@First",sales[0].DocumentId);command.Parameters.AddWithValue("@Second",sales[1].DocumentId);
+        command.CommandText="""
+            ALTER TABLE reporting.SalesReportingJobs DROP CONSTRAINT CK_SalesReportingJobs_SourceShape;
+            UPDATE reporting.SalesReportingJobs SET SourceDocumentProcessingJobId=NULL WHERE SourceDocumentId IN(@First,@Second);
+            UPDATE reporting.SalesReportingJobs SET SourcePayloadHash=HASHBYTES('SHA2_256',N'unverified-test-source') WHERE SourceDocumentId=@Second;
+            """;
+        await command.ExecuteNonQueryAsync();
+        try
+        {
+            var rejected=await Assert.ThrowsAsync<SqlException>(()=>fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection));
+            Assert.Equal(51623,rejected.Number);
+            command.CommandText="SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId IN(@First,@Second) AND SourceDocumentProcessingJobId IS NULL;";
+            Assert.Equal(2,Convert.ToInt32(await command.ExecuteScalarAsync()));
+            Assert.Equal(before,await ReportingMigrationFingerprintAsync(connection));
+        }
+        finally
+        {
+            command.CommandText="""
+                UPDATE report SET SourcePayloadHash=payload.PayloadHash FROM reporting.SalesReportingJobs report
+                JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=report.SourceDocumentId
+                  AND payload.DocumentType=report.SourceDocumentType AND payload.BusinessId=report.BusinessId
+                WHERE report.SourceDocumentId IN(@First,@Second);
+                """;
+            await command.ExecuteNonQueryAsync();
+            await fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection);
+            await fixture.ReapplySchemaAsync();
+        }
+    }
+
+    private async Task<string> ReportingMigrationFingerprintAsync(SqlConnection connection)
+    {
+        await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        command.CommandText="""
+            SELECT Kind,Rows,Digest FROM (
+              SELECT N'Sales' Kind,COUNT_BIG(*) Rows,CHECKSUM_AGG(BINARY_CHECKSUM(*)) Digest FROM dbo.SalesDocuments WHERE BusinessId=@Business
+              UNION ALL SELECT N'Payloads',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.DocumentProcessingPayloads WHERE BusinessId=@Business
+              UNION ALL SELECT N'Operations',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business
+              UNION ALL SELECT N'Movements',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.InventoryMovements WHERE BusinessId=@Business
+              UNION ALL SELECT N'Balances',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.InventoryBalances WHERE BusinessId=@Business
+              UNION ALL SELECT N'Receivables',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.Receivables WHERE BusinessId=@Business
+              UNION ALL SELECT N'Payables',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.Payables WHERE BusinessId=@Business
+              UNION ALL SELECT N'Entries',COUNT_BIG(*),CHECKSUM_AGG(BINARY_CHECKSUM(*)) FROM dbo.AccountingEntries WHERE BusinessId=@Business
+            ) snapshots ORDER BY Kind FOR JSON PATH;
+            """;
+        return Assert.IsType<string>(await command.ExecuteScalarAsync());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

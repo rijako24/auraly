@@ -62,6 +62,8 @@ public sealed class DatabaseUpgradeMigrationTests
             pipeline[start..end] + "\nConvertTo-Json -InputObject @($reviewedMigrations) -Compress"));
         Assert.Contains(result.RootElement.EnumerateArray(), migration =>
             migration.GetString() == "20261113_RetireAcceptedAccountConfiguration.sql");
+        Assert.Contains(result.RootElement.EnumerateArray(), migration =>
+            migration.GetString() == "20261121_BackfillReportingSourceReferences.sql");
     }
 
     [Theory]

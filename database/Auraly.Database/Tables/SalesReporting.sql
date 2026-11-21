@@ -324,7 +324,7 @@ CREATE TABLE [reporting].[SalesReportingJobs]
     CONSTRAINT [CK_SalesReportingJobs_SourceVersion] CHECK ([SourceVersion]>0),
     CONSTRAINT [CK_SalesReportingJobs_SourceShape] CHECK
       (([SourceDocumentProcessingJobId] IS NOT NULL AND [SourcePayloadJson] IS NULL) OR
-       ([SourceDocumentProcessingJobId] IS NULL AND ISJSON([SourcePayloadJson])=1)),
+       ([SourceDocumentProcessingJobId] IS NULL AND [SourcePayloadJson] IS NOT NULL AND ISJSON([SourcePayloadJson])=1)),
     CONSTRAINT [CK_SalesReportingJobs_Status]
         CHECK ([Status] IN (N'Pending',N'Processing',N'Projected',N'Failed')),
     CONSTRAINT [CK_SalesReportingJobs_Attempts] CHECK ([AttemptCount]>=0)

@@ -159,6 +159,18 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
             await scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>().ProcessAsync(
                 invoice.DocumentId,ServiceInvoiceDocumentTypes.ServiceInvoice,fixture.BusinessId,1,CancellationToken.None);
         await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using(var source=connection.CreateCommand())
+        {
+            source.CommandText="SELECT CONCAT(SalesReportingJobId,':',Status,':',CONVERT(varchar(64),SourcePayloadHash,2),':',CONVERT(varchar(18),RowVersion,1)) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id;";
+            source.Parameters.AddWithValue("@Id",invoice.DocumentId);
+            var original=Assert.IsType<string>(await source.ExecuteScalarAsync());
+            for(var deployment=0;deployment<2;deployment++)
+            {
+                await fixture.ApplyMigrationAsync("20260916_RemoveNonOperationalReportingSources.sql",connection);
+                await fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection);
+                Assert.Equal(original,await source.ExecuteScalarAsync());
+            }
+        }
         await using var query=new SqlCommand("""
             SELECT d.BusinessLocalDate,d.RecognizedCostAmount,
               (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND Status=N'Projected' AND AttemptCount=1),
