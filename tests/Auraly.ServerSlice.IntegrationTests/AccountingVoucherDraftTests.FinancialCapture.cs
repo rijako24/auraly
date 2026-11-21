@@ -13,16 +13,19 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class AccountingVoucherDraftTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task New_and_preexisting_drafts_bind_payments_to_the_document_once_on_concurrent_send(bool preexistingDraft)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task New_and_preexisting_drafts_bind_source_references_once_on_concurrent_send(bool preexistingDraft, bool generalJournal)
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
         using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
         using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
             new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();
-        var cash = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, client);
+        var cash = generalJournal
+            ? await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client, "4194", "Revenue", "General", "Credit")
+            : await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, client);
         var expense = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
             "5194", "Expense", "General", "Debit");
         var documentId = Guid.NewGuid(); var priorReference = Guid.NewGuid();
@@ -30,9 +33,11 @@ public sealed partial class AccountingVoucherDraftTests
             new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Egreso sin identidad adicional", null,
             [new(expense.AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0, LineId: Guid.NewGuid(),
                 FinancialGroupId: preexistingDraft ? priorReference : documentId),
-             new(cash.AccountId, fixture.SupplierPartyId, null, "Caja", 0, 100, LineId: Guid.NewGuid(),
-                FinancialGroupId: preexistingDraft ? priorReference : documentId)],
-            null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: "Disbursement");
+             new(cash.AccountId, fixture.SupplierPartyId, null, "Contrapartida", 0, generalJournal ? 60 : 100, LineId: Guid.NewGuid(),
+                FinancialGroupId: preexistingDraft ? priorReference : documentId),
+             .. (generalJournal ? new VoucherDraftLine[] { new(cash.AccountId, fixture.SupplierPartyId, null, "Otra contrapartida", 0, 40,
+                 LineId: Guid.NewGuid(), FinancialGroupId: documentId) } : [])],
+            null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: generalJournal ? "Accounting" : "Disbursement");
         using var scope = fixture.CreateScope();
         var store = scope.ServiceProvider.GetRequiredService<IAccountingStore>();
         var identity = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
@@ -52,7 +57,12 @@ public sealed partial class AccountingVoucherDraftTests
         var posted = (await client.GetFromJsonAsync<VoucherDraftView>(path))!;
         Assert.Equal("Posted", posted.Status);
         Assert.All(posted.Lines, line => Assert.Equal(documentId, line.Value.FinancialGroupId));
-        Assert.Equal(documentId, Assert.Single(posted.FinancialEffects!.DirectMovements).GroupId);
+        if (generalJournal)
+        {
+            Assert.Empty(posted.FinancialEffects!.DirectMovements); Assert.Empty(posted.FinancialEffects.Positions);
+            Assert.Empty(posted.FinancialEffects.Payments); Assert.Equal(3, posted.Lines.Count);
+        }
+        else Assert.Equal(documentId, Assert.Single(posted.FinancialEffects!.DirectMovements).GroupId);
         await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         async Task<string> SourceHash()
         {

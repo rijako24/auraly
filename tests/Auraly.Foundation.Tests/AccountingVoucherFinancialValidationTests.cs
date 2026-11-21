@@ -9,6 +9,38 @@ namespace Auraly.Foundation.Tests;
 public sealed class AccountingVoucherFinancialValidationTests
 {
     [Theory]
+    [InlineData("General")]
+    [InlineData("Payable")]
+    [InlineData("Receivable")]
+    public void A_document_reference_does_not_create_payment_effects_on_general_journals_or_opening_counterparts(string function)
+    {
+        var document = Guid.NewGuid(); var party = Guid.NewGuid(); var control = Guid.NewGuid(); var general = Guid.NewGuid();
+        var at = new DateTimeOffset(2026, 11, 21, 12, 0, 0, TimeSpan.Zero);
+        var user = new AccountingUserIdentity(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), new HashSet<string>());
+        var payable = function == "Payable";
+        var request = new ConfirmManualAccountingVoucherRequest(document, user.BusinessId, at, "MANUAL_VOUCHER", "Asiento de tres partidas",
+            [new(control, party, null, "Partida principal", payable ? 0 : 100, payable ? 100 : 0, Reference: "REF-ORIGEN",
+                LineId: Guid.NewGuid(), FinancialGroupId: document, DueDate: function == "General" ? null : at.AddDays(30)),
+             new(general, party, null, "Contrapartida 1", payable ? 60 : 0, payable ? 0 : 60, LineId: Guid.NewGuid(), FinancialGroupId: document),
+             new(general, party, null, "Contrapartida 2", payable ? 40 : 0, payable ? 0 : 40, LineId: Guid.NewGuid(), FinancialGroupId: document)],
+            MainPartyId: party, PayloadVersion: 4, VoucherTypeCode: "Accounting", CurrencyCode: "COP");
+        var context = new VoucherFinancialContext([new(control, function, null, null), new(general, "General", null, null)], [],
+            [new(party, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), true)]);
+        var effects = AccountingVoucherFinancialValidation.Normalize(user, request, context, new Uuid7AuralyIdGenerator(TimeProvider.System));
+        Assert.Empty(effects.Payments); Assert.Empty(effects.DirectMovements); Assert.Empty(effects.CreditApplications);
+        if (function == "General") Assert.Empty(effects.Positions);
+        else
+        {
+            var position = Assert.Single(effects.Positions);
+            Assert.Equal(function, position.SubledgerKind); Assert.Equal(document, position.GroupId);
+            Assert.Equal(request.Lines[0].LineId, position.SourceLineId); Assert.Equal(100m, position.Amount);
+        }
+        var foreign = request with { Lines = request.Lines.Select((line, index) => index == 2
+            ? line with { FinancialGroupId = line.LineId } : line).ToArray() };
+        Assert.Throws<AccountingValidationException>(() => AccountingVoucherFinancialValidation.Normalize(user, foreign, context, new Uuid7AuralyIdGenerator(TimeProvider.System)));
+    }
+
+    [Theory]
     [InlineData(2)]
     [InlineData(50)]
     [InlineData(500)]

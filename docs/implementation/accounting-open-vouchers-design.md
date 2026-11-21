@@ -3597,6 +3597,12 @@ La vista reconoce un cruce por sus partidas de deuda y saldo a favor, sin dinero
 ni reversión. Seleccionar solamente un anticipo no lo convierte en un cruce ni
 bloquea actualizar su importe por compartir la referencia del documento. Esta
 identificación reutiliza el índice de partidas en memoria, sin otra lectura.
+Una partida General que referencia su propio documento sigue siendo una partida
+del asiento, sin efecto de pago. El mismo vínculo se admite en las contrapartidas
+de una apertura por cuenta; la cuenta y los vínculos explícitos determinan si
+se abre una obligación. Un vínculo particular de otra partida o evidencia de
+dinero sin operación financiera válida continúa rechazándose. Esto conserva los
+comprobantes generales de tres o más partidas al quitar la identidad de grupo.
 
 Presupuesto de este incremento: cero viajes adicionales respecto del guardado,
 aceptación y lectura existentes; hasta 500 partidas, sin consulta por partida.

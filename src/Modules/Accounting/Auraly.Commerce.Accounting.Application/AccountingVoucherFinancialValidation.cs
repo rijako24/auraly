@@ -230,8 +230,10 @@ public static partial class AccountingVoucherFinancialValidation
             if (request.VoucherTypeCode == "Disbursement")
                 throw new AccountingValidationException("No se registró el egreso: selecciona un auxiliar de efectivo, banco o tarjeta para la salida.");
             var openingLines = openings.Select(item => item.SourceLineId).ToHashSet();
+            // The document identity is an ordinary source reference. It does
+            // not turn a General counterpart into a payment or a crossing.
             if (lines.Any(line => !openingLines.Contains(line.LineId!.Value) &&
-                (line.FinancialGroupId is not null || line.PaymentEvidence is not null)))
+                (line.FinancialGroupId is { } reference && reference != request.VoucherId || line.PaymentEvidence is not null)))
                 throw new AccountingValidationException("El vínculo o la evidencia de pago no corresponde a una partida financiera.");
             return new(user.UserId, [], openings, [], [],Concepts:conceptEvidence);
         }
