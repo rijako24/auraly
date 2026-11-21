@@ -17,6 +17,7 @@ namespace Auraly.Api;
 
 public sealed class DispatchSettlementCoordinator
 {
+    private static readonly TimeSpan MinimumLeaseDelay = TimeSpan.FromMilliseconds(50);
     private readonly Channel<bool> signals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
@@ -30,7 +31,10 @@ public sealed class DispatchSettlementCoordinator
     public async Task WaitAsync(TimeSpan? retryAfter,TimeProvider timeProvider,CancellationToken token)
     {
         if(retryAfter is null) { await WaitAsync(token); return; }
-        using var deadline=new CancellationTokenSource(retryAfter.Value,timeProvider);
+        // A zero/sub-millisecond deadline can complete immediately and spin SQL
+        // claims just before a lease expires. Signals and shutdown still wake it.
+        var delay=retryAfter.Value<MinimumLeaseDelay?MinimumLeaseDelay:retryAfter.Value;
+        using var deadline=new CancellationTokenSource(delay,timeProvider);
         using var linked=CancellationTokenSource.CreateLinkedTokenSource(token,deadline.Token);
         try { await signals.Reader.ReadAsync(linked.Token); }
         catch(OperationCanceledException) when(!token.IsCancellationRequested&&deadline.IsCancellationRequested) { }

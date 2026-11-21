@@ -14,6 +14,102 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(0, 50)]
+    [InlineData(.5, 50)]
+    [InlineData(49.9, 50)]
+    [InlineData(50, 50)]
+    [InlineData(2000, 2000)]
+    public async Task Dispatch_lease_deadline_avoids_immediate_reclaims_and_keeps_signal_and_stop(double requested, double expected)
+    {
+        var coordinator = new DispatchSettlementCoordinator();
+        await coordinator.WaitAsync(default); // Consume the initial startup signal.
+        var clock = new LeaseDeadlineClock();
+        using var stop = new CancellationTokenSource();
+        var waiting = coordinator.WaitAsync(TimeSpan.FromMilliseconds(requested), clock, stop.Token);
+        try
+        {
+            Assert.Equal(TimeSpan.FromMilliseconds(expected), clock.LastDelay);
+            Assert.False(waiting.IsCompleted);
+            coordinator.Signal();
+            await waiting.WaitAsync(TimeSpan.FromSeconds(1));
+            var cancelled = coordinator.WaitAsync(TimeSpan.FromSeconds(2), clock, stop.Token);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+        }
+        finally
+        {
+            if (!waiting.IsCompleted)
+            {
+                stop.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+            }
+        }
+    }
+
+    private sealed class LeaseDeadlineClock : TimeProvider
+    {
+        public TimeSpan? LastDelay { get; private set; }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            LastDelay = dueTime;
+            // Inspect scheduling deterministically; only an explicit signal or
+            // cancellation completes this test's wait.
+            return System.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    [Fact]
+    public async Task Product_picker_searches_internal_codes_before_paging_with_bounded_reads()
+    {
+        using var scope = fixture.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var prefix = $"LOOKUP{Guid.NewGuid():N}";
+        var rows = Enumerable.Range(0, 13).Select(index => new
+        {
+            ProductId = Guid.NewGuid(), ProductCode = $"{prefix}{index:D2}",
+            Sku = $"REFERENCE{Guid.NewGuid():N}", Name = $"Producto de selector {index:D2}",
+            IsActive = index < 12
+        }).ToArray();
+        var json = System.Text.Json.JsonSerializer.Serialize(rows);
+        var taxProfileId = Guid.NewGuid();
+        var taxCode = taxProfileId.ToString("N");
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES({taxProfileId},{fixture.TenantId},{taxCode},N'Impuesto de prueba',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Reference,Sku,Name,
+              BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            SELECT ProductId,{fixture.TenantId},ProductCode,Sku,Sku,Name,
+              N'EA',{taxProfileId},0,0,IsActive,0,N'COP',SYSDATETIMEOFFSET()
+            FROM OPENJSON({json}) WITH(ProductId UNIQUEIDENTIFIER,
+              ProductCode NVARCHAR(64),Sku NVARCHAR(100),Name NVARCHAR(200),IsActive BIT);
+            """);
+        var repository = new ProductRepository(db);
+        var measurements = new List<(int Reads, double Milliseconds)>();
+        foreach (var (page, size) in new[] { (1, 1), (1, 10), (2, 10) })
+        {
+            using var reads = new InventoryBalanceProcessingTests.CommandCounter(db.Database.GetDbConnection().Database);
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var result = await repository.GetPagedByBusinessIdAsync(fixture.BusinessId, page, size, prefix);
+            measurements.Add((reads.Count, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds));
+            Assert.Equal(12, result.TotalCount);
+            Assert.Equal(page == 2 ? 2 : size, result.Items.Count);
+            Assert.All(result.Items, product =>
+            {
+                Assert.Equal(fixture.TenantId, product.TenantId);
+                Assert.True(product.IsActive);
+                Assert.StartsWith(prefix, product.ProductCode);
+            });
+        }
+        Assert.All(measurements, result => Assert.Equal(5, result.Reads));
+        Assert.All(measurements, result => Assert.InRange(result.Milliseconds, 0, 2_000));
+        // Match the existing name/SKU path, without another lookup or enrichment.
+        var byReference = await repository.GetPagedByBusinessIdAsync(fixture.BusinessId, 1, 10, rows[0].Sku);
+        Assert.Equal(rows[0].ProductId, Assert.Single(byReference.Items).ProductId);
+        await transaction.RollbackAsync();
+    }
+
     [Fact]
     public async Task Explicit_price_publication_replaces_the_active_branch_price_atomically()
     {

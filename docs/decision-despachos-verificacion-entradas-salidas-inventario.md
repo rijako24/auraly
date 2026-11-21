@@ -2142,6 +2142,9 @@ La espera del coordinador de liquidación reutiliza el vencimiento durable del
 lease. Al reiniciar programa una sola activación para el próximo vencimiento;
 no introduce polling ni otra cola. Una operación entregada al motor contable
 permanece bajo ese propietario y no vuelve a reclamarse por el despacho.
+Una duración restante inferior a 50 ms se agenda a 50 ms para evitar consultas
+en bucle por un temporizador inmediato cerca del vencimiento. Las señales
+explícitas y la detención interrumpen esa espera; no es un intervalo de sondeo.
 
 Evidencia: `dispatch-coordination-final.trx` aprueba 21 escenarios de netos,
 fracciones, concurrencia, crédito, reembolsos y upgrade; la regresión focalizada

@@ -158,6 +158,22 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   expect(itemReads).toBe(readsBeforeSave);
   await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar precio de todos los productos" })).toHaveAttribute("data-state", "indeterminate");
   await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 12 unidades" })).not.toBeChecked();
+  // Mixed selection can be cleared without changing prices or refetching items.
+  await detailDialog.getByRole("button", { name: "Editar canal" }).click();
+  await expect(synchronizeAll).toBeEnabled();
+  await synchronizeAll.check();
+  await expect(synchronizeAll).toHaveAttribute("data-state", "checked");
+  await synchronizeAll.uncheck();
+  await expect(synchronizeAll).toHaveAttribute("data-state", "unchecked");
+  await editDialog.getByRole("button", { name: "Guardar canal" }).click();
+  await expect(detailDialog).toBeVisible();
+  expect(settingsWrites).toBe(2);
+  expect(savedItem).toMatchObject({ autoUpdatePrice: false, itemSync: [] });
+  expect(itemReads).toBe(readsBeforeSave);
+  await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar precio de todos los productos" })).not.toBeChecked();
+  await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 1 unidades" })).not.toBeChecked();
+  await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 12 unidades" })).not.toBeChecked();
+  await expect(detailDialog.getByRole("row").filter({ hasText: "Aceite vegetal 3000 ml" }).first()).toContainText("29.500");
   await detailDialog.getByRole("button", { name: "Editar canal" }).click();
   await editDialog.getByRole("button", { name: "Agregar producto" }).click();
 

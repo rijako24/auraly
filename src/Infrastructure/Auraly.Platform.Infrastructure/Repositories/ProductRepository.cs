@@ -161,6 +161,7 @@ public sealed partial class ProductRepository : IProductRepository
             {
                 var searchTerm = term;
                 query = query.Where(product => EF.Functions.Collate(product.Name, "Latin1_General_100_CI_AI").Contains(searchTerm)
+                    || product.ProductCode != null && EF.Functions.Collate(product.ProductCode, "Latin1_General_100_CI_AI").Contains(searchTerm)
                     || product.Sku != null && EF.Functions.Collate(product.Sku, "Latin1_General_100_CI_AI").Contains(searchTerm)
                     || product.Description != null && EF.Functions.Collate(product.Description, "Latin1_General_100_CI_AI").Contains(searchTerm)
                     || product.CategoryName != null && EF.Functions.Collate(product.CategoryName, "Latin1_General_100_CI_AI").Contains(searchTerm));

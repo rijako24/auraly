@@ -515,7 +515,8 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
         using var comboSaved = await catalog.PutAsJsonAsync($"/api/commerce/v1/products/{combo:D}/recipe",
             new PublishProductRecipeRequest(0, [new(presentation, 1m)], "Combo"));
         Assert.True(comboSaved.IsSuccessStatusCode, await comboSaved.Content.ReadAsStringAsync());
-        using var pricing = fixture.CreateAdminClient(PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis, PricingPermissionCodes.PreparePrices);
+        using var pricing = fixture.CreateAdminClient(PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices);
         var before = await pricing.GetFromJsonAsync<ProductPricingContext>($"/api/commerce/v1/pricing/products/{combo:D}/context");
         Assert.Equal(1190m, before!.CostBasisAmount);
         using var changed = await pricing.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{raw:D}/prepared-price",
@@ -524,6 +525,35 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
         var after = await pricing.GetFromJsonAsync<ProductPricingContext>($"/api/commerce/v1/pricing/products/{combo:D}/context");
         Assert.Equal(2380m, after!.CostBasisAmount);
         Assert.Equal(10000m, after.PublicSalePrice);
+        async Task AssertDependentPreparations()
+        {
+            await using var prepared = new SqlCommand("""
+                SELECT preparation.ProductId,preparation.CostBasisAmount,price.Amount
+                FROM dbo.ProductPricePreparations preparation
+                JOIN dbo.ProductPrices price ON price.BusinessId=preparation.BusinessId
+                  AND price.ProductId=preparation.ProductId AND price.IsActive=1
+                WHERE preparation.BusinessId=@Business AND preparation.Status=N'Pending'
+                  AND preparation.ProductId IN(@Finished,@Presentation,@Combo);
+                """, connection);
+            prepared.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            prepared.Parameters.AddWithValue("@Finished", finished);
+            prepared.Parameters.AddWithValue("@Presentation", presentation);
+            prepared.Parameters.AddWithValue("@Combo", combo);
+            var ids = new HashSet<Guid>();
+            await using var reader = await prepared.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                Assert.True(ids.Add(reader.GetGuid(0))); // One pending version per dependent.
+                Assert.Equal(2380m, reader.GetDecimal(1));
+                Assert.Equal(10000m, reader.GetDecimal(2)); // Still unpublished.
+            }
+            Assert.Equal(3, ids.Count);
+        }
+        await AssertDependentPreparations();
+        using (var publishedComponent = await pricing.PostAsJsonAsync(
+                   "/api/commerce/v1/pricing/publish", new PublishPricesRequest([raw])))
+            Assert.True(publishedComponent.IsSuccessStatusCode, await publishedComponent.Content.ReadAsStringAsync());
+        await AssertDependentPreparations();
         using var cleared = await catalog.PutAsJsonAsync($"/api/commerce/v1/products/{finished:D}/recipe",
             new PublishProductRecipeRequest(1, []));
         Assert.True(cleared.IsSuccessStatusCode, await cleared.Content.ReadAsStringAsync());

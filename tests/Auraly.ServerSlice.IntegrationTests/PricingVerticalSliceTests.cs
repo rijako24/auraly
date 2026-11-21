@@ -391,6 +391,64 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Theory]
+    [InlineData(0, 10000, 15000, 8000)]
+    [InlineData(19, 11900, 17850, 9520)]
+    public async Task Editing_a_synchronized_tier_price_captures_its_margin_and_preserves_vat_and_fixed_scales(
+        decimal vat, decimal capturedPrice, decimal updatedPrice, decimal fixedPrice)
+    {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
+        var product = Guid.NewGuid();
+        await SeedProductAsync(product, $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}", 10_000m);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var tax = new SqlCommand("""
+                UPDATE tax SET Rate=@Rate FROM dbo.TaxProfiles tax
+                JOIN dbo.Products product ON product.TaxProfileId=tax.TaxProfileId
+                WHERE product.ProductId=@Product AND product.TenantId=@Tenant;
+                """, connection);
+            tax.Parameters.AddWithValue("@Rate", vat); tax.Parameters.AddWithValue("@Product", product);
+            tax.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            Assert.Equal(1, await tax.ExecuteNonQueryAsync());
+        }
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
+        using var pricing = fixture.CreateAdminClient(PricingPermissionCodes.Read,
+            PricingPermissionCodes.ReadCostBasis, PricingPermissionCodes.PreparePrices,
+            PricingPermissionCodes.PublishPrices, "pricing.segments.read", "pricing.segments.manage");
+        async Task Prepare(decimal cost)
+        {
+            using var response = await pricing.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/products/{product:D}/prepared-price",
+                new PublishProductPriceRequest(PriceInputModes.Margin, 20m, null, 1m,
+                    PricingRoundingModes.Nearest, cost));
+            response.EnsureSuccessStatusCode();
+        }
+        async Task Publish()
+        {
+            using var response = await pricing.PostAsJsonAsync("/api/commerce/v1/pricing/publish",
+                new PublishPricesRequest([product]));
+            response.EnsureSuccessStatusCode();
+        }
+        await Prepare(4_000m); await Publish();
+        using var created = await pricing.PostAsJsonAsync("/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest($"IVA y escalas {Guid.NewGuid():N}", "TieredProductPrice", null,
+                [new(product, capturedPrice, 1m, null, true, PriceInputModes.SalePrice),
+                 new(product, fixedPrice, 5m, null, false, PriceInputModes.SalePrice)]));
+        Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
+        var channel = (await created.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
+        async Task<Auraly.Api.PriceSegmentItem[]> Items() => (await pricing.GetFromJsonAsync<
+            Auraly.Api.PriceSegmentItem[]>($"/api/commerce/v1/pricing/segments/{channel.Id:D}/items"))!;
+        Assert.Equal(new decimal?[] { 60m, 50m }, (await Items()).Select(item => item.TargetMarginPercent));
+        await Prepare(6_000m);
+        Assert.Equal(new[] { capturedPrice, fixedPrice }, (await Items()).Select(item => item.Amount));
+        await Publish();
+        var after = await Items();
+        Assert.Equal(new[] { updatedPrice, fixedPrice }, after.Select(item => item.Amount));
+        Assert.Equal(new decimal?[] { 60m, 50m }, after.Select(item => item.TargetMarginPercent));
+        Assert.Equal(new[] { true, false }, after.Select(item => item.AutoUpdatePrice));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Channel_cost_uses_the_publication_clock_and_its_validity_interval(bool linked)
@@ -821,6 +879,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         using var pricing = fixture.CreateAdminClient(
             PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
             PricingPermissionCodes.ReviewProposals, PricingPermissionCodes.PublishPrices,
+            PricingPermissionCodes.PreparePrices,
             "pricing.segments.read", "pricing.segments.manage");
         using var created = await pricing.PostAsJsonAsync(
             "/api/commerce/v1/pricing/segments",
@@ -910,6 +969,86 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.DoesNotContain(events.Read(250), value => value.ProductId == productId && value.NewPrice == 12_000m);
             await sync.SynchronizeConfigurationAsync();
             Assert.Single(events.Read(250).Where(value => value.ProductId == productId && value.NewPrice == 17_000m));
+
+            async Task AssertScales(decimal publicPrice, decimal firstScale)
+            {
+                foreach (var quantity in new[] { .5m, 1m, 2.999m, 3m, 3.001m, 10m })
+                    Assert.Equal(quantity < 1 ? publicPrice : quantity < 3 ? firstScale : 12_000m,
+                        (await local.ResolvePriceAsync(productId, customerId, quantity)).Amount);
+            }
+            async Task PrepareAndPublish(decimal cost)
+            {
+                using var prepared = await pricing.PutAsJsonAsync(
+                    $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+                    new PublishProductPriceRequest(PriceInputModes.Margin, 20m, null,
+                        1m, PricingRoundingModes.Nearest, cost));
+                prepared.EnsureSuccessStatusCode();
+                using var published = await pricing.PostAsJsonAsync(
+                    "/api/commerce/v1/pricing/publish", new PublishPricesRequest([productId]));
+                published.EnsureSuccessStatusCode();
+            }
+            await AssertScales(10_625m, 17_000m);
+            // Editing a synchronized final price captures its new margin: 60%.
+            using (var edited = await pricing.PutAsJsonAsync(
+                       $"/api/commerce/v1/pricing/segments/{channel.Id:D}/items/{productId:D}",
+                       new Auraly.Api.SavePriceSegmentItemRequest(21_250m, 1m, null,
+                           true, PriceInputModes.SalePrice)))
+                edited.EnsureSuccessStatusCode();
+            var editedItems = (await pricing.GetFromJsonAsync<Auraly.Api.PriceSegmentItem[]>(
+                $"/api/commerce/v1/pricing/segments/{channel.Id:D}/items"))!;
+            Assert.Equal(60m, Assert.Single(editedItems, item => item.MinimumQuantity == 1).TargetMarginPercent);
+            await AssertScales(10_625m, 17_000m); // The box still has its last snapshot.
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(10_625m, 21_250m);
+            using (var pendingCost = await pricing.PutAsJsonAsync(
+                       $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+                       new PublishProductPriceRequest(PriceInputModes.Margin, 20m, null,
+                           1m, PricingRoundingModes.Nearest, 10_000m)))
+                pendingCost.EnsureSuccessStatusCode();
+            await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(10_625m, 21_250m); // Preparation cannot reprice the box.
+            using (var published = await pricing.PostAsJsonAsync(
+                       "/api/commerce/v1/pricing/publish", new PublishPricesRequest([productId])))
+                published.EnsureSuccessStatusCode();
+            await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(12_500m, 25_000m);
+            await PrepareAndPublish(8_500m); // A cost decrease keeps the same 60% margin.
+            await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(10_625m, 21_250m);
+            using (var disabled = await pricing.PutAsJsonAsync(
+                       $"/api/commerce/v1/pricing/segments/{channel.Id:D}/settings",
+                       new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, false)))
+                disabled.EnsureSuccessStatusCode();
+            await PrepareAndPublish(6_000m);
+            await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(7_500m, 21_250m);
+            using (var enabled = await pricing.PutAsJsonAsync(
+                       $"/api/commerce/v1/pricing/segments/{channel.Id:D}/settings",
+                       new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, null,
+                           [new(productId, 1m, true)])))
+                enabled.EnsureSuccessStatusCode();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(7_500m, 21_250m); // Enabling alone does not publish a price.
+            await PrepareAndPublish(7_000m);
+            await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(8_750m, 17_500m);
+            await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
+            await AssertScales(8_750m, 17_500m); // Replay retains the same scales.
+            var aggregate = await local.ResolvePricesAsync(
+                [new("first", productId, 2m), new("second", productId, 1m)], customerId);
+            Assert.All(aggregate.Values, price => Assert.Equal(12_000m, price.Amount));
+            var independent = await local.ResolvePricesAsync(
+                [new("first", productId, 2m), new("second", productId, 1m)], customerId, independentLines: true);
+            // Independent promotion evaluation still shares the product's channel quantity.
+            Assert.All(independent.Values, price => Assert.Equal(12_000m, price.Amount));
+            var reduced = await local.ResolvePricesAsync([new("first", productId, 2m)], customerId);
+            Assert.Equal(17_500m, reduced["first"].Amount);
         }
         finally
         {
