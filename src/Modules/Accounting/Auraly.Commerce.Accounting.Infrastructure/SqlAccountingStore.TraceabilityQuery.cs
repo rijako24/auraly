@@ -112,10 +112,11 @@ public sealed partial class SqlAccountingStore
                   AND (@DocumentType IS NULL OR source.SourceDocumentType=@DocumentType)
             """ + TraceabilitySearchCandidateSql("source", filterSearch) + $"""
               OPTION(RECOMPILE);
-            -- The immutable membership index is already unique. Keep its skewed
-            -- history outside the native-source deduplication and compilation.
-            INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType)
-            SELECT matched.SourceDocumentId,matched.SourceDocumentType FROM (
+            -- Materialize native keys before deduplicating against manual keys.
+            -- Otherwise the skewed manual set participates in optimization of
+            -- every native owner even when none has a matching document.
+            SELECT matched.SourceDocumentId,matched.SourceDocumentType
+            INTO #NativePartyDocumentKeys FROM (
               SELECT DocumentId SourceDocumentId,DocumentType SourceDocumentType FROM accounting.VoucherDrafts
                 WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND MainPartyId=@PartyId
                   AND {SqlBusinessLocalDates.SourceCalendarPredicate("OccurredAt", dateRangeVersion)}
@@ -143,7 +144,11 @@ public sealed partial class SqlAccountingStore
                 AND adjustmentParty.PartyId=@PartyId
             ) matched WHERE (@DocumentType IS NULL OR matched.SourceDocumentType=@DocumentType)
             """ + TraceabilitySearchCandidateSql("matched", filterSearch) + $"""
-              AND NOT EXISTS(SELECT 1 FROM #PartyDocumentKeys existing
+            OPTION(RECOMPILE);
+            INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType)
+            SELECT matched.SourceDocumentId,matched.SourceDocumentType
+            FROM #NativePartyDocumentKeys matched
+            WHERE NOT EXISTS(SELECT 1 FROM #PartyDocumentKeys existing
                 WHERE existing.SourceDocumentId=matched.SourceDocumentId AND existing.SourceDocumentType=matched.SourceDocumentType)
             OPTION(RECOMPILE);
             -- Accepted direct adjustments have no draft. Keep their indexed

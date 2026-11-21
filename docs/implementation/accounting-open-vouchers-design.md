@@ -331,6 +331,25 @@ conteo, orden, volumen ni viajes SQL. La regresión conserva los 100.000 documen
 el límite de 800 ms y la evidencia del plan original antes de generar otro plan
 de diagnóstico; también comprueba que ese ordenamiento no vuelva a derramar.
 
+La selección por tercero materializa las claves nativas filtradas antes de
+deduplicarlas contra las pertenencias manuales. Ambas etapas siguen dentro del
+mismo comando y reutilizan el mapa de fuentes existente; no copian detalles,
+fechas ni estados a otro índice persistido. Esto evita que las 50.005 claves
+manuales intervengan en la optimización de todos los orígenes nativos, incluso
+cuando estos no aportan documentos. El conjunto nativo conserva su `UNION` y
+la unión final descarta identidades ya capturadas antes del conteo y la página.
+El rollback solo retira esta separación temporal, sin cambios de esquema ni datos.
+
+La comparación local del 2026-11-21 conservó 100.000 fuentes, 10.000 terceros,
+20 muestras por caso y los calendarios v1/v2: el tercero frecuente pasó de
+750,4/651,8 ms a 631,7/609,9 ms p95, bajo el mismo límite de 800 ms.
+La compilación del conjunto nativo en los planes posteriores a las muestras
+bajó de 155 a 74 ms. Pasaron también los casos de 10.000 recibos nativos,
+filtros de comprobante y conceptos: cuatro pruebas SQL/API, con uno/dos viajes
+por página según el contrato de calendario y sin spills. Esta medición local
+no convierte en aprobada la ejecución anterior de CI que registró 873,1 ms;
+el gate del ajuste debe conservar su resultado propio antes de publicar.
+
 La bandeja tiene un solo propietario de carga. Editor/detalle comparte recurso; contadores no vuelven a pedir listas. El visor sustituye a la vista activa o usa datos ya cargados; no mantiene consultas invisibles. Push coalescido y reconexión con backoff compartido finito; cero polling. Indicadores distintos: Guardando, Enviando, Procesando, Preparando PDF/Excel.
 
 ## 11. Aceptación y secuencia de implementación futura
