@@ -141,15 +141,15 @@ public sealed class AccountingCashReceiptTests
     [Theory]
     [InlineData(false, null)]
     [InlineData(true, null)]
-    [InlineData(false, "missingConcept")]
-    [InlineData(true, "missingConcept")]
+    [InlineData(false, "accountOnly")]
+    [InlineData(true, "accountOnly")]
     [InlineData(false, "otherParty")]
     [InlineData(true, "otherParty")]
     [InlineData(false, "unclassifiedDifference")]
     [InlineData(true, "unclassifiedDifference")]
     [InlineData(false, "debtReduction")]
     [InlineData(true, "debtReduction")]
-    public void An_explicit_additional_concept_and_invoice_share_one_payment_without_an_advance(bool supplier, string? fault)
+    public void An_explicit_additional_account_or_concept_and_invoice_share_one_payment_without_an_advance(bool supplier, string? fault)
     {
         var (user, request, context) = Receipt(true, false);
         var group = Guid.NewGuid(); var account = Guid.NewGuid(); var concept = Guid.NewGuid();
@@ -157,7 +157,7 @@ public sealed class AccountingCashReceiptTests
         var cash = request.Lines[1] with { Debit = 216_800m, FinancialGroupId = group };
         var extra = new ManualVoucherLineRequest(account, fault == "otherParty" ? Guid.NewGuid() : request.MainPartyId,
             null, "Ajuste elegido", 0, 51.97m, LineId: Guid.NewGuid(), FinancialGroupId: group,
-            FinancialConceptId: fault == "missingConcept" ? null : concept);
+            FinancialConceptId: fault == "accountOnly" ? null : concept);
         if (fault == "debtReduction")
         {
             extra = extra with { Debit = 51.97m, Credit = 0m };
@@ -165,7 +165,7 @@ public sealed class AccountingCashReceiptTests
         }
         request = request with { Lines = fault == "unclassifiedDifference" ? [debt, cash] : [debt, cash, extra] };
         context = context with { Accounts = [.. context.Accounts, new(account, "General", null, null)],
-            Concepts = [new(concept, "AJUSTE", "Ajuste explícito")] };
+            Concepts = fault == "accountOnly" ? [] : [new(concept, "AJUSTE", "Ajuste explícito")] };
         if (supplier)
         {
             var role = Guid.NewGuid();
@@ -178,7 +178,7 @@ public sealed class AccountingCashReceiptTests
                 Positions = context.Positions.Select(item => item with { Kind = "Payable", RoleId = role }).ToArray(),
                 Parties = context.Parties.Select(item => item with { SupplierId = role }).ToArray() };
         }
-        if (fault is not null)
+        if (fault is not null and not "accountOnly")
         {
             Assert.Throws<AccountingValidationException>(() => AccountingVoucherFinancialValidation.Normalize(user, request, context, Ids()));
             return;
@@ -188,10 +188,12 @@ public sealed class AccountingCashReceiptTests
         Assert.Equal(216_748.03m, Assert.Single(payment.Allocations).Amount);
         Assert.Equal(216_800m, Assert.Single(payment.Tenders).Amount);
         Assert.Equal(51.97m, payment.AdditionalConceptAmount);
+        Assert.Equal([extra.LineId!.Value], payment.AdditionalSourceLineIds);
         Assert.Equal(0, payment.AdvanceAmount);
         Assert.Empty(effects.Positions);
         Assert.Empty(effects.DirectMovements);
-        Assert.Equal(concept, Assert.Single(effects.Concepts!).FinancialConceptId);
+        if (fault == "accountOnly") Assert.Null(effects.Concepts);
+        else Assert.Equal(concept, Assert.Single(effects.Concepts!).FinancialConceptId);
     }
 
     [Theory]
