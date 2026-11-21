@@ -63,6 +63,14 @@ no vuelve a aplicar el efecto. Reutilizar la clave con otro comando produce
 `SalesDraftIdempotencyConflict`. Una versión vieja produce
 `SalesDraftVersionConflict`.
 
+La captura de cantidades comparte el bloqueo síncrono de captura de la pantalla.
+Mientras se guarda, los campos de cantidad están deshabilitados; repetir Enter,
+Tab o el evento de salida de foco no envía otro comando ni adelanta la navegación.
+Al terminar se aplica la respuesta autoritativa y se libera el mismo bloqueo,
+incluido el caso de error. No se añaden lecturas, reintentos ni una cola de UI.
+Un conflicto real con otra ventana conserva el rechazo de versión: recargar el
+módulo vuelve a leer el borrador durable, sin reiniciarlo ni repetir productos.
+
 ## Captura, precios e inventario
 
 La captura acepta código de barras, código interno, `Sku`, referencia e

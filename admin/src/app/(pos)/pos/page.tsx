@@ -1754,7 +1754,8 @@ export default function PosPage() {
   }
 
   async function changeQuantity(lineId: string, quantity: number, focusAfter = true) {
-    if (!client || !draft || quantity <= 0) return;
+    if (!client || !draft || quantity <= 0 || busy || captureInFlight.current) return;
+    captureInFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -1805,6 +1806,7 @@ export default function PosPage() {
           ...current, [lineId]: String(confirmed.quantity),
         }));
     } finally {
+      captureInFlight.current = false;
       setBusy(false);
       if (focusAfter) focusScanner();
     }
@@ -1815,6 +1817,7 @@ export default function PosPage() {
     value: number,
     backwards: boolean,
   ) {
+    if (busy || captureInFlight.current) return;
     const lines = draft?.lines ?? [];
     const currentIndex = lines.findIndex((line) => line.lineId === lineId);
     const nextIndex = backwards ? currentIndex - 1 : currentIndex + 1;
@@ -2844,7 +2847,7 @@ export default function PosPage() {
     product: PosCatalogProduct,
     requestedQuantity?: number,
   ): Promise<boolean> {
-    if (!client || busy) return false;
+    if (!client || busy || captureInFlight.current) return false;
     setBusy(true);
     setError(null);
     let quantityToFocus: string | null = null;
@@ -3294,6 +3297,7 @@ export default function PosPage() {
                             }
                           }}
                           type="number"
+                          disabled={busy}
                           inputMode={line.allowsFractionalSale ? "decimal" : "numeric"}
                           min={line.allowsFractionalSale ? "0.001" : "1"}
                           step={line.allowsFractionalSale ? "0.001" : "1"}
