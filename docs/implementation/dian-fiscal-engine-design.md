@@ -121,6 +121,9 @@ cliente en consumidor final. El rechazo antes de emitir conserva borrador y
 numeración; un snapshot histórico inválido requiere información verificable,
 sin reescribirlo ni reenviarlo por efecto del despliegue. Los comprobantes
 comerciales sin documento fiscal conservan su captura.
+El POS muestra ese mismo mensaje dentro del diálogo de pago mediante su campo
+`submissionError` existente; una confirmación rechazada conserva los importes
+y el borrador y no inicia la impresión, tanto al elegir imprimir como sin imprimir.
 
 La captura nueva de consumidor final usa la misma identidad fiscal al no elegir
 cliente y al seleccionar explícitamente su tercero del maestro. El lector común

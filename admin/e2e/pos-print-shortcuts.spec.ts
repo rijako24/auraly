@@ -2,9 +2,9 @@ import { expect, test, type Route } from "@playwright/test";
 import { login } from "./support/auth";
 
 for (const mode of ["browser", "installed-online", "prepared"] as const) {
-  for (const catalogState of ["ready", "credit", "cards", "missing", "previous"] as const) {
+  for (const catalogState of ["ready", "credit", "cards", "missing", "previous", "rejected"] as const) {
   const automaticCredit = catalogState === "credit";
-  test(`${catalogState === "cards" ? "native card capture opens only after selecting a form and preserves approval" : catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
+  test(`${catalogState === "rejected" ? "rejected confirmation shows its error inside checkout without printing" : catalogState === "cards" ? "native card capture opens only after selecting a form and preserves approval" : catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
     test.setTimeout(150_000);
     if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
     else await page.context().addCookies([{ name: "auth_token", value: "printing-test", url: baseURL!, httpOnly: true }]);
@@ -41,6 +41,15 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       localStorage.setItem("auraly.printing.configuration.v1", JSON.stringify({ posOutputFormat: "Letter", receiptPaperWidthMillimeters: 80 }));
       if (mode !== "browser") sessionStorage.setItem("auraly.pos.edge-token", "printing-test");
     }, { user, workspace, mode });
+    // Exercise rendering while replacing the OS print dialog, which otherwise
+    // blocks prepared-preview navigation and browser-context teardown.
+    await page.context().addInitScript(() => {
+      window.print = () => {
+        const owner = (window.opener ?? window.top ?? window) as Window & { testNativePrintCalls?: number };
+        owner.testNativePrintCalls = (owner.testNativePrintCalls ?? 0) + 1;
+        window.dispatchEvent(new Event("afterprint"));
+      };
+    });
 
     let brandingReads = 0;
     let confirmed = false;
@@ -86,6 +95,8 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       else if (path.endsWith("/configuration/printers")) body = { configuration };
       else if (path.endsWith("/complete")) {
         completions.push(request.postDataJSON());
+        if (catalogState === "rejected") return route.fulfill({ status: 400, contentType: "application/json",
+          body: JSON.stringify({ message: "La identificación del adquirente no es válida." }) });
         confirmed = true;
         body = mode === "prepared" ? { receipt, nextDraft: toEdge(nextDraft), printedDirectly: false,
           issuedSale: { documentId: { value: "sale" }, documentNumber: "CV-TEST", total: 1000, wasAlreadyIssued: false } }
@@ -103,6 +114,25 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
     };
     await page.route("**/api/**", handle);
     await page.route("**/edge/v1/**", handle);
+
+    if (catalogState === "rejected") {
+      await page.goto("/pos");
+      await expect(page.locator("#pos-scanner")).toBeEnabled();
+      await page.getByRole("button", { name: /^Cobrar/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Finalizar venta" });
+      const amount = dialog.getByRole("textbox", { name: "Valor recibido en Efectivo" });
+      await amount.fill("1000");
+      await dialog.getByRole("button", { name: "Sin imprimir", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toContainText("La identificación del adquirente no es válida.");
+      await expect(amount).toHaveValue("1.000");
+      await dialog.getByRole("button", { name: /^Emitir e imprimir/ }).click();
+      await expect.poll(() => completions.length).toBe(2);
+      await expect(dialog.getByRole("alert")).toContainText("La identificación del adquirente no es válida.");
+      expect(confirmed).toBe(false);
+      expect(printed).toHaveLength(0);
+      expect(await page.evaluate(() => (window as Window & { testNativePrintCalls?: number }).testNativePrintCalls ?? 0)).toBe(0);
+      return;
+    }
 
     if (catalogState === "cards") {
       await page.goto("/pos");

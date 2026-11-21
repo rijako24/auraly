@@ -4274,6 +4274,7 @@ export default function PosPage() {
           grossTotal={saleSettlement.grossAmount}
           withholdingTotal={saleSettlement.withholdingTotal}
           busy={busy}
+          submissionError={error ? { title: "No se pudo finalizar la venta", message: error } : null}
           documentType={selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType}
           documentTypeLocked={selectedCustomer?.requiresElectronicInvoice ?? false}
           documentTypeReady={canIssuePosDocument(
