@@ -3576,6 +3576,36 @@ de formas consulta por página al abrirse y comparte la caché con alcance.
 
 El recibo normal no pide grupos ni crea una identidad adicional para agrupar
 sus formas: utiliza el ID del documento en el vínculo financiero existente.
+Cierre técnico del 21-11-2026: la captura nueva no genera una identidad de
+agrupación independiente. El recibo/egreso usa `DocumentId`; un cruce o una
+corrección que requiere una referencia particular usa el `LineId` real de su
+partida de origen. La preparación de descuentos no reserva otra identidad.
+El normalizador existente enlaza esas referencias en memoria, con hasta 500
+partidas y recorrido lineal, sin SQL/HTTP adicional. Guardar enlaza antes de
+calcular el hash del borrador; aceptar enlaza antes de congelar su fuente.
+
+Se conserva el nombre serializado `FinancialGroupId` y `GroupId` del contrato
+inmutable: eliminarlo de documentos usados rompería hashes, pagos e historial.
+En una fuente nueva su valor sólo identifica ese documento o una de sus
+partidas; no identifica una entidad o configuración adicional. Los comprobantes
+aceptados conservan íntegros su payload y hash. Su consulta muestra el vínculo
+congelado de la fuente aceptada; el reintento compara la misma captura enlazada
+y devuelve la aceptación original, sin regenerar efectos ni corregir historia.
+Un borrador anterior se enlaza al guardar o aceptar por esos mismos propietarios,
+sin migración que reescriba saldos, movimientos o documentos aceptados.
+La vista reconoce un cruce por sus partidas de deuda y saldo a favor, sin dinero
+ni reversión. Seleccionar solamente un anticipo no lo convierte en un cruce ni
+bloquea actualizar su importe por compartir la referencia del documento. Esta
+identificación reutiliza el índice de partidas en memoria, sin otra lectura.
+
+Presupuesto de este incremento: cero viajes adicionales respecto del guardado,
+aceptación y lectura existentes; hasta 500 partidas, sin consulta por partida.
+La proyección adicional de referencias de la fuente se carga en la lectura del
+mismo documento. Se prueban borrador nuevo/anterior, concurrencia, replay,
+fuente/hash conservados, cruce y pago mixto mediante los motores existentes.
+Rollback conserva los mismos contratos/tablas; un binario anterior entiende
+las referencias porque siempre admitió IDs de documento/partida como claves.
+
 Las facturas, conceptos que ajustan una factura y aplicaciones de anticipos
 conservan sus referencias explícitas; cuadrar débitos/créditos no sustituye
 esos vínculos. Los cruces independientes y comprobantes ya aceptados conservan
@@ -4630,6 +4660,19 @@ editar. El catálogo de configuración y el filtro de trazabilidad se conservan;
 las partidas ya vinculadas muestran su concepto como información, conservando
 su identidad, cuenta, valores y vínculos. No se migran ni reescriben documentos.
 Los conceptos de Gastos y de Nómina pertenecen a sus propios catálogos.
+Una contrapartida general capturada directamente por cuenta no exige seleccionar
+un concepto de catálogo. El normalizador comprueba su función General, tercero,
+sentido e importe explícitos; el resultado conserva `AdditionalSourceLineIds`
+para probar sus partidas concretas al aplicar el pago. El nombre inmutable
+`AdditionalConceptAmount` conserva su valor contractual y suma esa contrapartida,
+no la agrega al abono de cartera ni crea otro ingreso o anticipo. Las fuentes
+anteriores conservan su evidencia de concepto y hash. Los descuentos de compra
+siguen requiriendo su decisión explícita y cuentas configuradas; pueden tener
+varias contrapartidas identificadas cuya suma coincida, sin agruparlas con IDs
+nuevos ni mezclar sus importes con las contrapartidas generales adicionales.
+El despliegue coordina API y Worker antes de aceptar esta captura; un rollback
+de binarios requiere terminar esos trabajos o deshabilitar su captura, no
+reinterpretar una fuente aceptada con el processor anterior.
 Los bloques de formas de pago mantienen una columna de ancho acotado en móvil,
 incluidos nombres y auxiliares largos, tanto en borradores como contabilizados.
 El desplazamiento horizontal de las partidas permanece dentro de su grilla.

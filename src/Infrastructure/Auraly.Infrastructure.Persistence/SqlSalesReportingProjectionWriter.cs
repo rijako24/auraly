@@ -472,7 +472,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                    batch.Total,COALESCE(sourceLine.RecognizedCostAmount,restaurant.RecognizedCostAmount,-valuation.ValueChange,
                      CASE WHEN sourceLine.IsGenericProductSnapshot=1 THEN CONVERT(decimal(19,4),ROUND(sourceLine.UnitCostSnapshot*batch.Quantity,4)) END,0),
                    @Version,@ProjectedAt,restaurant.WaiterPartyIdSnapshot,restaurant.WaiterNameSnapshot,
-                   batch.UnitCode,sourceLine.TaxCode,sourceLine.TaxRate,COALESCE(sourceLine.CompositionKindSnapshot,frozenComposition.CompositionKind),
+                   batch.UnitCode,batch.TaxCode,batch.TaxRate,COALESCE(sourceLine.CompositionKindSnapshot,frozenComposition.CompositionKind),
                    (SELECT consumption.IngredientProductId ProductId,component.ProductCodeSnapshot ProductCode,
                      component.ProductNameSnapshot ProductName,component.BaseUnitCodeSnapshot UnitCode,
                      consumption.Quantity,consumption.RecognizedCostAmount
@@ -486,30 +486,31 @@ public sealed partial class SqlSalesReportingProjectionWriter(
             FROM OPENJSON(@Lines) WITH
               (FactId uniqueidentifier,LineNumber int,ProductId uniqueidentifier,
                Quantity decimal(19,6),Gross decimal(19,4),Discount decimal(19,4),
-               Untaxed decimal(19,4),Tax decimal(19,4),Total decimal(19,4),UnitCode nvarchar(24)) batch
-            INNER JOIN dbo.SalesDocumentLines sourceLine
+               Untaxed decimal(19,4),Tax decimal(19,4),Total decimal(19,4),UnitCode nvarchar(24),
+               TaxCode nvarchar(16),TaxRate decimal(9,6)) batch
+            LEFT JOIN dbo.SalesDocumentLines sourceLine
               ON sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=batch.LineNumber
-              AND sourceLine.ProductId=batch.ProductId
             LEFT JOIN sales.RestaurantCheckoutLines restaurant
-              ON restaurant.DocumentId=sourceLine.DocumentId
-             AND restaurant.LineNumber=sourceLine.LineNumber
+              ON restaurant.DocumentId=@DocumentId
+             AND restaurant.LineNumber=batch.LineNumber
             LEFT JOIN catalog.ProductCompositionVersions frozenComposition
               ON frozenComposition.ProductRecipeVersionId=COALESCE(sourceLine.ProductRecipeVersionId,restaurant.ProductRecipeVersionId) AND frozenComposition.TenantId=@TenantId
             LEFT JOIN dbo.InventoryMovements valuation ON valuation.BusinessId=@BusinessId AND valuation.DocumentId=@DocumentId
               AND valuation.DocumentType=@DocumentType AND valuation.LineNumber=batch.LineNumber AND valuation.MovementType=N'Sale'
-            INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId
+            INNER JOIN dbo.Products p ON p.ProductId=batch.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.TenantId=@TenantId
               WHERE sp.ProductId=p.ProductId AND sp.TenantId=@TenantId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
-            WHERE p.TenantId=@TenantId;
+            WHERE p.TenantId=@TenantId AND (sourceLine.DocumentId IS NULL OR sourceLine.ProductId=batch.ProductId);
             SELECT COUNT(*),COALESCE(SUM(Cost),0),COALESCE(MIN(CONVERT(int,Available)),1),COUNT_BIG(CASE WHEN Available=0 THEN 1 END) FROM @InsertedCosts;
             """;
         var unitsByLine = value.UblSnapshot?.Lines.ToDictionary(line=>line.LineNumber,line=>line.UnitCode);
         var lines = value.Lines.Select(line => new
         {
             FactId = ids.NewId(), line.LineNumber, line.ProductId, line.Quantity,
+            line.TaxCode, line.TaxRate,
             Gross = line.UntaxedAmount + line.DiscountAmount, Discount = line.DiscountAmount,
             Untaxed = line.UntaxedAmount, Tax = line.TaxAmount, Total = line.LineTotal,
             UnitCode = unitsByLine?.GetValueOrDefault(line.LineNumber)

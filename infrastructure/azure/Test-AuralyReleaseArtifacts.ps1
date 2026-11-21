@@ -1,0 +1,43 @@
+#Requires -Version 7.2
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$ReleaseRoot,
+    [Parameter(Mandatory)][ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$')][string]$ReleaseVersion
+)
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path -LiteralPath (Join-Path $ReleaseRoot 'manifest.json'))) {
+    throw 'No existe manifest.json en el release.'
+}
+$manifest = Get-Content -LiteralPath (Join-Path $ReleaseRoot 'manifest.json') -Raw | ConvertFrom-Json
+if ($manifest.product -ne 'AURALY' -or $manifest.version -ne $ReleaseVersion -or $manifest.dirty -isnot [bool] -or $manifest.dirty -or
+    $manifest.commit -notmatch '^[a-fA-F0-9]{40}$') {
+    throw 'El manifiesto no es un release Auraly limpio de la version solicitada.'
+}
+if (@($manifest.artifacts.name | Sort-Object -Unique).Count -ne @($manifest.artifacts).Count) {
+    throw 'El manifiesto contiene artefactos duplicados.'
+}
+foreach ($artifact in $manifest.artifacts) {
+    if ([IO.Path]::GetFileName([string]$artifact.name) -ne $artifact.name -or $artifact.name -match '[\\/]') {
+        throw 'El manifiesto contiene una ruta de artefacto no válida.'
+    }
+    $artifactPath = Join-Path $ReleaseRoot $artifact.name
+    if (-not (Test-Path -LiteralPath $artifactPath)) {
+        throw "Falta el artefacto $($artifact.name)."
+    }
+    $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($hash -ne $artifact.sha256 -or (Get-Item -LiteralPath $artifactPath).Length -ne $artifact.bytes) {
+        throw "El artefacto $($artifact.name) no coincide con el manifiesto."
+    }
+}
+foreach ($requiredName in @(
+    "auraly-admin-$ReleaseVersion.zip",
+    "auraly-database-$ReleaseVersion.dacpac",
+    "auraly-function-$ReleaseVersion.zip",
+    "auraly-api-$ReleaseVersion.zip",
+    "auraly-pos-$ReleaseVersion.exe",
+    "auraly-pos-prod-$ReleaseVersion.exe")) {
+    if (-not ($manifest.artifacts.name -contains $requiredName)) {
+        throw "El release no contiene $requiredName."
+    }
+}
+return $manifest

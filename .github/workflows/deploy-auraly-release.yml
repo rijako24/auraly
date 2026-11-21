@@ -39,14 +39,75 @@ permissions:
   contents: write
   id-token: write
 
+env:
+  AURALY_RELEASE_VERSION: ${{ inputs.version }}
+
 concurrency:
   group: auraly-release-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
+  admin_build:
+    name: Build immutable Admin package
+    if: github.ref == 'refs/heads/main' && inputs.environment == 'dev'
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify Admin source belongs to origin/main
+        id: source
+        shell: bash
+        run: |
+          git fetch origin main --no-tags
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - name: Build Admin once for both environments
+        working-directory: admin
+        run: npm ci && npm run build
+      - name: Package built Admin with source and hash evidence
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, zipfile
+          version = os.environ['RELEASE_VERSION']
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', version):
+              raise SystemExit('Invalid immutable release version')
+          root = pathlib.Path('admin'); target = pathlib.Path('artifacts/admin-package'); target.mkdir(parents=True)
+          package = target / f'auraly-admin-{version}.zip'
+          paths = [root / name for name in ('.next', 'public', 'package.json', 'package-lock.json', 'next.config.mjs')]
+          with zipfile.ZipFile(package, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
+              for path in paths:
+                  for item in sorted(path.rglob('*')) if path.is_dir() else [path]:
+                      relative = item.relative_to(root)
+                      if item.is_file() and not relative.as_posix().startswith(('.next/cache/', '.next/diagnostics/')):
+                          archive.write(item, relative.as_posix())
+          metadata = dict(version=version, commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+              platform='linux-x64', name=package.name, bytes=package.stat().st_size,
+              sha256=hashlib.file_digest(package.open('rb'),'sha256').hexdigest(),
+              buildId=(root/'.next/BUILD_ID').read_text().strip())
+          (target/'admin-package.json').write_text(json.dumps(metadata,indent=2))
+          PY
+      - uses: actions/upload-artifact@v6
+        with:
+          name: auraly-admin-build-${{ inputs.version }}
+          path: artifacts/admin-package
+          if-no-files-found: error
+
   release:
     name: Resolve immutable release
-    if: github.ref == 'refs/heads/main'
+    needs: admin_build
+    if: always() && github.ref == 'refs/heads/main' && (needs.admin_build.result == 'success' || needs.admin_build.result == 'skipped')
     # WiX 6.0.2 can lose its native pipe on console-less Windows 2025 runners.
     # Keep the release builder on the stable Windows generation until the
     # upstream fix (wixtoolset/wix#701) is available in a stable WiX release.
@@ -64,8 +125,14 @@ jobs:
         if: inputs.environment == 'dev'
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ needs.admin_build.outputs.commit }}
           fetch-depth: 0
+
+      - uses: actions/download-artifact@v7
+        if: inputs.environment == 'dev'
+        with:
+          name: auraly-admin-build-${{ inputs.version }}
+          path: artifacts/admin-package
 
       - name: Checkout release tag for PROD
         if: inputs.environment == 'prod'
@@ -152,12 +219,12 @@ jobs:
           RELEASE_BASELINE_QUALITY_RUN_ID: ${{ inputs.baseline_quality_run_id }}
         run: >-
           ./infrastructure/azure/New-AuralyRelease.ps1
-          -Version '${{ inputs.version }}'
+          -Version "$env:AURALY_RELEASE_VERSION"
           -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net'
           -ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net'
           -SigningCertificateThumbprint '${{ steps.signing_certificate.outputs.thumbprint }}'
           -SigningTimestampUrl 'https://timestamp.digicert.com'
-          -SkipAdmin
+          -PrebuiltAdminPackagePath "./artifacts/admin-package/auraly-admin-$env:AURALY_RELEASE_VERSION.zip"
           -IntegrationTestFilter "$env:RELEASE_INTEGRATION_TEST_FILTER"
           -BaselineQualityRunId "$env:RELEASE_BASELINE_QUALITY_RUN_ID"
 
@@ -176,7 +243,7 @@ jobs:
         run: |
           ./infrastructure/azure/Resolve-AuralyDeploymentComponents.ps1 `
             -Environment dev `
-            -ManifestPath './artifacts/releases/${{ inputs.version }}/manifest.json' `
+            -ManifestPath "./artifacts/releases/$env:AURALY_RELEASE_VERSION/manifest.json" `
             -RequestedComponents $env:REQUESTED_COMPONENTS `
             -Persist | Format-List
 
@@ -184,7 +251,7 @@ jobs:
         if: inputs.environment == 'dev'
         shell: pwsh
         run: |
-          $tag = 'auraly-v${{ inputs.version }}'
+          $tag = "auraly-v$env:AURALY_RELEASE_VERSION"
           git ls-remote --exit-code --tags origin "refs/tags/$tag" *> $null
           if ($LASTEXITCODE -eq 0) {
             throw "El tag $tag ya existe y el release no se puede reemplazar."
@@ -194,12 +261,12 @@ jobs:
           az storage container create --account-name $storage --name $container --auth-mode login --output none
           if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar el archivo privado de releases.' }
           # Sin tag no existe un release aprobado: retire solo residuos parciales de esta version.
-          az storage blob delete-batch --account-name $storage --source $container --pattern '${{ inputs.version }}/*' --auth-mode login --output none
+          az storage blob delete-batch --account-name $storage --source $container --pattern "$env:AURALY_RELEASE_VERSION/*" --auth-mode login --output none
           if ($LASTEXITCODE -ne 0) { throw 'No se pudieron retirar residuos parciales de la version.' }
-          $manifest = Get-Content './artifacts/releases/${{ inputs.version }}/manifest.json' -Raw | ConvertFrom-Json
-          $assets = @(Get-ChildItem './artifacts/releases/${{ inputs.version }}' -File | ForEach-Object FullName)
+          $manifest = Get-Content "./artifacts/releases/$env:AURALY_RELEASE_VERSION/manifest.json" -Raw | ConvertFrom-Json
+          $assets = @(Get-ChildItem "./artifacts/releases/$env:AURALY_RELEASE_VERSION" -File | ForEach-Object FullName)
           foreach ($asset in $assets) {
-            $blob = '${{ inputs.version }}/' + (Split-Path $asset -Leaf)
+            $blob = "$env:AURALY_RELEASE_VERSION/" + (Split-Path $asset -Leaf)
             $exists = az storage blob exists --account-name $storage --container-name $container --name $blob --auth-mode login --query exists --output tsv
             if ($LASTEXITCODE -ne 0 -or $exists -eq 'true') { throw "El artefacto inmutable $blob ya existe o no se pudo validar." }
             az storage blob upload --account-name $storage --container-name $container --name $blob --file $asset --auth-mode login --overwrite false --output none
@@ -213,11 +280,11 @@ jobs:
         if: inputs.environment == 'prod'
         shell: pwsh
         run: |
-          $target = './artifacts/releases/${{ inputs.version }}'
+          $target = "./artifacts/releases/$env:AURALY_RELEASE_VERSION"
           New-Item -ItemType Directory -Path $target -Force | Out-Null
           $storage = 'stauralydevw5usmo6w'
           $container = 'auraly-releases'
-          $prefix = '${{ inputs.version }}/'
+          $prefix = "$env:AURALY_RELEASE_VERSION/"
           $names = @(az storage blob list --account-name $storage --container-name $container --prefix $prefix --auth-mode login --query '[].name' --output tsv)
           if ($LASTEXITCODE -ne 0 -or $names.Count -eq 0) { throw 'No existe el release privado aprobado solicitado.' }
           foreach ($name in $names) {
@@ -232,17 +299,17 @@ jobs:
         env:
           REQUESTED_COMPONENTS: ${{ inputs.components }}
         run: |
-          $manifest = Get-Content './artifacts/releases/${{ inputs.version }}/manifest.json' -Raw | ConvertFrom-Json
+          $manifest = ./infrastructure/azure/Test-AuralyReleaseArtifacts.ps1 -ReleaseRoot "./artifacts/releases/$env:AURALY_RELEASE_VERSION" -ReleaseVersion "$env:AURALY_RELEASE_VERSION"
           $head = (git rev-parse HEAD).Trim()
-          if ($manifest.commit -ne $head -or $manifest.dirty -or $manifest.version -ne '${{ inputs.version }}') {
+          if ($manifest.commit -ne $head -or $manifest.dirty -or $manifest.version -ne "$env:AURALY_RELEASE_VERSION") {
             throw 'El manifiesto no corresponde al commit/tag seleccionado.'
           }
           $scope = ./infrastructure/azure/Resolve-AuralyDeploymentComponents.ps1 `
             -Environment '${{ inputs.environment }}' `
-            -ManifestPath './artifacts/releases/${{ inputs.version }}/manifest.json' `
+            -ManifestPath "./artifacts/releases/$env:AURALY_RELEASE_VERSION/manifest.json" `
             -RequestedComponents $env:REQUESTED_COMPONENTS
           "commit=$($manifest.commit)" >> $env:GITHUB_OUTPUT
-          "artifact_name=auraly-release-${{ inputs.version }}" >> $env:GITHUB_OUTPUT
+          "artifact_name=auraly-release-$env:AURALY_RELEASE_VERSION" >> $env:GITHUB_OUTPUT
           "components=$($scope.Csv)" >> $env:GITHUB_OUTPUT
           "deploy_cloud=$($scope.DeployCloud.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "deploy_admin=$($scope.DeployAdmin.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -317,7 +384,7 @@ jobs:
           if ($components.Count -gt 0) {
             ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1 `
               -Environment '${{ inputs.environment }}' `
-              -ReleaseVersion '${{ inputs.version }}' `
+              -ReleaseVersion "$env:AURALY_RELEASE_VERSION" `
               -Components $components `
               -AllowRecordedComponentSubset `
               -SqlPackagePath $env:SQLPACKAGE_PATH
@@ -353,7 +420,7 @@ jobs:
         run: |
           ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1 `
             -Environment '${{ inputs.environment }}' `
-            -ReleaseVersion '${{ inputs.version }}' `
+            -ReleaseVersion "$env:AURALY_RELEASE_VERSION" `
             -Components pos-installer `
             -AllowRecordedComponentSubset
 
@@ -371,6 +438,22 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.commit }}
 
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.release.outputs.artifact_name }}
+          path: artifacts/releases/${{ inputs.version }}
+      - name: Validate and extract the immutable Admin package
+        shell: pwsh
+        run: |
+          $release = "./artifacts/releases/$env:AURALY_RELEASE_VERSION"
+          $manifest = ./infrastructure/azure/Test-AuralyReleaseArtifacts.ps1 -ReleaseRoot $release -ReleaseVersion "$env:AURALY_RELEASE_VERSION"
+          if ($manifest.commit -ne '${{ needs.release.outputs.commit }}') { throw 'El frontend no corresponde al commit aprobado.' }
+          $archive = Join-Path $release "auraly-admin-$env:AURALY_RELEASE_VERSION.zip"
+          Expand-Archive -LiteralPath $archive -DestinationPath './artifacts/admin-deploy'
+          foreach ($required in @('.next/BUILD_ID','.next/standalone/server.js','package.json','next.config.mjs')) {
+            if (-not (Test-Path -LiteralPath (Join-Path './artifacts/admin-deploy' $required))) { throw "Falta $required en el frontend precompilado." }
+          }
+
       - name: Deploy Admin DEV
         if: inputs.environment == 'dev'
         uses: Azure/static-web-apps-deploy@v1
@@ -378,9 +461,11 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
-          app_location: ./admin
+          app_location: ./artifacts/admin-deploy
           api_location: ''
           output_location: ''
+          skip_app_build: true
+          skip_api_build: true
 
       - name: Deploy Admin PROD
         if: inputs.environment == 'prod'
@@ -389,9 +474,11 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
-          app_location: ./admin
+          app_location: ./artifacts/admin-deploy
           api_location: ''
           output_location: ''
+          skip_app_build: true
+          skip_api_build: true
 
   verify:
     name: Verify environment
@@ -435,4 +522,4 @@ jobs:
             if (-not $healthy) { throw "$uri no quedo saludable despues de 6 intentos." }
           }
           "## Verificacion final" >> $env:GITHUB_STEP_SUMMARY
-          "Release ``${{ inputs.version }}`` saludable en ``${{ inputs.environment }}``. Componentes: ``${{ needs.release.outputs.components }}``." >> $env:GITHUB_STEP_SUMMARY
+          "Release ``$env:AURALY_RELEASE_VERSION`` saludable en ``${{ inputs.environment }}``. Componentes: ``${{ needs.release.outputs.components }}``." >> $env:GITHUB_STEP_SUMMARY

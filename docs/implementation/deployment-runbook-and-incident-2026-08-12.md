@@ -11,6 +11,16 @@ runtime compatibles. DEV es la compuerta obligatoria de producción: el mismo
 `manifest.json` y los mismos hashes se promueven; nunca se recompila para
 producción.
 
+El Admin también pertenece a ese manifiesto: `admin_build` prepara una compilación
+Linux, el builder verifica su commit/versión/plataforma/hash y archiva el ZIP con
+API, Function, DACPAC e instaladores. El job Admin sólo valida y extrae ese paquete;
+SWA omite ambas compilaciones. No se conserva el workflow independiente que
+recompilaba la interfaz al promover. Una versión sin paquete Admin no se promueve
+con una excepción silenciosa; se prepara un release nuevo y se prueba primero en DEV.
+La comprobación final incluye navegador real (autenticación, proxy, recursos
+estáticos y pantallas afectadas), porque empaquetar y recibir HTTP 200 no demuestra
+que el backend administrado de Next.js funcione.
+
 El procedimiento evita la secuencia lenta que ocurrió en el primer despliegue:
 publicar, esperar el arranque, descubrir una clave con nombre incorrecto,
 corregir y volver a publicar.
@@ -85,8 +95,9 @@ deshabilitada.
 ## Flujo rápido de DEV
 
 1. Partir de `main` limpio y actualizado.
-2. Crear una versión nueva con `New-AuralyRelease.ps1`. El script compila y
-   ejecuta las regresiones antes de producir artefactos.
+2. Ejecutar el workflow canónico `deploy-auraly-release.yml` para DEV. Su job
+   Linux prepara Admin y `New-AuralyRelease.ps1` verifica ese paquete, compila y
+   ejecuta las regresiones antes de producir el manifiesto común.
 3. Ejecutar preflight local:
 
 ```powershell

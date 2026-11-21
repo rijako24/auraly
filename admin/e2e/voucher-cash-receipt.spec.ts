@@ -216,6 +216,7 @@ for (const supplier of [false, true]) for (const pureCross of [false, true]) for
     expect(creditLine.debit + creditLine.credit).toBe(30);
     expect(creditLine.financialGroupId).toBeTruthy();
     const target = saved.lines.find(line => line.financialGroupId === creditLine.financialGroupId && line !== creditLine)!;
+    expect(creditLine.financialGroupId).toBe(target.lineId);
     expect(target.existingPosition).toEqual({ subledgerKind: kind, subledgerId: scenario.positionId });
     expect(target.debit + target.credit).toBe(30);
     expect(saved.lines.reduce((sum, line) => sum + line.debit - line.credit, 0)).toBe(0);
@@ -280,6 +281,7 @@ test("el menú de recibos filtra en servidor y abre la captura compartida con ca
   await page.getByRole("link", { name: "Recibos de caja", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard\/cash-receipts$/);
   await expect(page.getByRole("heading", { name: "Recibos de caja", level: 1, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Filtros de documentos", exact: true }).click();
   await expect(page.getByLabel("Desde", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Hasta", { exact: true })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Tipo de operación" })).toHaveCount(0);

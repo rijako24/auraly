@@ -10,6 +10,7 @@ public sealed record VoucherDraftLine(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     AccountingOpeningPositionReference? ExistingPosition = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    // Wire name retained for immutable sources; new capture references its document or an actual source line.
     Guid? FinancialGroupId = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     DateTimeOffset? DueDate = null,

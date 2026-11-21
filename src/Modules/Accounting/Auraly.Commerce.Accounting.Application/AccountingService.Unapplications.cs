@@ -44,16 +44,18 @@ public sealed partial class AccountingService
         var tenderRemainders = payment.Tenders.Select(item => item.Amount).ToArray();
         foreach (var siteGroup in payment.Applications.GroupBy(item => item.Original.PartySiteId))
         {
-            var groupId = ids.NewId();
+            Guid? originLineId = null;
             var groupAmount = siteGroup.Sum(item => item.Original.AvailableAmount);
             foreach (var item in siteGroup)
             {
                 var original = item.Original;
+                var sourceLineId = ids.NewId();
+                originLineId ??= sourceLineId;
                 var line = new VoucherDraftLine(original.AccountId, original.PartyId, null,
                     $"Reabrir {original.DocumentNumber}", payable ? 0m : original.AvailableAmount,
                     payable ? original.AvailableAmount : 0m, original.DocumentNumber,
                     ExistingPosition: new(kind, item.PositionId, item.TransactionId),
-                    FinancialGroupId: groupId, PartySiteId: siteGroup.Key);
+                    LineId: sourceLineId, FinancialGroupId: originLineId, PartySiteId: siteGroup.Key);
                 lines.Add(new(line, original.AccountCode, original.AccountName,
                     original.PartyName, original.PartyIdentification, null));
             }
@@ -65,7 +67,7 @@ public sealed partial class AccountingService
                 var line = new VoucherDraftLine(tender.AccountId, first.PartyId, null,
                     $"Reversar {tender.MethodCode} registrado",
                     payable ? amount : 0m, payable ? 0m : amount,
-                    FinancialGroupId: groupId, PartySiteId: siteGroup.Key);
+                    LineId: ids.NewId(), FinancialGroupId: originLineId, PartySiteId: siteGroup.Key);
                 lines.Add(new(line, tender.AccountCode, tender.AccountName,
                     first.PartyName, first.PartyIdentification, null));
                 tenderRemainders[index] -= amount;

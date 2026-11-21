@@ -1,5 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Text;
+using Auraly.Commerce.Accounting.Application;
+using Microsoft.Extensions.DependencyInjection;
 using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 
@@ -7,6 +12,94 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed partial class AccountingVoucherDraftTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task New_and_preexisting_drafts_bind_payments_to_the_document_once_on_concurrent_send(bool preexistingDraft)
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
+        using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
+            new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();
+        var cash = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, client);
+        var expense = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            "5194", "Expense", "General", "Debit");
+        var documentId = Guid.NewGuid(); var priorReference = Guid.NewGuid();
+        var command = new SaveVoucherDraftRequest(documentId, AccountingManualDocumentTypes.ManualVoucher,
+            new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Egreso sin identidad adicional", null,
+            [new(expense.AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0, LineId: Guid.NewGuid(),
+                FinancialGroupId: preexistingDraft ? priorReference : documentId),
+             new(cash.AccountId, fixture.SupplierPartyId, null, "Caja", 0, 100, LineId: Guid.NewGuid(),
+                FinancialGroupId: preexistingDraft ? priorReference : documentId)],
+            null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: "Disbursement");
+        using var scope = fixture.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAccountingStore>();
+        var identity = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend });
+        VoucherDraftView saved;
+        if (preexistingDraft)
+            saved = await store.SaveVoucherDraftAsync(identity, command, default);
+        else
+        {
+            using var save = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/manual/drafts/{documentId}", command);
+            Assert.True(save.IsSuccessStatusCode, await save.Content.ReadAsStringAsync());
+            saved = (await save.Content.ReadFromJsonAsync<VoucherDraftView>())!;
+        }
+        var path = $"/api/commerce/v1/accounting/manual/drafts/{documentId}";
+        var sends = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PostAsJsonAsync(path + "/send", new SendVoucherDraftRequest(saved.RowVersion))));
+        foreach (var response in sends) { Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync()); response.Dispose(); }
+        var posted = (await client.GetFromJsonAsync<VoucherDraftView>(path))!;
+        Assert.Equal("Posted", posted.Status);
+        Assert.All(posted.Lines, line => Assert.Equal(documentId, line.Value.FinancialGroupId));
+        Assert.Equal(documentId, Assert.Single(posted.FinancialEffects!.DirectMovements).GroupId);
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        async Task<string> SourceHash()
+        {
+            await using var read = new SqlCommand("SELECT CONVERT(varchar(64),PayloadHash,2) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND BusinessId=@Business", connection);
+            read.Parameters.AddWithValue("@Id", documentId); read.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            return (string)(await read.ExecuteScalarAsync())!;
+        }
+        // Recreate an already accepted pre-cutover wire shape in the isolated
+        // fixture. Its arbitrary historical reference and hash must remain frozen.
+        if (preexistingDraft)
+        {
+            string json;
+            await using (var read = new SqlCommand("SELECT PayloadJson FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id", connection))
+            {
+                read.Parameters.AddWithValue("@Id", documentId); json = (string)(await read.ExecuteScalarAsync())!;
+            }
+            var historical = JsonNode.Parse(json)!;
+            foreach (var line in historical["Lines"]!.AsArray()) line!["FinancialGroupId"] = priorReference;
+            foreach (var movement in historical["FinancialEffects"]!["DirectMovements"]!.AsArray()) movement!["GroupId"] = priorReference;
+            json = historical.ToJsonString();
+            await using var seedHistory = new SqlCommand("""
+                SET XACT_ABORT ON; BEGIN TRANSACTION;
+                UPDATE dbo.AccountingSourceDocuments SET PayloadJson=@Json,PayloadHash=@Hash WHERE SourceDocumentId=@Id AND BusinessId=@Business;
+                UPDATE dbo.AccountingPostingJobs SET SourcePayloadHash=@Hash WHERE SourceDocumentId=@Id AND BusinessId=@Business;
+                COMMIT TRANSACTION;
+                """, connection);
+            seedHistory.Parameters.AddWithValue("@Id", documentId); seedHistory.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            seedHistory.Parameters.AddWithValue("@Json", json); seedHistory.Parameters.AddWithValue("@Hash", SHA256.HashData(Encoding.UTF8.GetBytes(json)));
+            await seedHistory.ExecuteNonQueryAsync();
+            var history = (await client.GetFromJsonAsync<VoucherDraftView>(path))!;
+            Assert.All(history.Lines, line => Assert.Equal(priorReference, line.Value.FinancialGroupId));
+            Assert.Equal(priorReference, Assert.Single(history.FinancialEffects!.DirectMovements).GroupId);
+        }
+        var originalHash = await SourceHash();
+        using (var repeated = await client.PostAsJsonAsync(path + "/send", new SendVoucherDraftRequest(saved.RowVersion)))
+            Assert.True(repeated.IsSuccessStatusCode, await repeated.Content.ReadAsStringAsync());
+        Assert.Equal(originalHash, await SourceHash());
+        await using var counts = new SqlCommand("""
+            SELECT (SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id),
+              COUNT(*),SUM(DebitTotal),SUM(CreditTotal) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id;
+            """, connection);
+        counts.Parameters.AddWithValue("@Id", documentId);
+        await using var reader = await counts.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0)); Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal(100m, reader.GetDecimal(2)); Assert.Equal(100m, reader.GetDecimal(3));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(2)]
@@ -196,7 +289,8 @@ public sealed partial class AccountingVoucherDraftTests
             Assert.Equal(4,reopened.PayloadVersion);
             Assert.Null(reopened.SentAt);
             Assert.Null(reopened.FinancialEffects);
-            Assert.Equal(input.Lines,reopened.Lines.Select(line=>line.Value));
+            Assert.Equal(input.Lines.Select(line=>line with { FinancialGroupId=id }),reopened.Lines.Select(line=>line.Value));
+            Assert.All(reopened.Lines,line=>Assert.Equal(id,line.Value.FinancialGroupId));
             using(var replayResponse=await client.PutAsJsonAsync(path,input))
             {
                 Assert.True(replayResponse.IsSuccessStatusCode,await replayResponse.Content.ReadAsStringAsync());

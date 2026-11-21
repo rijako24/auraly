@@ -54,7 +54,8 @@ public sealed record VoucherFinancialPaymentGroup(
     IReadOnlyList<VoucherFinancialPaymentAllocation> Allocations,
     IReadOnlyList<VoucherFinancialTender> Tenders,
     Guid? AdvancePositionId = null, decimal AdvanceAmount = 0m,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? AdditionalConceptAmount = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? AdditionalConceptAmount = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<Guid>? AdditionalSourceLineIds = null);
 
 public sealed record VoucherFinancialPaymentAllocation(
     Guid SourceLineId, Guid SubledgerId, Guid AccountId, decimal Amount,

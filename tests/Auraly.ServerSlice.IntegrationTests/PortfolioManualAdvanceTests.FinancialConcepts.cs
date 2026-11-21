@@ -174,11 +174,15 @@ public sealed partial class PortfolioManualAdvanceTests
     }
 
     [Theory]
-    [InlineData(false, 1)]
-    [InlineData(true, 1)]
-    [InlineData(false, 498)]
-    [InlineData(true, 498)]
-    public async Task Invoice_and_explicit_additional_concept_share_money_application_rollback_and_replay(bool supplier, int conceptLines)
+    [InlineData(false, 1, true)]
+    [InlineData(true, 1, true)]
+    [InlineData(false, 498, true)]
+    [InlineData(true, 498, true)]
+    [InlineData(false, 1, false)]
+    [InlineData(true, 1, false)]
+    [InlineData(false, 498, false)]
+    [InlineData(true, 498, false)]
+    public async Task Invoice_and_explicit_additional_concept_share_money_application_rollback_and_replay(bool supplier, int conceptLines, bool catalogueConcept)
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
@@ -196,6 +200,7 @@ public sealed partial class PortfolioManualAdvanceTests
         var sides = (await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/accounting-balance-side"))!;
         var concept = new SaveFinancialConceptRequest(Guid.NewGuid(), $"EXTRA-{Guid.NewGuid():N}", "Ajuste sobrante elegido",
             general.AccountId, sides.Single(item => item.Code == (supplier ? "Debit" : "Credit")).Id, !supplier, supplier, true, true, 10);
+        if (catalogueConcept)
         using (var savedConcept = await client.PutAsJsonAsync($"/api/commerce/v1/financial-concepts/{concept.FinancialConceptId}", concept))
             savedConcept.EnsureSuccessStatusCode();
         var at = new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero);
@@ -218,7 +223,7 @@ public sealed partial class PortfolioManualAdvanceTests
                 LineId: Guid.NewGuid(), ExistingPosition: new(supplier ? "Payable" : "Receivable", obligation.PositionId), FinancialGroupId: group),
              .. Enumerable.Range(0, conceptLines).Select(index => new VoucherDraftLine(general.AccountId, party, null, "Ajuste explícito",
                 supplier ? index == 0 ? 51.97m : .01m : 0, supplier ? 0 : index == 0 ? 51.97m : .01m,
-                LineId: Guid.NewGuid(), FinancialGroupId: group, FinancialConceptId: concept.FinancialConceptId)),
+                LineId: Guid.NewGuid(), FinancialGroupId: group, FinancialConceptId: catalogueConcept ? concept.FinancialConceptId : null)),
              new(cash.AccountId, party, null, "Dinero efectivo", supplier ? 0 : money, supplier ? money : 0,
                 LineId: Guid.NewGuid(), FinancialGroupId: group)],
             null, null, MainPartyId: party, PayloadVersion: 4, VoucherTypeCode: supplier ? "Disbursement" : "CashReceipt", WorkSessionId: session);
@@ -259,6 +264,8 @@ public sealed partial class PortfolioManualAdvanceTests
         var accepted = (await client.GetFromJsonAsync<VoucherDraftView>(path))!;
         var payment = Assert.Single(accepted.FinancialEffects!.Payments);
         Assert.Equal(additional, payment.AdditionalConceptAmount);
+        Assert.Equal(capture.Lines.Skip(1).Take(conceptLines).Select(line => line.LineId!.Value), payment.AdditionalSourceLineIds);
+        if (!catalogueConcept) Assert.Null(accepted.FinancialEffects.Concepts);
         Assert.Equal(invoiceAmount, Assert.Single(payment.Allocations).Amount);
         Assert.Equal(money, Assert.Single(payment.Tenders).Amount);
         Assert.Empty(accepted.FinancialEffects.Positions); Assert.Empty(accepted.FinancialEffects.DirectMovements);

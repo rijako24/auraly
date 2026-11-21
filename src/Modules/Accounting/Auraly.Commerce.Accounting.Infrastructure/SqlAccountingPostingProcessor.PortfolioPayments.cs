@@ -117,13 +117,19 @@ public sealed partial class SqlAccountingPostingProcessor
                     line.FinancialGroupId is { } capturedGroup && capturedGroup != group.GroupId)
                     throw new InvalidOperationException("An accepted tender does not match its immutable source line.");
             }
-            // Prove the normalized additional amount against explicit concept
-            // lines, without consulting the live catalogue or reclassifying it.
-            var counterparts = groupedConceptLines[group.GroupId].Where(line => !claimed.Contains(line.LineId!.Value)).ToArray();
+            // New sources identify the actual counterpart lines. Older accepted
+            // sources already identify them through their frozen concept evidence.
+            // Neither path consults live configuration or invents another movement.
+            var counterpartIds = group.AdditionalSourceLineIds ?? groupedConceptLines[group.GroupId]
+                .Where(line => !claimed.Contains(line.LineId!.Value)).Select(line => line.LineId!.Value).ToArray();
+            if (counterpartIds.Count != counterpartIds.Distinct().Count() ||
+                counterpartIds.Any(id => claimed.Contains(id) || !raw.ContainsKey(id)))
+                throw new InvalidOperationException("Las contrapartidas aceptadas no corresponden a partidas únicas del comprobante.");
+            var counterparts = counterpartIds.Select(id => raw[id]).ToArray();
             if (counterparts.Sum(line => payable ? line.Debit : line.Credit) != (group.AdditionalConceptAmount ?? 0m) ||
                 counterparts.Any(line => line.PartyId != group.PartyId || line.ExistingPosition is not null ||
                     line.PaymentEvidence is not null || line.DueDate is not null || line.FinancialDiscountEarned is not null ||
-                    !acceptedConceptIds.Contains(line.FinancialConceptId!.Value) ||
+                    line.FinancialConceptId is { } conceptId && !acceptedConceptIds.Contains(conceptId) ||
                     (payable ? line.Debit <= 0m || line.Credit != 0m : line.Credit <= 0m || line.Debit != 0m)))
                 throw new InvalidOperationException("The accepted additional concepts differ from their immutable source lines.");
             foreach (var line in counterparts) claimed.Add(line.LineId!.Value);

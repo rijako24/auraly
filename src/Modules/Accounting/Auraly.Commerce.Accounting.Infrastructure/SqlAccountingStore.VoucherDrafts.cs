@@ -205,7 +205,7 @@ public sealed partial class SqlAccountingStore
               CASE WHEN d.SentAt IS NOT NULL THEN COALESCE(JSON_VALUE(source.PayloadJson,'$.VoucherTypeCode'),d.VoucherTypeCode) ELSE d.VoucherTypeCode END,
               d.WorkSessionId,JSON_QUERY(source.PayloadJson,'$.FinancialEffects'),d.FiscalCaptureJson,
               fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus,
-              reversal.SourceDocumentId,reversalJob.Status,j.AppliedPaymentMethodsJson
+              reversal.SourceDocumentId,reversalJob.Status,j.AppliedPaymentMethodsJson,JSON_QUERY(source.PayloadJson,'$.Lines')
             FROM accounting.VoucherDrafts d
             LEFT JOIN dbo.Parties mainParty ON mainParty.PartyId=d.MainPartyId AND mainParty.TenantId=d.TenantId
             LEFT JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=d.DocumentId
@@ -271,6 +271,12 @@ public sealed partial class SqlAccountingStore
         var appliedJson = NullableText(reader, 40);
         var appliedPaymentMethods = appliedJson is null ? null : JsonSerializer.Deserialize<VoucherAppliedPaymentMethod[]>(appliedJson)
             ?? throw new InvalidOperationException("The completed payment form evidence is invalid.");
+        var acceptedLinesJson = NullableText(reader, 41);
+        var acceptedReferences = sent is not null && payloadVersion == 4 && acceptedLinesJson is not null
+            ? (JsonSerializer.Deserialize<ManualVoucherLineRequest[]>(acceptedLinesJson)
+                ?? throw new InvalidOperationException("Las partidas aceptadas del comprobante no son válidas."))
+                .ToDictionary(line => line.LineId!.Value, line => line.FinancialGroupId)
+            : null;
         var row = new AccountingDocumentRow(documentId, type, reference, date, status, reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
             NullableText(reader, 16), NullableText(reader, 17), NullableId(reader, 18), NullableText(reader, 19),
             reader.IsDBNull(21) ? null : reader.GetDecimal(21), reader.IsDBNull(22) ? null : reader.GetDecimal(22),
@@ -282,6 +288,13 @@ public sealed partial class SqlAccountingStore
         await reader.NextResultAsync(token);
         while (await reader.ReadAsync(token))
         {
+            var lineId = NullableId(reader,13);
+            var financialReference = NullableId(reader,17);
+            if (acceptedReferences is not null)
+            {
+                if (lineId is null || !acceptedReferences.TryGetValue(lineId.Value, out financialReference))
+                    throw new InvalidOperationException("La partida no corresponde a la fuente aceptada del comprobante.");
+            }
             var conceptId=NullableId(reader,31);
             var conceptCode=NullableText(reader,32);var conceptName=NullableText(reader,33);
             if(sent is not null&&conceptId is { } selectedConcept)
@@ -291,10 +304,10 @@ public sealed partial class SqlAccountingStore
                 conceptCode=captured.Code;conceptName=captured.Name;
             }
             lines.Add(new(new(NullableId(reader, 0), NullableId(reader, 1), NullableId(reader, 2), reader.GetString(3),
-                reader.GetDecimal(4), reader.GetDecimal(5), NullableText(reader, 6), NullableId(reader, 13),
+                reader.GetDecimal(4), reader.GetDecimal(5), NullableText(reader, 6), lineId,
                 reader.IsDBNull(14) ? null : reader.GetDecimal(14),
                 reader.IsDBNull(16)?null:new AccountingOpeningPositionReference(reader.GetString(15),reader.GetGuid(16),NullableId(reader,24)),
-                NullableId(reader,17),reader.IsDBNull(18)?null:reader.GetDateTimeOffset(18),NullableId(reader,19),
+                financialReference,reader.IsDBNull(18)?null:reader.GetDateTimeOffset(18),NullableId(reader,19),
                 reader.IsDBNull(20)&&reader.IsDBNull(21)&&reader.IsDBNull(22)&&reader.IsDBNull(23)&&reader.IsDBNull(26)?null:
                   new VoucherPaymentEvidence(NullableText(reader,20),NullableText(reader,21),reader.IsDBNull(22)?null:reader.GetDecimal(22),NullableText(reader,23),
                     NullableId(reader,26),NullableText(reader,27),reader.IsDBNull(28)?null:reader.GetInt32(28),NullableText(reader,29),NullableText(reader,30)),

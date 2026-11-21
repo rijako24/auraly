@@ -104,12 +104,12 @@ public sealed partial class AccountingService
                 if (line.FinancialDiscountEarned is not null &&
                     (line.ExistingPosition is not { SubledgerKind: AccountingSubledgerKinds.Payable, ReversesTransactionId: null } ||
                      line.FinancialGroupId is null))
-                    throw new AccountingValidationException("La decisión de descuento financiero requiere una obligación por pagar vinculada a un grupo de egreso.");
+                    throw new AccountingValidationException("La decisión de descuento financiero requiere una obligación por pagar vinculada al egreso.");
                 if (line.FinancialGroupId == Guid.Empty || line.PartySiteId == Guid.Empty ||
                     line.ExistingPosition is { } position && (position.SubledgerId == Guid.Empty || position.ReversesTransactionId == Guid.Empty ||
                         position.ReversesTransactionId is not null && position.SubledgerKind is not ("Payable" or "Receivable") ||
                         position.SubledgerKind is not ("Payable" or "Receivable" or "SupplierCredit" or "CustomerCredit")))
-                    throw new AccountingValidationException("Revisa la identidad del grupo y la posición vinculada de la partida.");
+                    throw new AccountingValidationException("Revisa la identidad del vínculo y la posición seleccionada en la partida.");
                 if (line.PaymentEvidence is { } evidence && (evidence.CardFranchiseCode?.Length > 64 ||
                     evidence.ApprovalNumber?.Length > 100 || evidence.Notes?.Length > 500 ||
                     evidence.TenderedAmount is { } tendered && (tendered <= 0 || !ValidDraftAmount(tendered))))
@@ -142,13 +142,13 @@ public sealed partial class AccountingService
         else if (request.Adjustment is not null)
             throw new AccountingValidationException("Un comprobante libre no modifica obligaciones de cartera.");
 
-        return store.SaveVoucherDraftAsync(user, request with {
+        return store.SaveVoucherDraftAsync(user, AccountingVoucherFinancialValidation.BindSourceReferences(request with {
             Description = request.Description.Trim(), ConceptCode = request.ConceptCode.Trim(),
             Reference = Normalize(request.Reference), VoucherTypeCode = Normalize(request.VoucherTypeCode),
             Lines = request.Lines.Select(line => line with {
                 Description = line.Description.Trim(), Reference = Normalize(line.Reference),
                 PaymentEvidence = NormalizeVoucherPaymentEvidence(line.PaymentEvidence) }).ToArray()
-        }, cancellationToken);
+        }), cancellationToken);
     }
 
     private static VoucherPaymentEvidence? NormalizeVoucherPaymentEvidence(VoucherPaymentEvidence? value)

@@ -325,34 +325,7 @@ function Invoke-ReviewedPreDacpacMigration {
 }
 
 function Test-Release {
-    if (-not (Test-Path -LiteralPath $manifestPath)) {
-        throw "No existe el manifiesto $manifestPath."
-    }
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.product -ne 'AURALY' -or $manifest.version -ne $ReleaseVersion -or $manifest.dirty) {
-        throw 'El manifiesto no es un release Auraly limpio de la version solicitada.'
-    }
-    foreach ($artifact in $manifest.artifacts) {
-        $artifactPath = Join-Path $releasePath $artifact.name
-        if (-not (Test-Path -LiteralPath $artifactPath)) {
-            throw "Falta el artefacto $($artifact.name)."
-        }
-        $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne $artifact.sha256 -or (Get-Item -LiteralPath $artifactPath).Length -ne $artifact.bytes) {
-            throw "El artefacto $($artifact.name) no coincide con el manifiesto."
-        }
-    }
-    foreach ($requiredName in @(
-        "auraly-database-$ReleaseVersion.dacpac",
-        "auraly-function-$ReleaseVersion.zip",
-        "auraly-api-$ReleaseVersion.zip",
-        "auraly-pos-$ReleaseVersion.exe",
-        "auraly-pos-prod-$ReleaseVersion.exe")) {
-        if (-not ($manifest.artifacts.name -contains $requiredName)) {
-            throw "El release no contiene $requiredName."
-        }
-    }
-    return $manifest
+    return & (Join-Path $PSScriptRoot 'Test-AuralyReleaseArtifacts.ps1') -ReleaseRoot $releasePath -ReleaseVersion $ReleaseVersion
 }
 
 function Publish-Database {

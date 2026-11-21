@@ -207,12 +207,13 @@ El mismo release debe desplegarse primero en DEV y después en PROD. La versión
 ```powershell
 $version = '0.1.0-rc6'
 $codeSigningThumbprint = Read-Host 'Huella del certificado Authenticode instalado'
-.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net' -ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net' -SigningCertificateThumbprint $codeSigningThumbprint
+.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PrebuiltAdminPackagePath ".\artifacts\admin-package\auraly-admin-$version.zip" -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net' -ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net' -SigningCertificateThumbprint $codeSigningThumbprint
 Get-Content ".\artifacts\releases\$version\manifest.json"
 ```
 
-El script exige un árbol Git limpio, hace restore bloqueado, build determinístico, pruebas, build del Admin y crea:
+El script exige un árbol Git limpio, hace restore bloqueado, build determinístico y pruebas. Requiere el paquete Admin Linux generado para ese mismo commit por el job `admin_build` del workflow canónico y crea:
 
+- `auraly-admin-<version>.zip` y `admin-package.json`, con la compilación Linux y su evidencia
 - `auraly-function-<version>.zip`
 - `auraly-api-<version>.zip`
 - `auraly-database-<version>.dacpac`
@@ -393,19 +394,19 @@ El plan DEV es F1 y puede suspenderse al agotar su cuota diaria; esto no indica 
 
 ### 4. Admin DEV
 
-El workflow `.github/workflows/azure-static-web-apps-auraly.yml` despliega únicamente DEV desde `main` cuando cambia `admin/**`. Una publicación de PROD requiere `workflow_dispatch` explícito con `environment=prod`. Requiere los secretos de GitHub:
+El Admin se publica únicamente desde `.github/workflows/deploy-auraly-release.yml`.
+El job `admin_build` compila en Linux una sola vez desde `origin/main`. El builder
+valida commit, versión, plataforma, tamaño y hash; incluye el ZIP y su evidencia
+en el manifiesto inmutable común. DEV y PROD descargan y validan ese mismo archivo
+con `Test-AuralyReleaseArtifacts.ps1`; la acción SWA utiliza `skip_app_build` y
+`skip_api_build`. No hay workflow independiente ni recompilación al promover.
+Una versión anterior sin ese paquete no obtiene un fallback: requiere un release
+nuevo probado en DEV. Se conservan los secretos existentes:
 
 - `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV`
 - `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD`
 
-Para dispararlo manualmente:
-
-```powershell
-gh workflow run azure-static-web-apps-auraly.yml --ref main
-gh run list --workflow azure-static-web-apps-auraly.yml --limit 5
-```
-
-Para ejecutar DEV manualmente usa `gh workflow run azure-static-web-apps-auraly.yml --ref main -f environment=dev`. PROD solo se publica con `-f environment=prod`, después de aprobar exactamente el mismo release validado en DEV.
+La publicación real a PROD sigue requiriendo una orden explícita del usuario.
 
 ## Desplegar PROD
 
@@ -472,7 +473,7 @@ Además:
 ## Reversión
 
 - Function y API: solo se puede volver a una versión compatible con el esquema y los snapshots ya aceptados. Después del corte de cartera/bancos no se reinician escritores anteriores que creen obligaciones sin vínculo o utilicen el auxiliar compartido. Un fallo mantiene detenidos los hosts afectados y requiere corregir hacia adelante con binarios compatibles; nunca se reinicia automáticamente el paquete viejo.
-- Admin: revertir en `main` el cambio defectuoso y dejar que el workflow publique el commit de reversión.
+- Admin: promover un release compatible ya probado en DEV por el pipeline canónico; no recompilar ni usar una publicación independiente. Si hace falta revertir código, crear y probar un nuevo release desde `origin/main`.
 - Base de datos: no existe rollback destructivo automático. Antes de cambios incompatibles, verificar Point-in-Time Restore y preparar una migración compensatoria. `DropObjectsNotInSource=False` protege objetos no presentes en el DACPAC, pero no reemplaza un plan de datos.
 - Infraestructura: corregir Bicep y volver a desplegar incrementalmente después de `WhatIf`; no borrar el resource group como mecanismo de rollback.
 

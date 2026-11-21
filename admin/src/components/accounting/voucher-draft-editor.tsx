@@ -40,8 +40,8 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 const newLine = (): VoucherDraftLineView => ({ value: { lineId: crypto.randomUUID(), accountId: null, partyId: null, costCenterId: null, description: "", debit: 0, credit: 0, reference: null, baseAmount: null }, accountCode: null, accountName: null, partyName: null, partyIdentification: null, costCenterName: null });
 const identifyLines = (lines: VoucherDraftLineView[]) => lines.map(line => line.value.lineId ? line
   : { ...line, value: { ...line.value, lineId: crypto.randomUUID() } });
-const groupUnassignedLines=(lines:VoucherDraftLineView[],groupId:string|null)=>lines.map(line=>!groupId||line.value.financialGroupId?line:
-  {...line,value:{...line.value,financialGroupId:groupId}});
+const bindDocumentLines=(lines:VoucherDraftLineView[],documentId:string)=>lines.map(line=>line.value.financialGroupId?line:
+  {...line,value:{...line.value,financialGroupId:documentId}});
 // Generated identity/group alone do not represent captured data. Every other
 // populated field must survive assisted additions, even in an incomplete row.
 const hasLineCapture=(line:VoucherDraftLineView)=>Object.entries(line.value).some(([key,value])=>
@@ -72,7 +72,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     lines: [], adjustment: adjustment ?? null, rowVersion: null, payloadVersion: adjustment ? null : 4,
     workSessionId: null,
   });
-  const [lines, setLines] = useState<VoucherDraftLineView[]>(() => initial ? identifyLines(initial.lines) : preparation ? groupUnassignedLines(identifyLines(preparation.lines), voucherTypeScope === "Disbursement" ? form.documentId : null) : (adjustment ? [] : [newLine(), newLine()]));
+  const [lines, setLines] = useState<VoucherDraftLineView[]>(() => initial ? identifyLines(initial.lines) : preparation ? bindDocumentLines(identifyLines(preparation.lines), form.documentId) : (adjustment ? [] : [newLine(), newLine()]));
   const [scrollTop, setScrollTop] = useState(0);
   const [dirty, setDirty] = useState(!initial || !initial.sentAt && initial.documentType === "ManualAccountingVoucher" &&
     (initial.payloadVersion !== editablePayloadVersion(initial) || !!initial.workSessionId));
@@ -88,9 +88,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const confirmUnsavedChanges = !modal || Boolean(preparation);
   const [positionOpen, setPositionOpen] = useState(false);
   const [showPendingDocuments, setShowPendingDocuments] = useState(false);
-  const [defaultFinancialGroupId, setDefaultFinancialGroupId] = useState<string | null>(() =>
-    initial?.lines.some(line => line.value.financialGroupId && (line.value.financialGroupId === initial.documentId ||
-      line.value.existingPosition?.subledgerKind === "CustomerCredit" || line.value.existingPosition?.subledgerKind === "SupplierCredit")) ? initial.documentId : preparation && voucherTypeScope === "Disbursement" ? form.documentId : null);
   const [fiscalOpen, setFiscalOpen] = useState(false);
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [detailLineId, setDetailLineId] = useState<string | null>(null);
@@ -139,8 +136,18 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const compatibleTargets = (side:string|null|undefined) => adjustmentTargets.filter(line =>
     line.value.existingPosition!.subledgerKind === (side === "Debit" ? "Receivable" : "Payable"));
   const targetLabel = (line:VoucherDraftLineView) => `${line.value.reference || line.value.description || line.value.existingPosition!.subledgerId} · ${money.format(line.value.debit + line.value.credit)}`;
-  const creditGroups = new Set(lines.filter(line => line.value.existingPosition?.subledgerKind === "CustomerCredit" ||
-    line.value.existingPosition?.subledgerKind === "SupplierCredit").map(line => line.value.financialGroupId).filter(Boolean));
+  const groupedLines = new Map<string, VoucherDraftLineView[]>();
+  for (const line of lines) if (line.value.financialGroupId) {
+    const captured = groupedLines.get(line.value.financialGroupId);
+    if (captured) captured.push(line); else groupedLines.set(line.value.financialGroupId, [line]);
+  }
+  // A selected balance alone is editable. Only the explicit debt/credit pair
+  // forms a crossing; sharing the document ID does not establish that effect.
+  const creditGroups = new Set([...groupedLines].filter(([, captured]) =>
+    captured.every(line => line.value.existingPosition && !line.value.existingPosition.reversesTransactionId) &&
+    captured.some(line => line.value.existingPosition?.subledgerKind === "CustomerCredit" || line.value.existingPosition?.subledgerKind === "SupplierCredit") &&
+    captured.some(line => line.value.existingPosition?.subledgerKind === "Receivable" || line.value.existingPosition?.subledgerKind === "Payable"))
+    .map(([reference]) => reference));
   const linkedPositions = lines.flatMap(line => line.value.existingPosition ? [{ ...line.value.existingPosition,
     amount: line.value.debit + line.value.credit, financialDiscountEarned: line.value.financialDiscountEarned,
     creditCrossing: !!line.value.financialGroupId && creditGroups.has(line.value.financialGroupId) }] : []);
@@ -154,12 +161,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       line.value.existingPosition?.subledgerKind === "Payable" && line.value.debit > 0 && line.value.credit === 0))
     .map(line=>({...line,availableForCreditAmount:Math.max(0,Number((line.value.debit+line.value.credit-(capturedReductions.get(line.value.lineId!)??0)).toFixed(4)))}))
     .filter(line=>line.availableForCreditAmount>0);
-  const groupedLines = new Map<string, VoucherDraftLineView[]>();
-  for (const line of lines) if (line.value.financialGroupId) {
-    const group = groupedLines.get(line.value.financialGroupId);
-    if (group) group.push(line); else groupedLines.set(line.value.financialGroupId, [line]);
-  }
   const removableCrossings = lines.filter(line => line.value.financialGroupId &&
+    creditGroups.has(line.value.financialGroupId) &&
     (line.value.existingPosition?.subledgerKind === "CustomerCredit" || line.value.existingPosition?.subledgerKind === "SupplierCredit") &&
     groupedLines.get(line.value.financialGroupId)!.every(item =>
       item.value.existingPosition && !item.value.existingPosition.reversesTransactionId));
@@ -351,13 +354,13 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     if (empty < 0 && lines.length >= 500) return;
     const line = empty < 0 ? newLine() : lines[empty];
     const prepared = { ...line, partyName: mainParty.name, partyIdentification: mainParty.identification,
-      value: { ...line.value, partyId: form.mainPartyId, financialGroupId: defaultFinancialGroupId ?? form.documentId } };
-    const groupId = defaultFinancialGroupId ?? form.documentId;
+      value: { ...line.value, partyId: form.mainPartyId, financialGroupId: form.documentId } };
+    const groupId = form.documentId;
     setLines(previous => {
-      const grouped = groupUnassignedLines(previous,groupId);
+      const grouped = bindDocumentLines(previous,groupId);
       return empty < 0 ? [...grouped, prepared] : grouped.map((item, index) => index === empty ? prepared : item);
     });
-    setDefaultFinancialGroupId(groupId); setDetailLineId(prepared.value.lineId!); markChanged();
+    setDetailLineId(prepared.value.lineId!); markChanged();
   }
 
   function selectPaymentForm(method: PaymentMethod, requestedIndex = detailIndex, capture?: VoucherPaymentCapture) {
@@ -370,7 +373,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     }
     const line = index < 0 ? newLine() : lines[index];
     const sameType = line.value.paymentEvidence?.paymentMethodTypeCode === method.methodCode;
-    const groupId = line.value.financialGroupId ?? defaultFinancialGroupId ?? form.documentId;
+    const groupId = line.value.financialGroupId ?? form.documentId;
     const card = method.methodCode === "DebitCard" || method.methodCode === "CreditCard";
     const prepared = { ...line, accountCode: method.accountCode, accountName: method.accountName, financialConceptCode:null, financialConceptName:null,
       partyName: line.value.partyId ? line.partyName : mainParty.name,
@@ -388,9 +391,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         approvalNumber: inlinePaymentVoucher ? card ? capture?.approvalNumber ?? (sameType ? line.value.paymentEvidence?.approvalNumber : null) : null : sameType ? line.value.paymentEvidence?.approvalNumber : null } } };
     setLines(previous => {
       const updated = index < 0 ? [...previous, prepared] : previous.map((item, itemIndex) => itemIndex === index ? prepared : item);
-      return inlinePaymentVoucher ? groupUnassignedLines(updated, groupId) : updated;
+      return inlinePaymentVoucher ? bindDocumentLines(updated, groupId) : updated;
     });
-    if (inlinePaymentVoucher) setDefaultFinancialGroupId(groupId);
     markChanged(); setError(null); return true;
   }
 
@@ -400,10 +402,9 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         .map(line => line.value.existingPosition!.subledgerId)]).size > 1) {
       setError("Este recibo tiene varias formas de pago y admite una sola factura. Retira las formas adicionales para agregar otra factura."); return;
     }
-    added = added.map(line => line.value.financialGroupId || !defaultFinancialGroupId ? line
-      : { ...line, value: { ...line.value, financialGroupId: defaultFinancialGroupId } });
+    added = bindDocumentLines(added, form.documentId);
     setLines(previous => {
-      const current = groupUnassignedLines(previous,defaultFinancialGroupId);
+      const current = bindDocumentLines(previous,form.documentId);
       if (added.length > 1) return [...current.filter(hasLineCapture), ...added];
       const line = added[0];
       const existing = current.findIndex(item => item.value.existingPosition?.subledgerKind === line.value.existingPosition?.subledgerKind &&
@@ -433,15 +434,15 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       lines.length + (amount === total ? 1 : 2) > 500) {
       setError("No se agregó el cruce: revisa la factura seleccionada y el importe disponible del anticipo."); return;
     }
-    const groupId = crypto.randomUUID();
+    const positionLineId = crypto.randomUUID();
     const remaining = Number((total - amount).toFixed(4));
     const updated = lines.flatMap(line => line.value.lineId === targetLineId
       ? remaining === 0 ? [] : [{ ...line, value: { ...line.value, debit: supplier ? remaining : 0, credit: supplier ? 0 : remaining } }]
       : line.value.accountId || line.value.description || line.value.debit || line.value.credit || line.value.existingPosition ? [line] : [])
       .map(line => line.value.financialGroupId ? line : { ...line, value: { ...line.value, financialGroupId: form.documentId } });
-    updated.push({ ...target, value: { ...target.value, lineId: crypto.randomUUID(), financialGroupId: groupId,
-      debit: supplier ? amount : 0, credit: supplier ? 0 : amount } }, createVoucherPositionLine(position,amount,groupId));
-    setLines(updated); setDefaultFinancialGroupId(form.documentId); setError(null); markChanged();
+    updated.push({ ...target, value: { ...target.value, lineId: positionLineId, financialGroupId: positionLineId,
+      debit: supplier ? amount : 0, credit: supplier ? 0 : amount } }, createVoucherPositionLine(position,amount,positionLineId));
+    setLines(updated); setError(null); markChanged();
   }
 
   function copyMainPartyToLines() {
@@ -594,7 +595,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       </section> : <fieldset disabled={supportCancellation} className="min-w-0 overflow-hidden rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><h2 className="font-semibold">Partidas del comprobante</h2><p className="text-sm text-muted-foreground">{supportCancellation ? "Partidas inversas del asiento original. Para cambiar el origen, selecciona otro soporte." : "Edita cada partida en su fila. D = débito, C = crédito. Puedes guardar un comprobante incompleto."}</p></div><div className="flex flex-wrap gap-2">
           {form.payloadVersion === 4 && !inlinePaymentVoucher && !fiscalDocument && <Button variant="outline" disabled={!form.mainPartyId || lines.length >= 500} onClick={addPaymentForm}>Agregar forma de pago</Button>}
-          <Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null,financialGroupId:defaultFinancialGroupId},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div></div>
+          <Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null,financialGroupId:form.documentId},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div></div>
         {!!saved?.appliedPaymentMethods?.length && <section aria-label="Formas de pago utilizadas" className="space-y-1 border-b p-4 text-sm">
           <p className="font-medium">Formas y cuentas utilizadas al contabilizar</p>
           {saved.appliedPaymentMethods.map(method => <p key={method.sourceLineId}>{method.name} · {method.accountCode} · {method.accountName}</p>)}
@@ -671,7 +672,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
           <Label>Documento ajustado</Label><Select value={detailLine.value.financialConceptTargetLineId??"none"} disabled={busy||readOnly} onValueChange={value=>{
             if(value==="none"){updateValue(detailIndex,{financialConceptTargetLineId:null});return;}
             const target=compatibleTargets(detailLine.financialConceptSideCode).find(line=>line.value.lineId===value);
-            if(!target)return;const groupId=target.value.financialGroupId??defaultFinancialGroupId??form.documentId;
+            if(!target)return;const groupId=target.value.financialGroupId??form.documentId;
             setLines(current=>current.map(line=>line.value.lineId===value?{...line,value:{...line.value,financialGroupId:groupId}}:
               line.value.lineId===detailLineId?{...line,value:{...line.value,financialConceptTargetLineId:value,financialGroupId:groupId}}:line));markChanged();
           }}><SelectTrigger aria-label="Documento ajustado"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Sin documento vinculado</SelectItem>

@@ -129,13 +129,15 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Historical_null_uploaded_cost_preserves_ledger_cost_or_explicitly_unknown_generic_cost(bool generic)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Historical_null_uploaded_cost_preserves_ledger_cost_or_explicitly_unknown_generic_cost(bool generic, bool missingOperationalLines)
     {
         await using var connection = new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
-        var sale = fixture.CreateValidRequest(generic ? 9_599 : 9_598);
+        var sale = fixture.CreateValidRequest((generic ? 9_599 : 9_598) - (missingOperationalLines ? 10 : 0));
         bool wasGeneric = false, managedStock = true;
         if (generic)
         {
@@ -193,10 +195,13 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
             -- Historical lines predate the recognized-cost column as well.
             UPDATE dbo.SalesDocumentLines SET RecognizedCostAmount=NULL WHERE DocumentId=@Document;
             IF @Generic=1 UPDATE dbo.SalesDocumentLines SET UnitCostSnapshot=NULL WHERE DocumentId=@Document;
+            IF @MissingLines=1 DELETE dbo.SalesDocumentLines WHERE DocumentId=@Document;
             """;
         source.Parameters.AddWithValue("@Payload", payload); source.Parameters.AddWithValue("@Hash", hash);
         source.Parameters.AddWithValue("@Generic", generic);
+        source.Parameters.AddWithValue("@MissingLines", missingOperationalLines);
         await source.ExecuteNonQueryAsync();
+        var originalEffects = await ReportingMigrationFingerprintAsync(connection);
         using var scope = fixture.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
         for (var replay = 0; replay < 2; replay++)
@@ -227,6 +232,12 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
             Assert.Equal(generic ? 0 : 1, result.GetInt32(3));
             Assert.Equal(payload, result.GetString(5)); Assert.Equal(hash, (byte[])result.GetValue(6));
             Assert.True(result.GetBoolean(7)); Assert.False(await result.ReadAsync());
+            await result.DisposeAsync();
+            Assert.Equal(originalEffects, await ReportingMigrationFingerprintAsync(connection));
+            await using var untouched = connection.CreateCommand();
+            untouched.CommandText = "SELECT COUNT(*) FROM dbo.SalesDocumentLines WHERE DocumentId=@Document;";
+            untouched.Parameters.AddWithValue("@Document", sale.DocumentId);
+            Assert.Equal(missingOperationalLines ? 0 : sale.Lines.Count, Convert.ToInt32(await untouched.ExecuteScalarAsync()));
         }
     }
 

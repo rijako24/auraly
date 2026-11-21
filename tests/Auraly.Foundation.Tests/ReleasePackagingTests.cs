@@ -3,13 +3,20 @@ namespace Auraly.Foundation.Tests;
 public sealed class ReleasePackagingTests
 {
     [Fact]
-    public void Admin_contract_changes_do_not_publish_independently_on_push()
+    public void Admin_uses_only_the_archived_release_package_and_has_no_independent_rebuild_workflow()
     {
-        var workflow = File.ReadAllText(Path.Combine(FindRepositoryRoot(), ".github", "workflows",
-            "azure-static-web-apps-auraly.yml"));
-        Assert.DoesNotContain("\n  push:", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("github.event_name == 'push'", workflow, StringComparison.Ordinal);
-        Assert.Contains("workflow_dispatch:", workflow, StringComparison.Ordinal);
+        var root = FindRepositoryRoot();
+        Assert.False(File.Exists(Path.Combine(root, ".github", "workflows", "azure-static-web-apps-auraly.yml")));
+        var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "deploy-auraly-release.yml"));
+        workflow = workflow.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var admin = workflow[workflow.IndexOf("  admin:\n", StringComparison.Ordinal)..workflow.IndexOf("  verify:\n", StringComparison.Ordinal)];
+        Assert.Contains("actions/download-artifact@v7", admin, StringComparison.Ordinal);
+        Assert.Contains("Test-AuralyReleaseArtifacts.ps1", admin, StringComparison.Ordinal);
+        Assert.Equal(2, admin.Split("skip_app_build: true", StringSplitOptions.None).Length - 1);
+        Assert.Equal(2, admin.Split("skip_api_build: true", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("npm ", admin, StringComparison.Ordinal);
+        Assert.Contains("app_location: ./artifacts/admin-deploy", admin, StringComparison.Ordinal);
+        Assert.Contains("-PrebuiltAdminPackagePath", workflow, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -22,7 +22,8 @@ param(
     [ValidatePattern('^https://')]
     [string]$SigningTimestampUrl = 'https://timestamp.digicert.com',
 
-    [switch]$SkipAdmin,
+    [Parameter(Mandatory)]
+    [string]$PrebuiltAdminPackagePath,
 
     [string]$IntegrationTestFilter,
 
@@ -44,7 +45,8 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 $outputRootPath = [IO.Path]::GetFullPath($OutputRoot)
 $releasePath = Join-Path $outputRootPath $Version
 
-if (-not $outputRootPath.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+if ($outputRootPath -ne $repoRoot -and
+    -not $outputRootPath.StartsWith($repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'OutputRoot debe estar dentro del repositorio.'
 }
 if ([string]::IsNullOrWhiteSpace($PosApiUrl) -ne [string]::IsNullOrWhiteSpace($ProdPosApiUrl)) {
@@ -120,6 +122,19 @@ function New-DeterministicZip {
 try {
     New-Item -ItemType Directory -Path $releasePath -Force | Out-Null
     New-Item -ItemType Directory -Path $publishPath -Force | Out-Null
+
+    $adminPackage = Get-Item -LiteralPath $PrebuiltAdminPackagePath
+    $adminEvidencePath = Join-Path $adminPackage.DirectoryName 'admin-package.json'
+    $adminEvidence = Get-Content -LiteralPath $adminEvidencePath -Raw | ConvertFrom-Json
+    if ($adminPackage.Name -ne "auraly-admin-$Version.zip" -or $adminEvidence.version -ne $Version -or
+        $adminEvidence.commit -ne $commit -or $adminEvidence.platform -ne 'linux-x64' -or
+        $adminEvidence.name -ne $adminPackage.Name -or $adminEvidence.bytes -ne $adminPackage.Length -or
+        $adminEvidence.sha256 -ne (Get-FileHash -LiteralPath $adminPackage.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
+        throw 'El frontend precompilado no coincide con el commit, versión, plataforma o hash del release.'
+    }
+    Copy-Item -LiteralPath $adminPackage.FullName -Destination (Join-Path $releasePath $adminPackage.Name)
+    Copy-Item -LiteralPath $adminEvidencePath -Destination (Join-Path $releasePath 'admin-package.json')
+
 
     & dotnet restore (Join-Path $repoRoot 'Auraly.Commerce.sln') --locked-mode
     if ($LASTEXITCODE) { throw 'dotnet restore fallo.' }
@@ -226,7 +241,7 @@ try {
         -c Release --no-restore
     if ($LASTEXITCODE) { throw 'La compilacion de base de datos fallo.' }
 
-    if (-not $SkipAdmin -or $PosApiUrl) {
+    if ($PosApiUrl) {
         $adminPath = Join-Path $repoRoot 'admin'
         $nextOutputPath = Join-Path $adminPath '.next'
         if (Test-Path -LiteralPath $nextOutputPath) {
@@ -236,10 +251,6 @@ try {
         try {
             & npm ci
             if ($LASTEXITCODE) { throw 'npm ci fallo.' }
-            if (-not $SkipAdmin) {
-                & npm run build
-                if ($LASTEXITCODE) { throw 'La compilacion del frontend fallo.' }
-            }
         }
         finally {
             Pop-Location

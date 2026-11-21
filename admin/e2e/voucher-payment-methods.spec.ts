@@ -20,6 +20,7 @@ for (const supplier of [false, true]) for (const posted of [false, true]) test(`
   await page.route(`**/manual/drafts/${scenario.documentId}`,route=>route.fulfill({json:scenario.draft}));
   await page.goto(`/dashboard/${supplier?"financial-traceability":"cash-receipts"}?document=${scenario.documentId}`);
   const panel=page.getByRole("region",{name:"Formas de pago del comprobante",exact:true});await expect(panel).toBeVisible();
+  await expect(page.getByText("Iniciando Auraly", { exact: true })).toBeHidden();
   await expect(panel.getByRole("group",{name:"Forma de pago 1",exact:true})).toBeVisible();
   await expect.poll(()=>page.getByRole("main").evaluate(main=>main.scrollWidth-main.clientWidth)).toBeLessThanOrEqual(1);
   for(const fieldset of await panel.locator("fieldset").all()) expect(await fieldset.evaluate(e=>e.getBoundingClientRect().width<=e.parentElement!.clientWidth)).toBe(true);

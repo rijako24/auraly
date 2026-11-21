@@ -101,6 +101,7 @@ public sealed partial class SqlAccountingStore(
             }, cancellationToken, draftVersion, request.PayloadVersion == 4
                 ? async (connection, transaction, raw, token) =>
                 {
+                    raw = AccountingVoucherFinancialValidation.BindSourceReferences(raw);
                     if (raw.MainPartyId is null)
                         throw new AccountingValidationException("Selecciona el tercero principal antes de contabilizar el comprobante.");
                     var hasFiscalEffect = raw.VoucherTypeCode is "SupportDocument" or "SupportDocumentCancellation";
@@ -246,7 +247,10 @@ public sealed partial class SqlAccountingStore(
                     if (capturedReference is null && payload is ConfirmManualAccountingVoucherRequest { Reference: null } &&
                         stored.VoucherTypeCode is "SupportDocument" or "SupportDocumentCancellation")
                         comparable = comparable with { Reference = null };
-                    if (JsonSerializer.Serialize(comparable) != json)
+                    var comparableJson = JsonSerializer.Serialize(AccountingVoucherFinancialValidation.BindSourceReferences(comparable));
+                    var capturedJson = payload is ConfirmManualAccountingVoucherRequest captured
+                        ? JsonSerializer.Serialize(AccountingVoucherFinancialValidation.BindSourceReferences(captured)) : json;
+                    if (comparableJson != capturedJson)
                         throw new AccountingConflictException("La captura no coincide con su fuente financiera aceptada.");
                     payload = accepted;
                     json = frozenPayload;

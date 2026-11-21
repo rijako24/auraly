@@ -5,6 +5,43 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class DatabaseUpgradeMigrationTests
 {
+    [Theory]
+    [InlineData("Valid", true)]
+    [InlineData("Tampered", false)]
+    [InlineData("MissingAdmin", false)]
+    [InlineData("WrongVersion", false)]
+    [InlineData("PathEscape", false)]
+    public async Task Immutable_release_validation_checks_actual_artifacts_before_publication(string scenario, bool expected)
+    {
+        var script = Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Test-AuralyReleaseArtifacts.ps1");
+        var folder = Path.Combine(Path.GetTempPath(), $"auraly-release-proof-{Guid.NewGuid():N}");
+        try
+        {
+            using var result = JsonDocument.Parse(await RunPowerShellAsync("""
+                param([string]$Entry,[string]$Folder,[string]$Scenario)
+                $ErrorActionPreference='Stop'
+                New-Item -ItemType Directory -Path $Folder | Out-Null
+                $version='0.1.1-proof'
+                $names=@('auraly-admin-0.1.1-proof.zip','auraly-api-0.1.1-proof.zip','auraly-function-0.1.1-proof.zip',
+                  'auraly-database-0.1.1-proof.dacpac','auraly-pos-0.1.1-proof.exe','auraly-pos-prod-0.1.1-proof.exe')
+                $artifacts=@(foreach($name in $names){
+                  $path=Join-Path $Folder $name; [IO.File]::WriteAllBytes($path,[byte[]](1,2,3))
+                  @{name=$name;bytes=3;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+                })
+                if($Scenario -eq 'MissingAdmin'){$artifacts=@($artifacts|Where-Object {$_.name -notlike 'auraly-admin-*'})}
+                if($Scenario -eq 'PathEscape'){$artifacts[0].name='../outside.zip'}
+                if($Scenario -eq 'WrongVersion'){$version='0.1.2-proof'}
+                @{product='AURALY';version=$version;commit=('a'*40);dirty=$false;artifacts=$artifacts}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $Folder 'manifest.json')
+                if($Scenario -eq 'Tampered'){[IO.File]::WriteAllBytes((Join-Path $Folder $names[0]),[byte[]](3,2,1))}
+                $passed=$false
+                try{$manifest=& $Entry -ReleaseRoot $Folder -ReleaseVersion '0.1.1-proof';$passed=$manifest.version -eq '0.1.1-proof'}catch{$passed=$false}
+                @{passed=$passed}|ConvertTo-Json -Compress
+                """, script, folder, scenario));
+            Assert.Equal(expected, result.RootElement.GetProperty("passed").GetBoolean());
+        }
+        finally { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
+    }
+
     [Fact]
     public async Task Reviewed_opening_preview_is_read_only_and_has_the_same_source_hash_in_fresh_processes()
     {

@@ -34,6 +34,54 @@ public sealed record VoucherFinancialParty(Guid PartyId, Guid? SupplierId, Guid?
 // settlement and tender domain owners used by assisted capture.
 public static partial class AccountingVoucherFinancialValidation
 {
+    // The wire field is retained on immutable sources; new captures bind it to
+    // an existing document/line identity, never to another generated entity.
+    public static SaveVoucherDraftRequest BindSourceReferences(SaveVoucherDraftRequest request)
+    {
+        if (request.PayloadVersion != 4) return request;
+        var references = SourceReferences(request.DocumentId,
+            request.Lines.Select(line => (line.LineId, line.FinancialGroupId)));
+        return request with { Lines = request.Lines.Select(line => line with {
+            FinancialGroupId = line.FinancialGroupId is { } id ? references[id] : null }).ToArray() };
+    }
+
+    public static ConfirmManualAccountingVoucherRequest BindSourceReferences(ConfirmManualAccountingVoucherRequest request)
+    {
+        if (request.PayloadVersion != 4) return request;
+        var references = SourceReferences(request.VoucherId,
+            request.Lines.Select(line => (line.LineId, line.FinancialGroupId)));
+        return request with { Lines = request.Lines.Select(line => line with {
+            FinancialGroupId = line.FinancialGroupId is { } id ? references[id] : null }).ToArray() };
+    }
+
+    private static Dictionary<Guid, Guid> SourceReferences(Guid documentId,
+        IEnumerable<(Guid? LineId, Guid? Reference)> source)
+    {
+        var lines = source.ToArray();
+        var identities = lines.Where(line => line.LineId is not null).ToDictionary(line => line.LineId!.Value);
+        var references = lines.Where(line => line.Reference is not null).GroupBy(line => line.Reference!.Value).ToArray();
+        var result = new Dictionary<Guid, Guid>();
+        foreach (var reference in references)
+        {
+            if (reference.Key == Guid.Empty)
+                throw new AccountingValidationException("El vínculo financiero no puede tener una identidad vacía.");
+            if (reference.Key == documentId) result.Add(reference.Key, documentId);
+            else if (identities.TryGetValue(reference.Key, out var target))
+            {
+                if (target.Reference != reference.Key)
+                    throw new AccountingValidationException("El vínculo financiero debe corresponder a su partida de origen.");
+                result.Add(reference.Key, reference.Key);
+            }
+            else
+            {
+                var anchor = reference.FirstOrDefault(line => line.LineId is not null).LineId
+                    ?? throw new AccountingValidationException("El vínculo financiero requiere una partida identificada.");
+                result.Add(reference.Key, references.Length == 1 ? documentId : anchor);
+            }
+        }
+        return result;
+    }
+
     public static VoucherFinancialEffects Normalize(AccountingUserIdentity user,
         ConfirmManualAccountingVoucherRequest request, VoucherFinancialContext context, IAuralyIdGenerator ids,
         VoucherFiscalPreview? fiscalProof = null)
@@ -184,7 +232,7 @@ public static partial class AccountingVoucherFinancialValidation
             var openingLines = openings.Select(item => item.SourceLineId).ToHashSet();
             if (lines.Any(line => !openingLines.Contains(line.LineId!.Value) &&
                 (line.FinancialGroupId is not null || line.PaymentEvidence is not null)))
-                throw new AccountingValidationException("El grupo o evidencia de pago no corresponde a una partida financiera.");
+                throw new AccountingValidationException("El vínculo o la evidencia de pago no corresponde a una partida financiera.");
             return new(user.UserId, [], openings, [], [],Concepts:conceptEvidence);
         }
 
@@ -193,12 +241,12 @@ public static partial class AccountingVoucherFinancialValidation
         // Never manufacture groups per invoice to evade the shared tender rule.
         var explicitGroups = financial.Any(line => line.FinancialGroupId is not null);
         if (explicitGroups && financial.Any(line => line.FinancialGroupId is null))
-            throw new AccountingValidationException("Asocia todas las partidas financieras a su grupo de cruce.");
+            throw new AccountingValidationException("Vincula las partidas de dinero y cartera al comprobante o a su partida de origen.");
         var financialParties = financial.Where(line => !IsTreasury(accounts[line.AccountId].Function))
             .Select(line => line.PartyId).Distinct().ToArray();
         if (!explicitGroups && financialParties.Length > 1)
-            throw new AccountingValidationException("Asocia las partidas financieras a su grupo para identificar su tercero y contrapartidas.");
-        var implicitId = financial[0].LineId!.Value;
+            throw new AccountingValidationException("Identifica la partida de origen de cada pago cuando intervienen varios terceros.");
+        var implicitId = request.VoucherId;
         var groups = financial.GroupBy(line => line.FinancialGroupId ?? implicitId);
         var payments = new List<VoucherFinancialPaymentGroup>();
         var creditApplications = new List<VoucherFinancialCreditApplication>();
@@ -236,7 +284,7 @@ public static partial class AccountingVoucherFinancialValidation
                         tenders.Any(line => line.PartyId is { } partyId && partyId != origin.PartyId ||
                             returnPayable && (line.Debit <= 0 || line.Credit != 0) ||
                             !returnPayable && (line.Credit <= 0 || line.Debit != 0)))
-                        throw new AccountingValidationException("La devolución requiere los abonos originales del mismo tercero y sede, y el dinero realmente devuelto, sin anticipos ni obligaciones nuevas en ese grupo.");
+                        throw new AccountingValidationException("La devolución requiere los abonos originales del mismo tercero y sede, y el dinero realmente devuelto, sin anticipos ni obligaciones nuevas en esa operación.");
                     try
                     {
                         var amount = originals.Sum(line => returnPayable ? line.Credit : line.Debit);
@@ -299,7 +347,7 @@ public static partial class AccountingVoucherFinancialValidation
             {
                 var counterparts = directCounterparts[group.Key];
                 if (counterparts.Sum(line => line.Debit) != counterparts.Sum(line => line.Credit))
-                    throw new AccountingValidationException("El movimiento directo requiere sus contrapartidas balanceadas en el mismo grupo.");
+                    throw new AccountingValidationException("El movimiento directo requiere sus contrapartidas balanceadas dentro del comprobante.");
                 var net = tenders.Sum(line => line.Debit - line.Credit);
                 if (request.VoucherTypeCode != (net < 0 ? "Disbursement" : "Accounting") &&
                     !(request.VoucherTypeCode == "CashReceipt" && net > 0))
@@ -335,7 +383,7 @@ public static partial class AccountingVoucherFinancialValidation
                     DemandPaymentPermission(user, targets[0].Kind == AccountingSubledgerKinds.Payable);
                     if (targets.Select(item => item.Kind).Distinct().Count() != 1 || targets.Select(item => item.PartyId).Distinct().Count() != 1 ||
                         targets[0].Kind == AccountingSubledgerKinds.Payable && targets.Select(item => item.PartySiteId).Distinct().Count() != 1)
-                        throw new AccountingValidationException("El grupo de ajustes requiere obligaciones del mismo tercero y dirección, y la misma sede de proveedor.");
+                        throw new AccountingValidationException("Los ajustes requieren obligaciones del mismo tercero y dirección, y la misma sede de proveedor.");
                     continue;
                 }
                 if (request.VoucherTypeCode is not ("Accounting" or "CashReceipt" or "Disbursement"))
@@ -343,7 +391,7 @@ public static partial class AccountingVoucherFinancialValidation
                 var credits = applications.Where(line => line.ExistingPosition!.SubledgerKind is
                     AccountingSubledgerKinds.SupplierCredit or AccountingSubledgerKinds.CustomerCredit).ToArray();
                 if (credits.Length != 1)
-                    throw new AccountingValidationException("Cada grupo de cruce sin dinero requiere un saldo a favor seleccionado. Separa los demás en otro grupo.");
+                    throw new AccountingValidationException("Cada cruce sin dinero debe identificar el saldo a favor y las obligaciones a las que se aplica.");
                 var creditLine = credits[0];
                 var payableCredit = creditLine.ExistingPosition!.SubledgerKind == AccountingSubledgerKinds.SupplierCredit;
                 var positionKind = payableCredit ? AccountingSubledgerKinds.Payable : AccountingSubledgerKinds.Receivable;
@@ -375,12 +423,12 @@ public static partial class AccountingVoucherFinancialValidation
                 continue;
             }
             if (applications.Length + groupAdvances.Length == 0 || groupAdvances.Length > 1 || tenders.Length == 0)
-                throw new AccountingValidationException("El grupo requiere obligaciones seleccionadas o un anticipo, y sus partidas de tesorería.");
+                throw new AccountingValidationException("El pago requiere obligaciones seleccionadas o un anticipo, y sus partidas de dinero.");
             var kinds = applications.Select(line => line.ExistingPosition!.SubledgerKind)
                 .Concat(groupAdvances.Select(item => item.SubledgerKind == "SupplierCredit" ? AccountingSubledgerKinds.Payable : AccountingSubledgerKinds.Receivable))
                 .Distinct().ToArray();
             if (kinds.Length != 1 || kinds[0] is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable))
-                throw new AccountingValidationException("Cada grupo de abono debe pagar o recaudar obligaciones de una misma clase.");
+                throw new AccountingValidationException("El abono debe pagar o recaudar obligaciones de una misma clase.");
             var kind = kinds[0];
             var payable = kind == AccountingSubledgerKinds.Payable;
             DemandPaymentPermission(user, payable);
@@ -395,7 +443,7 @@ public static partial class AccountingVoucherFinancialValidation
             var sites = origins.Select(item => item.PartySiteId).Distinct().ToArray();
             if (party.Length != 1 || roles.Length != 1 || groupAdvances.Length > 0 && sites.Length != 1 ||
                 payable && (roles[0] is null || sites.Length != 1 || sites[0] is null))
-                throw new AccountingValidationException("El grupo debe corresponder al mismo tercero y, en pagos, a una sola sede del proveedor.");
+                throw new AccountingValidationException("El pago debe corresponder al mismo tercero y, en pagos, a una sola sede del proveedor.");
             if (tenders.Any(line => line.PartyId is { } id && id != party[0] ||
                 payable && (line.Credit <= 0 || line.Debit != 0) || !payable && (line.Debit <= 0 || line.Credit != 0)))
                 throw new AccountingValidationException("Las partidas de tesorería no corresponden al tercero o al sentido del abono.");
@@ -414,25 +462,28 @@ public static partial class AccountingVoucherFinancialValidation
             }
             var paymentCounterparts = directCounterparts[group.Key].Where(line => line.FinancialGroupId == group.Key &&
                 !financialIds.Contains(line.LineId!.Value) && !openingIds.Contains(line.LineId.Value)).ToArray();
-            var additionalConcepts = paymentCounterparts.Where(line => line.FinancialConceptId is not null).ToArray();
+            var gain = discountAdjustments.Values.Where(value => value > 0m).Sum();
+            var loss = -discountAdjustments.Values.Where(value => value < 0m).Sum();
+            // A discount is identified by the explicit decision and its configured
+            // account; other counterparts are explicit account lines, with or without a catalogue concept.
+            var discountCounterparts = paymentCounterparts.Where(line => line.FinancialConceptId is null &&
+                (gain > 0m && line.AccountId == context.SupplierDiscountEarnedAccountId ||
+                 loss > 0m && line.AccountId == context.SupplierDiscountLostAccountId)).ToArray();
+            var discountLineIds = discountCounterparts.Select(line => line.LineId!.Value).ToHashSet();
+            var additionalConcepts = paymentCounterparts.Where(line => !discountLineIds.Contains(line.LineId!.Value)).ToArray();
             if (additionalConcepts.Any(line => line.PartyId != party[0] || line.ExistingPosition is not null ||
                 accounts[line.AccountId].Function != "General" || line.PaymentEvidence is not null ||
                 line.DueDate is not null || line.FinancialDiscountEarned is not null ||
                 (payable ? line.Debit <= 0m || line.Credit != 0m : line.Credit <= 0m || line.Debit != 0m)))
-                throw new AccountingValidationException("El concepto adicional debe identificar una contrapartida general del mismo tercero y sentido del pago. No reduce la obligación ni crea un anticipo.");
+                throw new AccountingValidationException("La contrapartida adicional debe ser una cuenta general del mismo tercero y sentido del pago. No reduce la obligación ni crea un anticipo.");
             var additionalAmount = additionalConcepts.Sum(line => payable ? line.Debit : line.Credit);
-            var discountCounterparts = paymentCounterparts.Where(line => line.FinancialConceptId is null).ToArray();
-            var gain = discountAdjustments.Values.Where(value => value > 0m).Sum();
-            var loss = -discountAdjustments.Values.Where(value => value < 0m).Sum();
-            var expectedCount = (gain > 0m ? 1 : 0) + (loss > 0m ? 1 : 0);
-            if (discountCounterparts.Length != expectedCount ||
-                gain > 0m && !discountCounterparts.Any(line => line.AccountId == context.SupplierDiscountEarnedAccountId &&
-                    line.PartyId == party[0] && line.Credit == gain && line.Debit == 0m) ||
-                loss > 0m && !discountCounterparts.Any(line => line.AccountId == context.SupplierDiscountLostAccountId &&
-                    line.PartyId == party[0] && line.Debit == loss && line.Credit == 0m) ||
-                discountCounterparts.Any(line => line.ExistingPosition is not null || line.PaymentEvidence is not null ||
-                    line.DueDate is not null || line.FinancialDiscountEarned is not null))
-                throw new AccountingValidationException("No se registró el egreso ni se pagó: la contrapartida del descuento financiero debe usar la cuenta configurada y el importe exacto del grupo.");
+            if (discountCounterparts.Where(line => line.AccountId == context.SupplierDiscountEarnedAccountId).Sum(line => line.Credit) != gain ||
+                discountCounterparts.Where(line => line.AccountId == context.SupplierDiscountLostAccountId).Sum(line => line.Debit) != loss ||
+                discountCounterparts.Any(line => line.PartyId != party[0] || line.ExistingPosition is not null || line.PaymentEvidence is not null ||
+                    line.DueDate is not null || line.FinancialDiscountEarned is not null ||
+                    line.AccountId == context.SupplierDiscountEarnedAccountId && (line.Credit <= 0m || line.Debit != 0m) ||
+                    line.AccountId == context.SupplierDiscountLostAccountId && (line.Debit <= 0m || line.Credit != 0m)))
+                throw new AccountingValidationException("No se registró el egreso ni se pagó: las contrapartidas del descuento financiero deben usar las cuentas configuradas y sumar su importe exacto.");
             foreach (var counterpart in paymentCounterparts) paymentCounterpartIds.Add(counterpart.LineId!.Value);
             try
             {
@@ -468,7 +519,8 @@ public static partial class AccountingVoucherFinancialValidation
                     moneyAllocations.Select(item => new VoucherFinancialPaymentAllocation(item.Line.LineId!.Value,
                         item.Line.ExistingPosition!.SubledgerId, item.Line.AccountId, item.CashAmount,
                         item.Line.FinancialDiscountEarned, item.Adjustment)).ToArray(), normalizedTenders,
-                    advance?.PositionId, advance?.Amount ?? 0m, additionalAmount == 0m ? null : additionalAmount));
+                    advance?.PositionId, advance?.Amount ?? 0m, additionalAmount == 0m ? null : additionalAmount,
+                    additionalConcepts.Length == 0 ? null : additionalConcepts.Select(line => line.LineId!.Value).ToArray()));
             }
             catch (ArgumentException error)
             {
@@ -478,7 +530,7 @@ public static partial class AccountingVoucherFinancialValidation
         if (lines.Any(line => line.FinancialGroupId is { } groupId &&
             !financialIds.Contains(line.LineId!.Value) && !openingIds.Contains(line.LineId!.Value) &&
             !paymentCounterpartIds.Contains(line.LineId!.Value) && !directGroups.Contains(groupId)))
-            throw new AccountingValidationException("La partida no corresponde a un grupo financiero ni a sus contrapartidas directas.");
+            throw new AccountingValidationException("La partida no corresponde a una operación financiera ni a sus contrapartidas directas.");
         return new(user.UserId, payments, openings, creditApplications, directMovements,
             unapplications.Count == 0 ? null : unapplications,conceptEvidence);
     }

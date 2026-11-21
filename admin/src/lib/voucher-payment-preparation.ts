@@ -23,8 +23,8 @@ export function voucherDiscountAdjustment(position: AccountingOpenPosition, deci
 
 export function createVoucherPositionLines(position: AccountingOpenPosition, amount: number, decision: VoucherDiscountDecision) {
   const adjustment = voucherDiscountAdjustment(position, decision);
-  const groupId = decision === "pending" ? null : crypto.randomUUID();
-  const selected = createVoucherPositionLine(position, amount, groupId, decision === "pending" ? null : decision === "earned");
+  // The composing voucher supplies its document ID; no separate identity is created.
+  const selected = createVoucherPositionLine(position, amount, null, decision === "pending" ? null : decision === "earned");
   if (adjustment === 0) return [selected];
   const accountId = adjustment > 0 ? position.financialDiscountEarnedAccountId : position.financialDiscountLostAccountId;
   if (!accountId) throw new Error("Falta la cuenta del descuento financiero. Revisa su configuración.");
@@ -32,7 +32,7 @@ export function createVoucherPositionLines(position: AccountingOpenPosition, amo
     lineId: crypto.randomUUID(), accountId, partyId: position.partyId, costCenterId: null,
     description: `Descuento financiero ${position.documentNumber}`.slice(0, 500),
     reference: position.documentNumber.slice(0, 100), debit: adjustment < 0 ? -adjustment : 0,
-    credit: adjustment > 0 ? adjustment : 0, financialGroupId: groupId,
+    credit: adjustment > 0 ? adjustment : 0, financialGroupId: null,
   }, accountCode: adjustment > 0 ? position.financialDiscountEarnedAccountCode ?? null : position.financialDiscountLostAccountCode ?? null,
     accountName: adjustment > 0 ? position.financialDiscountEarnedAccountName ?? null : position.financialDiscountLostAccountName ?? null,
     partyName: position.partyName, partyIdentification: position.partyIdentification, costCenterName: null }];

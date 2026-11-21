@@ -197,6 +197,7 @@ for (const sample of [
         expect(line.existingPosition).toEqual({ subledgerKind: sample.kind, subledgerId: position.subledgerId });
         expect(line.accountId).toBe(position.accountId);
         expect(line.partyId).toBe(position.partyId);
+        expect(line.financialGroupId).toBe(draft.documentId);
         expect(line.debit).toBe(sample.credit > 0 ? 300 : 0);
         expect(line.credit).toBe(sample.debit > 0 ? 300 : 0);
         draft = { ...draft, rowVersion: "AAAAAAAAAAI=", lines: command.lines.map(value => ({ value,

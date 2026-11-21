@@ -9,6 +9,52 @@ namespace Auraly.Foundation.Tests;
 public sealed class AccountingVoucherFinancialValidationTests
 {
     [Theory]
+    [InlineData(2)]
+    [InlineData(50)]
+    [InlineData(500)]
+    public void Captured_financial_references_use_existing_document_or_line_ids_without_mutating_input(int count)
+    {
+        var documentId = Guid.NewGuid();
+        var opaque = Guid.NewGuid();
+        var lines = Enumerable.Range(0, count).Select(index => new VoucherDraftLine(null, null, null,
+            $"Partida {index}", index % 2 == 0 ? 100 : 0, index % 2 == 0 ? 0 : 100,
+            LineId: Guid.NewGuid(), FinancialGroupId: opaque)).ToArray();
+        var request = new SaveVoucherDraftRequest(documentId, AccountingManualDocumentTypes.ManualVoucher,
+            DateTimeOffset.UtcNow, "MANUAL_VOUCHER", "Vínculos del comprobante", null, lines, null, null, PayloadVersion: 4);
+        var bound = AccountingVoucherFinancialValidation.BindSourceReferences(request);
+        Assert.All(bound.Lines, line => Assert.Equal(documentId, line.FinancialGroupId));
+        Assert.Equal(lines.Select(line => line.LineId), bound.Lines.Select(line => line.LineId));
+        Assert.Equal(lines.Select(line => (line.Debit, line.Credit)), bound.Lines.Select(line => (line.Debit, line.Credit)));
+        Assert.All(request.Lines, line => Assert.Equal(opaque, line.FinancialGroupId));
+        Assert.Equal(bound.Lines, AccountingVoucherFinancialValidation.BindSourceReferences(bound).Lines);
+
+        var partitions = lines.Select((line, index) => line with { FinancialGroupId = lines[index / 2 * 2].LineId }).ToArray();
+        var crossed = AccountingVoucherFinancialValidation.BindSourceReferences(request with { Lines = partitions });
+        Assert.Equal(partitions, crossed.Lines);
+        var aliases = Enumerable.Range(0, count / 2).Select(_ => Guid.NewGuid()).ToArray();
+        var supplied = partitions.Select((line, index) => line with { FinancialGroupId = aliases[index / 2] }).ToArray();
+        var rebound = AccountingVoucherFinancialValidation.BindSourceReferences(request with { Lines = supplied });
+        if (count > 2) Assert.Equal(partitions, rebound.Lines);
+        var allowed = lines.Select(line => line.LineId!.Value).Append(documentId).ToHashSet();
+        Assert.All(rebound.Lines, line => Assert.Contains(line.FinancialGroupId!.Value, allowed));
+    }
+
+    [Fact]
+    public void A_financial_reference_cannot_target_a_line_assigned_to_another_operation()
+    {
+        var first = Guid.NewGuid(); var second = Guid.NewGuid();
+        var request = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
+            DateTimeOffset.UtcNow, "MANUAL_VOUCHER", "Vínculo inválido", null,
+            [new(null, null, null, "Origen", 1, 0, LineId: first, FinancialGroupId: first),
+             new(null, null, null, "Otro destino", 0, 1, LineId: second, FinancialGroupId: second),
+             new(null, null, null, "Destino ajeno", 0, 1, LineId: Guid.NewGuid(), FinancialGroupId: second)],
+            null, null, PayloadVersion: 4);
+        var invalid = request with { Lines = request.Lines.Select(line => line.LineId == second
+            ? line with { FinancialGroupId = first } : line).ToArray() };
+        Assert.Throws<AccountingValidationException>(() => AccountingVoucherFinancialValidation.BindSourceReferences(invalid));
+    }
+
+    [Theory]
     [InlineData(false, true, 100, 90, 10)]
     [InlineData(true, false, 90, 100, -10)]
     [InlineData(false, false, 100, 100, 0)]
@@ -48,6 +94,16 @@ public sealed class AccountingVoucherFinancialValidationTests
         Assert.Equal(adjustment, allocation.FinancialDiscountAdjustment);
         Assert.Equal(earned, allocation.FinancialDiscountEarned);
         Assert.Equal(cash, Assert.Single(payment.Tenders).Amount);
+        if (adjustment != 0m)
+        {
+            var counterpart = lines[2];
+            var split = request with { Lines = [.. lines.Take(2),
+                counterpart with { Debit = counterpart.Debit / 2, Credit = counterpart.Credit / 2 },
+                counterpart with { LineId = Guid.NewGuid(), Debit = counterpart.Debit / 2, Credit = counterpart.Credit / 2 }] };
+            var splitPayment = Assert.Single(AccountingVoucherFinancialValidation.Normalize(user, split, context, ids).Payments);
+            Assert.Equal(cash, Assert.Single(splitPayment.Allocations).Amount);
+            Assert.Null(splitPayment.AdditionalSourceLineIds);
+        }
         if (adjustment != 0m)
             Assert.Throws<AccountingValidationException>(() => AccountingVoucherFinancialValidation.Normalize(user,
                 request with { Lines = lines.Take(2).ToArray() }, context, ids));

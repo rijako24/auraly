@@ -167,6 +167,15 @@ Para ventas mantiene una proyección física versionada con:
 - costo reconocido congelado;
 - totales diarios conciliables.
 
+La identidad de producto, cantidades, impuestos e importes de
+cada línea provienen de la fuente inmutable validada por hash. Las líneas
+operativas aportan snapshots de atribución y costo cuando existen; su ausencia
+no elimina una venta que tiene fuente verificable. Un producto distinto en la
+misma partida o fuera del tenant se rechaza. El costo se reconoce exclusivamente
+desde las evidencias congeladas/ledger existentes; sin ellas queda desconocido,
+no como un costo cero conocido. Proyectar o reconstruir no crea las líneas
+operativas ausentes ni repara inventario, cartera, contabilidad o DIAN.
+
 Las correcciones de medios confirmadas en conciliación de caja o despacho
 son fuentes financieras inmutables del mismo motor de Reporting. Su aceptación
 se registra en `SalesReportingJobs` junto al trabajo financiero, pero la señal
