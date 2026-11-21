@@ -110,6 +110,18 @@ documentos productivos ni sustituye el ensayo del resto de la migración.
 
 Auraly no reconstruye una factura histórica leyendo maestros actuales. El payload congelado contiene emisor, adquirente, autorización/rango, número DIAN, fecha/hora, moneda, líneas, cantidades, unidades, precios, descuentos, impuestos, totales, software y datos mínimos de pago.
 
+La identificación del adquirente se valida con una sola regla de
+`PosSaleFiscalMappings`, compartida por la verificación fiscal antes del commit
+online, la emisión fiscal offline, servicios y la generación XML. FAK21 del anexo
+1.9 exige 3–30 caracteres; la cédula de ciudadanía colombiana (13) admite sólo
+dígitos. Los documentos extranjeros conservan sus letras. La regla comprueba
+el formato, no consulta la existencia de una persona en un registro civil.
+El error se presenta en español y no cambia la identificación ni convierte al
+cliente en consumidor final. El rechazo antes de emitir conserva borrador y
+numeración; un snapshot histórico inválido requiere información verificable,
+sin reescribirlo ni reenviarlo por efecto del despliegue. Los comprobantes
+comerciales sin documento fiscal conservan su captura.
+
 La captura nueva de consumidor final usa la misma identidad fiscal al no elegir
 cliente y al seleccionar explícitamente su tercero del maestro. El lector común
 `SqlSaleUblPartyReader` reconoce su identificación fiscal y reutiliza la

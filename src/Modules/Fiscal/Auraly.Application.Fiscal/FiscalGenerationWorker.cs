@@ -321,6 +321,10 @@ public sealed class FiscalGenerationWorker(
     {
         if (work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice)
         {
+            var customer = work.ServiceInvoice?.UblSnapshot.Customer ?? work.Sale?.UblSnapshot?.Customer;
+            if (customer is not null && PosSaleFiscalMappings.DianCustomerIdentificationError(
+                customer.Identification, customer.IdentificationTypeCode) is { } identificationError)
+                throw new FiscalSnapshotDataException(identificationError);
             var invoice = work.ServiceInvoice is null
                 ? await MapInvoiceAsync(work, cancellationToken)
                 : await MapServiceInvoiceAsync(work, cancellationToken);

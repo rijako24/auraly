@@ -1470,6 +1470,9 @@ public sealed class PosEdgeSaleStore
 
     private static void ValidateUblSnapshot(PosEdgeIssueCommand command, FiscalSeriesCursorRow cursor)
     {
+        if (PosSaleFiscalMappings.DianCustomerIdentificationError(command.CustomerIdentification,
+            command.UblSnapshot?.Customer.IdentificationTypeCode) is { } identificationError)
+            throw new InvalidOperationException(identificationError);
         var snapshot = command.UblSnapshot;
         if (snapshot is null) return;
         if (snapshot.FiscalIssuerConfigurationId == Guid.Empty ||

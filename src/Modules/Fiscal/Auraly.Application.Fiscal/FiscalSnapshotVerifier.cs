@@ -109,6 +109,10 @@ public static class FiscalSnapshotValidator
             return "The fiscal snapshot is required.";
         }
 
+        if (PosSaleFiscalMappings.DianCustomerIdentificationError(snapshot.CustomerIdentification,
+            request.UblSnapshot?.Customer.IdentificationTypeCode) is { } identificationError)
+            return identificationError;
+
         if (request.DocumentId == Guid.Empty ||
             request.TenantId == Guid.Empty ||
             request.BusinessId == Guid.Empty ||

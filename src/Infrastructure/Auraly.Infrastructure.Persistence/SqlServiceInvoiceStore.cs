@@ -573,9 +573,13 @@ public sealed class SqlServiceInvoiceStore(
                 throw new ServiceInvoiceValidationException(
                     "El cliente o la sede no están disponibles para facturar.");
         }
-        return await SqlOnlineSalesDraftStore.ReadCustomerPartyAsync(
+        var party = await SqlOnlineSalesDraftStore.ReadCustomerPartyAsync(
             connection, transaction, businessId, customerId, partySiteId, configuration,
             cancellationToken);
+        if (PosSaleFiscalMappings.DianCustomerIdentificationError(party.Identification,
+            party.IdentificationTypeCode) is { } identificationError)
+            throw new ServiceInvoiceValidationException(identificationError);
+        return party;
     }
 
     private static async Task<IReadOnlyList<ServiceInvoiceLineContract>> BuildLinesAsync(

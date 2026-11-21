@@ -4,6 +4,24 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosSaleFiscalMappingsTests
 {
+    [Theory]
+    [InlineData("EE")]
+    [InlineData("ABC")]
+    public void Fiscal_customer_rejects_an_invalid_citizenship_identification(string identification)
+    {
+        Assert.NotNull(PosSaleFiscalMappings.DianCustomerIdentificationError(identification,"13"));
+    }
+
+    [Theory]
+    [InlineData("123", "13")]
+    [InlineData("1234567890", "13")]
+    [InlineData("AB12345", "41")]
+    [InlineData("222222222222", "13")]
+    public void Fiscal_customer_preserves_valid_local_foreign_and_final_consumer_identifications(string identification,string type)
+    {
+        Assert.Null(PosSaleFiscalMappings.DianCustomerIdentificationError(identification,type));
+    }
+
     [Fact]
     public void Final_consumer_projection_preserves_contact_and_does_not_infer_identity_from_a_name()
     {

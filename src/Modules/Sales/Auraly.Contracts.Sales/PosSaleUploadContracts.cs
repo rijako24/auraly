@@ -274,6 +274,18 @@ public static class PosSaleFiscalMappings
 {
     public const string FinalConsumerIdentification = "222222222222";
 
+    // DIAN annex 1.9, FAK21: the buyer's identifier has 3..30 characters.
+    // A Colombian citizenship card is numeric; foreign identifiers may contain letters.
+    public static string? DianCustomerIdentificationError(
+        string? identification, string? identificationTypeCode)
+    {
+        if (string.IsNullOrWhiteSpace(identification) || identification.Length is < 3 or > 30)
+            return "La identificación del adquirente debe tener entre 3 y 30 caracteres. Corrige el tercero antes de facturar.";
+        if (identificationTypeCode == "13" && identification.Any(character => character is < '0' or > '9'))
+            return "La cédula de ciudadanía del adquirente debe contener solo números. Corrige el tercero antes de facturar.";
+        return null;
+    }
+
     public static PosSaleUblPartyContract FinalConsumer(
         PosSaleUblAddressContract address, string? email = null, string? telephone = null) =>
         new(FinalConsumerIdentification, "0", "13", "2", "Consumidor final", "Consumidor final",

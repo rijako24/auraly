@@ -16,6 +16,24 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosSaleCompletionServiceTests
 {
+    [Fact]
+    public async Task Invalid_fiscal_customer_does_not_consume_the_offline_draft_or_number()
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var draft=await fixture.AddLineAsync();
+            var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>
+                fixture.CompleteAsync(draft.DraftId,customerIdentification:"EE"));
+            Assert.Contains("identificación del adquirente",error.Message);
+            Assert.Equal(PosDraftStatus.Active,(await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
+            Assert.Empty(await fixture.Sales.GetPendingOutboxAsync());
+            var completed=await fixture.CompleteAsync(draft.DraftId);
+            Assert.Equal("VTA03-00000100",completed.IssuedSale.DocumentNumber);
+            Assert.Equal("FV100",completed.IssuedSale.FiscalNumber);
+            Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+        });
+    }
+
     [Theory]
     [InlineData("Cash")]
     [InlineData("Transfer")]
@@ -567,7 +585,8 @@ public sealed class PosSaleCompletionServiceTests
             IReadOnlyCollection<OfflineSalePayment>? payments = null,
             PosSaleCreditTerms? credit = null,
             IReadOnlySet<string>? permissions = null,
-            string documentType = PosSaleDocumentTypes.Invoice) =>
+            string documentType = PosSaleDocumentTypes.Invoice,
+            string customerIdentification = "222222222") =>
             new PosSaleCompletionService(Drafts, Issuance, Sales, Printer).CompleteAsync(
                 draftId,
                 new CompletePosSaleCommand(
@@ -575,7 +594,7 @@ public sealed class PosSaleCompletionServiceTests
                     Register,
                     IssuedAt,
                     "9001234567",
-                    "222222222",
+                    customerIdentification,
                     new FiscalTechnicalKey("CLAVE-TECNICA", "v1"),
                     FiscalEnvironment.Test,
                     "https://catalogo-vpfe.dian.gov.co/document/searchqr",

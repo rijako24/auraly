@@ -18,6 +18,49 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData("EE")]
+    [InlineData("ABC")]
+    public async Task Invalid_fiscal_customer_is_rejected_before_acceptance_and_can_retry_after_correction(string identification)
+    {
+        var actor=await CreateUserAsync("invalid-fiscal-identity");
+        var (customer,site)=await CreateNaturalPersonCustomerAsync(actor,identification);
+        using var client=fixture.CreateUserClient(actor,CommercePermissionCodes.SalesCreate);
+        var draft=await OpenAsync(client);
+        using(var select=new HttpRequestMessage(HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
+        {Content=JsonContent.Create(new SelectOnlineSalesDraftCustomerRequest(customer,draft.Version,site))})
+        {
+            select.Headers.Add("Idempotency-Key",Guid.NewGuid().ToString("N"));
+            using var response=await client.SendAsync(select);response.EnsureSuccessStatusCode();
+            draft=(await response.Content.ReadFromJsonAsync<OnlineSalesCustomerSelection>())!.Draft;
+        }
+        draft=await CaptureAsync(client,draft);
+        var request=new CompleteOnlineSalesDraftRequest(draft.Version,
+            [new OnlineSalesPayment("Cash",draft.PayableAmount,null)],DocumentType:PosSaleDocumentTypes.Invoice);
+        var key=Guid.NewGuid().ToString("N");
+        using(var mutation=Mutation(draft.DraftId,request,key))
+        using(var rejected=await client.SendAsync(mutation))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest,rejected.StatusCode);
+            Assert.Contains("adquirente",await rejected.Content.ReadAsStringAsync());
+        }
+        await using(var connection=new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var count=new SqlCommand("SELECT COUNT(*) FROM dbo.OnlineSalesCheckoutReceipts WHERE SalesDraftId=@Draft",connection);
+            count.Parameters.AddWithValue("@Draft",draft.DraftId);
+            Assert.Equal(0,Convert.ToInt32(await count.ExecuteScalarAsync()));
+        }
+        await ExecuteAsync("""
+            UPDATE party SET Identification=@Identification,NormalizedIdentification=@Identification
+            FROM dbo.Parties party JOIN dbo.Customers customer ON customer.PartyId=party.PartyId
+            WHERE customer.CustomerId=@Customer;
+            """,new SqlParameter("@Identification",identification=="EE"?"1065648661":"1065648662"),new SqlParameter("@Customer",customer));
+        var completed=await CompleteAsync(client,draft.DraftId,request,key);
+        var replay=await CompleteAsync(client,draft.DraftId,request,key);
+        Assert.Equal(completed.Receipt.DocumentId,replay.Receipt.DocumentId);
+    }
+
     [Fact]
     public async Task Selected_final_consumer_uses_the_same_fiscal_identity_as_an_anonymous_sale()
     {
