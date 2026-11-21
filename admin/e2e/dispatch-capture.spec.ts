@@ -114,10 +114,13 @@ test(`despacho ${viewport.width}: carga transportadores y documentos por sede y 
   expect(listReads).toBe(1); expect(optionsReads).toBe(1); expect(driverQueries).toHaveLength(1);
   expect(candidateQueries).toHaveLength(3);
   const workspace=page.getByRole("dialog",{name:"DSP-TEST",exact:true});
+  await expect(workspace.getByRole("button",{name:"Cancelar despacho",exact:true})).toBeVisible();
   await workspace.getByRole("button",{name:"Preparar despacho",exact:true}).click();
+  await expect(workspace.getByRole("button",{name:"Cancelar despacho",exact:true})).toBeVisible();
   await workspace.getByRole("button",{name:"Verificar mercancía",exact:true}).click();
   const firstQuantity=workspace.getByRole("spinbutton",{name:"Cantidad de PRD-1",exact:true});
   await expect(firstQuantity).toBeEnabled();await expect(firstQuantity).toHaveValue("20.5");
+  await expect(workspace.getByRole("button",{name:"Cancelar despacho",exact:true})).toHaveCount(0);
   expect(detailReads).toBe(1);
   const readsBeforeVerification=detailReads;
   await workspace.getByRole("button",{name:"Verificar 20,5",exact:true}).click();
