@@ -1,4 +1,6 @@
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -22,7 +24,7 @@ public sealed class ReportingReturnTotalMigrationTests(ServerSliceFixture fixtur
         try
         {
             await scenario.Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
-                "SalesReceipt", "Cash", true, false, "Partial", verifyReporting: true);
+                "SalesReceipt", "Cash", true, false, "Partial", verifyReporting: true, rebuildReporting: true);
         }
         finally { await scenario.DisposeAsync(); }
 
@@ -91,7 +93,31 @@ public sealed class ReportingReturnTotalMigrationTests(ServerSliceFixture fixtur
         await fixture.ReapplySchemaAsync();
         await AssertPreservedAsync();
 
+        // Imported figures are evidence even when their original operation was
+        // never imported. A rebuild must reject before resetting that history.
+        var reportBeforeRebuild = await ReportSnapshotAsync();
+        using var scope = fixture.CreateScope();
+        var reporting = scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
+        var incomplete = await Assert.ThrowsAsync<SqlException>(() =>
+            reporting.RebuildAsync(fixture.TenantId, fixture.BusinessId, default));
+        Assert.Equal(51626, incomplete.Number);
+        Assert.Equal(reportBeforeRebuild, await ReportSnapshotAsync());
+        await AssertPreservedAsync();
+
         Task ApplyAsync() => fixture.ApplyMigrationAsync("20261121_ProjectReturnOfficialTotals.sql", connection);
+
+        async Task<string> ReportSnapshotAsync() => (string)(await ScalarAsync("""
+            SELECT (SELECT
+              (SELECT * FROM reporting.SalesReportDocuments WHERE BusinessId=@Business ORDER BY DocumentId FOR JSON PATH) Documents,
+              (SELECT * FROM reporting.SalesReportLineFacts WHERE BusinessId=@Business ORDER BY FactId FOR JSON PATH) Lines,
+              (SELECT * FROM reporting.SalesReportTaxFacts WHERE BusinessId=@Business ORDER BY SourceDocumentId,SourceDocumentType,TaxCode,TaxRate FOR JSON PATH) Taxes,
+              (SELECT * FROM reporting.SalesReportPaymentFacts WHERE BusinessId=@Business ORDER BY SourceDocumentId,SourceDocumentType,PaymentNumber FOR JSON PATH) Payments,
+              (SELECT * FROM reporting.SalesReportDailyTotals WHERE BusinessId=@Business ORDER BY BusinessLocalDate,CurrencyCode FOR JSON PATH) Daily,
+              (SELECT * FROM reporting.SalesReportDailyDimensionTotals WHERE BusinessId=@Business ORDER BY BusinessLocalDate,DimensionType,DimensionKey,CurrencyCode FOR JSON PATH) Dimensions,
+              (SELECT * FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@Business ORDER BY ProjectionVersion FOR JSON PATH) Checkpoints,
+              (SELECT * FROM reporting.SalesReportingJobs WHERE BusinessId=@Business ORDER BY SourceDocumentId,SourceDocumentType,SourceVersion FOR JSON PATH) Jobs
+              FOR JSON PATH,WITHOUT_ARRAY_WRAPPER)
+            """))!;
 
         async Task AssertPreservedAsync()
         {

@@ -24,6 +24,7 @@ public sealed partial class SqlSalesReportingProcessor
             await using(var create=new SqlCommand("""
                 CREATE TABLE #RebuildSources(Sequence bigint NOT NULL PRIMARY KEY,
                   SourceDocumentId uniqueidentifier NOT NULL,SourceDocumentType nvarchar(32) COLLATE DATABASE_DEFAULT NOT NULL,SourceVersion bigint NOT NULL);
+                CREATE INDEX IX_RebuildSources_Document ON #RebuildSources(SourceDocumentId,SourceDocumentType);
                 """,connection))
                 await create.ExecuteNonQueryAsync(cancellationToken);
             await using(var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,cancellationToken))
@@ -43,6 +44,30 @@ public sealed partial class SqlSalesReportingProcessor
                           AND financial.SourceDocumentType=r.SourceDocumentType AND financial.BusinessId=r.BusinessId
                           AND financial.Status IN(N'Posted',N'CommercialEffectsApplied')));
                     IF NOT EXISTS(SELECT 1 FROM #RebuildSources) THROW 51621,N'La sede no tiene fuentes inmutables para reconstruir.',1;
+                    -- A partial source manifest cannot authorize deleting imported
+                    -- report-only history. Validate every existing source-bearing
+                    -- projection in this same transaction before the first reset.
+                    IF EXISTS(
+                      SELECT 1 FROM (
+                        SELECT DocumentId SourceDocumentId,DocumentType SourceDocumentType
+                          FROM reporting.SalesReportDocuments WHERE BusinessId=@Business
+                        UNION ALL SELECT SourceDocumentId,SourceDocumentType
+                          FROM reporting.SalesReportTaxFacts WHERE BusinessId=@Business
+                        UNION ALL SELECT SourceDocumentId,SourceDocumentType
+                          FROM reporting.SalesReportPaymentFacts WHERE BusinessId=@Business
+                        UNION ALL SELECT SourceDocumentId,SourceDocumentType
+                          FROM reporting.SalesReportLineFacts WHERE BusinessId=@Business
+                        UNION ALL SELECT SourceDocumentId,SourceDocumentType
+                          FROM reporting.ServiceSalesReportLineFacts WHERE BusinessId=@Business
+                        UNION ALL SELECT SourceDocumentId,SourceDocumentType
+                          FROM reporting.PurchaseReportDocuments WHERE BusinessId=@Business
+                        UNION ALL SELECT SourceDocumentId,SourceDocumentType
+                          FROM reporting.PurchaseReportLineFacts WHERE BusinessId=@Business
+                      ) existing
+                      WHERE NOT EXISTS(SELECT 1 FROM #RebuildSources source
+                        WHERE source.SourceDocumentId=existing.SourceDocumentId
+                          AND source.SourceDocumentType=existing.SourceDocumentType))
+                      THROW 51626,N'La sede conserva histórico de reportes sin fuentes suficientes para reconstruirlo. No se modificó el histórico.',1;
                     DELETE reporting.SalesReportPaymentFacts WHERE BusinessId=@Business;
                     DELETE reporting.SalesReportTaxFacts WHERE BusinessId=@Business;
                     DELETE reporting.ServiceSalesReportLineFacts WHERE BusinessId=@Business;

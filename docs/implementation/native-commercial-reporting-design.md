@@ -69,6 +69,15 @@ de esa versión, conservando la columna y los datos proyectados. Esa lectura rec
 limitación anterior; se prefiere avanzar con la versión corregida. No se
 revierte el mayor ni los documentos originales como rollback del reporte.
 
+La reconstrucción explícita de consola comprueba, en la transacción de reset
+existente, que su manifiesto de fuentes cubra cada documento o hecho conservado
+de ventas, servicios y compras. Si falta alguno, rechaza antes de borrar datos,
+modificar checkpoints o poner trabajos pendientes. El histórico importado sin
+fuente regenerable no autoriza una reconstrucción parcial. La comprobación usa
+el mismo comando y un índice temporal de documento/tipo; no agrega viajes SQL,
+un motor, una captura ni un proceso de reparación. Las lecturas interactivas
+no ejecutan esta comprobación ni cambian su presupuesto.
+
 Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 
 - código y nombre del producto;
