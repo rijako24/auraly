@@ -33,7 +33,7 @@ for (const mode of ["retry", "empty", "forbidden"] as const) {
           partySiteAddress: "Dirección de prueba" }], page: 1, pageSize: 50, total: 1 } });
       } else if (path.endsWith("/issue")) {
         requests.push({ body: route.request().postDataJSON(), key: route.request().headers()["idempotency-key"] });
-        if (requests.length === 1) await route.fulfill({ status: 503, json: { title: "Respuesta interrumpida" } });
+        if (requests.length === 1) await route.fulfill({ status: 503, json: { detail: "Respuesta interrumpida" } });
         else await route.fulfill({ json: { documentId: "service-invoice-1", documentNumber: "FSV-1",
           fiscalNumber: "FSV-1", cufe: "cufe-qa", untaxedAmount: 10000, taxAmount: 1900,
           payableAmount: 11900, creditAmount: 0, fiscalStatus: "Pending", isReplay: true } });

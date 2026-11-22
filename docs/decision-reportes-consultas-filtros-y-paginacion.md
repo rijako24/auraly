@@ -590,6 +590,10 @@ La experiencia mínima incluye:
 - fila accionable mediante puntero, Enter y espacio, sin controles anidados que disparen la fila accidentalmente;
 - foco visible y retorno de foco predecible al cerrar un diálogo.
 
+Los importes de los reportes comerciales se presentan con dos decimales,
+incluido «,00», mediante `commercialReportMoney`; la exportación conserva el
+valor proyectado completo. El formato no modifica importes ni recalcula saldos.
+
 Estados obligatorios:
 
 - **carga:** estructura estable con `Skeleton`; no tabla vacía ni spinner aislado si se conoce la forma del contenido;

@@ -32,23 +32,27 @@ test.describe("enterprise login experience", () => {
   });
 
   test("remembers the canonical company only after a successful login", async ({ page }) => {
+    const user = {
+      userId: "10000000-0000-0000-0000-000000000001",
+      tenantId: "a0a10000-0000-0000-0000-000000000000",
+      tenantKey: "@auraly",
+      username: "admin",
+      email: "admin@auraly.ai",
+      firstName: "Administrador",
+      lastName: "Auraly",
+      avatarUrl: null,
+      roles: [],
+      permissions: [],
+    };
     await page.route("**/api/auth/login", async (route) => route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({
-        user: {
-          userId: "10000000-0000-0000-0000-000000000001",
-          tenantId: "a0a10000-0000-0000-0000-000000000000",
-          tenantKey: "@auraly",
-          username: "admin",
-          email: "admin@auraly.ai",
-          firstName: "Administrador",
-          lastName: "Auraly",
-          avatarUrl: null,
-          roles: [],
-          permissions: [],
-        },
-      }),
+      body: JSON.stringify({ user }),
+    }));
+    await page.route("**/api/auth/me", async (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(user),
     }));
     await page.goto("/login");
     await page.locator("#tenantKey").fill("  @AURALY  ");
