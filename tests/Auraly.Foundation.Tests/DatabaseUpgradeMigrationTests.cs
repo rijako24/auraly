@@ -101,6 +101,8 @@ public sealed class DatabaseUpgradeMigrationTests
             migration.GetString() == "20261113_RetireAcceptedAccountConfiguration.sql");
         Assert.Contains(result.RootElement.EnumerateArray(), migration =>
             migration.GetString() == "20261121_BackfillReportingSourceReferences.sql");
+        Assert.Contains(result.RootElement.EnumerateArray(), migration =>
+            migration.GetString() == "20261121_ProjectReturnOfficialTotals.sql");
     }
 
     [Theory]

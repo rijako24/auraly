@@ -97,8 +97,9 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
             VALUES(NEWID(),@Tenant,@Business,@Service,N'ServiceInvoice',1,@Service,N'Sale','2026-11-02','20261102',@CustomerC,NEWID(),N'SV',N'Servicio',
               N'EA',1,50,0,50,N'IVA',19,9.5,59.5,5,SYSDATETIMEOFFSET());
             INSERT reporting.SalesReportTaxFacts(SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,TaxCode,TaxRate,TenantId,BusinessId,
-              BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt)
-            SELECT Id,Type,Original,N'IVA',Rate,@Tenant,@Business,Date,Base,Tax,Base+Tax,SYSDATETIMEOFFSET(),CONVERT(datetimeoffset,Date)
+              BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt,OfficialDocumentTotalAmount)
+            SELECT Id,Type,Original,N'IVA',Rate,@Tenant,@Business,Date,Base,Tax,Base+Tax,SYSDATETIMEOFFSET(),CONVERT(datetimeoffset,Date),
+              CASE WHEN Type=N'SalesReturn' THEN Base+Tax END
             FROM (VALUES
               (@Invoice,N'SalesInvoice',@Invoice,19.0,CONVERT(date,'20261101'),220.0,41.8),
               (@Invoice,N'SalesInvoice',@Invoice,0.0,CONVERT(date,'20261101'),100.0,0.0),

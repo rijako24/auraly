@@ -621,21 +621,22 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                     line.TaxAmount, line.LineTotal)).Concat((value.Charges ?? [])
                 .Where(charge => charge.InvoicedAmount > 0).Select(charge =>
                     new TaxFact(charge.TaxCode, charge.TaxRate, charge.InvoicedUntaxedAmount,
-                        charge.InvoicedTaxAmount, charge.InvoicedAmount))), -1m, now, cancellationToken,value.OriginalDocumentId,value.ReturnedAt,localHour);
+                        charge.InvoicedTaxAmount, charge.InvoicedAmount))), -1m, now, cancellationToken,value.OriginalDocumentId,value.ReturnedAt,localHour,
+            officialDocumentTotal: -value.TotalAmount);
 
     private static async Task InsertTaxFactsAsync(
         SalesReportingSqlSession session,
         Guid documentId, string documentType, Guid tenantId, Guid businessId,
         DateOnly localDate, IEnumerable<TaxFact> lines, decimal sign,
         DateTimeOffset now, CancellationToken cancellationToken, Guid? originalSaleDocumentId = null,
-        DateTimeOffset? occurredAt = null,byte? localHour=null)
+        DateTimeOffset? occurredAt = null,byte? localHour=null,decimal? officialDocumentTotal=null)
     {
         const string sql = """
             INSERT reporting.SalesReportTaxFacts
               (SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,TaxCode,TaxRate,TenantId,BusinessId,
-               BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt,BusinessLocalHour)
+               BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt,BusinessLocalHour,OfficialDocumentTotalAmount)
             SELECT @DocumentId,@DocumentType,@OriginalId,t.Code,t.Rate,@TenantId,@BusinessId,@LocalDate,
-                   t.Taxable,t.Tax,t.Total,@ProjectedAt,@OccurredAt,@LocalHour
+                   t.Taxable,t.Tax,t.Total,@ProjectedAt,@OccurredAt,@LocalHour,@OfficialDocumentTotal
             FROM OPENJSON(@Taxes) WITH
               (Code nvarchar(16),Rate decimal(9,6),Taxable decimal(19,4),
                Tax decimal(19,4),Total decimal(19,4)) t;
@@ -651,6 +652,10 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@OriginalId", originalSaleDocumentId ?? documentId);
         command.Parameters.AddWithValue("@OccurredAt", (object?)occurredAt ?? DBNull.Value);
         command.Parameters.AddWithValue("@LocalHour",(object?)localHour??DBNull.Value);
+        var official = command.Parameters.Add("@OfficialDocumentTotal", SqlDbType.Decimal);
+        official.Precision = 19;
+        official.Scale = 4;
+        official.Value = (object?)officialDocumentTotal ?? DBNull.Value;
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));

@@ -238,15 +238,22 @@ CREATE TABLE [reporting].[SalesReportTaxFacts]
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+    -- Whole-document signed return total, repeated across its tax groups.
+    -- Aggregate with MAX per source; it is independent of money refunded.
+    [OfficialDocumentTotalAmount] DECIMAL(19,4) NULL,
     CONSTRAINT [PK_SalesReportTaxFacts] PRIMARY KEY CLUSTERED
       ([SourceDocumentId],[SourceDocumentType],[TaxCode],[TaxRate]),
     CONSTRAINT [FK_SalesReportTaxFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
-    CONSTRAINT [FK_SalesReportTaxFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId])
+    CONSTRAINT [FK_SalesReportTaxFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [CK_SalesReportTaxFacts_ReturnTotal] CHECK
+      ([SourceDocumentType]<>N'SalesReturn' OR
+       ([OfficialDocumentTotalAmount] IS NOT NULL AND [OfficialDocumentTotalAmount]<0
+        AND [OriginalSaleDocumentId] IS NOT NULL))
 );
 GO
 CREATE INDEX [IX_SalesReportTaxFacts_Business_Date_Tax]
   ON [reporting].[SalesReportTaxFacts]([BusinessId],[BusinessLocalDate],[TaxCode],[TaxRate])
-  INCLUDE([TaxableAmount],[TaxAmount],[TotalAmount],[TenantId],[OriginalSaleDocumentId],[OccurredAt],[ProjectedAt],[BusinessLocalHour]);
+  INCLUDE([TaxableAmount],[TaxAmount],[TotalAmount],[TenantId],[OriginalSaleDocumentId],[OccurredAt],[ProjectedAt],[BusinessLocalHour],[OfficialDocumentTotalAmount]);
 GO
 
 CREATE TABLE [reporting].[SalesReportDailyTotals]

@@ -42,6 +42,27 @@ firmada. El subtotal exacto se reconstruye como `TotalAmount -
 RoundingAdjustmentAmount`; líneas, bases e impuestos permanecen exactos y
 reporting no reparte el ajuste entre productos ni bases tributarias.
 
+El total oficial de una devolución es el importe comercial confirmado, aunque
+no haya recaudo que devolver o solo se reduzca parte de una deuda. El writer
+existente congela su negativo en `SalesReportTaxFacts.OfficialDocumentTotalAmount`;
+se agrega una sola vez por documento mediante MAX entre sus grupos tributarios.
+`SalesReportDocumentMovements` usa ese dato para el total y su redondeo. Los
+hechos de pago conservan exclusivamente el dinero o la deuda realmente revertidos;
+no se inventa un pago para completar el reporte. No hay consultas operativas
+al leer el informe, nuevas consultas por línea, tablas, motores ni colas.
+
+El despliegue versionado completa únicamente esa columna derivada de las
+devoluciones existentes, junto al vínculo derivado con la venta original si la
+versión anterior no lo tenía, desde su cabecera confirmada. Valida empresa,
+sede y referencias existentes antes del DACPAC. Repetirlo no reescribe valores existentes
+ni reprocesa inventario, fuentes financieras o DIAN. El corte usa la detención
+de API/Worker ya exigida por el publicador: la nueva restricción requiere el
+writer correspondiente. Para volver a un writer anterior hay que detenerlos,
+restaurar la función lectora de esa versión y retirar la nueva restricción,
+conservando la columna y los datos proyectados. Esa lectura recuperaría la
+limitación anterior; se prefiere avanzar con la versión corregida. No se
+revierte el mayor ni los documentos originales como rollback del reporte.
+
 Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 
 - código y nombre del producto;

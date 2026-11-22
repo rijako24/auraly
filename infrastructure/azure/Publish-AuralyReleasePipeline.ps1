@@ -398,6 +398,7 @@ function Publish-Database {
             '20260916_AddGenericProductMode.sql',
             '20260916_RemoveNonOperationalReportingSources.sql',
             '20261121_BackfillReportingSourceReferences.sql',
+            '20261121_ProjectReturnOfficialTotals.sql',
             '20260921_PreserveOrderItemQuantityPrecision.sql',
             '20260907_AlignReceivablesWithAccountingSource.sql',
             '20260922_MigratePortfolioPaymentTenders.sql',

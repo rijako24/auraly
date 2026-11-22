@@ -100,8 +100,8 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
               f.WaiterPartyId,f.WaiterName,f.UnitCode,f.TaxCode,f.TaxRate,-1,-100,0,-100,-19,-119,-60,1,5,SYSDATETIMEOFFSET()
             FROM #Returns r JOIN reporting.SalesReportLineFacts f ON f.SourceDocumentId=r.OriginalId AND f.SourceDocumentType=N'SalesInvoice' AND f.SourceLineNumber=1;
             INSERT reporting.SalesReportTaxFacts(SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,TaxCode,TaxRate,
-              TenantId,BusinessId,BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt)
-            SELECT Id,N'SalesReturn',OriginalId,N'IVA',19,@Tenant,@Business,Date,-100,-19,-119,SYSDATETIMEOFFSET(),CONVERT(datetimeoffset,Date) FROM #Returns;
+              TenantId,BusinessId,BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt,OfficialDocumentTotalAmount)
+            SELECT Id,N'SalesReturn',OriginalId,N'IVA',19,@Tenant,@Business,Date,-100,-19,-119,SYSDATETIMEOFFSET(),CONVERT(datetimeoffset,Date),-100 FROM #Returns;
             INSERT reporting.SalesReportPaymentFacts(SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,BusinessLocalDate,MovementType,MethodCode,Amount,ProjectedAt)
             SELECT Id,N'SalesReturn',1,@Tenant,@Business,Date,N'Refund',N'Cash',-100,SYSDATETIMEOFFSET() FROM #Returns;
             UPDATE daily SET UnitsReturned=returned.Count,Returns=returned.Count*100,NetUntaxedSales=NetUntaxedSales-returned.Count*100,

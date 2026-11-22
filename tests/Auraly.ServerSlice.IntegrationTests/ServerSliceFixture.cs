@@ -1443,6 +1443,9 @@ public sealed partial class ServerSliceFixture : IAsyncLifetime
         process.StartInfo.ArgumentList.Add($"/p:CreateNewDatabase={createNewDatabase}");
         process.StartInfo.ArgumentList.Add("/p:DropObjectsNotInSource=False");
         process.StartInfo.ArgumentList.Add("/p:BlockOnPossibleDataLoss=True");
+        // Match the canonical publisher: additive legacy columns must not
+        // rebuild an otherwise unchanged table just to reorder its columns.
+        process.StartInfo.ArgumentList.Add("/p:IgnoreColumnOrder=True");
         process.Start();
         var standardOutput = process.StandardOutput.ReadToEndAsync();
         var standardError = process.StandardError.ReadToEndAsync();

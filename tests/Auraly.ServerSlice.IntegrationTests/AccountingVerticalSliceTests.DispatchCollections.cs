@@ -16,6 +16,17 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed partial class AccountingVerticalSliceTests
 {
+    [Theory]
+    [InlineData("SalesReceipt", "Partial", 0)]
+    [InlineData("SalesReceipt", "NotDelivered", 0)]
+    [InlineData("SalesInvoice", "Partial", 4000)]
+    [InlineData("SalesInvoice", "Partial", 11900)]
+    public Task Returned_document_totals_are_independent_of_the_money_reversed(
+        string documentType, string returnCase, decimal credit)
+        => Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
+            documentType, "Cash", true, false, returnCase, credit,
+            verifyReporting: true, rebuildReporting: returnCase == "NotDelivered");
+
     [Fact]
     public Task Dispatch_settlement_resumes_an_expired_claim_after_restart_without_another_signal()
         => Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
@@ -402,6 +413,11 @@ public sealed partial class AccountingVerticalSliceTests
                     "SELECT payload.PayloadJson FROM dbo.SalesReturns returned JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=returned.ReturnId AND payload.DocumentType=N'SalesReturn' WHERE returned.OriginalDocumentId=@Id",sale));
                 Assert.Equal(expectedResolution,returnedPayload.EconomicResolution);
                 await AssertBalancedAsync(returnedPayload.ReturnId);
+                Assert.Equal(-returnedPayload.TotalAmount, await ScalarAsync<decimal>($"""
+                    SELECT COALESCE(SUM(OfficialTotal),0)
+                    FROM reporting.SalesReportDocumentMovements('{fixture.TenantId:D}','{fixture.BusinessId:D}','20261101','20261231')
+                    WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturn'
+                    """, returnedPayload.ReturnId));
                 Assert.Equal(-reversedCredit,await ScalarAsync<decimal>("SELECT COALESCE(SUM(Amount),0) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'CreditApplication'",returnedPayload.ReturnId));
                 Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Refund'",returnedPayload.ReturnId));
                 Assert.Equal(reversedTender,await ScalarAsync<decimal>("SELECT COALESCE(SUM(line.Credit),0) FROM dbo.SalesReturns returned JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=returned.ReturnId AND entry.SourceDocumentType=N'SalesReturn' JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId JOIN dbo.SalesPayments payment ON payment.DocumentId=returned.OriginalDocumentId AND payment.PaymentNumber=1 AND payment.AccountId=line.AccountId WHERE returned.OriginalDocumentId=@Id",sale));
