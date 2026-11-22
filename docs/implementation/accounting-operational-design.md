@@ -364,6 +364,12 @@ same transaction. A failed validation rolls that acceptance back completely.
 Integration coverage must verify rollback, scope, mode preservation
 and the affected document flows before this consolidation is considered verified.
 
+The computed `VoucherTypeCode` and `AdjustmentObligationId` source projections
+declare their no-style conversions with `TRY_CAST`, matching the definitions
+SQL Server persists. This preserves values and indexes while preventing DacFx
+from proposing a repeated drop/recreation and blocking a schema-compatible
+API-only release. Deployment contract and data-loss checks remain enabled.
+
 The source's nullable `AccountingPostingJobId` is a derived existence link,
 protected by a composite FK to the job's tenant, business, document ID and type.
 Acceptance sets it only for newly accepted sources inside the same transaction;

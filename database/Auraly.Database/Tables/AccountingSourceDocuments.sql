@@ -14,9 +14,12 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
     -- Derived link to existing work, populated only by acceptance, explicit
     -- legacy recovery or the schema backfill. NULL also covers legacy sources.
     [AccountingPostingJobId] UNIQUEIDENTIFIER NULL,
+    -- SQL Server persists TRY_CONVERT without a style as TRY_CAST in computed
+    -- definitions. Match that representation so DacFx replay does not propose
+    -- dropping/recreating these projections and their indexes on every release.
     [VoucherTypeCode] AS (CONVERT(NVARCHAR(64),CASE
       WHEN [SourceDocumentType]=N'ManualAccountingVoucher' AND ISJSON([PayloadJson])=1
-        AND TRY_CONVERT(INT,JSON_VALUE([PayloadJson],'$.PayloadVersion'))=4
+        AND TRY_CAST(JSON_VALUE([PayloadJson],'$.PayloadVersion') AS INT)=4
       THEN JSON_VALUE([PayloadJson],'$.VoucherTypeCode') END)) PERSISTED,
     -- A posted journal reversal remains a separate immutable source. The
     -- filtered unique key prevents two reversals of the same original.
@@ -27,7 +30,7 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
     -- that have no VoucherDraft. This is a lookup key, never another balance.
     [AdjustmentObligationId] AS (
         CASE WHEN [SourceDocumentType]=N'AccountAdjustment' AND ISJSON([PayloadJson])=1
-        THEN TRY_CONVERT(UNIQUEIDENTIFIER,JSON_VALUE([PayloadJson],'$.SubledgerId')) END
+        THEN TRY_CAST(JSON_VALUE([PayloadJson],'$.SubledgerId') AS UNIQUEIDENTIFIER) END
     ) PERSISTED,
     CONSTRAINT [PK_AccountingSourceDocuments]
         PRIMARY KEY CLUSTERED ([SourceDocumentId],[SourceDocumentType]),
