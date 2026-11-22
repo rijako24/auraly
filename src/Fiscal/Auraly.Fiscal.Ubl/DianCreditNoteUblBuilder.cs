@@ -66,7 +66,9 @@ public sealed class DianCreditNoteUblBuilder
                 E(Cbc, "PaymentMeansCode", "ZZZ")),
             DianTaxTotalXml.Header(note.Taxes, note.CurrencyCode),
             RequestedMonetaryTotal(note),
-            note.Lines.Select(line => CreditLine(line, note.CurrencyCode)));
+            // Support annex 1.1 NSAV06 uses the actual quantity as price base.
+            note.Lines.Select(line => CreditLine(line, note.CurrencyCode,
+                note.BuyerGenerated ? line.Quantity : 1m)));
         var document = new XDocument(new XDeclaration("1.0", "utf-8", "no"), root);
         var bytes = Serialize(document);
         return new DianUblDocument(bytes, Hash(bytes));
@@ -147,7 +149,7 @@ public sealed class DianCreditNoteUblBuilder
                     note.CurrencyCode),
             MoneyElement("PayableAmount", note.PayableAmount, note.CurrencyCode));
 
-    private static XElement CreditLine(DianCreditNoteLine line, string currency) =>
+    private static XElement CreditLine(DianCreditNoteLine line, string currency, decimal priceBaseQuantity) =>
         new(Cac + "CreditNoteLine",
             E(Cbc, "ID", line.Number),
             new XElement(Cbc + "CreditedQuantity", new XAttribute("unitCode", line.UnitCode), Number(line.Quantity)),
@@ -164,7 +166,7 @@ public sealed class DianCreditNoteUblBuilder
                 new XElement(Cac + "StandardItemIdentification",
                     new XElement(Cbc + "ID", new XAttribute("schemeID", line.ProductCodeScheme), line.ProductCode))),
             new XElement(Cac + "Price", MoneyElement("PriceAmount", line.UnitPrice, currency),
-                new XElement(Cbc + "BaseQuantity", new XAttribute("unitCode", line.UnitCode), "1.000000")));
+                new XElement(Cbc + "BaseQuantity", new XAttribute("unitCode", line.UnitCode), Number(priceBaseQuantity))));
 
     private static XElement Currency(string code) => new(Cbc + "DocumentCurrencyCode",
         new XAttribute("listAgencyID", "6"),

@@ -1941,6 +1941,9 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
             StringComparison.Ordinal);
         Assert.Contains("<cbc:ProfileID>DIAN 2.1: Nota de ajuste al documento soporte",
             signedXml, StringComparison.Ordinal);
+        var generatedNote = System.Xml.Linq.XDocument.Parse(signedXml);
+        Assert.Equal("2.000000", generatedNote.Descendants(
+            Auraly.Fiscal.Ubl.DianUblNamespaces.Cbc + "BaseQuantity").Single().Value);
         using (var snapshotJson = System.Text.Json.JsonDocument.Parse(snapshot))
             Assert.Contains($"<cbc:PostalZone>{snapshotJson.RootElement.GetProperty("sellerPostalZone").GetString()}</cbc:PostalZone>",
                 signedXml, StringComparison.Ordinal);

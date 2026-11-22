@@ -160,6 +160,51 @@ public sealed class DianCreditNoteUblTests
         Assert.Throws<ArgumentException>(() => new DianCreditNoteUblBuilder().Build(note));
     }
 
+    [Theory]
+    [InlineData("95", 17.2, 0)]
+    [InlineData("95", 0.333, 0)]
+    [InlineData("95", 2, 100)]
+    [InlineData("95", 1, 0)]
+    [InlineData("91", 17.2, 0)]
+    [InlineData("91", 2, 100)]
+    public void Price_base_quantity_preserves_each_DIAN_note_arithmetic(
+        string documentType, decimal quantity, decimal discount)
+    {
+        var support = documentType == "95";
+        var net = quantity * 5000m - discount;
+        var tax = new DianTax("01", "IVA", net, 0m, 0m);
+        var original = CreateNote();
+        var note = original with
+        {
+            DocumentTypeCode = documentType,
+            CustomizationId = support ? "10" : original.CustomizationId,
+            ProfileId = support ? DianCreditNoteCodes.SupportAdjustmentProfileId : original.ProfileId,
+            UniqueCodeScheme = support ? "CUDS-SHA384" : original.UniqueCodeScheme,
+            OriginalUniqueCodeScheme = support ? "CUDS-SHA384" : original.OriginalUniqueCodeScheme,
+            BuyerGenerated = support,
+            SellerPostalZone = support ? "200001" : null,
+            Lines = [original.Lines[0] with { Quantity = quantity, UnitPrice = 5000m,
+                DiscountAmount = discount, UntaxedAmount = net, Taxes = [tax] }],
+            Taxes = [tax], LineExtensionAmount = net, TaxExclusiveAmount = net,
+            TaxInclusiveAmount = net, DiscountAmount = discount, PayableAmount = net
+        };
+        var built = new DianCreditNoteUblBuilder().Build(note);
+        var xml = XDocument.Parse(System.Text.Encoding.UTF8.GetString(built.Xml));
+        var line = Assert.Single(xml.Root!.Elements(DianUblNamespaces.Cac + "CreditNoteLine"));
+        var price = line.Element(DianUblNamespaces.Cac + "Price")!;
+        var basis = decimal.Parse(price.Element(DianUblNamespaces.Cbc + "BaseQuantity")!.Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        // Support annex 1.1 NSAV06 multiplies PriceAmount by BaseQuantity.
+        // Sales credit notes retain their existing per-unit price base.
+        Assert.Equal(support ? quantity : 1m, basis);
+        Assert.Equal(note.Cude, xml.Root.Element(DianUblNamespaces.Cbc + "UUID")?.Value);
+        Assert.Equal(net.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            line.Element(DianUblNamespaces.Cbc + "LineExtensionAmount")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
     [Fact]
     public void Support_adjustment_rejects_an_incorrect_DIAN_profile_before_signing()
     {

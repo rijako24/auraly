@@ -262,6 +262,12 @@ documento soporte original y lo emite en
 municipio, ciudad, departamento y país. La generación rechaza el snapshot si
 falta el código; no elimina ese dato del XML ni inventa uno en el reintento.
 Este contrato corresponde a las reglas DIAN `NSAD03`, `NSAJ08a` y `NSAJ73`.
+La nota de ajuste conserva además la cantidad real de cada línea en
+`Price/BaseQuantity`, como exige `NSAV06` del anexo 1.1. No usa la base unitaria
+de la nota crédito de venta tipo `91`: esa base se conserva sin cambios. La
+proyección no altera cantidades, precios, descuentos, totales ni CUDS; los XML
+aceptados permanecen inmutables y una nota rechazada solo se regenera mediante
+su reintento explícito y la siguiente versión de artefacto existente.
 
 Una factura de venta solo entra a generación o transmisión fiscal cuando su
 procesamiento operativo en `SalesDocuments` está `Completed`. Ambos stores
@@ -445,4 +451,6 @@ En desarrollo local se usa el mismo contrato respaldado por SQL Server con AES-G
 
 Las pruebas automáticas usan clientes/transportes determinísticos a nivel de contrato y SQL Server real. La integración real sólo puede declararse aceptada para una sede cuando DIAN responda usando sus credenciales válidas; compilar o ejecutar dobles de prueba no sustituye esa aceptación externa.
 
-La rebanada de clientes/personas debe ser la siguiente rebanada funcional: el snapshot ya admite adquirente histórico, pero falta el módulo canónico para crear clientes desde web/POS y modelar una persona con múltiples establecimientos/roles.
+La identidad comercial vigente pertenece al módulo canónico de `Parties` y sus
+roles/establecimientos. La generación fiscal conserva la identidad histórica
+del snapshot; una corrección del maestro no reescribe documentos ya emitidos.
