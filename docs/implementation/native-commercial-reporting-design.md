@@ -54,12 +54,18 @@ al leer el informe, nuevas consultas por línea, tablas, motores ni colas.
 El despliegue versionado completa únicamente esa columna derivada de las
 devoluciones existentes, junto al vínculo derivado con la venta original si la
 versión anterior no lo tenía, desde su cabecera confirmada. Valida empresa,
-sede y referencias existentes antes del DACPAC. Repetirlo no reescribe valores existentes
-ni reprocesa inventario, fuentes financieras o DIAN. El corte usa la detención
-de API/Worker ya exigida por el publicador: la nueva restricción requiere el
-writer correspondiente. Para volver a un writer anterior hay que detenerlos,
-restaurar la función lectora de esa versión y retirar la nueva restricción,
-conservando la columna y los datos proyectados. Esa lectura recuperaría la
+sede y referencias existentes antes del DACPAC. Las cifras importadas que solo
+existen en Reporting conservan su evidencia: si tenían un total oficial en los
+hechos de pago anteriores, la migración lo copia una vez; si no lo tenían,
+permanece NULL y no aparece un total documental inventado. La migración informa
+el número de documentos sin ese respaldo; no convierte el subtotal tributario
+en un total oficial ni crea vínculos originales ficticios. El lector usa siempre
+la misma columna proyectada, sin consultar pagos ni distinguir versiones.
+Repetirlo no reescribe valores existentes ni reprocesa inventario, fuentes
+financieras o DIAN. El corte usa la detención de API/Worker ya exigida por el
+publicador para instalar juntos el writer y el lector correspondientes. Para
+volver a un writer anterior hay que detenerlos y restaurar la función lectora
+de esa versión, conservando la columna y los datos proyectados. Esa lectura recuperaría la
 limitación anterior; se prefiere avanzar con la versión corregida. No se
 revierte el mayor ni los documentos originales como rollback del reporte.
 

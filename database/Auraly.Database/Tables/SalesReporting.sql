@@ -246,9 +246,8 @@ CREATE TABLE [reporting].[SalesReportTaxFacts]
     CONSTRAINT [FK_SalesReportTaxFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_SalesReportTaxFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [CK_SalesReportTaxFacts_ReturnTotal] CHECK
-      ([SourceDocumentType]<>N'SalesReturn' OR
-       ([OfficialDocumentTotalAmount] IS NOT NULL AND [OfficialDocumentTotalAmount]<0
-        AND [OriginalSaleDocumentId] IS NOT NULL))
+      ([SourceDocumentType]<>N'SalesReturn' OR [OfficialDocumentTotalAmount] IS NULL
+       OR [OfficialDocumentTotalAmount]<0)
 );
 GO
 CREATE INDEX [IX_SalesReportTaxFacts_Business_Date_Tax]

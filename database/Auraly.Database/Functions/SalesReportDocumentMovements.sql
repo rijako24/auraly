@@ -19,5 +19,5 @@ AS RETURN
     UNION ALL
     SELECT t.SourceDocumentId,t.SourceDocumentType,t.OriginalSaleDocumentId,
       CONVERT(decimal(19,4),t.OfficialTotal)-CONVERT(decimal(19,4),t.ExactTotal),t.OfficialTotal,CONVERT(decimal(19,4),0),t.BusinessLocalDate
-    FROM returnTaxes t
+    FROM returnTaxes t WHERE t.OfficialTotal IS NOT NULL
 );
