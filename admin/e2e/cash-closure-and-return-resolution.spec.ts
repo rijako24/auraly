@@ -1,6 +1,7 @@
 import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { login as sharedLogin } from "./support/auth";
+import type { WorkSessionClosurePage } from "../src/services/api/work-session-differences";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
@@ -10,6 +11,12 @@ const saleId = "55555555-5555-5555-5555-555555555555";
 const permissions = ["dashboard.read", "work-sessions.differences.read", "work-sessions.closures.reconcile","sales.payments.correct", "sales.returns.read", "sales.returns.create", "sales.returns.confirm", "invoice-charges.read", "invoice-charges.configure"];
 
 const json = (route: Route, body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+const cashClosurePage = (route: Route, body: WorkSessionClosurePage) => json(route, {
+  ...body,
+  items: body.items.map(cashClosure => ({
+    closureId: cashClosure.workSessionClosureId, type: "Cash", cashClosure, dispatchClosure: null,
+  })),
+});
 
 async function authenticate(page: Page) {
   await page.context().addCookies([{ name: "auth_token", value: "e2e", url: process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
@@ -58,7 +65,7 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
       closureSummary: { count: 2, invoicedAmount: 5000, expenseAmount: 6500,
         paymentMethods: [{ paymentMethodCode: "Cash", count: 1, amount: 5000 }] } });
   });
-  await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, { items: [{
+  await page.route("**/api/commerce/v1/work-sessions/closures/inbox?**", route => cashClosurePage(route, { items: [{
     workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId, businessName: "Auraly", warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero", openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00", salesCount: 3, creditSalesCount: 0, returnCount: 1, totalSales: 159000, totalRefunds: 20000, netAmount: 139000, expectedCash: 135000, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 150000, refundAmount: 20000, otherAmount: 0, netAmount: 130000, countedAmount: 130000, difference: 0, requiresCount: true }, { paymentMethodCode: "Card", salesAmount: 0, refundAmount: 0, otherAmount: 0, netAmount: 0, countedAmount: 0, difference: 0, requiresCount: true }, { paymentMethodCode: "Transfer", salesAmount: 9000, refundAmount: 0, otherAmount: 0, netAmount: 8000, countedAmount: 8000, difference: 0, requiresCount: true }],
   }], page: 1, pageSize: 50, totalItems: 1 }));
   const allMovements = [
@@ -203,7 +210,7 @@ test("cargos del cierre pagina, conserva totales y vuelve desde caché sin desca
       page: requestedPage, pageSize: 50, totalItems: 51, totalAmount: 51000,
       closureSummary: { count: 51, invoicedAmount: 0, expenseAmount: 51000, paymentMethods: [] } });
   });
-  await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
+  await page.route("**/api/commerce/v1/work-sessions/closures/inbox?**", route => cashClosurePage(route, {
     items: [{ workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId,
       businessName: "Auraly", warehouseId: null, warehouseName: null, userId, userName: "Cajero",
       openedAt: "2026-10-08T08:00:00-05:00", closedAt: "2026-10-08T18:00:00-05:00",
@@ -239,7 +246,7 @@ test("transferencia sin comprobantes muestra el faltante frente al valor reporta
   await page.route("**/api/commerce/v1/work-sessions/closures/*/invoice-charges/page?**", route =>
     json(route, { items: [], page: 1, pageSize: 50, totalItems: 0, totalAmount: 0,
       closureSummary: { count: 0, invoicedAmount: 0, expenseAmount: 0, paymentMethods: [] } }));
-  await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
+  await page.route("**/api/commerce/v1/work-sessions/closures/inbox?**", route => cashClosurePage(route, {
     items: [{ workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId,
       businessName: "Auraly", warehouseId: null, warehouseName: "Principal", userId,
       userName: "Cajero", openedAt: "2026-10-08T08:00:00-05:00",
@@ -275,7 +282,7 @@ test("el detalle de efectivo carga 100 facturas por página sin descargarlas al 
   await page.route("**/api/commerce/v1/work-sessions/closures/*/invoice-charges/page?**", route => json(route,
     { items: [], page: 1, pageSize: 50, totalItems: 0, totalAmount: 0,
       closureSummary: { count: 0, invoicedAmount: 0, expenseAmount: 0, paymentMethods: [] } }));
-  await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
+  await page.route("**/api/commerce/v1/work-sessions/closures/inbox?**", route => cashClosurePage(route, {
     items: [{ workSessionClosureId: closureId, workSessionId, businessId, businessName: "Auraly",
       warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero",
       openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00",

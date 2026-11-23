@@ -14,6 +14,7 @@ on:
         options:
           - integration
           - foundation
+          - browser
       integration_test_filter:
         description: Filtro explícito de las pruebas seleccionadas
         required: true
@@ -21,6 +22,7 @@ on:
 
 jobs:
   backend:
+    if: github.event_name != 'workflow_dispatch' || inputs.test_suite != 'browser'
     # Keep SQL latency gates on the same fixed Windows generation used to build
     # immutable releases; a floating image is not a stable performance baseline.
     runs-on: windows-2022
@@ -94,6 +96,14 @@ jobs:
             tests/Auraly.ServerSlice.IntegrationTests/bin/Release/net8.0/TestResults/portfolio-report-profile-*/**
           retention-days: 7
           if-no-files-found: ignore
+      - name: Retain selected test results
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: selected-backend-results-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/targeted-integration-results
+          retention-days: 7
+          if-no-files-found: ignore
 
   invoice-pdf-linux:
     if: github.event_name != 'workflow_dispatch'
@@ -110,7 +120,7 @@ jobs:
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj -c Release --no-build --filter FullyQualifiedName~DianInvoicePdfRendererTests
 
   admin:
-    if: github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'workflow_dispatch' || inputs.test_suite == 'browser'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -127,3 +137,25 @@ jobs:
       - run: npm run test:pos
       - run: npm run test:orders-ui
       - run: npm run build
+      - name: Install pinned browser for UI regression
+        if: github.event_name == 'workflow_dispatch'
+        run: npx playwright install --with-deps chromium
+      - name: Run selected browser regression with mocked API contracts
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          AURALY_E2E_MANAGE_SERVERS: '1'
+          AURALY_E2E_MANAGE_API: '0'
+          BROWSER_TEST_FILTER: ${{ inputs.integration_test_filter }}
+        run: |
+          if [ -z "$BROWSER_TEST_FILTER" ]; then echo 'Se requiere un filtro de pruebas explícito.'; exit 1; fi
+          npx playwright test --config playwright.mocked.config.ts --grep "$BROWSER_TEST_FILTER"
+      - name: Retain browser regression results
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-regression-${{ github.run_attempt }}
+          path: |
+            admin/playwright-report
+            admin/test-results
+          retention-days: 7
+          if-no-files-found: ignore

@@ -12,7 +12,11 @@ internal sealed class TestDocumentProcessingSignalPublisher(
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> BusinessGates = new();
     private readonly ConcurrentQueue<DocumentProcessingSignal> signals = new();
+    private readonly ConcurrentDictionary<Guid, string> processingFailures = new();
     private int processingPaused;
+
+    internal string? LastProcessingFailure(Guid documentId) =>
+        processingFailures.TryGetValue(documentId, out var failure) ? failure : null;
 
     public async Task PublishAsync(
         DocumentProcessingSignal signal,
@@ -36,6 +40,7 @@ internal sealed class TestDocumentProcessingSignalPublisher(
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
+                processingFailures[signal.DocumentId] = $"{exception.GetType().Name}: {exception.Message}";
                 // A real broker has already accepted the signal. Processing failures remain
                 // durable in DocumentProcessingJobs and must not turn the publishing request
                 // into an HTTP failure.

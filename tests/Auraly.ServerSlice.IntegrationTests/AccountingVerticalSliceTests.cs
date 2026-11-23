@@ -3874,7 +3874,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Fail(
             $"Accounting entry was not posted for {documentId:D}. " +
             $"Accounting job: {status ?? "missing"}. " +
-            $"Document job: {documentStatus ?? "missing"}.");
+            $"Document job: {documentStatus ?? "missing"}. " +
+            $"Test transport: {fixture.DocumentSignals.LastProcessingFailure(documentId) ?? "no processing failure captured"}.");
     }
 
     private async Task AssertFastProcessingAsync(Guid documentId, string operation,
