@@ -795,6 +795,49 @@ active tenant/business dimensions and equal positive debit and credit totals.
 
 ### Explicit reconciliation of commercial-only positions
 
+**Full opening scope review (2026-11-23):** opening balances bring forward the
+complete approved trial balance, including assets, liabilities and equity. The
+current account selector accepts every active posting account; it is not limited
+to portfolio accounts. Generic lines capture the account, required party,
+optional cost center, description and debit or credit. Approval requires a
+balanced batch; it must not invent capital, profit or another balancing account
+to make an unexplained difference disappear. The current capture currency is
+COP. This review does not add foreign-currency opening support.
+
+| Opening component | Current capture and operational result |
+| --- | --- |
+| Cash, banks, other assets, liabilities, taxes and equity | Ordinary opening lines create their ledger balances. They do not represent a new receipt, payment, purchase or sale. |
+| Customer receivables | One identified line per outstanding invoice creates a native receivable, bound to that opening journal line, available in the customer portfolio, ageing reports and subsequent collection flows. |
+| Supplier payables | The same opening aggregate creates a native payable per invoice, available in supplier portfolio, ageing reports and subsequent payment flows. |
+| Obligations already present in this system | Link the existing position where eligible; preserve its identity and prior payments. Do not enter it again as a new invoice. |
+| Inventory and fixed-asset balances | The ledger amounts can be captured. A ledger line alone does not create physical quantities by warehouse, an asset register or depreciation schedules. Inventory details retain their canonical owner; this review does not certify an operational fixed-asset register. |
+| Historical advances and unallocated credits | An ordinary opening line can carry their ledger amount, but this screen currently does not open or link the corresponding available `CustomerCredits` / `SupplierCredits`. Their operational opening is a real remaining limitation, not certified by ordinary debit/credit or invoice tests. |
+
+Customer and supplier invoice schedules are part of the balance, not additional
+amounts on top of their control accounts. Their totals must reconcile with those
+accounts at the opening cut. The same applies to inventory, bank and other
+balances already posted through another native operation: include each economic
+balance once and reconcile the existing postings before approval. Initial
+inventory quantities must continue through the canonical inventory owner; this
+review authorizes no second inventory writer or automatic stock reconstruction.
+
+For a complete operational opening of historical advances, the required design
+is to extend this same opening aggregate and its existing financial-effects
+owner, reusing the native credit writers and stable source-line identities.
+The original third party, account, reference, remaining availability and cut must
+be explicit; no cash movement, new historical receipt or duplicate journal may
+be invented. New/link, application and replay cases on both sides must pass
+before describing that capability as implemented. This is a documented gap;
+this review changes neither the opening payload nor existing credit balances.
+
+The official [Siigo other-account guide](https://siigonube.portaldeclientes.siigo.com/ingresar-saldos-iniciales-de-otras-cuentas/)
+and the Alegra guide below confirm that opening is broader than portfolio.
+[Siigo customer opening](https://siigonube.portaldeclientes.siigo.com/ingresar-saldos-iniciales-de-cartera/)
+also includes advances; that precedent does not prove our available-credit
+opening is already implemented. Existing activation locks, dual effective /
+registration report cutoffs and the reviewed Megafruver supplemental-opening
+decision remain unchanged by this scope review.
+
 **Opening invoice intake (2026-11-19, approved and implemented):** the opening
 screen expands invoice details when the selected account declares a receivable
 or payable financial function. One line identifies one original invoice:
