@@ -39,6 +39,11 @@ async function authenticate(page: Page) {
     { id: "visa", code: "Visa", label: "Visa", sortOrder: 1 },
     { id: "mastercard", code: "Mastercard", label: "Mastercard", sortOrder: 2 },
   ]));
+  await page.route(/\/api\/commerce\/v1\/payment-methods\/?(?:\?.*)?$/, route => {
+    const method = new URL(route.request().url()).searchParams.get("methodCode");
+    const items = paymentCatalogFixture().forms.filter(form => !method || form.methodCode === method);
+    return json(route, { items, page: 1, pageSize: 10, totalCount: items.length });
+  });
 }
 
 test("el cierre muestra motivos y observaciones sin números de egreso", async ({ page }) => {
@@ -46,6 +51,10 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   let validationRequests = 0;
   await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-corrections/validate`, route => {
     validationRequests++;
+    expect(route.request().postDataJSON()).toMatchObject([{ amount: 100000,
+      tenderMethodCode: "DebitCard", paymentMethodVersion: 1,
+      paymentMethodId: paymentCatalogFixture().forms.find(form => form.methodCode === "DebitCard")!.paymentMethodId,
+    }]);
     if (validationRequests === 1) return route.fulfill({ status: 400, contentType: "application/problem+json",
       body: JSON.stringify({ detail: "Falta la configuración contable del medio de pago corregido." }) });
     return json(route, { valid: true });
@@ -121,6 +130,7 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await correction.getByRole("combobox").first().click();
   await expect(page.getByRole("option", { name: "Tarjeta débito" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("option", { name: "Tarjeta débito" }).click();
+  await expect(correction.getByRole("combobox", { name: "Forma de pago del recaudo", exact: true })).toContainText("Tarjeta débito");
   await expect(correction.getByText("Franquicia", { exact: true })).toBeVisible();
   await expect(correction.getByRole("button", { name: "Aplicar" })).toBeDisabled();
   await correction.getByRole("combobox").last().click();
@@ -174,8 +184,8 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await expect(transfer.getByText(/Comprobante: ASI-BANCO-OUT/)).toBeVisible();
   const bankOut = transfer.locator(".grid").filter({ hasText: "Comprobante: ASI-BANCO-OUT" }).last();
   await bankOut.getByRole("button", { name: "Corregir", exact: true }).click();
-  await expect(correction.getByLabel("Valor real")).toBeDisabled();
-  await expect(correction.getByText(/El valor y las contrapartidas se corrigen desde contabilidad/)).toBeVisible();
+  await expect(correction.getByLabel("Valor del recaudo", { exact: true })).toBeDisabled();
+  await expect(correction.getByText("La corrección del medio conserva el importe del recaudo.", { exact: true })).toBeVisible();
   await correction.getByRole("combobox").first().click();
   await expect(page.getByRole("option", { name: "Transferencia", exact: true })).toBeVisible();
   await expect(page.getByRole("option", { name: "Efectivo", exact: true })).toBeVisible();

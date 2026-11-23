@@ -1,5 +1,6 @@
 import { expect, test, type Route, type Page } from "@playwright/test";
 import { paymentCatalogFixture } from "./support/payment-catalog";
+import { expectNoHorizontalOverflow } from "./support/layout-bounds";
 
 const baseUrl = process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -473,7 +474,7 @@ test("el estado de pago mantiene tamaño y fondo al faltar, sobrar o recibir el 
     await expect(status).toHaveText("Pago completo");
     await status.scrollIntoViewIfNeeded();
     await payment.screenshot({ path: `../.codex-build/restaurant-status-${viewport.width}.png` });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoHorizontalOverflow(page.locator("html"));
   }
 });
 

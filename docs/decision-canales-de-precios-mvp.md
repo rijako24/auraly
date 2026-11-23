@@ -459,4 +459,6 @@ Todos los importes y porcentajes usan `DECIMAL`.
   y los valores ya digitados. Una respuesta de cálculo sólo actualiza el mismo
   producto y la entrada de precio o margen que originó esa consulta; nunca
   reemplaza una edición posterior ni agrega otra lectura para reconstruirla.
+  Mientras llega el costo autorizado de un producto nuevo, se puede digitar la
+  cantidad; precio y guardado esperan ese costo para validar el margen y el piso.
 - Las tablas pertenecen a `Auraly.Database.sqlproj`.

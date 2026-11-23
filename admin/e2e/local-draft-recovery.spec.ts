@@ -63,6 +63,9 @@ async function prepare(page: Page) {
     purchaseCurrencies: [{ code: "COP", label: "Peso colombiano", description: null }],
     exchangeRateSources: [],
   }));
+  await page.route("**/api/commerce/v1/goods-receipts/withholding-preview", route => json(route, {
+    grossAmount: 1000, withholdingTotal: 0, netAmount: 1000, lines: [], adjustments: [],
+  }));
   await page.route("**/api/commerce/v1/purchase-orders?**", route => json(route, {
     items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0,
   }));
@@ -295,7 +298,7 @@ test("confirmar una recepción conserva la captura ante fallo y la borra al acep
     partySiteId: "88888888-8888-8888-8888-888888888888",
     supplierInvoiceNumber: "", supplierInvoiceDate: "2026-09-28",
     purchaseEvidenceType: "BuyerElectronicSupportDocument", receivedAt: "2026-09-28T09:00",
-    createsPayable: false, dueDate: "", notes: "Recepción de prueba", concurrencyToken: null,
+    createsPayable: true, dueDate: "2026-10-28", notes: "Recepción de prueba", concurrencyToken: null,
     withholdingConceptCode: "", withholdingJurisdictionCode: "", purchaseOrderId: "",
     currencyCode: "COP", exchangeRate: 1, exchangeRateDate: "2026-09-28",
     exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: [],

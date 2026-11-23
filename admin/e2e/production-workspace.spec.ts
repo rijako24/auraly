@@ -69,15 +69,18 @@ test("produce desde Inventario y reintenta la misma operación tras un fallo de 
     .screenshot({ path: "../tmp/inventory-production-option.png" });
   await page.getByRole("dialog", { name: "Nueva operación" })
     .getByRole("button", { name: /Producción.*Consume ingredientes/ }).click();
-  const dialog = page.getByRole("dialog", { name: "Producción por receta" });
+  const dialog = page.getByRole("dialog", { name: "Nueva operación" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Producción", exact: true })).toBeVisible();
   await dialog.getByRole("combobox", { name: "Producto a producir" }).click();
   await page.getByRole("option", { name: /HAM-01 · Hamburguesa/ }).click();
-  await dialog.getByLabel("Cantidad a producir").fill("4");
+  await dialog.getByText("Cantidad a producir", { exact: true }).locator("..").getByRole("spinbutton").fill("4");
   await dialog.getByRole("button", { name: "Revisar ingredientes y existencias" }).click();
-  await expect(dialog.getByText("Requiere 4 EA · disponible 12")).toBeVisible();
+  await expect(dialog.getByRole("row").filter({ hasText: "Pan" })).toContainText("4 EA");
+  await expect(dialog.getByRole("row").filter({ hasText: "Pan" })).toContainText("12 EA");
   await dialog.getByRole("button", { name: "Confirmar producción" }).click();
-  await expect(dialog.getByText(/formulario queda fijo/)).toBeVisible();
+  await expect(dialog.getByText("Cantidad a producir", { exact: true }).locator("..").getByRole("spinbutton")).toBeDisabled();
+  expect(requests).toHaveLength(1);
   await dialog.getByRole("button", { name: "Reintentar confirmación" }).click();
   await expect(dialog).not.toBeVisible();
   expect(requests).toHaveLength(2);

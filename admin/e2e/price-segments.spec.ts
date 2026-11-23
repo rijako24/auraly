@@ -206,13 +206,35 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await itemDialog.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
   const minimum = itemDialog.getByText("Cantidad mínima *", { exact: true }).locator("..").locator("input");
   await minimum.fill("12");
+  await expect(itemDialog.getByText("Precio *", { exact: true }).locator("..").locator("input")).toBeDisabled();
+  await expect(itemDialog.getByRole("button", { name: "Guardar condición" })).toBeDisabled();
   releaseCost();
   await expect(itemDialog.getByText(/Costo base de la sede/)).toBeVisible();
+  await expect(minimum).toHaveValue("12");
+  let releasePrice!: () => void;
+  const priceGate = new Promise<void>((resolve) => { releasePrice = resolve; });
+  await page.route("**/api/commerce/v1/pricing/calculate", async route => {
+    const request = route.request().postDataJSON() as { salePrice: number };
+    if (request.salePrice === 32000) await priceGate;
+    await route.fulfill({ json: { roundedSalePrice: request.salePrice,
+      effectiveMarginPercent: request.salePrice === 32000 ? 37.5 : 50 } });
+  });
+  const price = itemDialog.getByText("Precio *", { exact: true }).locator("..").locator("input");
+  const margin = itemDialog.getByText("Margen (%)", { exact: true }).locator("..").locator("input");
+  const delayedRequest = page.waitForRequest(request => request.url().endsWith("/pricing/calculate") && request.postDataJSON().salePrice === 32000);
+  const delayedResponse = page.waitForResponse(response => response.url().endsWith("/pricing/calculate") && response.request().postDataJSON().salePrice === 32000);
+  await price.fill("32000"); await price.press("Tab"); await delayedRequest;
+  await price.fill("40000"); await price.press("Tab");
+  await expect(margin).toHaveValue("50");
+  releasePrice(); await (await delayedResponse).finished();
+  await itemDialog.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await expect(price).toHaveValue("40 000");
+  await expect(margin).toHaveValue("50");
   await expect(minimum).toHaveValue("12");
   await itemDialog.getByRole("button", { name: "Guardar condición" }).click();
   await expect(itemDialog).toBeHidden();
   await expect(editDialog).toBeVisible();
-  expect(savedItem).toMatchObject({ amount: 29500, minimumQuantity: 12 });
+  expect(savedItem).toMatchObject({ amount: 40000, minimumQuantity: 12 });
   const exclusions = editDialog.getByRole("heading", { name: "Excluidos" }).locator("xpath=ancestor::section");
   await exclusions.getByRole("button", { name: "Producto", exact: true }).click();
   await exclusions.getByPlaceholder(/Código interno/).fill("Aceite");
