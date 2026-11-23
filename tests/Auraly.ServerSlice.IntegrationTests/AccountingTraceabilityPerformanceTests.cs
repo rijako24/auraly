@@ -174,10 +174,14 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
         foreach (var sample in cases)
         {
             var milliseconds = new List<double>(20);
+            var commandMilliseconds = new List<double>(20);
+            var collections = GC.CollectionCount(2);
             string? sql = null;
             for (var attempt = 0; attempt < 20; attempt++)
             {
-                using var counter = new InventoryBalanceProcessingTests.CommandCounter(database);
+                var commandElapsed = 0d;
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(database,
+                    afterExecute: (_, elapsed) => commandElapsed += elapsed);
                 var timer = Stopwatch.StartNew();
                 AccountingDocumentPage result;
                 try
@@ -202,9 +206,11 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                 Assert.All(result.Items, item => Assert.Equal("Pending", item.Status));
                 if (sample.PartyId is not null) Assert.All(result.Items, item => Assert.Equal(sample.PartyId, item.MainPartyId));
                 milliseconds.Add(timer.Elapsed.TotalMilliseconds);
+                commandMilliseconds.Add(commandElapsed);
             }
             var p95 = milliseconds.Order().ElementAt(18);
             output.WriteLine($"100000 sources / 10000 parties, {sample.Name}, calendar v{version}: first {milliseconds[0]:F1} ms, p95 {p95:F1} ms, {(version == 1 ? 1 : 2)} SQL/page.");
+            output.WriteLine($"Service samples ms: {string.Join(",", milliseconds.Select(value => value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)))}; SQL command p95 {commandMilliseconds.Order().ElementAt(18):F1} ms; Gen2 collections {GC.CollectionCount(2) - collections}; managed heap {GC.GetTotalMemory(false) / 1024 / 1024} MiB.");
             if (sample.Name == "frequent-party")
                 grantScenario = (sql!, sample.Name, sample.Page, sample.PartyId, sample.Search, p95, version);
             if (p95 > 800)
