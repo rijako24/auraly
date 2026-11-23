@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.BuildingBlocks.Infrastructure.Persistence;
@@ -64,28 +64,32 @@ public sealed partial class SqlAccountingStore
             SELECT N'SupplierCredit',credit.SupplierCreditId,supplier.PartyId,
                 COALESCE(entry.SourceDocumentId,history.SourceDocumentId,credit.SourceDocumentId,credit.SourcePurchaseReturnId),
                 COALESCE(entry.SourceDocumentType,history.SourceDocumentType,credit.SourceDocumentType,N'PurchaseReturn'),
-                COALESCE(entry.EntryNumber,CONVERT(nvarchar(36),COALESCE(history.SourceDocumentId,credit.SourceDocumentId,credit.SourcePurchaseReturnId))),
+                COALESCE(openingLine.OpeningAdvanceReference,entry.EntryNumber,CONVERT(nvarchar(36),COALESCE(history.SourceDocumentId,credit.SourceDocumentId,credit.SourcePurchaseReturnId))),
                 COALESCE(history.OccurredAt,entry.OccurredAt,credit.CreatedAt),NULL,
                 credit.CurrencyCode,credit.OriginalAmount,credit.AvailableAmount,credit.OpeningEntryId,credit.OpeningEntryLineNumber,
                 credit.SupplierId,credit.Status,credit.CreditNature,credit.PartySiteId
             FROM dbo.SupplierCredits credit JOIN dbo.Suppliers supplier ON supplier.SupplierId=credit.SupplierId AND supplier.TenantId=@TenantId
             LEFT JOIN dbo.SupplierCreditTransactions history ON history.SupplierCreditId=credit.SupplierCreditId AND history.TransactionType=N'Opening'
+            LEFT JOIN dbo.AccountingOpeningBalanceLines openingLine ON credit.SourceDocumentType=N'AccountingOpeningBalance'
+              AND openingLine.BatchId=credit.SourceDocumentId AND openingLine.LineId=credit.SourceLineId
             LEFT JOIN dbo.AccountingEntries entry ON entry.EntryId=credit.OpeningEntryId AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
-            WHERE {Predicate(supplierCredits)} AND credit.BusinessId=@BusinessId
+            WHERE {Predicate(supplierCredits)} AND credit.BusinessId=@BusinessId AND (@AdvancesOnly=0 OR credit.CreditNature=N'Advance')
                 AND (@PartyId IS NULL OR credit.SupplierId=@SelectedSupplierId)
                 AND (@Id IS NOT NULL OR credit.AvailableAmount>0 AND credit.Status<>N'Cancelled')
             UNION ALL
             SELECT N'CustomerCredit',credit.CustomerCreditId,COALESCE(credit.PartyId,customer.PartyId),
                 COALESCE(entry.SourceDocumentId,history.SourceDocumentId,credit.SourceDocumentId,credit.SourceReturnId),
                 COALESCE(entry.SourceDocumentType,history.SourceDocumentType,credit.SourceDocumentType,N'SalesReturn'),
-                COALESCE(entry.EntryNumber,CONVERT(nvarchar(36),COALESCE(history.SourceDocumentId,credit.SourceDocumentId,credit.SourceReturnId))),
+                COALESCE(openingLine.OpeningAdvanceReference,entry.EntryNumber,CONVERT(nvarchar(36),COALESCE(history.SourceDocumentId,credit.SourceDocumentId,credit.SourceReturnId))),
                 COALESCE(history.OccurredAt,entry.OccurredAt,credit.CreatedAt),NULL,
                 credit.CurrencyCode,credit.OriginalAmount,credit.AvailableAmount,credit.OpeningEntryId,credit.OpeningEntryLineNumber,
                 credit.CustomerId,credit.Status,credit.CreditNature,credit.PartySiteId
             FROM dbo.CustomerCredits credit LEFT JOIN dbo.Customers customer ON customer.CustomerId=credit.CustomerId AND customer.TenantId=@TenantId
             LEFT JOIN dbo.CustomerCreditTransactions history ON history.CustomerCreditId=credit.CustomerCreditId AND history.TransactionType=N'Opening'
+            LEFT JOIN dbo.AccountingOpeningBalanceLines openingLine ON credit.SourceDocumentType=N'AccountingOpeningBalance'
+              AND openingLine.BatchId=credit.SourceDocumentId AND openingLine.LineId=credit.SourceLineId
             LEFT JOIN dbo.AccountingEntries entry ON entry.EntryId=credit.OpeningEntryId AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
-            WHERE {Predicate(customerCredits)} AND credit.BusinessId=@BusinessId
+            WHERE {Predicate(customerCredits)} AND credit.BusinessId=@BusinessId AND (@AdvancesOnly=0 OR credit.CreditNature=N'Advance')
                 AND (@PartyId IS NULL OR credit.PartyId=@PartyId OR credit.CustomerId=@SelectedCustomerId)
                 AND (@Id IS NOT NULL OR credit.AvailableAmount>0)
             """;
@@ -260,6 +264,7 @@ public sealed partial class SqlAccountingStore
         if (query.SubledgerIds is not null)
             command.Parameters.Add("@SelectedIdsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(query.SubledgerIds);
         command.Parameters.AddWithValue("@ManualSupportOnly", query.ManualSupportOnly);
+        command.Parameters.AddWithValue("@AdvancesOnly", query.AdvancesOnly);
         command.Parameters.Add("@PartyId", SqlDbType.UniqueIdentifier).Value = (object?)query.PartyId ?? DBNull.Value;
         command.Parameters.Add("@Id", SqlDbType.UniqueIdentifier).Value = (object?)query.SubledgerId ?? DBNull.Value;
         command.Parameters.Add("@RoleId", SqlDbType.UniqueIdentifier).Value = (object?)query.CounterpartyRoleId ?? DBNull.Value;

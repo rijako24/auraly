@@ -1,4 +1,4 @@
-CREATE PROCEDURE accounting.OpeningPositionsValidate
+﻿CREATE PROCEDURE accounting.OpeningPositionsValidate
     @TenantId uniqueidentifier,
     @BusinessId uniqueidentifier,
     @EffectiveOn date,
@@ -13,14 +13,109 @@ BEGIN
       Debit decimal(19,4),Credit decimal(19,4),LineId uniqueidentifier,
       ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier,
       OpeningDocumentNumber nvarchar(80),OpeningIssuedOn date,OpeningDueOn date,
-      OpeningPartySiteId uniqueidentifier,OpeningRoleId uniqueidentifier,OpeningKind nvarchar(16));
+      OpeningPartySiteId uniqueidentifier,OpeningRoleId uniqueidentifier,OpeningKind nvarchar(16),
+      ExistingSupplierCreditId uniqueidentifier,ExistingCustomerCreditId uniqueidentifier,
+      OpeningAdvanceReference nvarchar(80),OpeningAdvanceOn date,OpeningAdvancePartySiteId uniqueidentifier,
+      OpeningAdvanceRoleId uniqueidentifier,OpeningAdvanceKind nvarchar(16));
     INSERT @Lines SELECT LineNumber,AccountId,PartyId,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId,
-      OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId,OpeningRoleId,OpeningKind
+      OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId,OpeningRoleId,OpeningKind,
+      ExistingSupplierCreditId,ExistingCustomerCreditId,OpeningAdvanceReference,OpeningAdvanceOn,OpeningAdvancePartySiteId,
+      OpeningAdvanceRoleId,OpeningAdvanceKind
     FROM OPENJSON(@LinesJson) WITH(LineNumber int,AccountId uniqueidentifier,PartyId uniqueidentifier,
       Debit decimal(19,4),Credit decimal(19,4),LineId uniqueidentifier,
       ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier,
       OpeningDocumentNumber nvarchar(80),OpeningIssuedOn date,OpeningDueOn date,
-      OpeningPartySiteId uniqueidentifier,OpeningRoleId uniqueidentifier,OpeningKind nvarchar(16));
+      OpeningPartySiteId uniqueidentifier,OpeningRoleId uniqueidentifier,OpeningKind nvarchar(16),
+      ExistingSupplierCreditId uniqueidentifier,ExistingCustomerCreditId uniqueidentifier,
+      OpeningAdvanceReference nvarchar(80),OpeningAdvanceOn date,OpeningAdvancePartySiteId uniqueidentifier,
+      OpeningAdvanceRoleId uniqueidentifier,OpeningAdvanceKind nvarchar(16));
+    -- Initial advances share the opening aggregate and native credit ledgers.
+    -- Their evidence carries no due date and creates no new cash movement.
+    IF EXISTS(SELECT 1 FROM @Lines line JOIN dbo.AccountingAccounts account
+      ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
+      WHERE account.FinancialFunction IN(N'SupplierAdvance',N'CustomerAdvance')
+        AND line.OpeningAdvanceReference IS NULL AND line.ExistingSupplierCreditId IS NULL AND line.ExistingCustomerCreditId IS NULL)
+      THROW 51408,N'La cuenta de anticipo requiere su referencia inicial o vincular un anticipo existente para conservar su saldo disponible.',1;
+    IF EXISTS(SELECT 1 FROM @Lines line
+      LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
+        AND account.IsActive=1 AND account.AllowsPosting=1 AND account.RequiresParty=1
+      LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId AND party.IsActive=1
+      LEFT JOIN dbo.PartySites site ON site.PartySiteId=line.OpeningAdvancePartySiteId AND site.PartyId=party.PartyId AND site.IsActive=1
+      LEFT JOIN dbo.Customers customer ON customer.PartyId=party.PartyId AND customer.TenantId=@TenantId AND customer.IsActive=1
+      LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=party.PartyId AND supplier.TenantId=@TenantId AND supplier.IsActive=1
+      WHERE (line.OpeningAdvanceReference IS NOT NULL OR line.OpeningAdvanceOn IS NOT NULL OR line.OpeningAdvancePartySiteId IS NOT NULL)
+        AND (@HistoricalCatchup=1 OR line.ExistingPayableId IS NOT NULL OR line.ExistingReceivableId IS NOT NULL
+          OR line.ExistingSupplierCreditId IS NOT NULL OR line.ExistingCustomerCreditId IS NOT NULL OR line.OpeningDocumentNumber IS NOT NULL
+          OR line.LineId IS NULL OR party.PartyId IS NULL OR site.PartySiteId IS NULL OR account.AccountId IS NULL
+          OR NULLIF(LTRIM(RTRIM(line.OpeningAdvanceReference)),N'') IS NULL OR line.OpeningAdvanceOn IS NULL OR line.OpeningAdvanceOn>=@EffectiveOn
+          OR ISNULL(account.FinancialFunction,N'') NOT IN(N'SupplierAdvance',N'CustomerAdvance')
+          OR account.FinancialFunction=N'SupplierAdvance' AND (account.AccountType<>N'Asset' OR ISNULL(account.BalanceSide,N'')<>N'Debit'
+            OR line.Debit<=0 OR line.Credit<>0 OR supplier.SupplierId IS NULL
+            OR line.OpeningAdvanceRoleId IS NOT NULL AND line.OpeningAdvanceRoleId<>supplier.SupplierId
+            OR line.OpeningAdvanceKind IS NOT NULL AND line.OpeningAdvanceKind<>N'SupplierCredit')
+          OR account.FinancialFunction=N'CustomerAdvance' AND (account.AccountType<>N'Liability' OR ISNULL(account.BalanceSide,N'')<>N'Credit'
+            OR line.Credit<=0 OR line.Debit<>0 OR customer.CustomerId IS NULL
+            OR line.OpeningAdvanceRoleId IS NOT NULL AND line.OpeningAdvanceRoleId<>customer.CustomerId
+            OR line.OpeningAdvanceKind IS NOT NULL AND line.OpeningAdvanceKind<>N'CustomerCredit')))
+      THROW 51408,N'El anticipo inicial no coincide con la cuenta, tercero, sede, referencia, fecha o saldo al corte.',1;
+    IF EXISTS(SELECT 1 FROM @Lines line WHERE line.OpeningAdvanceReference IS NOT NULL
+      GROUP BY line.AccountId,line.PartyId,line.OpeningAdvancePartySiteId,line.OpeningAdvanceReference HAVING COUNT(*)>1)
+      THROW 51408,N'El anticipo inicial está repetido en las partidas de apertura.',1;
+    IF EXISTS(SELECT 1 FROM @Lines WHERE
+      (CASE WHEN ExistingPayableId IS NULL THEN 0 ELSE 1 END+CASE WHEN ExistingReceivableId IS NULL THEN 0 ELSE 1 END
+       +CASE WHEN ExistingSupplierCreditId IS NULL THEN 0 ELSE 1 END+CASE WHEN ExistingCustomerCreditId IS NULL THEN 0 ELSE 1 END)>1
+      OR (ExistingSupplierCreditId IS NOT NULL OR ExistingCustomerCreditId IS NOT NULL) AND
+        (LineId IS NULL OR OpeningDocumentNumber IS NOT NULL OR OpeningAdvanceReference IS NOT NULL))
+      OR EXISTS(SELECT 1 FROM @Lines WHERE ExistingSupplierCreditId IS NOT NULL GROUP BY ExistingSupplierCreditId HAVING COUNT(*)>1)
+      OR EXISTS(SELECT 1 FROM @Lines WHERE ExistingCustomerCreditId IS NOT NULL GROUP BY ExistingCustomerCreditId HAVING COUNT(*)>1)
+      THROW 51408,N'Cada anticipo e identidad debe vincularse una sola vez, sin abrir otro saldo en la misma partida.',1;
+    DECLARE @Credits TABLE(Kind nvarchar(16),CreditId uniqueidentifier,PartyId uniqueidentifier,
+      Amount decimal(19,4),OriginalAmount decimal(19,4),CurrencyCode char(3),CreditNature nvarchar(16),
+      OpeningEntryId uniqueidentifier,OpeningLine int,PRIMARY KEY(Kind,CreditId));
+    INSERT @Credits
+    SELECT N'SupplierCredit',credit.SupplierCreditId,supplier.PartyId,credit.AvailableAmount,credit.OriginalAmount,
+      credit.CurrencyCode,credit.CreditNature,credit.OpeningEntryId,credit.OpeningEntryLineNumber
+    FROM @Lines line JOIN dbo.SupplierCredits credit WITH(UPDLOCK,HOLDLOCK) ON credit.SupplierCreditId=line.ExistingSupplierCreditId AND credit.BusinessId=@BusinessId
+    JOIN dbo.Suppliers supplier ON supplier.SupplierId=credit.SupplierId AND supplier.TenantId=@TenantId;
+    INSERT @Credits
+    SELECT N'CustomerCredit',credit.CustomerCreditId,COALESCE(credit.PartyId,customer.PartyId),credit.AvailableAmount,credit.OriginalAmount,
+      credit.CurrencyCode,credit.CreditNature,credit.OpeningEntryId,credit.OpeningEntryLineNumber
+    FROM @Lines line JOIN dbo.CustomerCredits credit WITH(UPDLOCK,HOLDLOCK) ON credit.CustomerCreditId=line.ExistingCustomerCreditId AND credit.BusinessId=@BusinessId
+    LEFT JOIN dbo.Customers customer ON customer.CustomerId=credit.CustomerId AND customer.TenantId=@TenantId
+    JOIN dbo.Parties party ON party.PartyId=COALESCE(credit.PartyId,customer.PartyId) AND party.TenantId=@TenantId;
+    IF (SELECT COUNT(*) FROM @Credits)<>(SELECT COUNT(*) FROM @Lines WHERE ExistingSupplierCreditId IS NOT NULL OR ExistingCustomerCreditId IS NOT NULL)
+      THROW 51408,N'Hay anticipos fuera de la sede o empresa autorizada.',1;
+    DECLARE @CreditHistory TABLE(Kind nvarchar(16),CreditId uniqueidentifier,SourceDocumentId uniqueidentifier,
+      SourceDocumentType nvarchar(64),OccurredAt datetimeoffset(7),TransactionType nvarchar(24),Amount decimal(19,4));
+    INSERT @CreditHistory SELECT credit.Kind,credit.CreditId,m.SourceDocumentId,m.SourceDocumentType,m.OccurredAt,m.TransactionType,m.Amount
+    FROM @Credits credit JOIN dbo.SupplierCreditTransactions m ON m.SupplierCreditId=credit.CreditId WHERE credit.Kind=N'SupplierCredit';
+    INSERT @CreditHistory SELECT credit.Kind,credit.CreditId,m.SourceDocumentId,m.SourceDocumentType,m.OccurredAt,m.TransactionType,m.Amount
+    FROM @Credits credit JOIN dbo.CustomerCreditTransactions m ON m.CustomerCreditId=credit.CreditId WHERE credit.Kind=N'CustomerCredit';
+    IF EXISTS(SELECT 1 FROM @Lines line JOIN @Credits credit ON credit.CreditId=COALESCE(line.ExistingSupplierCreditId,line.ExistingCustomerCreditId)
+        AND credit.Kind=CASE WHEN line.ExistingSupplierCreditId IS NOT NULL THEN N'SupplierCredit' ELSE N'CustomerCredit' END
+      LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
+        AND account.IsActive=1 AND account.AllowsPosting=1 AND account.RequiresParty=1
+      CROSS APPLY accounting.ObligationAvailability(@BusinessId,credit.Kind,credit.CreditId,credit.Amount,NULL) pending
+      WHERE @HistoricalCatchup=1 OR ISNULL(credit.CurrencyCode,N'')<>N'COP' OR ISNULL(credit.CreditNature,N'')<>N'Advance'
+        OR credit.Amount<=0 OR credit.OpeningEntryId IS NOT NULL OR credit.OpeningLine IS NOT NULL
+        OR line.PartyId IS NULL OR credit.PartyId<>line.PartyId OR account.AccountId IS NULL
+        OR pending.AvailableAmount<>credit.Amount OR pending.PendingAdjustmentCount<>0 OR pending.PendingCancellationCount<>0 OR pending.SourceCancelled=1
+        OR credit.Kind=N'SupplierCredit' AND (ISNULL(account.FinancialFunction,N'')<>N'SupplierAdvance' OR account.AccountType<>N'Asset'
+          OR ISNULL(account.BalanceSide,N'')<>N'Debit' OR line.Credit<>0 OR line.Debit<>credit.Amount)
+        OR credit.Kind=N'CustomerCredit' AND (ISNULL(account.FinancialFunction,N'')<>N'CustomerAdvance' OR account.AccountType<>N'Liability'
+          OR ISNULL(account.BalanceSide,N'')<>N'Credit' OR line.Debit<>0 OR line.Credit<>credit.Amount))
+      OR EXISTS(SELECT 1 FROM @CreditHistory m
+        LEFT JOIN dbo.AccountingPostingJobs origin ON origin.SourceDocumentId=m.SourceDocumentId AND origin.SourceDocumentType=m.SourceDocumentType
+          AND origin.TenantId=@TenantId AND origin.BusinessId=@BusinessId
+        WHERE CONVERT(date,m.OccurredAt)>=@EffectiveOn OR origin.AccountingPostingJobId IS NULL
+          OR origin.AccountingEntryRequired<>0 OR origin.Status<>N'CommercialEffectsApplied')
+      OR EXISTS(SELECT 1 FROM @Credits credit LEFT JOIN
+        (SELECT Kind,CreditId,SUM(CASE WHEN TransactionType=N'Application' THEN -Amount ELSE Amount END) Balance,
+          SUM(CASE WHEN TransactionType=N'Opening' THEN 1 ELSE 0 END) OpeningCount,
+          SUM(CASE WHEN TransactionType=N'Opening' THEN Amount ELSE 0 END) OpeningAmount
+         FROM @CreditHistory GROUP BY Kind,CreditId) history ON history.Kind=credit.Kind AND history.CreditId=credit.CreditId
+        WHERE ISNULL(history.OpeningCount,0)<>1 OR history.Balance IS NULL OR history.Balance<>credit.Amount OR history.OpeningAmount<>credit.OriginalAmount)
+      THROW 51408,N'El anticipo existente requiere saldo y movimientos conciliados anteriores al corte, sin asiento ni aplicaciones pendientes, y cuenta y tercero coincidentes.',1;
     IF EXISTS(SELECT 1 FROM @Lines WHERE OpeningDocumentNumber IS NOT NULL OR OpeningIssuedOn IS NOT NULL
       OR OpeningDueOn IS NOT NULL OR OpeningPartySiteId IS NOT NULL)
     BEGIN

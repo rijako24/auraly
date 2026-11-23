@@ -349,10 +349,16 @@ public sealed record AccountingOpeningBalanceLineRequest(
     Guid AccountId, Guid? PartyId, Guid? CostCenterId, string Description,
     decimal Debit, decimal Credit,
     Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null,
-    AccountingOpeningInvoice? NewInvoice = null);
+    AccountingOpeningInvoice? NewInvoice = null, AccountingOpeningAdvance? NewAdvance = null);
 
 public sealed record AccountingOpeningInvoice(string DocumentNumber, DateOnly IssuedOn,
     DateOnly DueOn, Guid PartySiteId);
+
+public sealed record AccountingOpeningAdvance(string Reference, DateOnly IssuedOn, Guid PartySiteId);
+
+public sealed record AccountingOpeningAdvancePosting(Guid PositionId, Guid TransactionId,
+    string SubledgerKind, Guid CounterpartyRoleId, Guid PartySiteId, string Reference,
+    DateTimeOffset IssuedAt);
 
 // Acceptance generates these effect identities once. They are not another
 // configuration snapshot or an independently writable portfolio operation.
@@ -374,9 +380,11 @@ public sealed record AccountingOpeningBalanceLineView(
     string Description, decimal Debit, decimal Credit,
     Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null,
     string? ExistingPositionDocumentNumber = null, AccountingOpeningInvoice? NewInvoice = null,
-    string? NewInvoicePartySiteName = null, string? PartyName = null, string? PartyIdentification = null);
+    string? NewInvoicePartySiteName = null, string? PartyName = null, string? PartyIdentification = null,
+    AccountingOpeningAdvance? NewAdvance = null, string? NewAdvancePartySiteName = null);
 
-// Version 3 links existing balances; version 4 also carries initial invoices.
+// Version 3 links existing debts; version 4 carries initial invoices; version 5
+// also opens or links advances. Accepted historical payloads remain unchanged.
 // Older workers reject these contracts instead of silently dropping their effects.
 public sealed record AccountingReconciledOpeningPayload(
     Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt, string ConceptCode,
@@ -389,7 +397,9 @@ public sealed record AccountingReconciledOpeningLine(
     string Description, decimal Debit, decimal Credit, Guid? LineId,
     AccountingOpeningPositionReference? ExistingPosition,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    AccountingOpeningInvoicePosting? NewInvoice = null);
+    AccountingOpeningInvoicePosting? NewInvoice = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    AccountingOpeningAdvancePosting? NewAdvance = null);
 
 public sealed record AccountingOpeningBalanceView(
     Guid BatchId, Guid BusinessId, DateOnly EffectiveOn, string CurrencyCode,

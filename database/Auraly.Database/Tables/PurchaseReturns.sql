@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[PurchaseReturns]
+﻿CREATE TABLE [dbo].[PurchaseReturns]
 (
     [PurchaseReturnId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
@@ -115,7 +115,7 @@ CREATE TABLE [dbo].[SupplierCredits]
     CONSTRAINT [CK_SupplierCredits_Nature] CHECK ([CreditNature] IN(N'Credit',N'Advance')),
     CONSTRAINT [CK_SupplierCredits_SourceLine] CHECK ([SourceLineId] IS NULL OR
       ([SourceLineId]<>'00000000-0000-0000-0000-000000000000' AND [SourceDocumentType] IS NOT NULL
-        AND [SourceDocumentType]=N'ManualAccountingVoucher')),
+        AND [SourceDocumentType] IN(N'ManualAccountingVoucher',N'AccountingOpeningBalance'))),
     CONSTRAINT [FK_SupplierCredits_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SupplierCredits_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [FK_SupplierCredits_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),

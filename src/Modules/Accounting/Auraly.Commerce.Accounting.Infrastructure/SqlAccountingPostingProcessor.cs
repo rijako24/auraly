@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
@@ -2413,7 +2413,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source, CancellationToken token)
     {
         using var document = JsonDocument.Parse(source.PayloadJson);
-        if (!document.RootElement.TryGetProperty("PayloadVersion", out var version) || version.ValueKind == JsonValueKind.Null || version.GetInt32() is not (3 or 4))
+        if (!document.RootElement.TryGetProperty("PayloadVersion", out var version) || version.ValueKind == JsonValueKind.Null || version.GetInt32() is not (3 or 4 or 5))
             return FinancialFactsResult.Ready(LoadManualVoucherFacts(source));
         var opening = JsonSerializer.Deserialize<AccountingReconciledOpeningPayload>(source.PayloadJson)
             ?? throw new InvalidOperationException("The reconciled opening source is invalid.");
@@ -2421,8 +2421,17 @@ public sealed partial class SqlAccountingPostingProcessor(
             throw new InvalidOperationException("The reconciled opening identity does not match its accepted source.");
         AccountingJournal.ValidateIdentifiedSourceLines(opening.Lines.Select(line => line.LineId));
         var invoices = opening.Lines.Where(line=>line.NewInvoice is not null).ToArray();
-        if (opening.PayloadVersion == 3 && invoices.Length != 0 || opening.PayloadVersion == 4 &&
-            (invoices.Length == 0 || opening.HistoricalCatchup == true || invoices.Any(line=>line.NewInvoice!.PositionId==Guid.Empty ||
+        var advances = opening.Lines.Where(line => line.NewAdvance is not null).ToArray();
+        var positionIds = invoices.Select(line=>line.NewInvoice!.PositionId).Concat(advances.Select(line=>line.NewAdvance!.PositionId)).ToArray();
+        var transactionIds = invoices.Select(line=>line.NewInvoice!.TransactionId).Concat(advances.Select(line=>line.NewAdvance!.TransactionId)).ToArray();
+        if (opening.PayloadVersion != 5 && (advances.Length != 0 || opening.Lines.Any(line=>line.ExistingPosition?.SubledgerKind is "SupplierCredit" or "CustomerCredit"))
+            || advances.Any(line=>line.NewAdvance!.PositionId==Guid.Empty || line.NewAdvance.TransactionId==Guid.Empty ||
+                line.NewAdvance.CounterpartyRoleId==Guid.Empty || line.NewAdvance.SubledgerKind is not ("SupplierCredit" or "CustomerCredit") ||
+                line.NewInvoice is not null || line.ExistingPosition is not null)
+            || positionIds.Distinct().Count()!=positionIds.Length || transactionIds.Distinct().Count()!=transactionIds.Length)
+            throw new InvalidOperationException("La evidencia del anticipo inicial o sus identidades aceptadas no son válidas.");
+        if (opening.PayloadVersion == 3 && invoices.Length != 0 || opening.PayloadVersion >= 4 &&
+            (opening.PayloadVersion == 4 && invoices.Length == 0 || opening.HistoricalCatchup == true || invoices.Any(line=>line.NewInvoice!.PositionId==Guid.Empty ||
                 line.NewInvoice.TransactionId==Guid.Empty || line.NewInvoice.CounterpartyRoleId==Guid.Empty ||
                 line.NewInvoice.SubledgerKind is not ("Receivable" or "Payable")) ||
                 invoices.Select(line=>line.NewInvoice!.PositionId).Distinct().Count()!=invoices.Length ||
@@ -2443,7 +2452,13 @@ public sealed partial class SqlAccountingPostingProcessor(
             OpeningIssuedOn=line.NewInvoice is {} issued ? DateOnly.FromDateTime(issued.IssuedAt.DateTime) : (DateOnly?)null,
             OpeningDueOn=line.NewInvoice is {} due ? DateOnly.FromDateTime(due.DueDate.DateTime) : (DateOnly?)null,
             OpeningPartySiteId=line.NewInvoice?.PartySiteId,OpeningRoleId=line.NewInvoice?.CounterpartyRoleId,
-            OpeningKind=line.NewInvoice?.SubledgerKind
+            OpeningKind=line.NewInvoice?.SubledgerKind,
+            ExistingSupplierCreditId=line.ExistingPosition?.SubledgerKind=="SupplierCredit"?line.ExistingPosition.SubledgerId:(Guid?)null,
+            ExistingCustomerCreditId=line.ExistingPosition?.SubledgerKind=="CustomerCredit"?line.ExistingPosition.SubledgerId:(Guid?)null,
+            OpeningAdvanceReference=line.NewAdvance?.Reference,
+            OpeningAdvanceOn=line.NewAdvance is {} advance?DateOnly.FromDateTime(advance.IssuedAt.DateTime):(DateOnly?)null,
+            OpeningAdvancePartySiteId=line.NewAdvance?.PartySiteId,OpeningAdvanceRoleId=line.NewAdvance?.CounterpartyRoleId,
+            OpeningAdvanceKind=line.NewAdvance?.SubledgerKind
         }));
         try { await validate.ExecuteNonQueryAsync(token); }
         catch (SqlException error) when (error.Number == 51408)
@@ -2464,16 +2479,26 @@ public sealed partial class SqlAccountingPostingProcessor(
                     line.NewInvoice.PositionId,line.AccountId,line.PartyId!.Value,line.NewInvoice.CounterpartyRoleId,
                     line.NewInvoice.PartySiteId,line.Debit,line.NewInvoice.DueDate,line.NewInvoice.DocumentNumber)).ToArray(),token,
                 receivableInvoices.ToDictionary(line=>line.LineId!.Value,line=>line.NewInvoice!.IssuedAt));
-            await SqlAccountingPosSynchronizationOutbox.InsertCustomersAsync(connection,transaction,source.BusinessId,
-                receivableInvoices.Select(line=>line.NewInvoice!.CounterpartyRoleId).Distinct().ToArray(),ids,timeProvider.GetUtcNow(),token);
         }
+        if (advances.Length>0)
+            await OpenCreditsAsync(connection,transaction,source,advances.Select(line=>
+                new VoucherFinancialPositionEffect(line.NewAdvance!.TransactionId,line.LineId!.Value,"Open",line.NewAdvance.SubledgerKind,
+                    line.LineId.Value,line.NewAdvance.PositionId,line.AccountId,line.PartyId!.Value,line.NewAdvance.CounterpartyRoleId,
+                    line.NewAdvance.PartySiteId,line.NewAdvance.SubledgerKind=="SupplierCredit"?line.Debit:line.Credit,null,line.NewAdvance.Reference)).ToArray(),token);
+        var customers=receivableInvoices.Select(line=>line.NewInvoice!.CounterpartyRoleId)
+            .Concat(advances.Where(line=>line.NewAdvance!.SubledgerKind=="CustomerCredit").Select(line=>line.NewAdvance!.CounterpartyRoleId)).Distinct().ToArray();
+        if(customers.Length>0)
+            await SqlAccountingPosSynchronizationOutbox.InsertCustomersAsync(connection,transaction,source.BusinessId,
+                customers,ids,timeProvider.GetUtcNow(),token);
         return FinancialFactsResult.Ready(FinancialFacts.Manual(opening.Description, opening.Lines.Select(line =>
             new ManualLineSpec(line.AccountId, line.Debit, line.Credit, line.PartyId, line.CostCenterId,
-                line.Description, line.LineId, OpeningKind: (line.ExistingPosition?.SubledgerKind ?? line.NewInvoice?.SubledgerKind) switch
+                line.Description, line.LineId, OpeningKind: (line.ExistingPosition?.SubledgerKind ?? line.NewInvoice?.SubledgerKind ?? line.NewAdvance?.SubledgerKind) switch
                 {
                     null => JournalOpeningKind.None,
                     "Payable" => JournalOpeningKind.Payable,
                     "Receivable" => JournalOpeningKind.Receivable,
+                    "SupplierCredit" => JournalOpeningKind.SupplierCredit,
+                    "CustomerCredit" => JournalOpeningKind.CustomerCredit,
                     _ => throw new InvalidOperationException("The reconciled opening position kind is invalid.")
                 }, ExistingPositionId: line.ExistingPosition?.SubledgerId)).ToArray()));
     }

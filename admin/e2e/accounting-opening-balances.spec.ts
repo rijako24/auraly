@@ -27,7 +27,11 @@ async function json(route: Route, body: unknown) {
 const localOpening = (page: Page, key: string) => readLocalCatalogDraft<StoredOpeningCapture>(page, key);
 
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-  test(`captura la factura inicial y reutiliza las etiquetas sin consultas por fila ${viewport.width}`, async ({ page }, testInfo) => {
+  for (const advanceRole of [null,"Supplier","Customer"] as const) test(advanceRole?`captura el anticipo inicial ${advanceRole} sin consultas por fila ${viewport.width}`:`captura la factura inicial y reutiliza las etiquetas sin consultas por fila ${viewport.width}`, async ({ page }, testInfo) => {
+    const referenceLabel=advanceRole?"Referencia original del anticipo":"Número de factura original";
+    const creditSide=advanceRole!=="Supplier";
+    const amountLabel=advanceRole?"Saldo disponible del anticipo inicial 1":"Saldo pendiente de la factura inicial 1";
+    const siteLabel=advanceRole?"Sede del anticipo inicial 1":"Sede de la factura inicial 1";
     const granted = viewport.width === 390 ? [...permissions, "pos.approvals.read", "pos.approvals.authorize"] : permissions;
     await page.setViewportSize(viewport);
     await page.clock.setFixedTime(new Date("2026-11-19T12:00:00-05:00"));
@@ -53,6 +57,11 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
           newInvoicePartySiteName: null, partyName: null, partyIdentification: null },
       ],
     };
+    if(advanceRole){
+      opening.lines[0]={...opening.lines[0],newInvoice:null,newAdvance:{reference:"PROV-320",issuedOn:"2025-09-10",partySiteId:siteId},newAdvancePartySiteName:"Sede principal",
+        debit:creditSide?0:1500,credit:creditSide?1500:0};
+      opening.lines[1]={...opening.lines[1],debit:creditSide?1500:0,credit:creditSide?0:1500};
+    }
     await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, username: "e2e", roles: ["Administrator"], permissions: granted }));
     await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
     await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
@@ -66,7 +75,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       siteReads++;
       const params = new URL(route.request().url()).searchParams;
       expect(params.get("partyId")).toBe(partyId);
-      expect(params.get("role")).toBe("Supplier");
+      expect(params.get("role")).toBe(advanceRole??"Supplier");
       expect(Number(params.get("pageSize"))).toBeLessThanOrEqual(100);
       return json(route, { items: [{ partySiteId: siteId, partyId, siteName: "Sede principal", displayName: "Proveedor histórico" }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 });
     });
@@ -81,7 +90,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
         return json(route,{items:ids.map(id=>({costCenterId:id,code:`CC-${id.slice(0,6)}`,name:"Centro QA",isActive:true})),page:1,pageSize:100,totalCount:ids.length,totalPages:1});
       }
       if (path.endsWith("/accounts")) return json(route, [
-        { accountId, code: "22050501", name: "Proveedores", accountType: "Liability", allowsPosting: true, requiresParty: true, isActive: true, semantics: { financialFunction: "Payable" } },
+        { accountId, code: "22050501", name: "Proveedores", accountType: advanceRole==="Supplier"?"Asset":"Liability", allowsPosting: true, requiresParty: true, isActive: true, semantics: { financialFunction: advanceRole==="Supplier"?"SupplierAdvance":advanceRole==="Customer"?"CustomerAdvance":"Payable" } },
         { accountId: equityId, code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
       ]);
       if (path.endsWith("/readiness")) {
@@ -110,7 +119,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
           debitTotal: request.lines.reduce((total: number, line: { debit: number }) => total + line.debit, 0),
           creditTotal: request.lines.reduce((total: number, line: { credit: number }) => total + line.credit, 0),
           lines: request.lines.map((line: Record<string, unknown>, index: number) => ({ ...line, lineNumber: index + 1,
-          newInvoicePartySiteName: index === 0 ? "Sede principal" : null, partyName: index === 0 ? "Proveedor histórico" : null, partyIdentification: index === 0 ? "900100200" : null })) };
+          newInvoicePartySiteName: index === 0 ? "Sede principal" : null,newAdvancePartySiteName:index===0?"Sede principal":null, partyName: index === 0 ? "Proveedor histórico" : null, partyIdentification: index === 0 ? "900100200" : null })) };
         return json(route, opening);
       }
       return json(route, []);
@@ -122,15 +131,16 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       await expect(page.getByText("Recibe aprobaciones con Auraly cerrada", { exact: true })).not.toBeVisible();
     }
     await page.getByRole("button", { name: "Saldos iniciales" }).click();
-    const invoice = page.getByRole("region", { name: "Factura inicial de la partida 1" });
+    const invoice = page.getByRole("region", { name: `${advanceRole?"Anticipo":"Factura"} inicial de la partida 1` });
     await expect(invoice).toBeVisible();
-    await expect(invoice.getByLabel("Número de factura original")).toHaveValue("PROV-320");
+    await expect(invoice.getByLabel(referenceLabel)).toHaveValue("PROV-320");
     await expect(invoice.getByText("10 de septiembre de 2025", { exact: true })).toBeVisible();
-    await expect(invoice.getByText("10 de octubre de 2025", { exact: true })).toBeVisible();
+    if(advanceRole)await expect(invoice.getByLabel("Fecha de vencimiento",{exact:true})).toHaveCount(0);
+    else await expect(invoice.getByText("10 de octubre de 2025", { exact: true })).toBeVisible();
     expect(partyReads).toBe(0); expect(siteReads).toBe(0);
     const save = page.getByRole("button", { name: "Guardar borrador" });
     const localKey = openingRecoveryKey(openingRecoveryScope(tenantId, "33333333-3333-3333-3333-333333333333", businessId), opening.effectiveOn);
-    await invoice.getByLabel("Número de factura original").fill("");
+    await invoice.getByLabel(referenceLabel).fill("");
     await expect(save).toBeDisabled();
     // Reload while the latest edit is still inside the coalescing window.
     pauseReadiness = true;
@@ -141,24 +151,24 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
       expect(openingReads).toBe(1);
     } finally { pauseReadiness = false; releaseReadiness?.(); }
     await closeOpeningNotificationHint(page);
-    await expect(invoice.getByLabel("Número de factura original")).toHaveValue("");
+    await expect(invoice.getByLabel(referenceLabel)).toHaveValue("");
     expect(openingReads).toBe(2);
     await expect(save).toBeDisabled();
     expect(saves).toBe(0);
-    await invoice.getByLabel("Número de factura original").fill("PROV-321");
-    await invoice.getByRole("textbox", { name: "Saldo pendiente de la factura inicial 1" }).fill("1750,1254");
-    await page.getByRole("textbox", { name: "Débito de apertura 2" }).fill("1750,1254");
-    await invoice.getByLabel("Fecha de vencimiento", { exact: true }).click();
-    await page.getByRole("button", { name: "15 de octubre de 2025", exact: true }).click();
-    await invoice.getByRole("combobox", { name: "Sede de la factura inicial 1" }).click();
+    await invoice.getByLabel(referenceLabel).fill("PROV-321");
+    await invoice.getByRole("textbox", { name: amountLabel }).fill("1750,1254");
+    await page.getByRole("textbox", { name: `${creditSide?"Débito":"Crédito"} de apertura 2` }).fill("1750,1254");
+    await invoice.getByLabel(advanceRole?"Fecha de emisión original":"Fecha de vencimiento", { exact: true }).click();
+    await page.getByRole("button", { name: advanceRole?"15 de septiembre de 2025":"15 de octubre de 2025", exact: true }).click();
+    await invoice.getByRole("combobox", { name: siteLabel }).click();
     await expect.poll(() => siteReads).toBe(1);
     await page.getByRole("option", { name: /Sede principal/ }).click();
     expect(siteReads).toBe(1); expect(partyReads).toBe(0);
-    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0].credit).toBe("1750.1254");
+    await expect.poll(async () => (await localOpening(page, localKey))?.capture.lines[0][creditSide?"credit":"debit"]).toBe("1750.1254");
     await page.reload();
     await page.getByRole("button", { name: "Saldos iniciales" }).click();
     await closeOpeningNotificationHint(page);
-    await expect(invoice.getByLabel("Número de factura original")).toHaveValue("PROV-321");
+    await expect(invoice.getByLabel(referenceLabel)).toHaveValue("PROV-321");
     if (viewport.width === 1440) {
       await page.evaluate(() => {
         const put = IDBObjectStore.prototype.put;
@@ -169,21 +179,29 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
           return request;
         };
       });
-      await invoice.getByLabel("Número de factura original").fill("NO-COMMIT");
+      await invoice.getByLabel(referenceLabel).fill("NO-COMMIT");
       await expect(page.getByRole("alert").filter({ hasText: "No fue posible recuperar o guardar" })).toBeVisible();
-      expect((await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber).toBe("PROV-321");
-      await invoice.getByLabel("Número de factura original").fill("PROV-321");
+      expect(((await localOpening(page, localKey))?.capture.lines[0].newAdvance?.reference??(await localOpening(page, localKey))?.capture.lines[0].newInvoice?.documentNumber)).toBe("PROV-321");
+      await invoice.getByLabel(referenceLabel).fill("PROV-321");
     }
-    await invoice.screenshot({ path: testInfo.outputPath(`opening-invoice-fields-${viewport.width}.png`) });
+    await invoice.screenshot({ path: testInfo.outputPath(`opening-${advanceRole??"invoice"}-fields-${viewport.width}.png`) });
     await save.click();
     await expect(page.getByRole("button", { name: "Aprobar saldos" })).toBeEnabled();
     expect(saves).toBe(1); expect(openingReads).toBe(3);
     await expect.poll(() => localOpening(page, localKey)).toBeNull();
-    expect(opening.lines[0].newInvoice).toEqual({ documentNumber: "PROV-321", issuedOn: "2025-09-10", dueOn: "2025-10-15", partySiteId: siteId });
-    await expect(page.getByRole("textbox", { name: "Crédito de apertura 1" })).toHaveValue(/1[\s\u00a0]750\.1254/);
-    expect(opening.lines[0].credit).toBe(1750.1254);
+    if(advanceRole)expect(opening.lines[0].newAdvance).toEqual({reference:"PROV-321",issuedOn:"2025-09-15",partySiteId:siteId});
+    else expect(opening.lines[0].newInvoice).toEqual({ documentNumber: "PROV-321", issuedOn: "2025-09-10", dueOn: "2025-10-15", partySiteId: siteId });
+    await expect(page.getByRole("textbox", { name: `${creditSide?"Crédito":"Débito"} de apertura 1` })).toHaveValue(/1[\s\u00a0]750\.1254/);
+    expect(opening.lines[0][creditSide?"credit":"debit"]).toBe(1750.1254);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath(`opening-invoice-${viewport.width}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`opening-${advanceRole??"invoice"}-${viewport.width}.png`), fullPage: true });
+    if(advanceRole){
+      await page.reload();await page.getByRole("button",{name:"Saldos iniciales"}).click();
+      await expect(invoice.getByLabel(referenceLabel)).toHaveValue("PROV-321");
+      await expect(invoice.getByRole("textbox",{name:amountLabel})).toHaveValue(/1[\s\u00a0]750\.1254/);
+      expect(siteReads).toBe(1);expect(partyReads).toBe(0);
+      return;
+    }
     await page.reload();
     await page.getByRole("button", { name: "Saldos iniciales" }).click();
     await expect(page.getByLabel("Número de factura original")).toHaveValue("PROV-321");

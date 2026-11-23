@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Auraly.Commerce.Accounting.Contracts;
@@ -13,10 +13,13 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class AccountingVerticalSliceTests
 {
     [Theory]
-    [InlineData(2)]
-    [InlineData(50)]
-    [InlineData(500)]
-    public async Task Initial_invoice_capture_keeps_three_commands_and_bounded_latency(int count)
+    [InlineData(2, false)]
+    [InlineData(50, false)]
+    [InlineData(500, false)]
+    [InlineData(2, true)]
+    [InlineData(50, true)]
+    [InlineData(500, true)]
+    public async Task Initial_invoice_and_advance_capture_keeps_three_commands_and_bounded_latency(int count, bool advances)
     {
         var snapshot = await CaptureOpeningTestSettingsAsync();
         try
@@ -24,14 +27,16 @@ public sealed partial class AccountingVerticalSliceTests
             await DisableAccountingAsync();
             using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
             var (partyId, siteId) = await PrepareOpeningInvoicePartyAsync();
-            var account = await CreateHistoricalAccountAsync(client, false);
+            var account = advances ? (await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,
+                "2390","Liability","CustomerAdvance","Credit")).AccountId : await CreateHistoricalAccountAsync(client, false);
             var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
             var equity = accounts.First(item => item.AccountType == "Equity" && item.AllowsPosting && item.IsActive);
             var batchId = Guid.NewGuid();
-            var cut = new DateOnly(2027, 1, count == 2 ? 1 : count == 50 ? 2 : 3);
+            var cut = new DateOnly(2027, 1, count == 2 ? advances?4:1 : count == 50 ? advances?5:2 : advances?6:3);
             var lines = Enumerable.Range(0, count - 1).Select(index => new AccountingOpeningBalanceLineRequest(
                 account, partyId, null, "Factura inicial", 0, 1, Guid.NewGuid(),
-                NewInvoice: new($"INI-{batchId:N}-{index}", cut.AddDays(-60), cut.AddDays(-30), siteId))).ToList();
+                NewInvoice: advances?null:new($"INI-{batchId:N}-{index}", cut.AddDays(-60), cut.AddDays(-30), siteId),
+                NewAdvance: advances?new($"ANT-{batchId:N}-{index}",cut.AddDays(-60),siteId):null)).ToList();
             lines.Add(new(equity.AccountId, null, null, "Contrapartida", count - 1, 0));
             var request = new SaveAccountingOpeningBalanceRequest(batchId, fixture.BusinessId, cut, "COP", "Cartera inicial por conjunto", null, lines);
             using var scope = fixture.CreateScope();
@@ -51,12 +56,12 @@ public sealed partial class AccountingVerticalSliceTests
                 samples.Add(watch.Elapsed.TotalMilliseconds);
                 Assert.Equal(3, counter.Count);
                 Assert.Equal(count, saved.Lines.Count);
-                Assert.All(saved.Lines.Take(count - 1), line => Assert.NotNull(line.NewInvoice));
+                Assert.All(saved.Lines.Take(count - 1), line => { if(advances)Assert.NotNull(line.NewAdvance);else Assert.NotNull(line.NewInvoice); });
                 request = request with { RowVersion = saved.RowVersion };
             }
             samples.Sort();
             var p95 = samples[18];
-            output.WriteLine("Initial invoices {0} lines: 3 SQL commands; p95 {1:F1} ms; 20 warm samples", count, p95);
+            output.WriteLine("Initial {2}, {0} lines: 3 SQL commands; p95 {1:F1} ms; 20 warm samples", count, p95, advances?"advances":"invoices");
             Assert.True(p95 < 1500, $"Initial {count}-line invoice capture p95 was {p95:F1} ms.");
             Assert.Equal(0, await CountAsync("Payables", "SourceDocumentId", batchId));
             Assert.Equal(0, await CountAsync("AccountingEntries", "SourceDocumentId", batchId));

@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Text.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Domain;
@@ -165,7 +165,7 @@ public sealed partial class SqlAccountingPostingProcessor
             await OpenManualReceivablesAsync(connection, transaction, source, receivableOpenings, token);
         var creditOpenings = effects.Positions.Where(item => item.SubledgerKind is "SupplierCredit" or "CustomerCredit").ToArray();
         if (creditOpenings.Length > 0)
-            await OpenManualCreditsAsync(connection, transaction, source, creditOpenings, token);
+            await OpenCreditsAsync(connection, transaction, source, creditOpenings, token);
         foreach (var kind in new[] { AccountingSubledgerKinds.Payable, AccountingSubledgerKinds.Receivable })
             await ApplyPortfolioAdjustmentsAsync(connection, transaction, source, kind,
                 effects.Positions.Where(item => item.EffectKind == "Adjustment" && item.SubledgerKind == kind)
@@ -251,7 +251,7 @@ public sealed partial class SqlAccountingPostingProcessor
         await command.ExecuteNonQueryAsync(token);
     }
 
-    private async Task OpenManualCreditsAsync(SqlConnection connection, SqlTransaction transaction,
+    private async Task OpenCreditsAsync(SqlConnection connection, SqlTransaction transaction,
         SourceEnvelope source, IReadOnlyList<VoucherFinancialPositionEffect> openings, CancellationToken token)
     {
         await using var command = new SqlCommand(DeclareSupplierCreditOpeningsSql + DeclareCustomerCreditOpeningsSql + """
@@ -263,7 +263,7 @@ public sealed partial class SqlAccountingPostingProcessor
               SourceLineId uniqueidentifier,Amount decimal(19,4));
             IF (SELECT COUNT(*) FROM @CreditInputs)<>@Count OR EXISTS(SELECT 1 FROM @CreditInputs
               WHERE SubledgerKind NOT IN(N'SupplierCredit',N'CustomerCredit'))
-              THROW 51846,'The manual credit opening batch is incomplete.',1;
+              THROW 51846,'El lote de apertura de anticipos está incompleto.',1;
             INSERT @SupplierCreditOpenings(CreditId,TransactionId,SupplierId,PartySiteId,DocumentId,DocumentType,
               SourceLineId,Nature,Currency,Amount)
             SELECT PositionId,EffectId,CounterpartyRoleId,PartySiteId,@CreditParentDocumentId,@CreditParentDocumentType,

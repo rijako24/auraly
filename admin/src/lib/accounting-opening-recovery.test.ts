@@ -44,3 +44,14 @@ test("recovers only valid SQL calendar dates", () => {
   assert.equal(validOpeningDate("2026-11-19"), true);
   for (const invalid of ["2026-02-30", "0000-01-01", "2026-11-19T12:00:00Z", "", undefined]) assert.equal(validOpeningDate(invalid), false);
 });
+
+
+test("recovers initial advance evidence and detects changes without persisting display labels", () => {
+  const line={...emptyOpeningLine(),newAdvance:{reference:"ANT-1",issuedOn:"2025-12-01",partySiteId:"site-1"},credit:"1000.1254"};
+  const capture={batchId:"batch-1",rowVersion:null,description:"Anticipos iniciales",lines:[line]};
+  const stored:StoredOpeningCapture={version:1,kind:"capture",scope:"own",effectiveOn:"2026-01-01",capture};
+  assert.equal(readOpeningCapture(stored,"own",stored.effectiveOn),stored);
+  assert.equal(openingCaptureSignature(capture),openingCaptureSignature({...capture,lines:[{...line,newAdvancePartySiteName:"Sede"}]}));
+  assert.notEqual(openingCaptureSignature(capture),openingCaptureSignature({...capture,lines:[{...line,newAdvance:{...line.newAdvance,reference:"ANT-2"}}]}));
+  assert.equal(readOpeningCapture({...stored,capture:{...capture,lines:[{...line,newAdvance:{reference:123}}]}},"own",stored.effectiveOn),null);
+});

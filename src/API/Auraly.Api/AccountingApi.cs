@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Payables;
@@ -19,11 +19,11 @@ public static class AccountingApi
             .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/open-positions", async (HttpContext context,
             string? subledgerKind, int? page, int? pageSize, Guid? partyId, Guid? accountId,
-            string? search, DateOnly? dueFrom, DateOnly? dueTo, Guid? subledgerId, Guid? counterpartyRoleId, bool? manualSupportOnly, DateOnly? effectiveOn, string? voucherTypeCode,
+            string? search, DateOnly? dueFrom, DateOnly? dueTo, Guid? subledgerId, Guid? counterpartyRoleId, bool? manualSupportOnly, DateOnly? effectiveOn, string? voucherTypeCode, bool? advancesOnly,
             AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.OpenPositionsAsync(context.User.ToAccountingIdentity(),
                 new(subledgerKind ?? AccountingSubledgerKinds.Payable, page ?? 1, pageSize ?? 25,
-                    partyId, accountId, search, dueFrom, dueTo, subledgerId, counterpartyRoleId, manualSupportOnly == true, effectiveOn, voucherTypeCode), token), Results.Ok))
+                    partyId, accountId, search, dueFrom, dueTo, subledgerId, counterpartyRoleId, manualSupportOnly == true, effectiveOn, voucherTypeCode, AdvancesOnly: advancesOnly == true), token), Results.Ok))
             .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/account-options", async (HttpContext context,
             int? page, int? pageSize, string? search, bool? expenseOnly, Guid? accountId, bool? liabilityOnly, bool? groupingOnly,

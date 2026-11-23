@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[AccountingConfigurationProfiles]
+﻿CREATE TABLE [dbo].[AccountingConfigurationProfiles]
 (
     [ProfileCode] NVARCHAR(32) NOT NULL,
     [Name] NVARCHAR(120) NOT NULL,
@@ -344,10 +344,15 @@ CREATE TABLE [dbo].[AccountingOpeningBalanceLines]
     [LineId] UNIQUEIDENTIFIER NULL,
     [ExistingPayableId] UNIQUEIDENTIFIER NULL,
     [ExistingReceivableId] UNIQUEIDENTIFIER NULL,
+    [ExistingSupplierCreditId] UNIQUEIDENTIFIER NULL,
+    [ExistingCustomerCreditId] UNIQUEIDENTIFIER NULL,
     [OpeningDocumentNumber] NVARCHAR(80) NULL,
     [OpeningIssuedOn] DATE NULL,
     [OpeningDueOn] DATE NULL,
     [OpeningPartySiteId] UNIQUEIDENTIFIER NULL,
+    [OpeningAdvanceReference] NVARCHAR(80) NULL,
+    [OpeningAdvanceOn] DATE NULL,
+    [OpeningAdvancePartySiteId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_AccountingOpeningBalanceLines] PRIMARY KEY CLUSTERED ([BatchId],[LineNumber]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Batch] FOREIGN KEY ([BatchId]) REFERENCES [dbo].[AccountingOpeningBalanceBatches]([BatchId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Account] FOREIGN KEY ([AccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
@@ -355,16 +360,31 @@ CREATE TABLE [dbo].[AccountingOpeningBalanceLines]
     CONSTRAINT [FK_AccountingOpeningBalanceLines_CostCenter] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_ExistingPayable] FOREIGN KEY ([ExistingPayableId]) REFERENCES [dbo].[Payables]([PayableId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_ExistingReceivable] FOREIGN KEY ([ExistingReceivableId]) REFERENCES [dbo].[Receivables]([ReceivableId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_SupplierCredit] FOREIGN KEY ([ExistingSupplierCreditId]) REFERENCES [dbo].[SupplierCredits]([SupplierCreditId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_CustomerCredit] FOREIGN KEY ([ExistingCustomerCreditId]) REFERENCES [dbo].[CustomerCredits]([CustomerCreditId]),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_ExistingPosition] CHECK (
-      ([ExistingPayableId] IS NULL OR [ExistingReceivableId] IS NULL)
-      AND (([ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL) OR [LineId] IS NOT NULL)),
+      (CASE WHEN [ExistingPayableId] IS NULL THEN 0 ELSE 1 END
+       +CASE WHEN [ExistingReceivableId] IS NULL THEN 0 ELSE 1 END
+       +CASE WHEN [ExistingSupplierCreditId] IS NULL THEN 0 ELSE 1 END
+       +CASE WHEN [ExistingCustomerCreditId] IS NULL THEN 0 ELSE 1 END)<=1
+      AND (([ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL
+        AND [ExistingSupplierCreditId] IS NULL AND [ExistingCustomerCreditId] IS NULL) OR [LineId] IS NOT NULL)),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_OpeningSite] FOREIGN KEY ([OpeningPartySiteId]) REFERENCES [dbo].[PartySites]([PartySiteId]),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_OpeningInvoice] CHECK (
       ([OpeningDocumentNumber] IS NULL AND [OpeningIssuedOn] IS NULL AND [OpeningDueOn] IS NULL AND [OpeningPartySiteId] IS NULL)
       OR ([OpeningDocumentNumber] IS NOT NULL AND LEN(LTRIM(RTRIM([OpeningDocumentNumber])))>0
         AND [OpeningIssuedOn] IS NOT NULL AND [OpeningDueOn] IS NOT NULL AND [OpeningDueOn]>=[OpeningIssuedOn]
         AND [OpeningPartySiteId] IS NOT NULL AND [PartyId] IS NOT NULL AND [LineId] IS NOT NULL
-        AND [ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL)),
+        AND [ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL
+        AND [ExistingSupplierCreditId] IS NULL AND [ExistingCustomerCreditId] IS NULL AND [OpeningAdvanceReference] IS NULL)),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_AdvanceSite] FOREIGN KEY ([OpeningAdvancePartySiteId]) REFERENCES [dbo].[PartySites]([PartySiteId]),
+    CONSTRAINT [CK_AccountingOpeningBalanceLines_Advance] CHECK (
+      ([OpeningAdvanceReference] IS NULL AND [OpeningAdvanceOn] IS NULL AND [OpeningAdvancePartySiteId] IS NULL)
+      OR ([OpeningAdvanceReference] IS NOT NULL AND LEN(LTRIM(RTRIM([OpeningAdvanceReference])))>0
+        AND [OpeningAdvanceOn] IS NOT NULL AND [OpeningAdvancePartySiteId] IS NOT NULL
+        AND [PartyId] IS NOT NULL AND [LineId] IS NOT NULL AND [OpeningDocumentNumber] IS NULL
+        AND [ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL
+        AND [ExistingSupplierCreditId] IS NULL AND [ExistingCustomerCreditId] IS NULL)),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_LineId] CHECK ([LineId] IS NULL OR [LineId]<>'00000000-0000-0000-0000-000000000000'),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_Number] CHECK ([LineNumber]>0),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_Side] CHECK (([Debit]>0 AND [Credit]=0) OR ([Credit]>0 AND [Debit]=0))
@@ -381,6 +401,13 @@ CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_Payable]
 GO
 CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_Receivable]
     ON [dbo].[AccountingOpeningBalanceLines]([BatchId],[ExistingReceivableId]) WHERE [ExistingReceivableId] IS NOT NULL;
+GO
+
+CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_SupplierCredit]
+    ON [dbo].[AccountingOpeningBalanceLines]([BatchId],[ExistingSupplierCreditId]) WHERE [ExistingSupplierCreditId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_CustomerCredit]
+    ON [dbo].[AccountingOpeningBalanceLines]([BatchId],[ExistingCustomerCreditId]) WHERE [ExistingCustomerCreditId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[AccountingAccountMappings]

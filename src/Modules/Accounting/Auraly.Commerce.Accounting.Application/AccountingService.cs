@@ -426,12 +426,16 @@ public sealed partial class AccountingService(
         foreach (var line in request.Lines)
         {
             if (line.LineId == Guid.Empty || line.ExistingPosition is { } position &&
-                (position.SubledgerId == Guid.Empty || position.ReversesTransactionId is not null || position.SubledgerKind is not ("Payable" or "Receivable")))
+                (position.SubledgerId == Guid.Empty || position.ReversesTransactionId is not null || position.SubledgerKind is not ("Payable" or "Receivable" or "SupplierCredit" or "CustomerCredit")))
                 throw new AccountingValidationException("La referencia de la obligación o la identidad de la partida no es válida.");
-            if (line.NewInvoice is { } invoice && (line.ExistingPosition is not null || line.PartyId is null ||
+            if (line.NewInvoice is { } invoice && (line.ExistingPosition is not null || line.NewAdvance is not null || line.PartyId is null ||
                 invoice.PartySiteId == Guid.Empty || string.IsNullOrWhiteSpace(invoice.DocumentNumber) || invoice.DocumentNumber.Length > 80 ||
                 invoice.IssuedOn == default || invoice.DueOn == default || invoice.DueOn < invoice.IssuedOn || invoice.IssuedOn >= request.EffectiveOn))
                 throw new AccountingValidationException("La factura inicial requiere tercero, sede, número, emisión anterior al corte y vencimiento válido; no puede vincular otra obligación al mismo tiempo.");
+            if (line.NewAdvance is { } advance && (line.ExistingPosition is not null || line.NewInvoice is not null || line.PartyId is null ||
+                advance.PartySiteId == Guid.Empty || string.IsNullOrWhiteSpace(advance.Reference) || advance.Reference.Length > 80 ||
+                advance.IssuedOn == default || advance.IssuedOn >= request.EffectiveOn))
+                throw new AccountingValidationException("El anticipo inicial requiere tercero, sede, referencia y fecha anterior al corte; no puede abrir o vincular otro saldo en la misma partida.");
             if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
                 (line.Debit > 0) == (line.Credit > 0))
                 throw new AccountingValidationException("Cada partida del saldo inicial requiere exactamente un débito o un crédito positivo.");

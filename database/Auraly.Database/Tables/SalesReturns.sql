@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[SalesReturns]
+﻿CREATE TABLE [dbo].[SalesReturns]
 (
     [ReturnId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
@@ -297,7 +297,7 @@ CREATE TABLE [dbo].[CustomerCredits]
     CONSTRAINT [CK_CustomerCredits_Source] CHECK (
       ([SourceReturnId] IS NOT NULL AND [SourceDocumentId] IS NULL AND [SourceDocumentType] IS NULL AND [SourceLineId] IS NULL)
       OR ([SourceReturnId] IS NULL AND [SourceDocumentId] IS NOT NULL AND [SourceDocumentType] IS NOT NULL
-        AND [SourceDocumentType]=N'ManualAccountingVoucher' AND [SourceLineId] IS NOT NULL
+        AND [SourceDocumentType] IN(N'ManualAccountingVoucher',N'AccountingOpeningBalance') AND [SourceLineId] IS NOT NULL
         AND [SourceLineId]<>'00000000-0000-0000-0000-000000000000')),
     CONSTRAINT [CK_CustomerCredits_Amounts] CHECK
       ([OriginalAmount]>0 AND [AvailableAmount]>=0 AND [AvailableAmount]<=[OriginalAmount]),

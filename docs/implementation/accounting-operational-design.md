@@ -811,7 +811,7 @@ COP. This review does not add foreign-currency opening support.
 | Supplier payables | The same opening aggregate creates a native payable per invoice, available in supplier portfolio, ageing reports and subsequent payment flows. |
 | Obligations already present in this system | Link the existing position where eligible; preserve its identity and prior payments. Do not enter it again as a new invoice. |
 | Inventory and fixed-asset balances | The ledger amounts can be captured. A ledger line alone does not create physical quantities by warehouse, an asset register or depreciation schedules. Inventory details retain their canonical owner; this review does not certify an operational fixed-asset register. |
-| Historical advances and unallocated credits | An ordinary opening line can carry their ledger amount, but this screen currently does not open or link the corresponding available `CustomerCredits` / `SupplierCredits`. Their operational opening is a real remaining limitation, not certified by ordinary debit/credit or invoice tests. |
+| Historical advances | The same opening capture opens native `CustomerCredits` / `SupplierCredits` with nature `Advance`, or links an eligible existing commercial-only advance. It retains the original reference/date, party/site and available balance at cutover, without another cash movement. |
 
 Customer and supplier invoice schedules are part of the balance, not additional
 amounts on top of their control accounts. Their totals must reconcile with those
@@ -821,20 +821,56 @@ balance once and reconcile the existing postings before approval. Initial
 inventory quantities must continue through the canonical inventory owner; this
 review authorizes no second inventory writer or automatic stock reconstruction.
 
-For a complete operational opening of historical advances, the required design
-is to extend this same opening aggregate and its existing financial-effects
-owner, reusing the native credit writers and stable source-line identities.
-The original third party, account, reference, remaining availability and cut must
-be explicit; no cash movement, new historical receipt or duplicate journal may
-be invented. New/link, application and replay cases on both sides must pass
-before describing that capability as implemented. This is a documented gap;
-this review changes neither the opening payload nor existing credit balances.
+**Advance opening extension (approved 2026-11-23):** a selected account with
+financial function `SupplierAdvance` or `CustomerAdvance` expands the shared
+opening-document fields. An advance has reference, original date before cut,
+party/site and available COP amount; no due date. Supplier advances debit their
+asset account; customer advances credit their liability account. The accountant
+enters the real balancing lines; the form does not invent income or capital.
+The MVP continues to use ordinary ledger lines and existing reports for other
+assets, liabilities and equity; no fixed-asset module is added by this change.
+
+The same `AccountingOpeningBalanceBatches` / `AccountingOpeningBalanceLines`,
+`OpeningPositionsValidate`, source acceptance and posting transaction remain
+the owners. Nullable evidence and existing-credit links extend the current
+line table. Payload version 5 generates new position/transaction IDs once and
+reuses the existing batched credit writer, now named `OpenCreditsAsync` for its
+manual-voucher and opening callers. The credit binds to its exact journal line.
+No payment header, work-session movement, inventory effect or fiscal document
+is generated. Existing openings and accepted version-3/4 payloads are untouched.
+
+Linking requires a native advance with unposted, completed commercial-only
+history before cut, no previous journal binding, and matching party, COP,
+account nature and available balance. Pending applications, cancellation,
+inconsistent history, repeated identities/references or foreign scope block
+save, approval or posting in the same canonical validator. Linking creates no
+new credit or opening transaction and does not repeat earlier applications.
+Other unallocated credits with nature `Credit` are not silently converted into
+advances; this extension only opens/links nature `Advance`.
+
+The capture retains its limit of 500 lines, three SQL commands and local warm
+p95 below 1.5 seconds at 2/50/500 lines. Posting adds one combined credit-writer
+command, independent of line count and side, and the existing batched customer
+synchronization outbox where needed. The reference selector filters advances
+in its canonical SQL before pagination; it performs no per-line request while
+closed. Draft recovery includes incomplete advance evidence in the existing
+IndexedDB record, without another store or autosave endpoint.
+
+Acceptance covers new and linked advances on both sides, original evidence,
+decimal precision, subsequent applications to opening invoices, replay, journal
+failure rollback, scope/nature/date/duplicate rejection and bounded capture.
+Browser coverage extends the invoice capture journey to both advance sides on
+desktop/mobile, including recovery, site lookup and save/reopen. Completion of
+these gates and the real DEV journey must be recorded before release approval.
+Deploy schema and the updated processor before exposing capture. Once version-5
+sources have been accepted, retain additive columns and finish them with this
+processor or a forward fix; an older worker rejects that payload. Rollback must
+not erase credits, journals or historical applications.
 
 The official [Siigo other-account guide](https://siigonube.portaldeclientes.siigo.com/ingresar-saldos-iniciales-de-otras-cuentas/)
 and the Alegra guide below confirm that opening is broader than portfolio.
 [Siigo customer opening](https://siigonube.portaldeclientes.siigo.com/ingresar-saldos-iniciales-de-cartera/)
-also includes advances; that precedent does not prove our available-credit
-opening is already implemented. Existing activation locks, dual effective /
+also includes advances. Existing activation locks, dual effective /
 registration report cutoffs and the reviewed Megafruver supplemental-opening
 decision remain unchanged by this scope review.
 

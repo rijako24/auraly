@@ -1,11 +1,11 @@
-namespace Auraly.Commerce.Accounting.Contracts;
+﻿namespace Auraly.Commerce.Accounting.Contracts;
 
 public sealed record AccountingOpenPositionQuery(
     string SubledgerKind, int Page, int PageSize, Guid? PartyId = null,
     Guid? AccountId = null, string? Search = null, DateOnly? DueFrom = null,
     DateOnly? DueTo = null, Guid? SubledgerId = null, Guid? CounterpartyRoleId = null, bool ManualSupportOnly = false,
     DateOnly? EffectiveOn = null, string? VoucherTypeCode = null,
-    IReadOnlyList<Guid>? SubledgerIds = null);
+    IReadOnlyList<Guid>? SubledgerIds = null, bool AdvancesOnly = false);
 
 // A bounded selection, not an unpaginated search of the party's portfolio.
 public sealed record AccountingOpenPositionSelectionRequest(
