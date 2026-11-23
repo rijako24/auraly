@@ -2,9 +2,9 @@ import { expect, test, type Route } from "@playwright/test";
 import { login } from "./support/auth";
 
 for (const mode of ["browser", "installed-online", "prepared"] as const) {
-  for (const catalogState of ["ready", "credit", "cards", "missing", "previous", "rejected"] as const) {
-  const automaticCredit = catalogState === "credit";
-  test(`${catalogState === "rejected" ? "rejected confirmation shows its error inside checkout without printing" : catalogState === "cards" ? "native card capture opens only after selecting a form and preserves approval" : catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
+  for (const catalogState of ["ready", "credit", "credit-multiple", "credit-missing", "cards", "missing", "previous", "rejected"] as const) {
+  const configuredCredit = catalogState === "credit" || catalogState === "credit-multiple";
+  test(`${catalogState === "rejected" ? "rejected confirmation shows its error inside checkout without printing" : catalogState === "cards" ? "native card capture opens only after selecting a form and preserves approval" : catalogState === "missing" || catalogState === "previous" ? `unavailable ${catalogState} catalog blocks new capture without legacy fallback` : catalogState === "credit-missing" ? "credit without a configured form cannot be selected by button or shortcut" : configuredCredit ? `configured money and ${catalogState} form keep the existing checkout` : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
     test.setTimeout(150_000);
     if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
     else await page.context().addCookies([{ name: "auth_token", value: "printing-test", url: baseURL!, httpOnly: true }]);
@@ -21,7 +21,7 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       currencyCode: "COP", priceSource: "Public", discount: 0, documentUnitCost: 500,
       net: 1000, tax: 0, total: 1000 };
     const draft = { draftId: "draft", ...workspace, userId: user.userId, status: "Active", version: 1,
-      customerId: automaticCredit ? "customer" : null, lines: [line], untaxedAmount: 1000, taxAmount: 0, payableAmount: 1000 };
+      customerId: configuredCredit || catalogState === "credit-missing" ? "customer" : null, lines: [line], untaxedAmount: 1000, taxAmount: 0, payableAmount: 1000 };
     const nextDraft = { ...draft, draftId: "next", lines: [], untaxedAmount: 0, payableAmount: 0 };
     const toEdge = (value: typeof draft | typeof nextDraft) => ({ ...value, draftId: { value: value.draftId },
       lines: value.lines.map(item => ({ ...item, productId: { value: item.productId } })) });
@@ -54,12 +54,13 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
     let brandingReads = 0;
     let confirmed = false;
     const completions: Array<{ payments: Array<{ amount: number; methodCode: string; paymentMethodId?: string }>; credit?: { amount: number; paymentMethodId?: string | null; accountId?: string | null } }> = [];
-    const forms = ["Cash", "DebitCard", "CreditCard", "Transfer"].map((methodCode, index) => ({
+    const forms = ["Cash", "DebitCard", "CreditCard", "Transfer", ...(configuredCredit || catalogState === "ready" ? ["Credit"] : [])].map((methodCode, index) => ({
       paymentMethodId: `form-${index}`, version: 1, code: `FORM-${index}`, name: `Forma ${methodCode}`,
       methodCode, accountId: `account-${index}`, useForSales: true, useForReceipts: true,
       useForSupplierPayments: true, useForPayroll: true, isActive: true,
     }));
     if (catalogState === "cards") forms.push({ ...forms[1], paymentMethodId: "form-other-debit", code: "OTHER-DEBIT", name: "Otra tarjeta débito" });
+    if (catalogState === "credit-multiple") forms.push({ ...forms[4], paymentMethodId: "form-other-credit", accountId: "account-other-credit", code: "OTHER-CREDIT", name: "Otra financiación" });
     const printed: string[] = [];
     const handle = async (route: Route) => {
       const request = route.request(), url = new URL(request.url()), path = url.pathname;
@@ -88,7 +89,7 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [],
         ...(catalogState === "missing" ? {} : { paymentMethods: { contractVersion: catalogState === "previous" ? 1 : 2, forms } }) };
       else if (path.endsWith("/reference-options/card-franchise")) body = [{ code: "Visa", label: "Visa" }];
-      else if (path.endsWith("/reference-options/payment-method")) body = automaticCredit || catalogState === "cards"
+      else if (path.endsWith("/reference-options/payment-method")) body = configuredCredit || catalogState === "credit-missing" || catalogState === "cards"
         ? (["Cash", "DebitCard", "CreditCard", "Transfer", "Credit"] as const).map(code => ({ code,
           label: { Cash: "Efectivo", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Credit: "Crédito cliente" }[code] }))
         : [{ code: "Cash", label: "Efectivo" }, { code: "Transfer", label: "Transferencia" }, { code: "Credit", label: "Crédito cliente" }];
@@ -180,7 +181,22 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       expect(printed).toHaveLength(0);
       return;
     }
-    if (automaticCredit) {
+    if (catalogState === "credit-missing") {
+      await page.goto("/pos");
+      await expect(page.locator("#pos-scanner")).toBeEnabled();
+      await page.getByRole("button", { name: /^Cobrar/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Finalizar venta" });
+      await expect(dialog.getByRole("button", { name: /Crédito cliente/ })).toBeDisabled();
+      const cash = dialog.getByRole("textbox", { name: "Valor recibido en Efectivo" });
+      await cash.fill("500");
+      await cash.press("F5");
+      await expect(dialog.getByRole("textbox", { name: "Valor recibido en Crédito cliente" })).toHaveCount(0);
+      await expect(dialog.getByRole("button", { name: "Sin imprimir", exact: true })).toBeDisabled();
+      expect(completions).toHaveLength(0);
+      expect(printed).toHaveLength(0);
+      return;
+    }
+    if (configuredCredit) {
       await page.goto("/pos");
       await expect(page.locator("#pos-scanner")).toBeEnabled();
       await page.getByRole("button", { name: /^Cobrar/ }).click();
@@ -191,7 +207,13 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       await cash.press("F5");
       const creditAmount = dialog.getByRole("textbox", { name: "Valor recibido en Crédito cliente" });
       await expect(creditAmount).toHaveValue("500");
-      await expect(dialog.getByText("Se registra en la cartera del cliente.", { exact: true })).toBeVisible();
+      const creditForm = dialog.getByRole("combobox", { name: "Medio de pago" }).last();
+      if (catalogState === "credit-multiple") {
+        await expect(dialog.getByRole("button", { name: "Sin imprimir", exact: true })).toBeDisabled();
+        await creditForm.click();
+        await page.getByRole("option", { name: "Otra financiación", exact: true }).click();
+        await expect(creditForm).toContainText("Otra financiación");
+      } else await expect(creditForm).toContainText("Forma Credit");
       await expect(dialog.getByRole("alert")).toHaveCount(0);
       const amountBox = await creditAmount.boundingBox();
       const currencyBox = await creditAmount.locator("..").getByText("$", { exact: true }).boundingBox();
@@ -199,13 +221,21 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       expect(currencyBox).not.toBeNull();
       expect(currencyBox!.y).toBeGreaterThanOrEqual(amountBox!.y);
       expect(currencyBox!.y + currencyBox!.height).toBeLessThanOrEqual(amountBox!.y + amountBox!.height);
-      if (mode === "browser") await dialog.screenshot({ path: test.info().outputPath("configured-credit.png") });
+      if (mode === "browser") {
+        for (const viewport of [{ width: 1366, height: 768 }, { width: 390, height: 844 }]) {
+          await page.setViewportSize(viewport);
+          await creditAmount.scrollIntoViewIfNeeded();
+          await expect(creditForm).toBeVisible();
+          expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+          await dialog.screenshot({ path: test.info().outputPath(`configured-credit-${viewport.width}.png`) });
+        }
+      }
       await dialog.getByRole("button", { name: "Sin imprimir", exact: true }).click();
       await expect.poll(() => completions.length).toBe(1);
       expect(completions[0].payments).toMatchObject([{ methodCode: "Cash", amount: 500, paymentMethodId: "form-0" }]);
       expect(completions[0].credit).toMatchObject({ amount: 500 });
-      expect(completions[0].credit?.paymentMethodId ?? null).toBeNull();
-      expect(completions[0].credit?.accountId ?? null).toBeNull();
+      expect(completions[0].credit?.paymentMethodId).toBe(catalogState === "credit-multiple" ? "form-other-credit" : "form-4");
+      expect(completions[0].credit?.accountId).toBe(catalogState === "credit-multiple" ? "account-other-credit" : "account-4");
       await expect(dialog).toBeHidden();
       expect(printed).toHaveLength(0);
       return;

@@ -94,23 +94,24 @@ WHERE ProfileCode=N'AURALY_CO' AND Category IN(N'SupplierDebitCard',N'SupplierCr
 MERGE dbo.AccountingConfigurationProfilePaymentMethods AS target
 USING (
   SELECT type.OptionId PaymentTypeId,initial.AccountCategory,initial.UseForSupplierPayments,
-    initial.UseForPayroll,type.SortOrder
+    initial.UseForPayroll,initial.UseForReceipts,initial.UseForVouchers,type.SortOrder
   FROM (VALUES
-    (N'Cash',N'Cash',1,1),
-    (N'DebitCard',N'DebitCardClearing',0,0),
-    (N'CreditCard',N'CreditCardClearing',0,0),
-    (N'Transfer',N'Bank',1,1)
-  ) initial(MethodCode,AccountCategory,UseForSupplierPayments,UseForPayroll)
+    (N'Cash',N'Cash',1,1,1,1),
+    (N'DebitCard',N'DebitCardClearing',0,0,1,1),
+    (N'CreditCard',N'CreditCardClearing',0,0,1,1),
+    (N'Transfer',N'Bank',1,1,1,1),
+    (N'Credit',N'AccountsReceivable',0,0,0,0)
+  ) initial(MethodCode,AccountCategory,UseForSupplierPayments,UseForPayroll,UseForReceipts,UseForVouchers)
   JOIN reference.Options type ON type.CatalogCode=N'payment-method' AND type.Code=initial.MethodCode
 ) source
 ON target.ProfileCode=N'AURALY_CO' AND target.PaymentTypeId=source.PaymentTypeId
 WHEN MATCHED THEN UPDATE SET AccountCategory=source.AccountCategory,
-  UseForSales=1,UseForReceipts=1,UseForSupplierPayments=source.UseForSupplierPayments,
-  UseForPayroll=source.UseForPayroll,UseForVouchers=1,SortOrder=source.SortOrder
+  UseForSales=1,UseForReceipts=source.UseForReceipts,UseForSupplierPayments=source.UseForSupplierPayments,
+  UseForPayroll=source.UseForPayroll,UseForVouchers=source.UseForVouchers,SortOrder=source.SortOrder
 WHEN NOT MATCHED THEN INSERT(ProfileCode,PaymentTypeId,AccountCategory,UseForSales,UseForReceipts,
   UseForSupplierPayments,UseForPayroll,UseForVouchers,SortOrder)
-  VALUES(N'AURALY_CO',source.PaymentTypeId,source.AccountCategory,1,1,
-    source.UseForSupplierPayments,source.UseForPayroll,1,source.SortOrder);
+  VALUES(N'AURALY_CO',source.PaymentTypeId,source.AccountCategory,1,source.UseForReceipts,
+    source.UseForSupplierPayments,source.UseForPayroll,source.UseForVouchers,source.SortOrder);
 
 MERGE dbo.AccountingConfigurationProfileExpenseConcepts AS target
 USING (VALUES

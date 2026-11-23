@@ -3878,23 +3878,27 @@ partidas originales. El rollback conserva la columna y los resultados ya
 aceptados y usa binarios compatibles; nunca borra cobros para volver atrás.
 
 
-- Precisión del usuario del 2026-11-15: un tenant nuevo recibe exactamente cuatro
-  formas iniciales: Efectivo, Tarjeta débito, Tarjeta crédito y Transferencia.
+- Precisión del usuario del 2026-11-23, que sustituye la elección de cuatro formas
+  del 2026-11-15: un tenant nuevo recibe cinco formas iniciales: Efectivo,
+  Tarjeta débito, Tarjeta crédito, Transferencia y Crédito cliente.
   Comparten identidad entre todas sus sedes; después se pueden agregar otras
-  formas de esos tipos. Crédito cliente conserva su tipo técnico para la venta
-  a plazo, pero no se crea como quinta forma inicial.
-  La financiación sin forma elegida usa el mapping `AccountsReceivable` vigente
-  al contabilizar, incluso cuando la venta combina formas monetarias del catálogo
-  y saldo a plazo. No requiere otra cuenta ni convierte el crédito en dinero
-  recibido. Una forma de crédito elegida explícitamente conserva su validación
-  completa y su resolución vigente; no se sustituye si dejó de ser válida.
+  formas de esos tipos. Crédito cliente se crea con el auxiliar de la categoría
+  `AccountsReceivable`, habilitada sólo para ventas. No representa dinero recibido
+  ni se habilita para pagar cartera, proveedores, nómina o comprobantes.
+  Todas sus formas alimentan la misma cartera; cada obligación conserva la cuenta
+  con la que quedó contabilizada y sus abonos cancelan esa obligación.
+  La captura nueva del POS, también preparado/sin conexión, selecciona la identidad
+  del catálogo: una sola forma se toma automáticamente, varias requieren elección
+  y la ausencia de formas impide seleccionarlas tanto por botón como por teclado.
+  Pedidos aplica el mismo catálogo paginado a su condición Crédito y transmite la
+  forma al checkout existente. No se crea una opción visual sintética ni se sustituye
+  una forma elegida que dejó de ser válida. Los contratos financieros de emisión
+  y recepción se conservan; este cambio de elección visual y aprovisionamiento
+  no reinterpreta documentos históricos ni añade validaciones al motor contable.
   `PaymentMethodEvidence.IsValidSale` valida separadamente esa identidad opcional
   y el conjunto monetario para checkout web y recepción preparada. Un conjunto
   monetario incompleto o una cuenta sin identidad de forma sigue rechazado.
-  El selector existente muestra «Crédito cliente» cuando no hay forma de crédito
-  configurada y explica que se registra en cartera; no muestra una configuración
-  monetaria faltante para ese caso ni crea otro catálogo de financiación.
-  `AccountingConfigurationProfilePaymentMethods` define esas cuatro plantillas
+  `AccountingConfigurationProfilePaymentMethods` define esas cinco plantillas
   del perfil, con tipo de `reference.Options`, categoría PUC y usos iniciales.
   No constituye otro catálogo operativo: las formas utilizables siguen viviendo
   sólo en `reference.PaymentMethods`. `PaymentMethodDefaultsProvision` es el
@@ -3903,6 +3907,8 @@ aceptados y usa binarios compatibles; nunca borra cobros para volver atrás.
   20261109; no recrea formas al agregar una sede ni descubre bancos para crear
   formas automáticamente. Si ya existe cualquier forma del tipo, la conserva,
   incluso desactivada, con su cuenta, usos, nombre y versión.
+  Si el código inicial ya pertenece a una forma de otro tipo, la nueva recibe
+  un código propio sin renombrar ni sobrescribir la configuración del cliente.
   Si crea formas para un tenant existente, el mismo comando registra un aviso
   `Configuration` por sede en el outbox de sincronización actual. Las cajas
   preparadas descargan el nuevo catálogo por su flujo habitual; repetir el
@@ -3927,12 +3933,14 @@ aceptados y usa binarios compatibles; nunca borra cobros para volver atrás.
   sólo se puede volver a binarios compatibles con el esquema y los snapshots
   aceptados; no se reinician escritores anteriores ni se borran o reinterpretan cuentas.
   Este aprovisionamiento no habilita por sí solo el corte coordinado de 14.4.
-  La regresión SQL/API dirigida verifica alta nueva, segunda sede, repetición,
+  La regresión SQL/API dirigida verifica alta nueva de cinco formas, actualización
+  desde cuatro, segunda sede, repetición, código ocupado por otra forma,
   configuración personalizada y cuenta histórica intacta. El comando completo
-  conserva un viaje SQL y midió 46–504 ms en seis ejecuciones locales, bajo el
-  presupuesto de dos segundos. Nueve regresiones cercanas verifican catálogo,
-  rechazo de auxiliares incompatibles, venta mixta, compra/devolución con CxP e
-  informes con anticipos/cruces. Estos resultados no certifican producción.
+  conserva un viaje SQL y el presupuesto de dos segundos. La captura se comprueba
+  en navegador, instalado online y preparado: una o varias formas de crédito,
+  ausencia de configuración, venta mixta, facturación de pedidos e impresión.
+  Los abonos y la contabilización conservan sus motores y contratos anteriores.
+  Estos escenarios no autorizan desplegar a producción.
 - La definición comercial pertenece al tenant y se comparte en sus sedes.
   Se extiende Catalog con el maestro especializado reference.PaymentMethods,
   no se insertan nombres de bancos por tenant en reference.Options global.

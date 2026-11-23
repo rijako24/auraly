@@ -120,7 +120,6 @@ export function PosPaymentDialog({
     return pending?[...options,{code:pending.code,label:pending.label,shortcut:""}]:options;
   },[paymentMethods.data,portfolioDirection,pendingEligible,forms]);
   const shortcutCount=methods.filter(method=>method.shortcut).length;
-  const automaticCredit = !portfolioDirection && !forms.some(form => form.methodCode === "Credit");
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
@@ -268,6 +267,7 @@ export function PosPaymentDialog({
 
   const addPayment = useCallback((requestedMethod?: string) => {
     if (busy || !catalogReady || !settlementConfigurationLoaded) return;
+    if (requestedMethod && !forms.some(form => form.methodCode === requestedMethod)) return;
     setCreditError(null);
     if(requestedMethod==="PendingCollection"){
       if(!pendingEligible) return;
@@ -310,7 +310,7 @@ export function PosPaymentDialog({
     if (payment.paymentMethodId && requiresCardCapture(nextMethod.code)) openCardCapture(id, payment);
     else if (payment.paymentMethodId && nextMethod.code === "Transfer") openTransferCapture(id, payment);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, methods, openCardCapture, openTransferCapture, payments, pendingEligible, total, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
+  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, forms, methods, openCardCapture, openTransferCapture, payments, pendingEligible, total, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -323,7 +323,6 @@ export function PosPaymentDialog({
   const canSubmit = pendingValid && settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded && catalogReady &&
     (!portfolioDirection || !portfolioPaymentDate || Boolean(portfolioPaymentDate.value)) &&
     payments.every(payment=>
-      (automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null) ||
       forms.some(form=>form.paymentMethodId===payment.paymentMethodId && form.version===payment.paymentMethodVersion && form.methodCode===payment.methodCode)) &&
     !payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) &&
     !payments.some(payment => payment.methodCode === "Transfer" &&
@@ -520,7 +519,7 @@ export function PosPaymentDialog({
               key={method.code}
               type="button"
               onClick={() => addPayment(method.code)}
-              disabled={busy || !catalogReady || !settlementConfigurationLoaded}
+              disabled={busy || !catalogReady || !settlementConfigurationLoaded || !forms.some(form => form.methodCode === method.code)}
               className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-slate-300 px-3 py-2 text-left text-sm font-semibold outline-none transition hover:border-teal-500 hover:bg-teal-50 focus:ring-2 focus:ring-teal-600/20 disabled:opacity-45"
             >
               <span className="min-w-0 whitespace-normal leading-tight">{method.label}</span>
@@ -557,9 +556,8 @@ export function PosPaymentDialog({
               <div className="text-xs font-medium text-slate-600">
                 <span>Medio</span>
                 <Select
-                  value={payment.paymentMethodId ?? (automaticCredit && payment.methodCode === "Credit" ? "automatic-credit" : "")}
+                  value={payment.paymentMethodId ?? ""}
                   onValueChange={(selection) => {
-                      if (selection === "automatic-credit" && automaticCredit && payment.methodCode === "Credit") return;
                       const form=forms.find(value=>value.paymentMethodId===selection);
                       if(!form)return;
                       if (form.paymentMethodId === payment.paymentMethodId && form.version === payment.paymentMethodVersion) return;
@@ -574,14 +572,10 @@ export function PosPaymentDialog({
                     <SelectValue aria-label="Medio de pago" placeholder="Seleccionar forma" />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl border-slate-200 shadow-xl">
-                    {automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null
-                      ? <SelectItem value="automatic-credit" className="py-2.5">{methods.find(method=>method.code==="Credit")?.label}</SelectItem>
-                      : forms.filter(form=>form.methodCode===payment.methodCode).map(form=><SelectItem key={form.paymentMethodId} value={form.paymentMethodId} className="py-2.5">{form.name}</SelectItem>)}
+                    {forms.filter(form=>form.methodCode===payment.methodCode).map(form=><SelectItem key={form.paymentMethodId} value={form.paymentMethodId} className="py-2.5">{form.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                {catalogReady && automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null &&
-                  <p className="mt-1 text-xs text-slate-500">Se registra en la cartera del cliente.</p>}
-                {catalogReady && !forms.some(form=>form.methodCode===payment.methodCode) && !(automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null) &&
+                {catalogReady && !forms.some(form=>form.methodCode===payment.methodCode) &&
                   <p role="alert" className="mt-1 text-xs text-amber-800">No hay formas activas para este tipo de pago y operación. Revisa Formas de pago.</p>}
               </div>
               <label className="relative self-start text-xs font-medium text-slate-600">

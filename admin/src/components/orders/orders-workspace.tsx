@@ -211,7 +211,9 @@ export function OrdersWorkspace({
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const businessId = workspaceBusinessId ?? selectedBusinessId;
   const [paymentSelection, setPaymentSelection] = useState<{ tenantId: string | null; businessId: string | null | undefined; form: PaymentMethod; details?: OrderInvoicePaymentDetails }>();
-  const paymentForm = paymentSelection?.tenantId === tenantId && paymentSelection?.businessId === businessId ? paymentSelection?.form : undefined;
+  const paymentForm = paymentSelection && paymentSelection.tenantId === tenantId && paymentSelection.businessId === businessId &&
+    (paymentSelection.form.methodCode === "Credit") === (paymentMethodCode === "Credit") &&
+    (paymentSelection.form.methodCode !== "PendingCollection" || documentType === "SalesReceipt") ? paymentSelection.form : undefined;
   const paymentDetails = paymentForm ? paymentSelection?.details : undefined;
   const [paymentCapture, setPaymentCapture] = useState<{
     tenantId: string | null; formId: string; card?: CardPaymentDetails; transfer?: TransferPaymentDetails;
@@ -237,8 +239,8 @@ export function OrdersWorkspace({
   }
 
   function selectPaymentForm(form: PaymentMethod | undefined) {
-    if (form?.methodCode === "Credit") {
-      setError("Para facturar a plazo, selecciona la opción Crédito.");
+    if (form && (form.methodCode === "Credit") !== (paymentMethodCode === "Credit")) {
+      setError("Selecciona una forma que corresponda a la condición de pago del lote.");
       return;
     }
     const details = form?.paymentMethodId === paymentForm?.paymentMethodId ? paymentDetails : undefined;
@@ -420,8 +422,8 @@ export function OrdersWorkspace({
 
   async function invoiceSelected(requestedPaymentMethodCode: "Cash" | "Credit", charges?: OrderInvoiceChargeSelection[] | null) {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
-    const selectedForm = requestedPaymentMethodCode === "Cash" ? paymentForm : undefined;
-    if (requestedPaymentMethodCode === "Cash" && !selectedForm) {
+    const selectedForm = paymentForm;
+    if (!selectedForm) {
       setError("Selecciona la forma de pago del lote.");
       return;
     }
@@ -846,13 +848,15 @@ export function OrdersWorkspace({
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>
-                {onInvoiceSelected && paymentMethodCode === "Cash" && <PagedEntitySelect<PaymentMethod>
-                  queryKey={["payment-method-choices", tenantId, businessId, documentType === "SalesReceipt" ? "OrderReceipts" : "Sales", "Immediate"]}
+                {onInvoiceSelected && <PagedEntitySelect<PaymentMethod>
+                  queryKey={["payment-method-choices", tenantId, businessId, documentType === "SalesReceipt" ? "OrderReceipts" : "Sales", paymentMethodCode]}
+                  preload={paymentMethodCode === "Credit"} autoSelectSingle={paymentMethodCode === "Credit"}
                   value={paymentForm?.paymentMethodId ?? ""}
                   selectedOption={paymentForm ? { value: paymentForm.paymentMethodId, label: paymentForm.name } : null}
                   onChange={(_value, _option, item) => selectPaymentForm(item)}
                   loadPage={async (search, page, pageSize) => {
-                    const result = await loadPaymentMethods({ page, pageSize, search, usage: documentType === "SalesReceipt" ? "OrderReceipts" : "Sales", excludeMethodCode: "Credit" });
+                    const result = await loadPaymentMethods({ page, pageSize, search, usage: documentType === "SalesReceipt" ? "OrderReceipts" : "Sales",
+                      ...(paymentMethodCode === "Credit" ? { methodCode: "Credit" } : { excludeMethodCode: "Credit" }) });
                     return { ...result, totalPages: Math.ceil(result.totalCount / pageSize) };
                   }}
                   getOption={(item) => ({ value: item.paymentMethodId, label: item.name, description: item.code })}

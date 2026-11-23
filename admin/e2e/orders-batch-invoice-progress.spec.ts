@@ -3,7 +3,7 @@ import { login } from "./support/auth";
 
 test.use({ timezoneId: "Asia/Tokyo" });
 
-for (const paymentCode of ["Cash", "DebitCard", "CreditCard", "Transfer", "PendingCollection"] as const) {
+for (const paymentCode of ["Cash", "DebitCard", "CreditCard", "Transfer", "PendingCollection", "Credit"] as const) {
 test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalación`, async ({ page, baseURL }) => {
   test.setTimeout(120_000);
   await page.clock.setFixedTime(new Date("2026-11-17T01:30:00Z"));
@@ -170,9 +170,12 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
       body = [{ id: "visa", code: "Visa", label: "Visa", description: null, sortOrder: 1 }];
     }
     else if (path.endsWith("/payment-methods/")) {
-      expect(url.searchParams.get("excludeMethodCode")).toBe("Credit");
+      const creditFilter = url.searchParams.get("methodCode") === "Credit";
+      if (creditFilter) expect(url.searchParams.get("excludeMethodCode")).toBeNull();
+      else expect(url.searchParams.get("excludeMethodCode")).toBe("Credit");
       if(paymentCode==="PendingCollection")expect(url.searchParams.get("usage")).toBe("OrderReceipts");
-      body = { items: [{ paymentMethodId: "form-cash-native", code: "CASH-BATCH", name: longPaymentName, methodCode: paymentCode,
+      body = { items: [{ paymentMethodId: creditFilter ? "form-credit-native" : "form-cash-native", code: creditFilter ? "CREDIT-BATCH" : "CASH-BATCH", name: longPaymentName,
+        methodCode: creditFilter ? "Credit" : paymentCode === "Credit" ? "Cash" : paymentCode,
         bankAccountId: paymentCode === "Transfer" ? "bank-configured" : null, accountCode: "111005", accountName: "Cuenta configurada",
         version: 1, accountId: "account-cash-native", isActive: true, useForSales: true }], page: 1, pageSize: 10, totalCount: 1 };
     }
@@ -183,6 +186,9 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
       expect(filters.get("createdTo")).toBe("2026-11-17T05:00:00.000Z");
       const items = orders.filter((order) => !completed.has(order.orderId));
       body = { items, page: 1, pageSize: 20, totalCount: items.length, hasMore: false };
+    } else if (path.endsWith("/orders/invoice/credit-validation") && route.request().method() === "POST") {
+      expect(route.request().postDataJSON()).toMatchObject({ paymentMethodCode: "Credit", paymentMethodId: "form-credit-native" });
+      body = [];
     } else if (path.endsWith("/orders/invoice") && route.request().method() === "POST") {
       const request = route.request().postDataJSON() as (typeof invoiceRequests)[number];
       invoiceRequests.push(request);
@@ -230,7 +236,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   await page.goto("/dashboard/orders#edgeToken=edge-test-token");
   await expect(page.getByText("PED-001")).toBeVisible();
   if(paymentCode==="PendingCollection") await page.getByRole("button",{name:"Comprobante de venta",exact:true}).click();
-  const invoiceAction = page.getByRole("button", { name: paymentCode==="PendingCollection"?"Emitir de contado (3)":"Facturar de contado (3)" });
+  const invoiceAction = page.getByRole("button", { name: paymentCode==="PendingCollection"?"Emitir de contado (3)":paymentCode==="Credit"?"Facturar a crédito (3)":"Facturar de contado (3)" });
   const refreshButton = page.getByRole("button", { name: "Actualizar pedidos", exact: true });
   await expect(refreshButton).toBeEnabled();
   const readsBeforeRefresh = orderReads;
@@ -239,8 +245,8 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   expect(orderReads).toBe(readsBeforeRefresh + 1);
   await expect(page.getByRole("button", { name: "Efectivo", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Crédito", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toHaveCount(0);
-  await page.getByRole("button", { name: "De contado", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toBeVisible();
+  if (paymentCode !== "Credit") await page.getByRole("button", { name: "De contado", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toBeVisible();
   await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
   await page.getByRole("button", { name: "Imprimir (3)" }).click();
@@ -277,7 +283,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   }
   await page.screenshot({ path: "../work/orders-toolbar-review/payment-options.png", fullPage: true });
   await longPaymentOption.click();
-  if (paymentCode !== "Cash" && paymentCode!=="PendingCollection") {
+  if (paymentCode === "DebitCard" || paymentCode === "CreditCard" || paymentCode === "Transfer") {
     // Closing without saving must not confirm a payment; the next invoice action
     // requests the same missing evidence before any command leaves the browser.
     await page.getByRole("button", { name: paymentCode === "Transfer" ? "Cerrar datos de transferencia" : "Cerrar datos de tarjeta", exact: true }).click();
@@ -321,7 +327,9 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     "drawer",
   ]);
   expect(invoiceRequests).toHaveLength(3);
-  expect(invoiceRequests).toEqual(expect.arrayContaining([expect.objectContaining({ paymentMethodId: "form-cash-native", paymentFormCode: "CASH-BATCH" })]));
+  expect(invoiceRequests).toEqual(expect.arrayContaining([expect.objectContaining({
+    paymentMethodId: paymentCode === "Credit" ? "form-credit-native" : "form-cash-native",
+    paymentFormCode: paymentCode === "Credit" ? "CREDIT-BATCH" : "CASH-BATCH" })]));
   expect(invoiceRequests.every(request => request.paymentMethodCode === paymentCode)).toBe(true);
   if(paymentCode==="PendingCollection")expect(invoiceRequests.every(request=>request.documentType==="SalesReceipt")).toBe(true);
   if (paymentCode === "DebitCard" || paymentCode === "CreditCard")

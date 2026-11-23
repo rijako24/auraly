@@ -15,7 +15,13 @@ BEGIN
         UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers,
         IsActive,SortOrder,Version,CreatedAt,UpdatedAt)
     OUTPUT inserted.TenantId,inserted.PaymentMethodId INTO @Created
-    SELECT tenant.TenantId,NEWID(),type.Code,type.Label,type.OptionId,account.AccountId,
+    -- Preserve customer-owned codes. A conflicting initial code gets a suffix
+    -- within Code's 64 characters: 31 prefix + separator + 32 GUID digits.
+    SELECT tenant.TenantId,NEWID(),
+        CASE WHEN EXISTS(SELECT 1 FROM reference.PaymentMethods currentCode WITH(UPDLOCK,HOLDLOCK)
+            WHERE currentCode.TenantId=tenant.TenantId AND currentCode.Code=type.Code)
+          THEN CONCAT(LEFT(type.Code,31),N'-',REPLACE(CONVERT(nvarchar(36),NEWID()),N'-',N''))
+          ELSE type.Code END,type.Label,type.OptionId,account.AccountId,
         template.UseForSales,template.UseForReceipts,template.UseForSupplierPayments,
         template.UseForPayroll,template.UseForVouchers,0,template.SortOrder,1,@Now,@Now
     FROM dbo.Tenants tenant

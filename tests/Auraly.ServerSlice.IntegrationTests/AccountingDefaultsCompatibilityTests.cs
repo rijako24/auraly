@@ -59,7 +59,7 @@ public sealed partial class AccountingVerticalSliceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Tenant_payment_defaults_are_four_shared_forms_and_reprovisioning_preserves_configuration(bool historicalCash)
+    public async Task Tenant_payment_defaults_are_five_shared_forms_and_reprovisioning_preserves_configuration(bool historicalCash)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -70,6 +70,7 @@ public sealed partial class AccountingVerticalSliceTests
         await using (var buffers=new SqlCommand("""
             SELECT TOP(0) AccountId,CONVERT(binary(8),RowVersion) RowVersion INTO #OriginalCash FROM dbo.AccountingAccounts;
             SELECT TOP(0) PaymentMethodId,Name,UseForSales,IsActive,Version,CONVERT(binary(8),RowVersion) RowVersion INTO #RetainedForms FROM reference.PaymentMethods;
+            SELECT TOP(0) PaymentMethodId,CONVERT(binary(8),RowVersion) RowVersion INTO #BeforeCreditUpgrade FROM reference.PaymentMethods;
             """,connection,transaction)) await buffers.ExecuteNonQueryAsync();
         try
         {
@@ -117,15 +118,38 @@ public sealed partial class AccountingVerticalSliceTests
                     var type=reader.GetString(0); types.Add(type);
                     var ready=type!="Transfer" && !(historicalCash && type=="Cash");
                     Assert.Equal(ready,reader.GetBoolean(1)); Assert.Equal(ready,reader.GetBoolean(2));
-                    Assert.True(reader.GetBoolean(3)); Assert.True(reader.GetBoolean(4)); Assert.True(reader.GetBoolean(7));
+                    Assert.True(reader.GetBoolean(3));
+                    Assert.Equal(type!="Credit",reader.GetBoolean(4));
+                    Assert.Equal(type!="Credit",reader.GetBoolean(7));
                     Assert.Equal(type is "Cash" or "Transfer",reader.GetBoolean(5));
                     Assert.Equal(type is "Cash" or "Transfer",reader.GetBoolean(6));
                 }
-                Assert.Equal(new[]{"Cash","DebitCard","CreditCard","Transfer"},types);
+                Assert.Equal(new[]{"Cash","DebitCard","CreditCard","Transfer","Credit"},types);
             }
+            // Simulate an installed tenant whose four monetary forms already
+            // exist. The same provisioner must add only the missing financing.
+            await using (var beforeUpgrade = new SqlCommand("""
+                DELETE reference.PaymentMethods WHERE TenantId=@Tenant AND Code=N'Credit';
+                -- A customer may already use that code for a different type.
+                UPDATE reference.PaymentMethods SET Code=N'Credit' WHERE TenantId=@Tenant AND Code=N'Cash';
+                INSERT #BeforeCreditUpgrade SELECT PaymentMethodId,RowVersion
+                  FROM reference.PaymentMethods WHERE TenantId=@Tenant;
+                """,connection,transaction))
+            { beforeUpgrade.Parameters.AddWithValue("@Tenant",tenant); await beforeUpgrade.ExecuteNonQueryAsync(); }
+            await Provision(business);
+            await using (var upgrade = new SqlCommand("""
+                SELECT COUNT(*) FROM #BeforeCreditUpgrade original
+                  JOIN reference.PaymentMethods currentForm ON currentForm.TenantId=@Tenant
+                    AND currentForm.PaymentMethodId=original.PaymentMethodId
+                    AND currentForm.RowVersion=original.RowVersion;
+                """,connection,transaction))
+            { upgrade.Parameters.AddWithValue("@Tenant",tenant); Assert.Equal(4,(int)(await upgrade.ExecuteScalarAsync())!); }
             await using (var personalize = new SqlCommand("""
-                UPDATE reference.PaymentMethods SET Name=N'Caja personalizada',UseForSales=0,IsActive=0,Version=Version+1
-                  WHERE TenantId=@Tenant AND Code=N'Cash';
+                UPDATE form SET Name=CASE type.Code WHEN N'Cash' THEN N'Caja personalizada' ELSE N'Financiación personalizada' END,
+                  Code=CASE type.Code WHEN N'Credit' THEN N'CREDITO-PROPIO' ELSE form.Code END,
+                  UseForSales=0,IsActive=0,Version=Version+1
+                FROM reference.PaymentMethods form JOIN reference.Options type ON type.OptionId=form.PaymentTypeId
+                  WHERE form.TenantId=@Tenant AND type.Code IN(N'Cash',N'Credit');
                 INSERT #RetainedForms SELECT PaymentMethodId,Name,UseForSales,IsActive,Version,RowVersion
                   FROM reference.PaymentMethods WHERE TenantId=@Tenant;
                 """,connection,transaction))
@@ -148,9 +172,9 @@ public sealed partial class AccountingVerticalSliceTests
             verify.Parameters.AddWithValue("@Tenant",tenant); verify.Parameters.AddWithValue("@Foreign",foreignTenant);
             verify.Parameters.AddWithValue("@Business",business); verify.Parameters.AddWithValue("@Second",secondBusiness);
             await using var result = await verify.ExecuteReaderAsync(); Assert.True(await result.ReadAsync());
-            Assert.Equal(4,result.GetInt32(0)); Assert.Equal(0,result.GetInt32(1)); Assert.Equal(4,result.GetInt32(2));
+            Assert.Equal(5,result.GetInt32(0)); Assert.Equal(0,result.GetInt32(1)); Assert.Equal(5,result.GetInt32(2));
             Assert.Equal(historicalCash?1:0,result.GetInt32(3));
-            Assert.Equal(2,result.GetInt32(4)); Assert.Equal(0,result.GetInt32(5));
+            Assert.Equal(4,result.GetInt32(4)); Assert.Equal(0,result.GetInt32(5));
         }
         finally { await transaction.RollbackAsync(); }
     }
