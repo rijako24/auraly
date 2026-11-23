@@ -1,0 +1,62 @@
+import {test,expect} from '@playwright/test';
+import {randomUUID} from 'node:crypto';
+import {writeFileSync} from 'node:fs';
+import {realAccountingContext} from './support/real-accounting-workspace';
+
+test('DEV canales: editor, sincronizacion por escala, precio y costo',async({page})=>{
+ test.skip(process.env.AURALY_E2E_TARGET !== 'dev', 'Requiere AURALY DEV autorizado.');
+ test.setTimeout(480_000);
+ const ctx=await realAccountingContext(page),api='/api/commerce/v1',suffix=randomUUID().slice(0,8);
+ const runtime=await ctx.scopedJson<{build:string}>('GET','/api/health');
+ const name=`Producto E2E RC12 ${suffix}`,channelName=`Canal QA RC12 ${suffix}`;
+ const catalogRequest=page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname==='/api/businesses/'+ctx.businessId+'/products'&&!new URL(r.url()).searchParams.get('search'));await page.goto('/dashboard/products');const catalogPage:any=await(await catalogRequest).json();await page.getByRole('button',{name:'Nuevo producto',exact:true}).click();const productDialog=page.getByRole('dialog');
+ await productDialog.getByPlaceholder('Nombre claro para venta y búsqueda').fill(name);
+ await productDialog.getByPlaceholder('Referencia del fabricante').fill(`RC12-${suffix}`);
+ for(const label of ['Proveedor principal *','IVA de venta *','IVA de compra *']){const combo=productDialog.getByText(label,{exact:true}).locator('..').getByRole('combobox');await expect(combo).toBeEnabled();await combo.click();await page.getByRole('option').first().click()}
+ await productDialog.getByText(/^Costo base \*/).locator('..').locator('input').fill('10000');await productDialog.getByText(/^Margen sobre el precio antes de IVA \*/).locator('..').locator('input').fill('20');
+ await productDialog.getByText('Control de inventario',{exact:true}).locator('../..').getByRole('switch').setChecked(false);
+ await productDialog.getByText('Permitir venta fraccionada',{exact:true}).locator('../..').getByRole('switch').setChecked(true);
+ const created=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===api+'/products');await productDialog.getByRole('button',{name:'Crear producto',exact:true}).click();const productResponse=await created;expect(productResponse.ok(),await productResponse.text()).toBe(true);const product:any=await productResponse.json();await expect(productDialog).toBeHidden();
+ const prepare=async(cost:number)=>ctx.scopedJson('PUT',`${api}/pricing/products/${product.productId}/prepared-price`,{inputMode:'Margin',targetMarginPercent:20,salePrice:null,roundingIncrement:1,roundingMode:'Nearest',costBasisAmount:cost});
+ const publish=async()=>ctx.scopedJson('POST',`${api}/pricing/publish`,{productIds:[product.productId]});
+ await prepare(3000);await publish();
+ await page.goto('/dashboard/products/price-segments');await page.getByRole('button',{name:'Nuevo canal',exact:true}).click();const create=page.getByRole('dialog',{name:'Nuevo canal de precios',exact:true});
+ await create.getByText('Nombre *',{exact:true}).locator('..').getByRole('textbox').fill(channelName);
+ await create.getByRole('checkbox',{name:'Sincronizar precio de todos los productos',exact:true}).check();
+ const lookupRequest=page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname==='/api/businesses/'+ctx.businessId+'/products'&&new URL(r.url()).searchParams.get('search')===product.productCode);await create.getByPlaceholder(/Código interno/).fill(product.productCode);const lookupResponse=await lookupRequest;expect(lookupResponse.ok()).toBe(true);const lookupPage:any=await lookupResponse.json();expect(lookupPage.items.some((value:any)=>value.productId===product.productId)).toBe(true);expect(lookupPage.items.length).toBeLessThanOrEqual(10);await lookupResponse.finished();const lookupTiming=lookupResponse.request().timing();const lookupMilliseconds=lookupTiming.responseEnd-lookupTiming.requestStart;await page.getByRole('option').filter({hasText:name}).click();const tiers=page.getByRole('dialog',{name:'Precios por cantidad',exact:true});
+ await expect(tiers.getByText(/Costo base de la sede:/)).toContainText('3.000');
+ for(const [index,minimum,margin] of [[0,1,50],[1,5,25]]){
+  if(index)await tiers.getByRole('button',{name:'Agregar otro precio',exact:true}).click();
+  const input=tiers.locator(`#new-channel-product-minimum-${index}`);await input.fill(String(minimum));
+  const percent=input.locator('../..').locator('input').nth(2);await percent.fill(String(margin));const calculated=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===api+'/pricing/calculate');await percent.press('Tab');expect((await calculated).ok()).toBe(true);
+ }
+ await tiers.getByRole('button',{name:'Agregar precios',exact:true}).click();
+ const channelCreated=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===api+'/pricing/segments');await create.getByRole('button',{name:'Crear canal · 2 precios',exact:true}).click();const channelResponse=await channelCreated;expect(channelResponse.ok(),await channelResponse.text()).toBe(true);const channel:any=await channelResponse.json();await expect(create).toBeHidden();
+ const items=async()=>ctx.scopedJson<any[]>('GET',`${api}/pricing/segments/${channel.id}/items`);
+ const initial=await items();expect(initial.map(x=>x.targetMarginPercent)).toEqual([50,25]);expect(initial.map(x=>x.autoUpdatePrice)).toEqual([true,true]);
+ await prepare(6000);expect((await items()).map(x=>x.amount)).toEqual(initial.map(x=>x.amount));await publish();const updated=await items();expect(updated.map(x=>x.amount)).toEqual(initial.map(x=>x.amount*2));expect(updated.map(x=>x.targetMarginPercent)).toEqual([50,25]);
+ const cost:any=await ctx.scopedJson('GET',`${api}/pricing/segments/products/${product.productId}/cost`);expect(cost.costBasisAmount).toBe(6000);
+ expect(cost.salesTaxRate).toBe(0);
+ await page.reload();await page.getByPlaceholder('Buscar por nombre',{exact:true}).fill(channelName);await page.getByRole('cell',{name:channelName,exact:true}).click();const detail=page.getByRole('dialog',{name:channelName,exact:true});await expect(detail.getByRole('row').filter({hasText:name})).toHaveCount(2);
+ await detail.getByRole('button',{name:'Editar canal',exact:true}).click();const edit=page.getByRole('dialog',{name:'Editar canal de precios',exact:true});await edit.getByRole('checkbox',{name:`Sincronizar ${name} desde 5 unidades`,exact:true}).uncheck();const settings=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===`${api}/pricing/segments/${channel.id}/settings`);await edit.getByRole('button',{name:'Guardar canal',exact:true}).click();expect((await settings).ok()).toBe(true);
+ await detail.getByRole('button',{name:'Editar canal',exact:true}).click();await edit.getByRole('button',{name:`Editar ${name}`,exact:true}).first().click();const item=page.getByRole('dialog',{name:'Editar condición',exact:true});
+ const manualPrice=item.getByText('Precio *',{exact:true}).locator('..').locator('input');await manualPrice.fill('15000');const calculated=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===api+'/pricing/calculate');await manualPrice.press('Tab');expect((await calculated).ok()).toBe(true);
+ await expect(item.getByText('Margen (%)',{exact:true}).locator('..').locator('input')).toHaveValue('60');
+ const saved=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===`${api}/pricing/segments/${channel.id}/items/${product.productId}`);await item.getByRole('button',{name:'Guardar condición',exact:true}).click();expect((await saved).ok()).toBe(true);await expect(item).toBeHidden();
+ const edited=await items();expect(edited.map(x=>x.amount)).toEqual([15000,8000]);expect(edited.map(x=>x.targetMarginPercent)).toEqual([60,25]);
+ await page.keyboard.press('Escape');await prepare(9000);expect((await items()).map(x=>x.amount)).toEqual([15000,8000]);await publish();const mixed=await items();expect(mixed.map(x=>x.amount)).toEqual([22500,8000]);expect(mixed.map(x=>x.autoUpdatePrice)).toEqual([true,false]);
+ async function setAll(enabled:boolean){
+  await page.goto('/dashboard/products/price-segments');await page.getByPlaceholder('Buscar por nombre',{exact:true}).fill(channelName);await page.getByRole('cell',{name:channelName,exact:true}).click();await page.getByRole('dialog',{name:channelName,exact:true}).getByRole('button',{name:'Editar canal',exact:true}).click();
+  const editor=page.getByRole('dialog',{name:'Editar canal de precios',exact:true}),all=editor.getByRole('checkbox',{name:'Sincronizar precio de todos los productos',exact:true});
+  await expect(all).toBeEnabled();
+  if(await all.getAttribute('data-state')==='indeterminate'){await all.click();await expect(all).toHaveAttribute('data-state','checked')}
+  if((await all.getAttribute('data-state')==='checked')!==enabled)await all.click();await expect(all).toHaveAttribute('data-state',enabled?'checked':'unchecked');
+  const changed=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===`${api}/pricing/segments/${channel.id}/settings`);await editor.getByRole('button',{name:'Guardar canal',exact:true}).click();const response=await changed;expect(response.ok()).toBe(true);expect(response.request().postDataJSON().autoUpdatePrice).toBe(enabled);await expect(editor).toBeHidden();await page.getByRole('dialog',{name:channelName,exact:true}).getByRole('button',{name:'Cerrar',exact:true}).click();expect((await items()).every(value=>value.autoUpdatePrice===enabled)).toBe(true);
+ }
+ await setAll(false);await prepare(3000);await publish();const fixed=await items();expect(fixed.map(x=>x.amount)).toEqual([22500,8000]);expect(fixed.map(x=>x.autoUpdatePrice)).toEqual([false,false]);
+ await setAll(true);expect((await items()).map(x=>x.amount)).toEqual([22500,8000]);await prepare(6000);await publish();const final=await items();expect(final.map(x=>x.amount)).toEqual([15000,8000]);expect(final.map(x=>x.targetMarginPercent)).toEqual([60,25]);expect(final.map(x=>x.autoUpdatePrice)).toEqual([true,true]);
+ await page.reload();await page.getByPlaceholder('Buscar por nombre',{exact:true}).fill(channelName);await page.getByRole('cell',{name:channelName,exact:true}).click();await page.setViewportSize({width:1366,height:768});await page.screenshot({path:test.info().outputPath('pricing-1366.png'),fullPage:true});
+ await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:test.info().outputPath('pricing-390.png'),fullPage:true});
+ writeFileSync(test.info().outputPath('pricing-proof.json'),JSON.stringify({at:new Date().toISOString(),environment:'AURALY DEV',apiBuild:runtime.build,realBrowser:true,realBackend:true,productId:product.productId,productCode:product.productCode,productName:name,channelId:channel.id,initial,updated,edited,mixed,fixed,final,pendingPreparationDidNotReprice:true,manualPriceCapturedMargin:60,productCodeSearch:{catalogTotal:catalogPage.totalCount,pageSize:lookupPage.pageSize,matches:lookupPage.totalCount,returned:lookupPage.items.length,milliseconds:lookupMilliseconds},allDisabledKeepsPrices:true,reEnabledPublishesOnlyLater:true,productionWrites:0},null,2));
+});
+

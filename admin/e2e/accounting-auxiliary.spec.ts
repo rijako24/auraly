@@ -80,9 +80,9 @@ test("auxiliar pagina más de 200 movimientos, conserva totales y comparte el ca
   await expect(dialog.getByText("201 movimientos", { exact: true })).toBeVisible();
   await expect(dialog.getByText("CONT-001", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 1366, height: 768 });
-  const bounds = (await dialog.boundingBox())!;
+  const laptopBounds = (await dialog.boundingBox())!;
   const balance = (await dialog.getByRole("row").filter({ hasText: "CONT-001" }).getByRole("cell").last().boundingBox())!;
-  expect(balance.x + balance.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+  expect(balance.x + balance.width).toBeLessThanOrEqual(laptopBounds.x + laptopBounds.width);
   await dialog.screenshot({ path: test.info().outputPath("auxiliary-1366.png") });
   await page.setViewportSize({ width: 390, height: 844 });
   const mobile = (await dialog.boundingBox())!;

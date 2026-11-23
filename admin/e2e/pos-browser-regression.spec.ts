@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { realAccountingWorkspace, selectRealCashForm } from "./support/real-accounting-workspace";
+import { realAccountingWorkspace, selectRealCashForm, waitForRealPosting } from "./support/real-accounting-workspace";
 import { createRealProduct } from "./support/real-product";
 import type { AccountingEntry } from "../src/services/api/accounting";
 import type { SalesWorkspaceOption } from "../src/services/pos/online-pos-client";
@@ -36,7 +36,8 @@ async function openOnlinePos(page: Page, businessName: string) {
 
 test("vende un comprobante online con teclado, imprime tirilla y deja una venta nueva", async ({ page }) => {
   test.setTimeout(240_000);
-  const { scopedJson, businessId } = await realAccountingWorkspace(page);
+  const context = await realAccountingWorkspace(page);
+  const { scopedJson, businessId } = context;
   const productName = await createRealProduct(page, false);
   const workspace = (await scopedJson<SalesWorkspaceOption[]>("GET", "/api/commerce/v1/pos/workspace/options"))
     .find(option => option.businessId === businessId && option.pointOfSaleMode === "DirectSale");
@@ -155,6 +156,7 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
   expect(receipts).toHaveLength(1);
   const { documentId } = receipts[0];
   expect(documentId).toBeTruthy();
+  await waitForRealPosting(context, documentId);
   const entry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${documentId}`);
   expect(entry.debitTotal).toBeGreaterThan(0);
   expect(entry.debitTotal).toBe(entry.creditTotal);
