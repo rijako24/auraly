@@ -34,7 +34,7 @@ test("produce desde Inventario y reintenta la misma operación tras un fallo de 
     if (path.endsWith("/execution-context/tenants"))
       return json(route, [{ tenantId, name: "Auraly" }]);
     if (path.endsWith("/execution-context/businesses"))
-      return json(route, [{ tenantId, businessId, name: "Sede restaurante" }]);
+      return json(route, [{ tenantId, businessId, name: "Sede restaurante", timeZone: "America/Bogota" }]);
     if (path.endsWith("/execution-context/access"))
       return json(route, { tenantId, businessId, roles: user.roles, permissions });
     if (path.endsWith("/commerce/v1/inventory/warehouses"))

@@ -84,7 +84,7 @@ async function prepareRestaurant(page: Page, options: {
     if (path.endsWith("/execution-context/tenants"))
       return respond(route, [{ tenantId, name: "Restaurante" }]);
     if (path.endsWith("/execution-context/businesses"))
-      return respond(route, [{ tenantId, businessId, name: "Restaurante" }]);
+      return respond(route, [{ tenantId, businessId, name: "Restaurante", timeZone: "America/Bogota" }]);
     if (path.endsWith("/execution-context/access"))
       return respond(route, { tenantId, businessId, roles: user.roles,
         permissions: user.permissions });

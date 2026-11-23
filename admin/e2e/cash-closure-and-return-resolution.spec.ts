@@ -27,7 +27,7 @@ async function authenticate(page: Page) {
   }, { tenant: tenantId, business: businessId, user: userId, granted: permissions });
   await page.route("**/api/auth/me", route => json(route, { userId, tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions }));
   await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
-  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
   await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
   await page.route("**/reference-options/payment-method**", route => json(route, [
     { id: "cash", code: "Cash", label: "Efectivo", sortOrder: 1 },
@@ -116,12 +116,12 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await expect(cash.getByText("DVT-1", { exact: true })).toBeVisible();
   await expect(cash.getByRole("button", { name: "No encontrado", exact: true })).toHaveCount(0);
   await cash.getByRole("button", { name: "Corregir", exact: true }).first().click();
-  const correction = page.getByRole("dialog", { name: "Corregir comprobante" });
+  const correction = page.getByRole("dialog", { name: "Corregir medio de recaudo" });
   await expect(correction).toBeVisible();
   await correction.getByRole("combobox").first().click();
   await expect(page.getByRole("option", { name: "Tarjeta débito" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("option", { name: "Tarjeta débito" }).click();
-  await expect(correction.getByText("Tipo de tarjeta")).toBeVisible();
+  await expect(correction.getByText("Franquicia", { exact: true })).toBeVisible();
   await expect(correction.getByRole("button", { name: "Aplicar" })).toBeDisabled();
   await correction.getByRole("combobox").last().click();
   await page.getByRole("option", { name: "Visa" }).click();
@@ -408,7 +408,7 @@ test("el modal de periféricos cubre el viewport completo desde el body", async 
   await expect(dialog.getByRole("button", { name: "Cancelar" })).toHaveCSS("color", "rgb(2, 6, 23)");
   expect(await backdrop.evaluate(element => element.parentElement === document.body)).toBe(true);
   await expect(backdrop).toHaveCSS("position", "fixed");
-  expect(await backdrop.boundingBox()).toEqual({ x: 0, y: 0, width: 1440, height: 1000 });
+  expect(await backdrop.boundingBox()).toEqual({ x: 0, y: 0, ...page.viewportSize()! });
   const invoices = dialog.getByRole("heading", { name: "Facturas" }).locator("../..");
   const orders = dialog.getByRole("heading", { name: "Pedidos" }).locator("../..");
   await invoices.getByRole("checkbox", { name: "Usar media oficio por defecto en facturas" }).check();

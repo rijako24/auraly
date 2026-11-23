@@ -20,7 +20,7 @@ test("el comprobante manual busca cuentas por código o nombre en el servidor", 
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, permissions: user.permissions, roles: [] };
     else if (path.endsWith("/accounting/accounts")) body = [account];
     else if (path.endsWith("/accounting/readiness")) body = { status: "Ready", blockingIssues: [] };

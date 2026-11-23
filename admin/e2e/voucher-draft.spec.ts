@@ -221,7 +221,7 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
   await expect(page.getByRole("columnheader", { name: "Tercero principal", exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Crédito", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: /Otro tercero.*900333444/ })).toBeVisible();
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await page.getByRole("button", { name: "Contabilidad: Borrador por contabilizar", exact: true }).click();
   await expect(page.getByText("No hay un período abierto para esta fecha.")).toBeVisible();
   expect(sends).toBe(1); expect(draftReads).toBe(0);
   await page.getByRole("button", { name: "Ver documento" }).click();

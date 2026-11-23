@@ -37,7 +37,7 @@ async function prepare(page: Page) {
     firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions,
   }));
   await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
-  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
   await page.route("**/api/execution-context/access", route => json(route, {
     tenantId, businessId, roles: ["Administrator"], permissions,
   }));

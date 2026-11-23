@@ -455,4 +455,8 @@ Todos los importes y porcentajes usan `DECIMAL`.
 - Un cambio genera deltas solo para cajas afectadas.
 - Cambiar cliente o composición del borrador recalcula únicamente líneas automáticas antes de confirmar.
 - Pedidos conservan su canal.
+- En la edición de escalas, una consulta de costo tardía conserva la cantidad
+  y los valores ya digitados. Una respuesta de cálculo sólo actualiza el mismo
+  producto y la entrada de precio o margen que originó esa consulta; nunca
+  reemplaza una edición posterior ni agrega otra lectura para reconstruirla.
 - Las tablas pertenecen a `Auraly.Database.sqlproj`.

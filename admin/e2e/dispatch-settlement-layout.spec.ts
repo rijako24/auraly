@@ -58,9 +58,15 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
   await expect(result).toContainText("Faltante"); await expect(result).toContainText("10.000");
   for (const width of [1440, 1366, 820]) {
     await page.setViewportSize({ width, height: width===1366 ? 768 : 1000 });
-    const a = await input.boundingBox(), b = await result.boundingBox();
-    expect(a).not.toBeNull(); expect(b).not.toBeNull();
-    expect(Math.abs(a!.y - b!.y)).toBeLessThanOrEqual(1); expect(a!.height).toBe(b!.height);
+    // Measure in one frame: the dialog's opening animation scales both boxes.
+    const bounds = await dialog.evaluate(element => {
+      const input = element.querySelector('[aria-label="Efectivo físico recibido"]')!;
+      const result = element.querySelector('[aria-label="Resultado del efectivo"]')!;
+      const a = input.getBoundingClientRect(), b = result.getBoundingClientRect();
+      return { inputY: a.y, resultY: b.y, inputHeight: a.height, resultHeight: b.height };
+    });
+    expect(Math.abs(bounds.inputY - bounds.resultY)).toBeLessThanOrEqual(1);
+    expect(bounds.inputHeight).toBe(bounds.resultHeight);
     expect(await input.evaluate(element=>getComputedStyle(element).fontSize)).toBe(await result.locator("strong").evaluate(element=>getComputedStyle(element).fontSize));
   }
   await page.screenshot({ path: "../work/release-preparation-current/liquidacion-alineada.png", fullPage: true });

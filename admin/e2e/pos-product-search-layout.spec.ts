@@ -78,6 +78,7 @@ test("buscador abre para agregar, alinea promociones y mantiene accesibles las e
   await page.getByRole("button",{name:"Buscar F1",exact:true}).click();
   await expect(dialog).toBeVisible();
   expect(availabilityRequests).toBe(1);
+  await expect(dialog.getByRole("option")).toHaveCount(8);
   await page.keyboard.press("F2");
   await expect(stocks).toContainText("Bodega 12");
   expect(availabilityRequests).toBe(2);

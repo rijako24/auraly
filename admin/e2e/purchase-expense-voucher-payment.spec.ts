@@ -102,7 +102,7 @@ for (const expense of [false, true]) for (const direct of [false, true]) for (co
       await expect(page.getByRole("alert").filter({ hasText: "Falta conciliar la apertura original" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toHaveCount(0);
     } else {
-      await expect(page.getByRole("region", { name: "Formas de pago del comprobante", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "Formas de pago del comprobante", exact: true })).toBeVisible();
       const line = page.getByRole("row", { name: "Partida 1", exact: true });
       await expect(line.getByLabel("Débito de la partida", { exact: true })).toHaveValue("60");
       await expect(line).toContainText("22050501");

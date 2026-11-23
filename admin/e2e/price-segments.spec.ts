@@ -37,6 +37,7 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   let itemReads = 0;
   let savedExclusion: Record<string, unknown> | null = null;
   let createdRequest: Record<string, unknown> | null = null;
+  let costGate: Promise<void> | null = null;
 
   await page.route("**/api/auth/me", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ userId: "33333333-3333-3333-3333-333333333333", tenantId: "11111111-1111-1111-1111-111111111111", tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.cost-basis.read", "pricing.segments.read", "pricing.segments.manage"] }) }));
 
@@ -44,6 +45,7 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
     const request = route.request();
     const url = new URL(request.url());
     if (/\/products\/[^/]+\/cost$/.test(url.pathname)) {
+      if (costGate) await costGate;
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ costBasisAmount: 20000, salesTaxRate: 0, currentMarginPercent: 32.203389 }) });
       return;
     }
@@ -195,6 +197,8 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(detailDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 12 unidades" })).not.toBeChecked();
   await expect(detailDialog.getByRole("row").filter({ hasText: "Aceite vegetal 3000 ml" }).first()).toContainText("29.500");
   await detailDialog.getByRole("button", { name: "Editar canal" }).click();
+  let releaseCost!: () => void;
+  costGate = new Promise<void>((resolve) => { releaseCost = resolve; });
   await editDialog.getByRole("button", { name: "Agregar producto" }).click();
 
   const itemDialog = page.getByRole("dialog", { name: "Agregar producto" });
@@ -202,6 +206,9 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await itemDialog.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
   const minimum = itemDialog.getByText("Cantidad mínima *", { exact: true }).locator("..").locator("input");
   await minimum.fill("12");
+  releaseCost();
+  await expect(itemDialog.getByText(/Costo base de la sede/)).toBeVisible();
+  await expect(minimum).toHaveValue("12");
   await itemDialog.getByRole("button", { name: "Guardar condición" }).click();
   await expect(itemDialog).toBeHidden();
   await expect(editDialog).toBeVisible();

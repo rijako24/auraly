@@ -3642,11 +3642,13 @@ su identidad y evidencia; no se reescriben fuentes históricas ni se elimina un
 vínculo que impide aplicar el mismo dinero a dos deudas. Las restricciones de
 `PaymentTenderBreakdown` descritas en este diseño permanecen vigentes.
 
-Por instrucción posterior del usuario, este cambio de captura aplica sólo al
-**recibo de caja**. No extiende el panel al egreso ni modifica su formulario o
-el pago asistido/POS. La verificación puntual incluye el egreso anterior para
-demostrar esa separación. Rollback del cliente conserva las mismas partidas,
-IDs y APIs; no necesita migrar pagos ni reproducir efectos financieros.
+La revisión posterior del usuario del formulario de egreso amplió esta captura
+al **recibo de caja y al comprobante de egreso**: formas de pago y evidencia
+en el panel, sin modal adicional ni grupos de partidas. En el egreso el panel
+es opcional; el contador conserva la selección manual de cuentas y partidas.
+No se agrega una contrapartida monetaria hasta que el usuario la confirma.
+El pago asistido/POS conserva su captura. Rollback del cliente conserva las
+mismas partidas, IDs y APIs; no necesita migrar pagos ni reproducir efectos.
 
 **Atribución del recaudo, decisión posterior del 2026-11-16:** una factura
 permite varias formas; dos o más facturas admiten una sola forma. Dos cajas o

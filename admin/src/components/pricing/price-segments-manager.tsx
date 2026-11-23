@@ -211,7 +211,7 @@ export function PriceSegmentsManager() {
     mode: "Margin" | "SalePrice") {
     void previewTier(item, mode, (calculation) =>
       setCreateProductPrices((current) => current.map((value, at) =>
-        at === index && value.inputMode === mode
+        at === index && matchesPriceInput(value, { ...item, inputMode: mode })
           ? { ...value, ...calculation } : value)));
   }
 
@@ -361,7 +361,11 @@ export function PriceSegmentsManager() {
       </DialogContent>
     </Dialog>
 
-    <PriceItemDialog segment={selected?.strategy === "TieredProductPrice" ? selected : null} draft={draft} onChange={(value) => { setDraft(value); if (!value && selected) setDetailOpen(true); }} onPreview={(productId, mode, calculation) => setDraft((current) => current?.productId === productId && current.inputMode === mode ? { ...current, ...calculation } : current)} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
+    <PriceItemDialog segment={selected?.strategy === "TieredProductPrice" ? selected : null} draft={draft} onChange={(value) => { setDraft(value); if (!value && selected) setDetailOpen(true); }} onProductCost={(productId, selectedAmount, cost) => setDraft((current) => current?.productId === productId ? {
+      ...current, costBasisAmount: cost.costBasisAmount, salesTaxRate: cost.salesTaxRate,
+      targetMarginPercent: current.inputMode === "SalePrice" && current.amount === selectedAmount && current.targetMarginPercent === null
+        ? cost.targetMarginPercent : current.targetMarginPercent,
+    } : current)} onPreview={(expected, calculation) => setDraft((current) => current && matchesPriceInput(current, expected) ? { ...current, ...calculation } : current)} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
 
     <Dialog open={Boolean(deleteItem)} onOpenChange={(open) => { if (!open) { setDeleteItem(null); if (selected) setDetailOpen(true); } }}>
       <DialogContent>
@@ -387,7 +391,7 @@ function SynchronizePrices({ checked, disabled, onChange }: {
   </label>;
 }
 
-function PriceItemDialog({ segment, draft, onChange, onPreview, onSave, saving }: { segment: PriceSegmentSummary | null; draft: ItemDraft | null; onChange: (value: ItemDraft | null) => void; onPreview: (productId: string, mode: ItemDraft["inputMode"], calculation: Pick<ItemDraft, "amount" | "targetMarginPercent">) => void; onSave: (value: ItemDraft) => void; saving: boolean }) {
+function PriceItemDialog({ segment, draft, onChange, onProductCost, onPreview, onSave, saving }: { segment: PriceSegmentSummary | null; draft: ItemDraft | null; onChange: (value: ItemDraft | null) => void; onProductCost: (productId: string, selectedAmount: number, cost: Pick<ItemDraft, "costBasisAmount" | "salesTaxRate" | "targetMarginPercent">) => void; onPreview: (expected: ItemDraft, calculation: Pick<ItemDraft, "amount" | "targetMarginPercent">) => void; onSave: (value: ItemDraft) => void; saving: boolean }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const canReadCost = useAuthStore((state) => state.user?.permissions.includes("pricing.cost-basis.read") ?? false);
   const isNew = draft?.originalMinimumQuantity === null;
@@ -400,7 +404,8 @@ function PriceItemDialog({ segment, draft, onChange, onPreview, onSave, saving }
           {isNew ? <div className="space-y-2">
             {businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(draft.productId ? [draft.productId] : [])} disabled={saving} label="Producto *" onSelect={(product) => {
               const next = { ...draft, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0, targetMarginPercent: null, costBasisAmount: null, salesTaxRate: 0, autoUpdatePrice: draft.autoUpdatePrice, inputMode: "SalePrice" as const };
-              if (!canReadCost) { onChange(next); return; }
+              onChange(next);
+              if (!canReadCost) return;
               void priceSegmentsApi.productCost(product.productId)
                 .then(async (cost) => {
                   let targetMarginPercent: number | null = cost.currentMarginPercent;
@@ -413,21 +418,20 @@ function PriceItemDialog({ segment, draft, onChange, onPreview, onSave, saving }
                     });
                     targetMarginPercent = calculation.effectiveMarginPercent;
                   }
-                  onChange({ ...next, costBasisAmount: cost.costBasisAmount,
+                  onProductCost(next.productId, next.amount, { costBasisAmount: cost.costBasisAmount,
                     salesTaxRate: cost.salesTaxRate,
                     targetMarginPercent });
                 })
                 .catch((error: Error) => {
                   toast.error(error.message ?? "No se pudo consultar el costo del producto.");
-                  onChange(next);
                 });
             }} />}
             {draft.productId && <p className="flex items-center gap-2 text-sm text-primary"><Check className="h-4 w-4" />{draft.productName}</p>}
           </div> : <div className="rounded-xl border bg-muted/20 p-3"><b>{draft.productName}</b><p className="text-xs text-muted-foreground">{draft.productCode}</p></div>}
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2"><Label>Cantidad mínima *</Label><FormattedNumberInput value={draft.minimumQuantity} invalid={draft.minimumQuantity <= 0} onValueChange={(value) => onChange({ ...draft, minimumQuantity: value ?? 0 })} /></div>
-            <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" value={draft.amount} invalid={draft.inputMode === "SalePrice" && (draft.amount <= 0 || draft.costBasisAmount !== null && draft.amount < draft.costBasisAmount * (1 + draft.salesTaxRate / 100))} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0, inputMode: "SalePrice" })} onCommit={(value) => void previewTier({ ...draft, amount: value ?? 0 }, "SalePrice", (calculation) => onPreview(draft.productId, "SalePrice", calculation))} /></div>
-            <div className="space-y-2"><Label>Margen (%)</Label><FormattedNumberInput kind="percent" disabled={!draft.costBasisAmount} value={draft.targetMarginPercent ?? 0} invalid={draft.inputMode === "Margin" && (draft.targetMarginPercent === null || draft.targetMarginPercent < 0 || draft.targetMarginPercent >= 100)} onValueChange={(value) => onChange({ ...draft, targetMarginPercent: value, inputMode: "Margin" })} onCommit={(value) => void previewTier({ ...draft, targetMarginPercent: value }, "Margin", (calculation) => onPreview(draft.productId, "Margin", calculation))} /></div>
+            <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" value={draft.amount} invalid={draft.inputMode === "SalePrice" && (draft.amount <= 0 || draft.costBasisAmount !== null && draft.amount < draft.costBasisAmount * (1 + draft.salesTaxRate / 100))} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0, inputMode: "SalePrice" })} onCommit={(value) => { const expected = { ...draft, amount: value ?? 0, inputMode: "SalePrice" as const }; void previewTier(expected, "SalePrice", (calculation) => onPreview(expected, calculation)); }} /></div>
+            <div className="space-y-2"><Label>Margen (%)</Label><FormattedNumberInput kind="percent" disabled={!draft.costBasisAmount} value={draft.targetMarginPercent ?? 0} invalid={draft.inputMode === "Margin" && (draft.targetMarginPercent === null || draft.targetMarginPercent < 0 || draft.targetMarginPercent >= 100)} onValueChange={(value) => onChange({ ...draft, targetMarginPercent: value, inputMode: "Margin" })} onCommit={(value) => { const expected = { ...draft, targetMarginPercent: value, inputMode: "Margin" as const }; void previewTier(expected, "Margin", (calculation) => onPreview(expected, calculation)); }} /></div>
           </div>
           {draft.costBasisAmount !== null && <p className="text-xs text-muted-foreground">Costo base de la sede: {formatCurrency(draft.costBasisAmount)}. El precio no puede quedar por debajo de este costo más IVA.</p>}
         </div>
@@ -448,6 +452,11 @@ function validProductPrices(items: ItemDraft[]) {
     (item.inputMode === "Margin" ? item.costBasisAmount !== null && item.costBasisAmount > 0 && item.targetMarginPercent !== null && item.targetMarginPercent >= 0 && item.targetMarginPercent < 100 : item.amount > 0 && (item.costBasisAmount === null || item.amount >= item.costBasisAmount * (1 + item.salesTaxRate / 100))) &&
     (!item.autoUpdatePrice || item.costBasisAmount !== null && item.costBasisAmount > 0 && item.targetMarginPercent !== null && item.targetMarginPercent >= 0 && item.targetMarginPercent < 100)) &&
     new Set(items.map((item) => item.minimumQuantity)).size === items.length;
+}
+
+function matchesPriceInput(current: ItemDraft, expected: ItemDraft) {
+  return current.productId === expected.productId && current.inputMode === expected.inputMode &&
+    (expected.inputMode === "Margin" ? current.targetMarginPercent === expected.targetMarginPercent : current.amount === expected.amount);
 }
 
 async function previewTier(item: ItemDraft, inputMode: "Margin" | "SalePrice",

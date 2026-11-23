@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./support/layout-bounds";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -130,9 +131,7 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await dialog.getByText("Ver sugerido", { exact: true }).click();
   await expect(dialog.getByText(/rotación de 30 días \(60\).*90 días \(120\)/)).toBeVisible();
   await expect(dialog.locator("tbody tr").first().locator("td").nth(5).locator("input")).toHaveValue(/20\s000/);
-  expect(await dialog.getByTestId("purchase-order-lines").evaluate(
-    element => element.scrollWidth <= element.clientWidth,
-  )).toBe(true);
+  await expectNoHorizontalOverflow(dialog.getByTestId("purchase-order-lines"));
 
   await dialog.getByText("Días sugeridos", { exact: true }).locator("..").locator("input").fill("14");
   await expect(dialog.getByText("Sugerido · 14 días")).toBeVisible();

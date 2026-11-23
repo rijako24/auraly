@@ -215,7 +215,11 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
     }
     if (path === "/edge/v1/payment-methods") {
       localPaymentReads++;
-      expect(new URL(route.request().url()).searchParams.get("methodCode")).toBe("Cash");
+      const parameters = new URL(route.request().url()).searchParams;
+      if (localPaymentReads === 1) {
+        expect(parameters.get("methodCode")).toBeNull();
+        expect(parameters.get("excludeMethodCode")).toBe("Credit");
+      } else expect(parameters.get("methodCode")).toBe("Cash");
       await route.fulfill({ json: { items: [cashForm], page: 1, pageSize: 10, totalCount: 1 } });
       return;
     }
@@ -350,7 +354,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
   await expect(page.getByRole("option", { name: /Efectivo/ })).toBeVisible();
   await page.getByRole("option", { name: /Efectivo/ }).click();
-  expect(localPaymentReads).toBe(1);
+  expect(localPaymentReads).toBe(2);
   expect(cloudPaymentReads).toBe(0);
   await page.getByRole("button", { name: "Cerrar pedidos", exact: true }).click();
   const returns = page.getByRole("button", { name: /Devoluciones/ });

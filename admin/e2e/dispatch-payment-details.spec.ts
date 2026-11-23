@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./support/layout-bounds";
 import { expect, test } from "@playwright/test";
 import type { DeliveryResultInput } from "../src/services/api/dispatches";
 
@@ -135,7 +136,7 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
       expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       await details.getByRole("button", { name: card ? "Cerrar datos de tarjeta" : "Cerrar datos de transferencia", exact: true }).click();
       await expect(confirm).toBeEnabled();
-      expect(await delivery.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await expectNoHorizontalOverflow(delivery);
       if (methodCode === "DebitCard") {
         await delivery.getByRole("button", { name: "Datos del pago", exact: true }).click();
         await details.getByRole("combobox", { name: "Forma de pago de la entrega" }).click();

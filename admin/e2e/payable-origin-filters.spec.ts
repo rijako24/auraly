@@ -26,7 +26,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (path.endsWith("/payables/suppliers") || path.endsWith("/receivables/customers")) {
       const partyId = url.searchParams.get(path.endsWith("/payables/suppliers") ? "supplierId" : "customerId");

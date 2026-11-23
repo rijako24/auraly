@@ -168,6 +168,7 @@ test("Tiendas reutiliza el borrador, la captura, las cantidades y el cobro de ve
   await expect.poll(aligned).toBeLessThan(3);
   for (const name of ["Cantidad de Camiseta negra M", "Cantidad de Camiseta negra S"]) {
     const card = saleLines.locator(".rounded-2xl").filter({ has: page.getByRole("spinbutton", { name, exact: true }) });
+    await card.scrollIntoViewIfNeeded();
     await expect(card).toBeInViewport({ ratio: 1 });
   }
   await page.screenshot({ path: "test-results/pos-store-footer-anchored.png" });

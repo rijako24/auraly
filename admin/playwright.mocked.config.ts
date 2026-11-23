@@ -34,7 +34,6 @@ export default defineConfig(base, {
     "fiscal-settings.spec.ts",
     "goods-receipt-cost-edit-view.spec.ts",
     "goods-receipt-totals.spec.ts",
-    "inventory-count-and-detail.spec.ts",
     "inventory-operation-local-drafts.spec.ts",
     "inventory-operation-permissions.spec.ts",
     "invoice-charges-pos.spec.ts",

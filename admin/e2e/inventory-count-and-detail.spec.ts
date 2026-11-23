@@ -1,20 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
-
-const user = process.env.AURALY_E2E_USERNAME ?? "admin";
-const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
-const tenantKey = process.env.AURALY_E2E_TENANT_KEY ?? "AURALY";
-
-async function login(page: Page) {
-  await page.goto(`/login?tenant=${encodeURIComponent(tenantKey)}`);
-  await page.locator("#username").fill(user);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /Iniciar sesi.n/ }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 60_000 });
-}
+import { expect, test } from "@playwright/test";
+import { realAccountingContext } from "./support/real-accounting-workspace";
 
 test.describe("conteo y detalle de inventario", () => {
   test.use({ serviceWorkers: "block" });
-  test.beforeEach(async ({ page }) => login(page));
+  test.beforeEach(async ({ page }) => { await realAccountingContext(page); });
   test.setTimeout(120_000);
 
   test("conciliacion selecciona borradores y suma productos repetidos", async ({ page }) => {

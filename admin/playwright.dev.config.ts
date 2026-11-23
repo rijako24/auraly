@@ -8,6 +8,7 @@ export default defineConfig(base, {
   testMatch: [
     "accounting-real-local.spec.ts",
     "goods-receipt-browser-regression.spec.ts",
+    "inventory-count-and-detail.spec.ts",
     "orders-real-local.spec.ts",
     "payroll-real-dev.spec.ts",
     "portfolio-payment-entry-real.spec.ts",

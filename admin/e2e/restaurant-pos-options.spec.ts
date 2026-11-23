@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./support/layout-bounds";
 import { expect, test, type Route } from "@playwright/test";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -236,7 +237,7 @@ test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas o
       const box = await card.boundingBox(); expect(box!.y).toBeGreaterThanOrEqual(boundary!.y);
       expect(box!.y + box!.height).toBeLessThanOrEqual(boundary!.y + boundary!.height);
     }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoHorizontalOverflow(page.locator("html"));
     await page.getByRole("button", { name: "Canal de precio: Canal 55", exact: true }).click();
     await expect(dialog.getByRole("button", { name: "Canal 01", exact: true })).toBeVisible();
     const box = await dialog.boundingBox(); expect(box!.y).toBeGreaterThanOrEqual(0);

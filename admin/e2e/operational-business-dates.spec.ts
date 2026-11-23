@@ -95,7 +95,7 @@ for(const {now,from,to} of [
 ])test(`inventario: filtros de sede para el día ${from.slice(0,10)}`,async({page,baseURL})=>{
   await page.clock.setFixedTime(new Date(now));
   const scenario=financialVoucherScenario();scenario.timeZone="America/New_York";
-  scenario.user.permissions.push("inventory.read","inventory.stock-counts.read");
+  scenario.user.permissions.push("inventory.read","inventory.physical-counts.manage");
   await installFinancialVoucherContext(page,baseURL!,scenario);
   const reads:URL[]=[];let contextReads=0;
   await page.route("**/api/**",async route=>{

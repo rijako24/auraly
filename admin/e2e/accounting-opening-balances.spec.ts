@@ -118,7 +118,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await authenticate(page, granted);
     await page.goto("/dashboard/accounting");
     if (viewport.width === 390) {
-      await page.getByRole("button", { name: "Cerrar aviso de notificaciones", exact: true }).click();
+      await closeOpeningNotificationHint(page);
       await expect(page.getByText("Recibe aprobaciones con Auraly cerrada", { exact: true })).not.toBeVisible();
     }
     await page.getByRole("button", { name: "Saldos iniciales" }).click();

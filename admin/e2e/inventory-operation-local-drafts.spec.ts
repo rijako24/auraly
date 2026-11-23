@@ -194,6 +194,7 @@ function field(scope: Locator, label: string) {
 async function select(page: Page, combo: Locator, option: string) {
   await combo.click();
   await page.getByRole("option", { name: option, exact: true }).click();
+  await expect(combo).toBeFocused();
 }
 
 async function addProduct(page: Page, dialog: Locator) {
@@ -321,6 +322,7 @@ test("conversión distingue falta de inventario de merma y permite una merma vá
   const search = dialog.getByTestId("product-picker-search");
   await search.fill("ARROZ");
   await dialog.getByRole("option", { name: /Arroz origen/ }).click();
+  await expect(dialog.getByRole("textbox", { name: "Cantidad de Arroz origen", exact: true })).toBeFocused();
   await search.fill("BOLSA");
   await dialog.getByRole("option", { name: /Bolsa producida/ }).click();
 

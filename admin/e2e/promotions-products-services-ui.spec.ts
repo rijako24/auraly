@@ -42,7 +42,7 @@ async function mockApi(page: Page, productRequests: string[], serviceRequests: s
     const path = url.pathname;
     if (path.endsWith("/auth/me")) return json(route, { userId, tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions });
     if (path.endsWith("/execution-context/tenants")) return json(route, [{ tenantId, name: "Auraly" }]);
-    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Sede Centro" }]);
+    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Sede Centro", timeZone: "America/Bogota" }]);
     if (path.endsWith("/execution-context/access")) return json(route, { tenantId, businessId, roles: ["Administrator"], permissions });
     if (path.endsWith("/businesses") && request.method() === "GET") return json(route, pageResult([{ businessId, tenantId, name: "Sede Centro", isActive: true }]));
     if (path.endsWith(`/businesses/${businessId}/product-categories`)) return json(route, [{ productCategoryId: categoryId, parentProductCategoryId: null, name: "Bebidas", displayOrder: 1, isActive: true, isBrowsable: true, depth: 0, path: "Bebidas" }]);
