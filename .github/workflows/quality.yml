@@ -15,6 +15,7 @@ on:
           - integration
           - foundation
           - browser
+          - dev-browser
       integration_test_filter:
         description: Filtro explícito de las pruebas seleccionadas
         required: true
@@ -22,7 +23,7 @@ on:
 
 jobs:
   backend:
-    if: github.event_name != 'workflow_dispatch' || inputs.test_suite != 'browser'
+    if: github.event_name != 'workflow_dispatch' || (inputs.test_suite != 'browser' && inputs.test_suite != 'dev-browser')
     # Keep SQL latency gates on the same fixed Windows generation used to build
     # immutable releases; a floating image is not a stable performance baseline.
     runs-on: windows-2022
@@ -96,6 +97,7 @@ jobs:
             tests/Auraly.ServerSlice.IntegrationTests/bin/Release/net8.0/TestResults/portfolio-report-profile-*/**
           retention-days: 7
           if-no-files-found: ignore
+
       - name: Retain selected test results
         if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v6
@@ -105,6 +107,51 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  dev-browser:
+    if: github.event_name == 'workflow_dispatch' && inputs.test_suite == 'dev-browser'
+    runs-on: ubuntu-latest
+    environment: dev
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.19.0
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify installed DEV identity
+        run: node -e 'fetch("https://api-auraly-dev-w5usmo6w.azurewebsites.net/health").then(async r=>{if(!r.ok)throw Error("DEV health failed");console.log(await r.text())})'
+      - name: Run real browser journeys exclusively in AURALY DEV
+        env:
+          AURALY_E2E_REAL_LOGIN: '1'
+          AURALY_E2E_TARGET: dev
+          AURALY_API_URL: https://api-auraly-dev-w5usmo6w.azurewebsites.net
+          AURALY_E2E_BASE_URL: https://proud-moss-0d9cf540f.7.azurestaticapps.net
+          AURALY_E2E_TENANT_KEY: '@auraly'
+          AURALY_E2E_TENANT_ID: a0a10000-0000-0000-0000-000000000000
+          AURALY_E2E_BUSINESS_ID: a0a10000-0000-0000-0000-000000000001
+          AURALY_E2E_USERNAME: codex.pos.dev
+          AURALY_E2E_PASSWORD: ${{ secrets.AURALY_DEV_E2E_QA_PASSWORD }}
+          DEV_BROWSER_TEST_FILTER: ${{ inputs.integration_test_filter }}
+        run: |
+          if [ -z "$AURALY_E2E_PASSWORD" ] || [ -z "$DEV_BROWSER_TEST_FILTER" ]; then echo 'Falta la credencial QA o el filtro explícito.'; exit 1; fi
+          mkdir -p ../work/release-preparation-current
+          npx playwright test --config playwright.dev.config.ts --grep "$DEV_BROWSER_TEST_FILTER"
+      - name: Retain real DEV journey results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dev-browser-regression-${{ github.run_attempt }}
+          path: |
+            admin/playwright-report
+            admin/test-results
+            work/release-preparation-current
+          retention-days: 7
+          if-no-files-found: ignore
   invoice-pdf-linux:
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
