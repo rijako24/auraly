@@ -131,7 +131,9 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await dialog.getByText("Ver sugerido", { exact: true }).click();
   await expect(dialog.getByText(/rotación de 30 días \(60\).*90 días \(120\)/)).toBeVisible();
   await expect(dialog.locator("tbody tr").first().locator("td").nth(5).locator("input")).toHaveValue(/20\s000/);
-  await expectNoHorizontalOverflow(dialog.getByTestId("purchase-order-lines"));
+  // Table layout rounds fractional column widths up; clientWidth rounds down.
+  // Descendant bounds must still remain inside the container.
+  await expectNoHorizontalOverflow(dialog.getByTestId("purchase-order-lines"), 1);
 
   await dialog.getByText("Días sugeridos", { exact: true }).locator("..").locator("input").fill("14");
   await expect(dialog.getByText("Sugerido · 14 días")).toBeVisible();

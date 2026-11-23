@@ -60,7 +60,7 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
     await page.setViewportSize({ width, height: width===1366 ? 768 : 1000 });
     // Measure in one frame: the dialog's opening animation scales both boxes.
     const bounds = await dialog.evaluate(element => {
-      const input = element.querySelector('[aria-label="Efectivo físico recibido"]')!;
+      const input = element.querySelector('input[id^="dispatch-received-"]')!;
       const result = element.querySelector('[aria-label="Resultado del efectivo"]')!;
       const a = input.getBoundingClientRect(), b = result.getBoundingClientRect();
       return { inputY: a.y, resultY: b.y, inputHeight: a.height, resultHeight: b.height };

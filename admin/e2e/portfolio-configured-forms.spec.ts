@@ -87,8 +87,10 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
   const cardDialog = page.getByRole("dialog", {name:"Datos de la tarjeta",exact:true});
   if (bankCount !== 1) await expect(cardDialog).toHaveCount(0);
   if(bankCount===0) {
-    await expect(checkout.getByText("No hay formas activas para este tipo de pago y operación. Revisa Formas de pago.")).toBeVisible();
-    await expect(checkout.getByRole("button",{name:"Sin imprimir",exact:true})).toBeDisabled();
+    const label = methodCode === "Transfer" ? "Transferencia" : methodCode === "DebitCard" ? "Tarjeta débito" : "Tarjeta crédito";
+    await expect(checkout.getByRole("button", { name: new RegExp(label) }).first()).toBeDisabled();
+    await expect(checkout.getByRole("combobox", { name: "Medio de pago" })).toContainText("Caja principal");
+    await expect(checkout.getByRole("textbox", { name: "Valor recibido en Efectivo" })).toHaveCount(1);
     expect(confirmation).toBeNull();
     expect(configurationReads).toBe(1);
     return;

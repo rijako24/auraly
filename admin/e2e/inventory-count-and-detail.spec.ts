@@ -233,6 +233,7 @@ test.describe("conteo y detalle de inventario", () => {
       await expect(count).toHaveValue("0");
       await change("Recontar", "2", "2", "Count");
       await operation.getByRole("button", { name: "Recontar", exact: true }).click();
+      await expect(recount).toBeFocused();
       await expect(count).toBeDisabled();
       await change("Sumar", "3", "3", "Recount");
       await expect(count).toHaveValue("2");

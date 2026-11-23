@@ -883,6 +883,9 @@ no consulta productos con la búsqueda anterior y el cliente de la venta nueva.
 
 La regresión de navegador cubre cancelación y confirmación del cobro, recuperación
 del cliente con una sola lectura y diez tamaños entre 320×568 y 1920×1080.
+La columna de la cuenta usa una pista de grilla que puede encogerse y no impone
+su ancho mínimo de contenido sobre la pantalla de 320 píxeles. Los controles
+conservan su tamaño táctil y el desplazamiento vertical de la cuenta.
 `pos-composition-inventory-real.spec.ts` vende desde cada una de las tres pantallas
 tres unidades de receta y de combo, con y sin inventario propio, y concilia los
 saldos antes y después en la bodega seleccionada. Las facturas se confirman desde

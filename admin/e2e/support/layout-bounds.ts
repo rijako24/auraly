@@ -1,7 +1,7 @@
 import { expect, type Locator } from "@playwright/test";
 
 /** Keep failing layout checks actionable without weakening viewport bounds. */
-export async function expectNoHorizontalOverflow(root: Locator) {
+export async function expectNoHorizontalOverflow(root: Locator, pixelRounding = 0) {
   const layout = await root.evaluate(element => {
     const bounds = element.getBoundingClientRect();
     return {
@@ -15,5 +15,6 @@ export async function expectNoHorizontalOverflow(root: Locator) {
       }).filter(child => child.width > 0 && (child.left < bounds.left - 1 || child.right > bounds.right + 1)).slice(0, 12),
     };
   });
-  expect(layout.scrollWidth, JSON.stringify(layout)).toBeLessThanOrEqual(layout.width);
+  expect(layout.scrollWidth, JSON.stringify(layout)).toBeLessThanOrEqual(layout.width + pixelRounding);
+  expect(layout.offenders, JSON.stringify(layout)).toEqual([]);
 }

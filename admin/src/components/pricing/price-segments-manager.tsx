@@ -456,6 +456,7 @@ function validProductPrices(items: ItemDraft[]) {
 
 function matchesPriceInput(current: ItemDraft, expected: ItemDraft) {
   return current.productId === expected.productId && current.inputMode === expected.inputMode &&
+    current.costBasisAmount === expected.costBasisAmount && current.salesTaxRate === expected.salesTaxRate &&
     (expected.inputMode === "Margin" ? current.targetMarginPercent === expected.targetMarginPercent : current.amount === expected.amount);
 }
 

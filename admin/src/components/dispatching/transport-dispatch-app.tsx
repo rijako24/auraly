@@ -211,7 +211,7 @@ function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string
     value={captureForm?.paymentMethodId??""} name={captureForm?.name} ariaLabel="Forma de pago de la entrega"
     onChange={selected=>{if(selected.paymentMethodId!==captureForm?.paymentMethodId)setCapture(current=>current?{...current,form:selected,...(current.card?{card:{franchiseCode:"",approvalNumber:""}}:{transfer:{reference:"",notes:""}})}:null)}}/>}</div>;
   return <>
-    <Dialog open onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[96dvh] max-w-3xl overflow-y-auto rounded-3xl">
+    <Dialog open onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[96dvh] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto rounded-3xl">
       <DialogHeader><DialogTitle>Confirmar entrega</DialogTitle><DialogDescription>{document.customerName} · {document.documentNumber}</DialogDescription></DialogHeader>
       <div className="space-y-5">
         <section className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-950 p-4 text-center text-white"><MiniMoney label="Factura" value={document.documentTotal}/><MiniMoney label="Devolución" value={returnedTotal}/><MiniMoney label={isCredit?"Venta a crédito":"A recibir"} value={isCredit?Math.max(0,document.creditAmount-returnedTotal):immediateAmount}/></section>

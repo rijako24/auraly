@@ -354,7 +354,7 @@ test("enrolamiento se recupera en la misma pantalla sin filtrar la URL técnica"
   await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
   await expect(page.getByRole("option", { name: /Efectivo/ })).toBeVisible();
   await page.getByRole("option", { name: /Efectivo/ }).click();
-  expect(localPaymentReads).toBe(2);
+  expect(localPaymentReads).toBe(1);
   expect(cloudPaymentReads).toBe(0);
   await page.getByRole("button", { name: "Cerrar pedidos", exact: true }).click();
   const returns = page.getByRole("button", { name: /Devoluciones/ });

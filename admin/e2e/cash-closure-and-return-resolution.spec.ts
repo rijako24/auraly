@@ -125,7 +125,7 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await expect(correction.getByRole("button", { name: "Aplicar" })).toBeDisabled();
   await correction.getByRole("combobox").last().click();
   await page.getByRole("option", { name: "Visa" }).click();
-  await correction.getByLabel("Número de aprobación o referencia").fill("AP-123");
+  await correction.getByLabel("Número de aprobación", { exact: true }).fill("AP-123");
   await correction.getByLabel("Motivo de la corrección").fill("Datáfono débito");
   await expect(correction.getByRole("button", { name: "Aplicar" })).toBeEnabled();
   await correction.getByRole("button", { name: "Aplicar" }).click();
