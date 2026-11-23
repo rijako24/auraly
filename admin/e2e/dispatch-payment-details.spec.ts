@@ -137,6 +137,8 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
       await details.getByRole("button", { name: card ? "Cerrar datos de tarjeta" : "Cerrar datos de transferencia", exact: true }).click();
       await expect(confirm).toBeEnabled();
       await expectNoHorizontalOverflow(delivery);
+      for (const label of ["Efectivo", "Tarjeta débito", "Tarjeta crédito", "Transferencia"])
+        await expectNoHorizontalOverflow(delivery.getByRole("button", { name: label, exact: true }));
       if (methodCode === "DebitCard") await delivery.screenshot({ path: test.info().outputPath("delivery-390.png") });
       if (methodCode === "DebitCard") {
         await delivery.getByRole("button", { name: "Datos del pago", exact: true }).click();
