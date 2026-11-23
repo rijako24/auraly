@@ -78,7 +78,7 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
       await quantity.fill("0.25");
       await returned.getByRole("button",{name:"Aplicar devolución",exact:true}).click();
     }
-    if (methodCode === "Cash") await page.screenshot({ path: "../work/release-preparation-current/entrega-efectivo.png" });
+    if (methodCode === "Cash") await page.screenshot({ path: test.info().outputPath("entrega-efectivo.png") });
     if (methodCode !== "Cash") {
       await delivery.getByRole("button", { name: labels[methodCode], exact: true }).click();
       const card = methodCode !== "Transfer";
@@ -93,7 +93,7 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
         await page.keyboard.press("Escape");
         await expect(details).toBeVisible();
         await details.getByRole("combobox", { name: "Forma de pago de la entrega" }).click();
-        await page.screenshot({ path: "../work/release-preparation-current/entrega-selector-tarjetas.png" });
+        await page.screenshot({ path: test.info().outputPath("entrega-selector-tarjetas.png") });
         await page.getByRole("option", { name: /Tarjeta débito 2/ }).click();
       }
       if (methodCode === "Transfer") {
@@ -112,12 +112,12 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
         await details.getByRole("combobox", { name: "Franquicia" }).click();
         await page.getByRole("option", { name: "Visa", exact: true }).click();
         await details.getByRole("textbox", { name: "Número de aprobación" }).fill("APROB-100");
-        if (methodCode === "DebitCard") await page.screenshot({ path: "../work/release-preparation-current/entrega-datos-tarjeta.png" });
+        if (methodCode === "DebitCard") await page.screenshot({ path: test.info().outputPath("entrega-datos-tarjeta.png") });
         await details.getByRole("button", { name: "Guardar datos · Enter", exact: true }).click();
       } else {
         await expect(details).toContainText("Transferencia 1 · 111005 · Cuenta Transfer 1");
         await details.getByRole("textbox", { name: "Referencia", exact: true }).fill("TRANS-100");
-        await page.screenshot({ path: "../work/release-preparation-current/entrega-datos-transferencia.png" });
+        await page.screenshot({ path: test.info().outputPath("entrega-datos-transferencia.png") });
         await details.getByRole("button", { name: "Guardar transferencia", exact: true }).click();
       }
       await expect(delivery).toBeVisible(); await expect(details).toHaveCount(0);
@@ -137,6 +137,7 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
       await details.getByRole("button", { name: card ? "Cerrar datos de tarjeta" : "Cerrar datos de transferencia", exact: true }).click();
       await expect(confirm).toBeEnabled();
       await expectNoHorizontalOverflow(delivery);
+      if (methodCode === "DebitCard") await delivery.screenshot({ path: test.info().outputPath("delivery-390.png") });
       if (methodCode === "DebitCard") {
         await delivery.getByRole("button", { name: "Datos del pago", exact: true }).click();
         await details.getByRole("combobox", { name: "Forma de pago de la entrega" }).click();

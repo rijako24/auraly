@@ -36,6 +36,7 @@ for (const viewport of viewports) {
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
         `${view.title} no debe generar desplazamiento horizontal`,
       ).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`${view.title}-${viewport.width}.png`), fullPage: true });
     }
     expect(styles[0]).toBe(styles[1]);
   });

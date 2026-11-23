@@ -390,7 +390,7 @@ test("asiento libre real conserva terceros y bases al guardar, contabilizar y cl
   await auxiliary.getByRole("combobox", { name: "Filtrar auxiliar por tercero", exact: true }).click();
   await page.getByRole("option").filter({ hasText: parties[0].displayName }).click();
   await expect(movement).toBeVisible();
-  await auxiliary.screenshot({ path: "../work/libro-auxiliar-real.png" });
+  await auxiliary.screenshot({ path: test.info().outputPath("libro-auxiliar-real.png") });
   const reportReads: string[] = [];
   page.on("request", request => {
     if (request.method() === "GET" && request.url().includes("/accounting/reports/account-movements")) reportReads.push(request.url());

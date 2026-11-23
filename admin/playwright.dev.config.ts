@@ -10,6 +10,7 @@ export default defineConfig(base, {
     "goods-receipt-browser-regression.spec.ts",
     "inventory-count-and-detail.spec.ts",
     "orders-real-local.spec.ts",
+    "orders-dispatch-style-regression.spec.ts",
     "payroll-real-dev.spec.ts",
     "portfolio-payment-entry-real.spec.ts",
     "pos-browser-regression.spec.ts",

@@ -148,11 +148,11 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(pricesDialog.getByText("Costo base de la sede:", { exact: false })).toBeVisible();
   await expect(pricesDialog.getByRole("checkbox")).toHaveCount(0);
   await expectMobileDialogFits(page, pricesDialog);
-  await pricesDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-editor.png" });
+  await pricesDialog.screenshot({ path: test.info().outputPath("precios-por-cantidad-editor.png") });
   await pricesDialog.locator("#new-channel-product-minimum-0").fill("3");
   await pricesDialog.getByRole("button", { name: "Agregar precios" }).click();
   await expectMobileDialogFits(page, createDialog);
-  await createDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-canal.png" });
+  await createDialog.screenshot({ path: test.info().outputPath("precios-por-cantidad-canal.png") });
   await createDialog.getByRole("button", { name: /Crear canal · 1 precios/ }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.getByRole("dialog", { name: "Distribuidores" })).toHaveCount(0);
@@ -178,7 +178,7 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(editDialog.getByRole("checkbox")).toHaveCount(3);
   await editDialog.getByRole("checkbox", { name: "Sincronizar Aceite vegetal 3000 ml desde 12 unidades" }).uncheck();
   await expect(synchronizeAll).toHaveAttribute("data-state", "indeterminate");
-  await editDialog.screenshot({ path: "../work/channel-sync-current/precios-por-cantidad-editar.png" });
+  await editDialog.screenshot({ path: test.info().outputPath("precios-por-cantidad-editar.png") });
   await editDialog.getByRole("button", { name: "Guardar canal" }).click();
   await expect(detailDialog).toBeVisible();
   expect(settingsWrites).toBe(1);

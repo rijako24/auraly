@@ -473,7 +473,7 @@ test("el estado de pago mantiene tamaño y fondo al faltar, sobrar o recibir el 
     await cash.fill("40000");
     await expect(status).toHaveText("Pago completo");
     await status.scrollIntoViewIfNeeded();
-    await payment.screenshot({ path: `../.codex-build/restaurant-status-${viewport.width}.png` });
+    await payment.screenshot({ path: test.info().outputPath(`restaurant-status-${viewport.width}.png`) });
     await expectNoHorizontalOverflow(page.locator("html"));
   }
 });
