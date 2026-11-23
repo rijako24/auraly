@@ -38,6 +38,8 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   let savedExclusion: Record<string, unknown> | null = null;
   let createdRequest: Record<string, unknown> | null = null;
   let costGate: Promise<void> | null = null;
+  let itemSaveGate: Promise<void> | null = null;
+  let itemWrites = 0;
 
   await page.route("**/api/auth/me", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ userId: "33333333-3333-3333-3333-333333333333", tenantId: "11111111-1111-1111-1111-111111111111", tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.cost-basis.read", "pricing.segments.read", "pricing.segments.manage"] }) }));
 
@@ -80,7 +82,11 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
       if (url.pathname.endsWith("/settings")) {
         settingsWrites += 1;
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ autoUpdatePrice: savedItem.autoUpdatePrice, itemSync: savedItem.itemSync ?? [] }) });
-      } else await route.fulfill({ status: 204 });
+      } else {
+        itemWrites++;
+        if (itemSaveGate) await itemSaveGate;
+        await route.fulfill({ status: 204 });
+      }
       return;
     }
     await route.fulfill({ status: 204 });
@@ -231,10 +237,18 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(price).toHaveValue("40 000");
   await expect(margin).toHaveValue("50");
   await expect(minimum).toHaveValue("12");
+  let releaseSave!: () => void;
+  itemSaveGate = new Promise<void>(resolve => { releaseSave = resolve; });
   await itemDialog.getByRole("button", { name: "Guardar condición" }).click();
+  await expect(minimum).toBeDisabled();
+  await expect(price).toBeDisabled();
+  await expect(margin).toBeDisabled();
+  await expect(itemDialog.getByRole("button", { name: "Guardando…", exact: true })).toBeDisabled();
+  releaseSave();
   await expect(itemDialog).toBeHidden();
   await expect(editDialog).toBeVisible();
   expect(savedItem).toMatchObject({ amount: 40000, minimumQuantity: 12 });
+  expect(itemWrites).toBe(1);
   const exclusions = editDialog.getByRole("heading", { name: "Excluidos" }).locator("xpath=ancestor::section");
   await exclusions.getByRole("button", { name: "Producto", exact: true }).click();
   await exclusions.getByPlaceholder(/Código interno/).fill("Aceite");

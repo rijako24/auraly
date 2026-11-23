@@ -446,7 +446,7 @@ test("el estado de pago mantiene tamaño y fondo al faltar, sobrar o recibir el 
     await page.goto("/pos/restaurant");
     await page.getByRole("button", { name: /M-01/ }).click();
     const accountTab = page.getByRole("button", { name: /^Cuenta ·/ });
-    if (await accountTab.isVisible()) await accountTab.click();
+    if (viewport.width < 1024) await accountTab.click();
     await page.getByRole("button", { name: "Facturar mesa" }).click();
     const payment = page.getByRole("dialog", { name: "Cobrar mesa" });
     const status = payment.getByLabel("Estado del pago");

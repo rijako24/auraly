@@ -397,7 +397,7 @@ function PriceItemDialog({ segment, draft, onChange, onProductCost, onPreview, o
   const isNew = draft?.originalMinimumQuantity === null;
   const awaitingCost = isNew && canReadCost && draft?.costBasisAmount === null;
 
-  return <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open) onChange(null); }}>
+  return <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open && !saving) onChange(null); }}>
     <DialogContent className="max-h-[92dvh] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
       {draft && segment && <>
         <DialogHeader><DialogTitle>{isNew ? "Agregar producto" : "Editar condición"}</DialogTitle><DialogDescription>Define el precio y la cantidad desde la cual aplica.</DialogDescription></DialogHeader>
@@ -430,13 +430,13 @@ function PriceItemDialog({ segment, draft, onChange, onProductCost, onPreview, o
             {draft.productId && <p className="flex items-center gap-2 text-sm text-primary"><Check className="h-4 w-4" />{draft.productName}</p>}
           </div> : <div className="rounded-xl border bg-muted/20 p-3"><b>{draft.productName}</b><p className="text-xs text-muted-foreground">{draft.productCode}</p></div>}
           <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-2"><Label>Cantidad mínima *</Label><FormattedNumberInput value={draft.minimumQuantity} invalid={draft.minimumQuantity <= 0} onValueChange={(value) => onChange({ ...draft, minimumQuantity: value ?? 0 })} /></div>
+            <div className="space-y-2"><Label>Cantidad mínima *</Label><FormattedNumberInput disabled={saving} value={draft.minimumQuantity} invalid={draft.minimumQuantity <= 0} onValueChange={(value) => onChange({ ...draft, minimumQuantity: value ?? 0 })} /></div>
             <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" disabled={awaitingCost || saving} value={draft.amount} invalid={draft.inputMode === "SalePrice" && (draft.amount <= 0 || draft.costBasisAmount !== null && draft.amount < draft.costBasisAmount * (1 + draft.salesTaxRate / 100))} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0, inputMode: "SalePrice" })} onCommit={(value) => { const expected = { ...draft, amount: value ?? 0, inputMode: "SalePrice" as const }; void previewTier(expected, "SalePrice", (calculation) => onPreview(expected, calculation)); }} /></div>
-            <div className="space-y-2"><Label>Margen (%)</Label><FormattedNumberInput kind="percent" disabled={!draft.costBasisAmount} value={draft.targetMarginPercent ?? 0} invalid={draft.inputMode === "Margin" && (draft.targetMarginPercent === null || draft.targetMarginPercent < 0 || draft.targetMarginPercent >= 100)} onValueChange={(value) => onChange({ ...draft, targetMarginPercent: value, inputMode: "Margin" })} onCommit={(value) => { const expected = { ...draft, targetMarginPercent: value, inputMode: "Margin" as const }; void previewTier(expected, "Margin", (calculation) => onPreview(expected, calculation)); }} /></div>
+            <div className="space-y-2"><Label>Margen (%)</Label><FormattedNumberInput kind="percent" disabled={!draft.costBasisAmount || saving} value={draft.targetMarginPercent ?? 0} invalid={draft.inputMode === "Margin" && (draft.targetMarginPercent === null || draft.targetMarginPercent < 0 || draft.targetMarginPercent >= 100)} onValueChange={(value) => onChange({ ...draft, targetMarginPercent: value, inputMode: "Margin" })} onCommit={(value) => { const expected = { ...draft, targetMarginPercent: value, inputMode: "Margin" as const }; void previewTier(expected, "Margin", (calculation) => onPreview(expected, calculation)); }} /></div>
           </div>
           {draft.costBasisAmount !== null && <p className="text-xs text-muted-foreground">Costo base de la sede: {formatCurrency(draft.costBasisAmount)}. El precio no puede quedar por debajo de este costo más IVA.</p>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onChange(null)}>Cancelar</Button><Button disabled={saving || awaitingCost || !draft.productId || !validProductPrices([draft])} onClick={() => onSave(draft)}>{saving ? "Guardando…" : "Guardar condición"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" disabled={saving} onClick={() => onChange(null)}>Cancelar</Button><Button disabled={saving || awaitingCost || !draft.productId || !validProductPrices([draft])} onClick={() => onSave(draft)}>{saving ? "Guardando…" : "Guardar condición"}</Button></DialogFooter>
       </>}
     </DialogContent>
   </Dialog>;
