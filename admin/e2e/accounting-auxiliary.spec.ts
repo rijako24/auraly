@@ -79,6 +79,18 @@ test("auxiliar pagina más de 200 movimientos, conserva totales y comparte el ca
   const dialog = page.getByRole("dialog", { name: "13300501 · Anticipos a proveedores" });
   await expect(dialog.getByText("201 movimientos", { exact: true })).toBeVisible();
   await expect(dialog.getByText("CONT-001", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const bounds = (await dialog.boundingBox())!;
+  const balance = (await dialog.getByRole("row").filter({ hasText: "CONT-001" }).getByRole("cell").last().boundingBox())!;
+  expect(balance.x + balance.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+  await dialog.screenshot({ path: test.info().outputPath("auxiliary-1366.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = (await dialog.boundingBox())!;
+  expect(mobile.x).toBeGreaterThanOrEqual(0);
+  expect(mobile.x + mobile.width).toBeLessThanOrEqual(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("auxiliary-mobile.png") });
+  await page.setViewportSize({ width: 1366, height: 768 });
   await expect(dialog.getByRole("cell", { name: "Proveedor principal", exact: true })).toHaveCount(50);
   await expect(dialog.getByRole("cell", { name: "900123456", exact: true })).toHaveCount(50);
   await expect(dialog.getByText("DOC-1", { exact: true })).toBeVisible();

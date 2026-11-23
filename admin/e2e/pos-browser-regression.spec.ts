@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { realAccountingWorkspace } from "./support/real-accounting-workspace";
+import { realAccountingWorkspace, selectRealCashForm } from "./support/real-accounting-workspace";
 import { createRealProduct } from "./support/real-product";
 import type { AccountingEntry } from "../src/services/api/accounting";
 import type { SalesWorkspaceOption } from "../src/services/pos/online-pos-client";
@@ -140,6 +140,7 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
   await page.keyboard.press("F8");
   const payment = page.getByRole("dialog", { name: "Finalizar venta" });
   await expect(payment).toBeVisible();
+  await selectRealCashForm(page, payment);
   const cash = payment.getByRole("textbox", { name: "Valor recibido en Efectivo" });
   await cash.fill("999999");
   await expect(payment.getByText(/Cambio listo:/)).toBeVisible();

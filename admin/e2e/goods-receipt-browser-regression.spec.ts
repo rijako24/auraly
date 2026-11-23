@@ -348,6 +348,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await receiptDialog.screenshot({ path: "../work/recepcion-compra-egreso-real.png" });
   await receiptDialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: `Pagar compra ${documentNumber}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "Comprobante de egreso", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard\/financial-traceability\?new=1&payable=/);
   await expect(page.getByRole("combobox", { name: "Tipo de comprobante", exact: true })).toContainText("Egreso");
   await expect(page.getByRole("combobox", { name: "Seleccionar tercero principal", exact: true })).toContainText(supplierName);

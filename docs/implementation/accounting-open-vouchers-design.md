@@ -2976,6 +2976,10 @@ todo el rediseño ni a una autorización de despliegue.
 
 ### Libro auxiliar por cuenta (referencia visual del usuario, 2026-10-21)
 
+La grilla debe caber en el ancho útil del portátil de 1366×768 sin recortar el
+saldo. En móvil conserva el desplazamiento dentro de la grilla, con las mismas
+columnas y precisión monetaria; no amplía el modal fuera de la pantalla.
+
 El reporte solicitado amplía la lectura canónica del diario en `SqlAccountingStore`;
 no crea otro ledger ni almacena totales financieros independientes. La consulta
 actual de movimientos de una sola cuenta no satisface todavía este alcance.

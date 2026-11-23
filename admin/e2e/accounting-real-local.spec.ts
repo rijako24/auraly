@@ -559,6 +559,7 @@ test("un gasto pendiente aparece debajo del tercero en el comprobante manual", a
   const confirmed = await confirming;
   expect(confirmed.ok(), await confirmed.text()).toBe(true);
   const { expenseId } = await confirmed.json() as { expenseId: string };
+  await waitForRealPosting(context, expenseId);
   const expense = await scopedJson<ExpenseDetail>("GET", `${api}/expenses/${expenseId}`);
   expect(expense.payable?.outstandingAmount).toBe(1000.5);
   await page.goto("/dashboard/financial-traceability");

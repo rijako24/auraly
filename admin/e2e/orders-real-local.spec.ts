@@ -162,12 +162,10 @@ for (const scenario of [
     if (response.request().method() === "POST" && response.url().endsWith("/orders/invoice/credit-validation")) creditValidations.push(response);
   });
   if (scenario.method === "Credit") await page.getByRole("button", { name: "Crédito", exact: true }).click();
-  else {
-    await page.getByRole("combobox", { name: "Forma de pago del lote", exact: true }).click();
-    const preferredCash = process.env.AURALY_E2E_CASH_FORM_NAME;
-    if (preferredCash) await page.getByPlaceholder("Buscar forma de pago…", { exact: true }).fill(preferredCash);
-    await (preferredCash ? page.getByRole("option").filter({ hasText: preferredCash }) : page.getByRole("option").first()).click();
-  }
+  await page.getByRole("combobox", { name: "Forma de pago del lote", exact: true }).click();
+  const preferred = scenario.method === "Credit" ? process.env.AURALY_E2E_CREDIT_FORM_NAME : process.env.AURALY_E2E_CASH_FORM_NAME;
+  if (preferred) await page.getByPlaceholder("Buscar forma de pago…", { exact: true }).fill(preferred);
+  await (preferred ? page.getByRole("option").filter({ hasText: preferred }) : page.getByRole("option").first()).click();
   await page.getByRole("button", { name: `Emitir ${scenario.method === "Credit" ? "a crédito" : "de contado"} (${scenario.count})`, exact: true }).click();
   await expect(page.getByText(`${scenario.count} pedidos emitidos correctamente.`, { exact: true })).toBeVisible({ timeout: 90_000 });
   const emissions = await Promise.all(invoiceResponses.map(async response => {
