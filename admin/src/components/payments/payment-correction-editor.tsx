@@ -16,9 +16,10 @@ import type { ClosurePaymentCorrection, ClosurePaymentVerification } from "@/ser
 import { workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
 import { formatCurrency } from "@/lib/utils";
 
-export function PaymentCorrectionEditor({ item, businessId, methods, current, onClose, onRemove, onApply, movementLabel, applicationNotice = "Se aplicará al confirmar la conciliación.", submitLabel = "Aplicar", usageOverride, referenceMaxLength = 160, approvalMaxLength = 100 }: {
+export function PaymentCorrectionEditor({ item, businessId, methods, current, onClose, onRemove, onApply, movementLabel, applicationNotice = "Se aplicará al confirmar la conciliación.", submitLabel = "Aplicar", usageOverride, referenceMaxLength = 160, approvalMaxLength = 100, originalPaymentName }: {
   item: ClosurePaymentVerification; businessId: string; methods: string[]; current?: ClosurePaymentCorrection;
   movementLabel: string; applicationNotice?: string; submitLabel?: string;
+  originalPaymentName?: string | null;
   usageOverride?: PaymentMethodQuery["usage"]; referenceMaxLength?: number; approvalMaxLength?: number;
   onClose: () => void; onRemove: () => void; onApply: (value: ClosurePaymentCorrection) => Promise<void>;
 }) {
@@ -92,7 +93,7 @@ export function PaymentCorrectionEditor({ item, businessId, methods, current, on
             if (isCard && cardFranchises.isError) void cardFranchises.refetch();
           }}>Reintentar</Button>
         </div>}
-        <p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{workSessionPaymentMethodName(originalTender)} · {formatCurrency(Math.abs(item.amount), "COP", 4)}</strong></p>
+        <p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{originalPaymentName ?? workSessionPaymentMethodName(originalTender)} · {formatCurrency(Math.abs(item.amount), "COP", 4)}</strong></p>
         <div className="space-y-1.5"><Label>Tipo de pago real</Label>
           <Select value={tender} onValueChange={changeType} disabled={validating}><SelectTrigger aria-label="Tipo de pago real"><SelectValue placeholder="Selecciona el tipo" /></SelectTrigger>
             <SelectContent>{available.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent>

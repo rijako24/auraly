@@ -152,5 +152,5 @@ export function PosInvoiceSearchDialog({busy,onSearch,onSearchCustomers,onSearch
           className="grid h-9 w-9 place-items-center rounded-lg border bg-white hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"><Pencil className="h-4 w-4"/></button>}</div></article>})}</div>{!loading&&!results.length&&!error&&<p className="grid min-h-40 place-items-center text-center text-sm text-slate-500">No encontramos facturas con esos filtros.</p>}{loadingMore&&<p className="py-4 text-center text-sm text-teal-800">Cargando 20 más…</p>}{error&&<p className="py-4 text-center text-sm font-medium text-red-700" role="alert">{error}</p>}</div>
     </>}
   </section>{correcting&&correctionBusinessId&&<SalePaymentCorrectionDialog documentId={correcting.documentId.value} documentNumber={correcting.documentNumber}
-    businessId={correctionBusinessId} dispatchId={correcting.dispatchId} onClose={()=>setCorrecting(null)}/>}</div>;
+    businessId={correctionBusinessId} dispatchId={correcting.dispatchId} paymentNames={Object.fromEntries((correcting.payments??[]).flatMap(payment=>payment.formName?[[payment.paymentNumber,payment.formName]]:[]))} onClose={()=>setCorrecting(null)}/>}</div>;
 }

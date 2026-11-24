@@ -10,6 +10,7 @@ for (const dispatch of [false, true]) for (const method of ["Cash", "DebitCard",
     await page.setViewportSize({ width: 390, height: 844 });
     const dispatchId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", paymentId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     const amount = method === "Transfer" && !dispatch ? 11900.47 : 11900;
+    const multiple = !dispatch && method === "Cash";
     const names: Record<string, string> = { Cash: "Efectivo", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia" };
     let reads = 0, saves = 0, searches = 0;
     let posted = false;
@@ -21,8 +22,8 @@ for (const dispatch of [false, true]) for (const method of ["Cash", "DebitCard",
       let body: unknown;
       if (path.endsWith("/sales/search")) {
         searches++; body = { items: [{ documentId: scenario.documentId, documentType: "SalesReceipt", documentNumber: "CVI-1", issuedAt: "2026-11-24T12:00:00Z",
-          customerName: "Cliente de prueba", customerIdentification: "123", total: amount, closureId: dispatch ? null : "closure-1", dispatchId: dispatch ? dispatchId : null,
-          payments: [{ paymentNumber: 1, methodCode: "Cash", amount, formName: "Caja original" }] }], hasMore: false, nextOffset: null };
+          customerName: "Cliente de prueba", customerIdentification: "123", total: multiple ? amount * 2 : amount, closureId: dispatch ? null : "closure-1", dispatchId: dispatch ? dispatchId : null,
+          payments: [{ paymentNumber: 1, methodCode: "Cash", amount, formName: "Caja principal" }, ...(multiple ? [{ paymentNumber: 2, methodCode: "Cash", amount, formName: "Caja secundaria" }] : [])] }], hasMore: false, nextOffset: null };
       } else if (path.endsWith("/payment-correction") || path.endsWith("/payment-corrections")) {
         if (route.request().method() === "GET") {
           reads++;
@@ -40,11 +41,17 @@ for (const dispatch of [false, true]) for (const method of ["Cash", "DebitCard",
       else if (path.endsWith("/reference-options/card-franchise")) body = [{ code: "Visa", label: "Visa", isActive: true }];
       else if (path.endsWith("/payment-methods/")) body = { items: url.searchParams.get("methodCode") === method ? [form] : [], page: 1, pageSize: 10, totalCount: url.searchParams.get("methodCode") === method ? 1 : 0 };
       else { await route.fallback(); return; }
+      if (multiple && path.endsWith("/payment-correction") && route.request().method() === "GET") {
+        const data = body as { items: Array<Record<string, unknown>> };
+        data.items = [{ ...data.items[0], appliedCorrectionId: undefined, correctionAccountingStatus: undefined, correctedTenderMethodCode: undefined, correctedAmount: undefined, correctedPaymentMethodName: undefined },
+          { ...data.items[0], verificationKey: "original-payment-2", sourceNumber: 2 }];
+      }
       await route.fulfill({ json: body });
     });
     await page.goto("/dashboard/invoices");
     await page.getByRole("button", { name: "Corregir pago de CVI-1", exact: true }).click();
     const editor = page.getByRole("dialog", { name: "Corregir medio de recaudo", exact: true });
+    if (multiple) await editor.locator("div.rounded-xl.border.p-3").filter({ hasText: "Caja secundaria" }).getByRole("button", { name: "Corregir", exact: true }).click();
     await expect(editor.getByLabel("Valor del recaudo")).toBeDisabled();
     if (amount % 1 !== 0) await expect(editor.getByLabel("Valor del recaudo")).toHaveValue(/11\.900,47/);
     if (method !== "Cash") {
@@ -74,6 +81,7 @@ for (const dispatch of [false, true]) for (const method of ["Cash", "DebitCard",
     expect(saves).toBe(1); expect(reads).toBe(1); expect(searches).toBe(1);
     expect(commands[0]).toMatchObject(dispatch ? { methodCode: method, paymentMethodId: form.paymentMethodId, paymentMethodVersion: 2, expectedCorrectedAt: null }
       : { correction: { tenderMethodCode: method, paymentMethodId: form.paymentMethodId, paymentMethodVersion: 2, amount } });
+    if (multiple) expect(commands[0]).toMatchObject({ correction: { verificationKey: "original-payment-2" } });
     expect(page.url()).toContain("/dashboard/invoices");
     if (!dispatch) {
       posted = true; await editor.getByRole("button", { name: "Actualizar estado" }).click();

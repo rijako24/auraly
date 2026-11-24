@@ -15,10 +15,12 @@ import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { accountingStatusLabel } from "@/lib/accounting-labels";
 import { formatCurrency } from "@/lib/utils";
 
-type CorrectionContext = SalePaymentCorrectionContext & { dispatchPayments?: DeliveryPayment[] };
+type CorrectionContext = Omit<SalePaymentCorrectionContext, "items"> & {
+  items: Array<ClosurePaymentVerification & { paymentMethodName?: string | null }>; dispatchPayments?: DeliveryPayment[];
+};
 
-export function SalePaymentCorrectionDialog({ documentId, documentNumber, businessId, dispatchId, onClose }: {
-  documentId: string; documentNumber: string; businessId: string; dispatchId?: string | null; onClose: () => void;
+export function SalePaymentCorrectionDialog({ documentId, documentNumber, businessId, dispatchId, paymentNames, onClose }: {
+  documentId: string; documentNumber: string; businessId: string; dispatchId?: string | null; paymentNames?: Readonly<Record<number, string>>; onClose: () => void;
 }) {
   const tenant = useTenantContextStore(state => state.selectedTenantId);
   const client = useQueryClient();
@@ -26,25 +28,29 @@ export function SalePaymentCorrectionDialog({ documentId, documentNumber, busine
   const dispatchCatalogError = Boolean(dispatchId) && dispatchMethods.isError;
   const key = ["sale-payment-correction", tenant, businessId, documentId, dispatchId];
   const context = useQuery<CorrectionContext>({ queryKey: key, queryFn: async () => {
-    if (!dispatchId) return workSessionDifferencesApi.salePaymentCorrection(documentId);
+    if (!dispatchId) {
+      const result = await workSessionDifferencesApi.salePaymentCorrection(documentId);
+      return { ...result, items: result.items.map(item => ({ ...item, paymentMethodName: paymentNames?.[item.sourceNumber] })) };
+    }
     const payments = await dispatchesApi.paymentCorrections(dispatchId, documentId);
     return { documentId, documentNumber, workSessionClosureId: "", countableMethods: [],
-      dispatchPayments: payments, items: payments.map(payment => ({
+      dispatchPayments: payments, items: payments.map((payment, index) => ({
         verificationKey: payment.paymentId, paymentMethodCode: payment.paymentMethod === "DebitCard" || payment.paymentMethod === "CreditCard" ? "Card" : payment.paymentMethod ?? "",
-        movementType: "Sale", sourceId: documentId, documentNumber, sourceNumber: 1, amount: payment.amount,
+        movementType: "Sale", sourceId: documentId, documentNumber, sourceNumber: index + 1, amount: payment.amount, paymentMethodName: payment.formName,
         reference: payment.reference, cardFranchiseCode: payment.cardFranchiseCode ?? null, approvalNumber: payment.approvalNumber ?? null,
         occurredAt: "", sourceDocumentType: "SalesReceipt", customerName: null, status: null,
         tenderMethodCode: payment.paymentMethod ?? undefined,
       })) };
   },
     enabled: Boolean(tenant && businessId), refetchOnWindowFocus: false });
-  const [selected, setSelected] = useState<ClosurePaymentVerification | null>(null);
+  const [selected, setSelected] = useState<CorrectionContext["items"][number] | null>(null);
   const [operation, setOperation] = useState(() => crypto.randomUUID());
-  const choose = (item: ClosurePaymentVerification) => { setOperation(crypto.randomUUID()); setSelected(item); };
+  const choose = (item: CorrectionContext["items"][number]) => { setOperation(crypto.randomUUID()); setSelected(item); };
   const single = context.data?.items.length === 1 && !context.data.items[0].appliedCorrectionId
     && (context.data.items[0].movementType !== "CreditSale" || (context.data.items[0].collectibleAmount ?? 0) > 0) ? context.data.items[0] : null;
   const active = selected ?? single;
   if (active && context.data && !dispatchCatalogError) return <PaymentCorrectionEditor item={active} businessId={businessId}
+    originalPaymentName={active.paymentMethodName}
     methods={dispatchId ? (dispatchMethods.data ?? []).map(option => option.code) : context.data.countableMethods} movementLabel={active.movementType === "CreditSale" ? "Venta a cartera" : "Comprobante"}
     usageOverride={dispatchId ? "Receipts" : undefined} referenceMaxLength={dispatchId ? 120 : undefined} approvalMaxLength={dispatchId ? 80 : undefined}
     applicationNotice={dispatchId ? "La corrección se guarda en la revisión del despacho y se aplica al confirmar su liquidación." : "Guardar acepta esta corrección directamente, sin conciliar los demás documentos del cierre."}
@@ -89,7 +95,7 @@ export function SalePaymentCorrectionDialog({ documentId, documentNumber, busine
       const unavailable = Boolean(item.appliedCorrectionId) || item.movementType === "CreditSale" && !(item.collectibleAmount && item.collectibleAmount > 0);
       const done = item.correctionAccountingStatus === "Posted" || item.correctionAccountingStatus === "CommercialEffectsApplied";
       return <div key={item.verificationKey} className="flex items-center justify-between gap-3 rounded-xl border p-3">
-        <div className="min-w-0"><p className="font-medium">{item.correctedPaymentMethodName ?? workSessionPaymentMethodName(item.correctedTenderMethodCode ?? item.tenderMethodCode ?? item.paymentMethodCode)}</p>
+        <div className="min-w-0"><p className="font-medium">{item.correctedPaymentMethodName ?? item.paymentMethodName ?? workSessionPaymentMethodName(item.correctedTenderMethodCode ?? item.tenderMethodCode ?? item.paymentMethodCode)}</p>
           <p className="text-sm">{formatCurrency(item.correctedAmount ?? (item.movementType === "CreditSale" ? item.collectibleAmount ?? 0 : item.amount), "COP", 4)}</p>
           {item.appliedCorrectionId && <p className="mt-1 text-xs text-muted-foreground">{done ? "Corrección aplicada" : item.correctionAccountingStatus === "PendingDispatchSettlement" ? "Guardada en la revisión del despacho" : item.correctionAccountingStatus === "Pending" ? "Corrección pendiente de contabilizar" : accountingStatusLabel(item.correctionAccountingStatus)}</p>}
           {!item.appliedCorrectionId && unavailable && <p className="mt-1 text-xs text-muted-foreground">Sin saldo disponible para recaudar.</p>}
