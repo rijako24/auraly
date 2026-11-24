@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[PosEnrollmentSessions]
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
     [RequestedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [RequestedByDisplayName] NVARCHAR(200) NOT NULL,
     [DeviceName] NVARCHAR(160) NOT NULL,

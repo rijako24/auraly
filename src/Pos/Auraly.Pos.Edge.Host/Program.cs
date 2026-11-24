@@ -15,13 +15,19 @@ using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Host;
 
+public sealed record PosCostCenterConfiguration(Guid? CostCenterId, string? CostCenterName);
+
 public sealed class PosEdgeRuntimeContext(
     TenantId tenantId,
     BusinessId businessId,
     WarehouseId warehouseId,
     DeviceId deviceId,
-    bool warehouseAllowsNegativeStock)
+    bool warehouseAllowsNegativeStock,
+    Guid? costCenterId = null, string? costCenterName = null)
 {
+    private PosCostCenterConfiguration costCenter = new(costCenterId, costCenterName);
+    public PosCostCenterConfiguration CostCenter => Volatile.Read(ref costCenter);
+    public void ApplyCostCenter(PosCostCenterConfiguration value) => Volatile.Write(ref costCenter, value);
     private int allowsNegativeStock = warehouseAllowsNegativeStock ? 1 : 0;
     public TenantId TenantId { get; } = tenantId;
     public BusinessId BusinessId { get; } = businessId;
@@ -68,6 +74,7 @@ public sealed record UpdateDraftLinesRequest(
     IReadOnlyList<UpdateSalesDraftLineRequest> Lines,
     bool IncludesProratedDiscount = false);
 public sealed record SelectSellerRequest(Guid? SellerId);
+public sealed record SelectPosCostCenterRequest(Guid? CostCenterId);
 public sealed record SelectCustomerRequest(Guid? CustomerId, Guid? PartySiteId = null);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 public sealed record DirectPrintReceiptRequest(
@@ -161,7 +168,8 @@ public static class PosEdgeHostApplication
             new BusinessId(RequiredGuid(builder.Configuration, "PosEdge:BusinessId")),
             new WarehouseId(RequiredGuid(builder.Configuration, "PosEdge:WarehouseId")),
             new DeviceId(RequiredGuid(builder.Configuration, "PosEdge:DeviceId")),
-            builder.Configuration.GetValue<bool>("PosEdge:WarehouseAllowsNegativeStock"));
+            builder.Configuration.GetValue<bool>("PosEdge:WarehouseAllowsNegativeStock"),
+            enrollment?.CostCenterId, enrollment?.CostCenterName);
 
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
@@ -786,6 +794,7 @@ public static class PosEdgeHostApplication
                         ? "LoginRequired"
                         : "Ready";
             var workspaceConfiguration = await catalog.WorkspaceConfigurationAsync(ct);
+            var costCenter = runtime.CostCenter;
             return Results.Ok(new
             {
                 status,
@@ -794,6 +803,8 @@ public static class PosEdgeHostApplication
                 deviceSeriesCode = workstation.DeviceSeriesCode,
                 businessId = runtime.BusinessId.Value,
                 warehouseId = runtime.WarehouseId.Value,
+                costCenterId = costCenter.CostCenterId,
+                costCenterName = costCenter.CostCenterName,
                 pointOfSaleMode = workspaceConfiguration.Mode,
                 timeZone = workspaceConfiguration.TimeZone,
                 businessName = workstation.BusinessName,
@@ -843,6 +854,43 @@ public static class PosEdgeHostApplication
                 pendingSynchronizationCount,
                 oldestPendingSynchronizationAt,
                 lastSynchronizationError
+            });
+        });
+        edge.MapGet("/cost-centers", async (HttpContext http, PosOrdersServerClient server,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            var user = sessions.Required();
+            if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            return await ServerOrderResult(() => server.SendConfigurationAsync(HttpMethod.Get,
+                $"api/pos/v1/accounting/cost-centers{http.Request.QueryString}", null, user, ct));
+        });
+        edge.MapPut("/configuration/cost-center", async (SelectPosCostCenterRequest request,
+            PosOrdersServerClient server, PosEdgeEnrollmentStore enrollment, PosEdgeRuntimeContext runtime,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        {
+            var user = sessions.Required();
+            if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
+            return await ServerOrderResult(async () =>
+            {
+                // A new explicit choice must be active in the canonical tenant catalog.
+                // The protected choice, rather than browser state, is used for offline issuance.
+                string? label=null;
+                if (request.CostCenterId is { } id)
+                {
+                    var selected = await server.SendConfigurationAsync(HttpMethod.Get,
+                        $"api/pos/v1/accounting/cost-centers?ids={id:D}&pageSize=1&isActive=true", null, user, ct);
+                    var items=selected.GetProperty("items");
+                    if (items.GetArrayLength()!=1 || items[0].GetProperty("costCenterId").GetGuid()!=id)
+                        throw new PosOrdersServerException(400,"InvalidCostCenter","El centro de costo no está activo en esta empresa.");
+                    label=items[0].GetProperty("code").GetString()+" · "+items[0].GetProperty("name").GetString();
+                }
+                var center = new PosCostCenterConfiguration(request.CostCenterId,label);
+                if (!enrollment.TryUpdatePackage(package => package.DeviceId==runtime.DeviceId.Value && package.TenantId==runtime.TenantId.Value &&
+                    package.BusinessId==runtime.BusinessId.Value && package.WarehouseId==runtime.WarehouseId.Value
+                    ? package with { CostCenterId=center.CostCenterId, CostCenterName=center.CostCenterName } : null,
+                    package=>runtime.ApplyCostCenter(new(package.CostCenterId,package.CostCenterName))))
+                    throw new PosOrdersServerException(409,"ProtectedConfigurationUnavailable","No fue posible guardar el centro de costo en la configuración protegida de esta caja.");
+                return JsonSerializer.SerializeToElement(center, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             });
         });
         edge.MapGet("/drafts/active", async (
@@ -1225,10 +1273,13 @@ public static class PosEdgeHostApplication
             await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
                 "api/commerce/v1/orders/invoice/credit-validation", request,
                 RequiredOrderInvoiceUser(sessions), ct)));
-        edge.MapPost("/orders/invoice", async (HttpContext http, JsonElement request,
-            PosOrdersServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+        edge.MapPost("/orders/invoice", async (HttpContext http, InvoiceOrdersRequest request,
+            PosOrdersServerClient server, PosEdgeRuntimeContext runtime,
+            PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerOrderResult(() => server.SendAsync(HttpMethod.Post,
-                "api/commerce/v1/orders/invoice", request,
+                "api/commerce/v1/orders/invoice", JsonSerializer.SerializeToElement(
+                    request with { CostCenterId=runtime.CostCenter.CostCenterId },
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)),
                 RequiredOrderInvoiceUser(sessions), ct,
                 http.Request.Headers["Idempotency-Key"])));
         edge.MapPost("/orders", async (JsonElement request,

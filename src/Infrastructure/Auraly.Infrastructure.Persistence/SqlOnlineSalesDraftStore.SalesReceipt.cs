@@ -175,7 +175,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
             Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,
-            CollectionMode: OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId), SellerId:draft.SellerId);
+            CollectionMode: OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId), SellerId:draft.SellerId, CostCenterId:request.CostCenterId);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """
@@ -215,7 +215,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 P("@Key", idempotencyKey), P("@Hash", requestHash),
                 P("@DocumentId", upload.DocumentId),
                 P("@Payload", PosSaleContractSerializer.Serialize(upload)), P("@Now", now)
-            ], ct);
+            ], ct, acceptedCostCenterId: request.CostCenterId, tenantId: user.TenantId);
         var nextDraft = await ReadDraftAsync(connection, transaction, nextDraftId, ct);
         await transaction.CommitAsync(ct);
         return new PreparedOnlineSalesCheckout(upload, nextDraft, false);

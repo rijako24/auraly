@@ -55,7 +55,8 @@ public sealed class PosEdgeEnrollmentStore(
         }
     }
 
-    public bool TryUpdatePackage(Func<PosEnrollmentPackage, PosEnrollmentPackage?> update)
+    public bool TryUpdatePackage(Func<PosEnrollmentPackage, PosEnrollmentPackage?> update,
+        Action<PosEnrollmentPackage>? onSaved = null)
     {
         lock (writeGate)
         {
@@ -64,6 +65,7 @@ public sealed class PosEdgeEnrollmentStore(
             var package = update(stored.Package);
             if (package is null) return false;
             SaveStored(stored with { Package = package });
+            onSaved?.Invoke(package);
             return true;
         }
     }

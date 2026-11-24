@@ -707,7 +707,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         var operationKind = OperationKind(source.DocumentType);
         await using var command = new SqlCommand("""
             DECLARE @Resolved uniqueidentifier=@ExplicitCenter;
-            IF @DocumentType=N'Expense'
+            IF @DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'ServiceInvoice')
+              SELECT @Resolved=CostCenterId FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @DocumentType=N'Expense'
               SELECT @Resolved=CostCenterId FROM dbo.Expenses WHERE ExpenseId=@DocumentId AND BusinessId=@BusinessId;
             ELSE IF @DocumentType=N'ExpenseCancellation'
               SELECT @Resolved=CostCenterId FROM dbo.Expenses WHERE CancellationId=@DocumentId AND BusinessId=@BusinessId;

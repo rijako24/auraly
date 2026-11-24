@@ -85,11 +85,13 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
     {
         const string sql = """
             SELECT b.BusinessId,b.Name,w.WarehouseId,w.Code,w.Name,
-                   w.AllowNegativeStockSales,b.PointOfSaleMode,b.RestaurantRequireWaiterCredential,b.TimeZone
+                   w.AllowNegativeStockSales,b.PointOfSaleMode,b.RestaurantRequireWaiterCredential,b.TimeZone,center.CostCenterId,center.Code+N' · '+center.Name
             FROM dbo.Businesses b
             INNER JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=@CostCenterId AND center.TenantId=b.TenantId AND center.IsActive=1
             WHERE b.TenantId=@TenantId
+              AND (@CostCenterId IS NULL OR center.CostCenterId IS NOT NULL)
               AND b.BusinessId=@BusinessId
               AND w.WarehouseId=@WarehouseId
               AND b.IsActive=1;
@@ -100,11 +102,13 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", selection.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", selection.WarehouseId);
+        command.Parameters.AddWithValue("@CostCenterId", (object?)selection.CostCenterId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return new SalesWorkspaceContext(
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-            reader.GetBoolean(5),reader.GetString(6),reader.GetBoolean(7),reader.GetString(8));
+            reader.GetBoolean(5),reader.GetString(6),reader.GetBoolean(7),reader.GetString(8),
+            reader.IsDBNull(9) ? null : reader.GetGuid(9),reader.IsDBNull(10) ? null : reader.GetString(10));
     }
 }

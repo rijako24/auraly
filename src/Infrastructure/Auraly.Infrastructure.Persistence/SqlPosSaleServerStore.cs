@@ -384,7 +384,7 @@ public sealed partial class SqlPosSaleServerStore(
             await ValidateRestaurantProductModeAsync(connection, transaction,
                 request, cancellationToken);
             await SqlInvoiceChargeStore.ValidateIssuedAsync(connection, transaction, request, cancellationToken);
-            await ValidateCustomerSiteAsync(
+            await ValidateSaleReferencesAsync(
                 connection, transaction, request, cancellationToken);
             await ValidateCreditAsync(
                 connection, transaction, request, command.ReceivedAt, cancellationToken);
@@ -500,35 +500,35 @@ public sealed partial class SqlPosSaleServerStore(
                 "La sede congelada del crédito no coincide con la sede de la venta.");
     }
 
-    private static async Task ValidateCustomerSiteAsync(
+    private static async Task ValidateSaleReferencesAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         PosSaleUploadRequest request,
         CancellationToken cancellationToken)
     {
-        if (request.CustomerId is null)
-        {
-            if (request.CustomerPartySiteId is not null)
-                throw new PosSaleInvalidException(
-                    "La sede seleccionada requiere un cliente en la venta.");
-            return;
-        }
-        if (request.CustomerPartySiteId is null)
-            throw new PosSaleInvalidException(
-                "Selecciona la sede del cliente para emitir la venta.");
+        if (request.CustomerId is null && request.CustomerPartySiteId is not null)
+            throw new PosSaleInvalidException("La sede seleccionada requiere un cliente en la venta.");
+        if (request.CustomerId is not null && request.CustomerPartySiteId is null)
+            throw new PosSaleInvalidException("Selecciona la sede del cliente para emitir la venta.");
+        if (request.CustomerId is null && request.CostCenterId is null) return;
         await using var command = new SqlCommand("""
-            SELECT COUNT(1)
-            FROM dbo.Customers customer
-            JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1
-            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-              AND customer.IsActive=1 AND site.PartySiteId=@PartySiteId;
+            SELECT CASE
+              WHEN @Center IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=@Center AND TenantId=@Tenant) THEN 1
+              WHEN @CustomerId IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM dbo.Customers customer
+                JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1
+                WHERE customer.CustomerId=@CustomerId AND customer.TenantId=@Tenant AND customer.IsActive=1
+                  AND site.PartySiteId=@PartySiteId) THEN 2
+              ELSE 0 END;
             """, connection, transaction);
-        command.Parameters.AddWithValue("@CustomerId", request.CustomerId.Value);
-        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@PartySiteId", request.CustomerPartySiteId.Value);
-        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) != 1)
-            throw new PosSaleInvalidException(
-                "La sede seleccionada no pertenece al cliente de la venta.");
+        command.Parameters.AddWithValue("@Center", (object?)request.CostCenterId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Tenant", request.TenantId);
+        command.Parameters.AddWithValue("@CustomerId", (object?)request.CustomerId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)request.CustomerPartySiteId ?? DBNull.Value);
+        var invalid = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+        if (invalid==1) throw new PosSaleInvalidException("El centro de costo de la venta no pertenece a esta empresa. Revisa la configuración de facturación.");
+        if (invalid==2) throw new PosSaleInvalidException("La sede seleccionada no pertenece al cliente de la venta.");
     }
 
     private static async Task InsertFiscalDocumentAsync(
@@ -574,7 +574,7 @@ public sealed partial class SqlPosSaleServerStore(
         const string sql = """
             INSERT INTO dbo.SalesDocuments
             (
-                DocumentId, BusinessId, WarehouseId, TableId,
+                DocumentId, BusinessId, WarehouseId, CostCenterId, TableId,
                 DeviceId, WorkSessionId, CollectionMode, SourceMode, DocumentSeriesId, DocumentNumber,
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
@@ -587,7 +587,7 @@ public sealed partial class SqlPosSaleServerStore(
             )
             VALUES
             (
-                @DocumentId, @BusinessId, @WarehouseId, @TableId,
+                @DocumentId, @BusinessId, @WarehouseId, @CostCenterId, @TableId,
                 @DeviceId, @WorkSessionId, @CollectionMode, @SourceMode, @DocumentSeriesId, @DocumentNumber,
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
@@ -626,6 +626,7 @@ public sealed partial class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        sqlCommand.Parameters.Add("@CostCenterId", SqlDbType.UniqueIdentifier).Value = (object?)request.CostCenterId ?? DBNull.Value;
         sqlCommand.Parameters.Add("@TableId", SqlDbType.UniqueIdentifier).Value =
             request.TableId is { } tableId ? tableId : DBNull.Value;
         // Online checkout has already validated and materialized the work session,

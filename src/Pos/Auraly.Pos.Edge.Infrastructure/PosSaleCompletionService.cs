@@ -79,7 +79,8 @@ public sealed record CompletePosSaleCommand(
     string DocumentType = PosSaleDocumentTypes.Invoice,
     IReadOnlySet<string>? Permissions = null,
     PosSaleCreditTerms? Credit = null,
-    string SoldByName = "Usuario");
+    string SoldByName = "Usuario",
+    Guid? CostCenterId = null);
 
 public sealed record PosSaleCreditTerms(
     Guid CustomerId,
@@ -338,7 +339,7 @@ public sealed class PosSaleCompletionService(
                 customer?.Name,
                 draft.CustomerPartySiteId, draft.Charges,
                 CustomerAddress: receiptCustomerSite?.AddressLine,
-                CustomerPhone: receiptCustomerSite?.Phone, SellerId:draft.SellerId),
+                CustomerPhone: receiptCustomerSite?.Phone, SellerId:draft.SellerId, CostCenterId:command.CostCenterId),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;

@@ -55,6 +55,8 @@ import { readPosEdgeProblem } from "./pos-printer-configuration";
 import { resolveSalePrintEffect } from "./pos-print-routing";
 import { buildCompatibleEdgeLineUpdates } from "./pos-edge-line-update";
 
+import type { AccountingCostCenterPage, AccountingCostCenterQuery } from "@/services/api/accounting";
+
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
@@ -687,6 +689,8 @@ export interface PosClient {
     serverConnected: boolean;
     pushConnected: boolean;
     deviceSeriesCode: string;
+    costCenterId?:string|null;
+    costCenterName?:string|null;
     businessId: string;
     warehouseId: string;
     businessName: string;
@@ -766,6 +770,7 @@ export interface PosClient {
   ): Promise<InvoiceOrdersResponse>;
   saveCharge(draftId: string, input: AddInvoiceCharge): Promise<PosDraft>;
   removeCharge(draftId: string, appliedChargeId: string): Promise<PosDraft>;
+  configureCostCenter?(costCenterId:string|null):Promise<{costCenterId:string|null;costCenterName:string|null}>;
   activeDraft(): Promise<PosDraft>;
   nextNumbers(documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null>;
   capture(value: string, customerId: string | null, quantity?: number): Promise<PosCaptureResult>;
@@ -1009,6 +1014,8 @@ export class PosEdgeClient implements PosClient {
       serverConnected: boolean;
       pushConnected: boolean;
       deviceSeriesCode: string;
+      costCenterId?:string|null;
+      costCenterName?:string|null;
       businessId: string;
       warehouseId: string;
       businessName: string;
@@ -1425,6 +1432,18 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosApprovalSummary>("/edge/v1/approvals", {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  }
+
+  costCenterPage(query:AccountingCostCenterQuery) {
+    const params=new URLSearchParams();
+    for(const [key,value] of Object.entries(query)) if(value!==undefined&&value!==null) params.set(key,String(value));
+    return this.request<AccountingCostCenterPage>(`/edge/v1/cost-centers?${params}`);
+  }
+
+  configureCostCenter(costCenterId:string|null) {
+    return this.request<{costCenterId:string|null;costCenterName:string|null}>("/edge/v1/configuration/cost-center", {
+      method:"PUT",body:JSON.stringify({costCenterId}),
     });
   }
 

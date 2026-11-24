@@ -1358,13 +1358,28 @@ public sealed partial class SqlOnlineSalesDraftStore(
         SqlTransaction transaction,
         string sql,
         SqlParameter[] parameters,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? acceptedCostCenterId = null,
+        Guid? tenantId = null)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = sql;
         command.Parameters.AddRange(parameters);
-        return await command.ExecuteNonQueryAsync(ct);
+        if (acceptedCostCenterId is { } centerId)
+        {
+            // Validate inside the existing acceptance command and transaction: no extra trip.
+            // A rejected choice rolls back number reservation and leaves the draft editable.
+            command.CommandText = """
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters
+                  WHERE CostCenterId=@AcceptedCostCenter AND TenantId=@AcceptedTenant AND IsActive=1)
+                  THROW 51412,'El centro de costo no está activo en esta empresa.',1;
+                """ + sql;
+            command.Parameters.AddRange([P("@AcceptedCostCenter",centerId),P("@AcceptedTenant",tenantId)]);
+        }
+        try { return await command.ExecuteNonQueryAsync(ct); }
+        catch(SqlException error) when(error.Number==51412)
+        { throw new OnlineSalesDraftValidationException("El centro de costo no está activo en esta empresa. Revisa la configuración de facturación."); }
     }
 
     private static SqlParameter P(string name, object? value) => new(name, value ?? DBNull.Value);

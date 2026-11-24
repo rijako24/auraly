@@ -87,7 +87,8 @@ public sealed record PosEdgeIssueCommand(
     IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
     string? CustomerAddress = null,
     string? CustomerPhone = null,
-    Guid? SellerId = null);
+    Guid? SellerId = null,
+    Guid? CostCenterId = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -1178,7 +1179,7 @@ public sealed class PosEdgeSaleStore
             SourceOrderId: command.SourceOrderId,
             Credit: command.Credit,
             CustomerPartySiteId: command.CustomerPartySiteId,
-            Charges: command.Charges is { Count: > 0 } ? command.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(command.SourceOrderId),SellerId:command.SellerId);
+            Charges: command.Charges is { Count: > 0 } ? command.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(command.SourceOrderId),SellerId:command.SellerId, CostCenterId:command.CostCenterId);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

@@ -42,7 +42,8 @@ public sealed record PosEnrollmentCapacity(
 
 public sealed record SalesWorkspaceSelection(
     Guid BusinessId,
-    Guid WarehouseId);
+    Guid WarehouseId,
+    Guid? CostCenterId = null);
 
 public sealed record SalesWorkspaceContext(
     Guid BusinessId,
@@ -53,12 +54,15 @@ public sealed record SalesWorkspaceContext(
     bool WarehouseAllowsNegativeStockSales,
     string PointOfSaleMode = "DirectSale",
     bool RestaurantRequireWaiterCredential = true,
-    string? TimeZone = null);
+    string? TimeZone = null,
+    Guid? CostCenterId = null,
+    string? CostCenterName = null);
 
 public sealed record CreatePosEnrollmentRequest(
     Guid BusinessId,
     Guid WarehouseId,
-    string DeviceName);
+    string DeviceName,
+    Guid? CostCenterId = null);
 
 public sealed record PosEnrollmentAuthorization(
     Guid EnrollmentSessionId,
@@ -128,4 +132,6 @@ public sealed record PosEnrollmentPackage(
     string? CompanyNit = null,
     string? CompanyVerificationDigit = null,
     string? BusinessAddress = null,
-    string? BusinessPhone = null);
+    string? BusinessPhone = null,
+    Guid? CostCenterId = null,
+    string? CostCenterName = null);

@@ -23,6 +23,48 @@ public sealed class OrderBatchInvoiceTests(
     ServerSliceFixture fixture,
     ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Batch_invoice_uses_the_selected_cost_center_for_each_document_and_replay_keeps_it()
+    {
+        var user=Guid.NewGuid();var session=Guid.NewGuid();var first=Guid.NewGuid();var second=Guid.NewGuid();
+        await SeedAsync(user,session,first,second);
+        var center=Guid.NewGuid();
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using(var create=new SqlCommand("""
+            INSERT dbo.AccountingCostCenters(CostCenterId,TenantId,Code,Name,IsDefault,IsActive,CreatedAt)
+            VALUES(@Center,@Tenant,@Code,N'Caja de pedidos',0,1,SYSUTCDATETIME());
+            """,connection))
+        {
+            create.Parameters.AddWithValue("@Center",center);create.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+            create.Parameters.AddWithValue("@Code","PED-"+center.ToString("N")[..12]);await create.ExecuteNonQueryAsync();
+        }
+        using var client=fixture.CreateUserClient(user,CommercePermissionCodes.SalesCreate,OrderPermissionCodes.Read,OrderPermissionCodes.Recover,OrderPermissionCodes.Invoice);
+        var request=new InvoiceOrdersRequest(session,fixture.WarehouseId,user,[first,second],"Cash",null,
+            DocumentType:PosSaleDocumentTypes.Receipt,CostCenterId:center);
+        var key="batch-center-"+Guid.NewGuid().ToString("N");
+        var result=await InvoiceAsync(client,request,key);
+        Assert.Equal(2,result.CompletedCount);
+        var replay=await InvoiceAsync(client,request,key);Assert.True(replay.IsReplay);
+        Assert.Equal(result.Results.Select(row=>row.DocumentId),replay.Results.Select(row=>row.DocumentId));
+        await using var verify=new SqlCommand("""
+            SELECT sale.DocumentId,sale.CostCenterId,COUNT(DISTINCT entry.EntryId),
+              SUM(line.Debit-line.Credit),COUNT(DISTINCT line.CostCenterId),MIN(CONVERT(nvarchar(36),line.CostCenterId))
+            FROM dbo.SalesDocuments sale
+            JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=sale.DocumentId AND entry.BusinessId=sale.BusinessId
+            JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+            WHERE sale.DocumentId IN(@First,@Second) GROUP BY sale.DocumentId,sale.CostCenterId;
+            """,connection);
+        verify.Parameters.AddWithValue("@First",result.Results[0].DocumentId!.Value);
+        verify.Parameters.AddWithValue("@Second",result.Results[1].DocumentId!.Value);
+        await using var rows=await verify.ExecuteReaderAsync();var count=0;
+        while(await rows.ReadAsync())
+        {
+            count++;Assert.Equal(center,rows.GetGuid(1));Assert.Equal(1,rows.GetInt32(2));
+            Assert.Equal(0m,rows.GetDecimal(3));Assert.Equal(1,rows.GetInt32(4));Assert.Equal(center,Guid.Parse(rows.GetString(5)));
+        }
+        Assert.Equal(2,count);
+    }
+
     [Theory]
     [InlineData(900000L,"COP")]
     [InlineData(1000000L,"USD")]

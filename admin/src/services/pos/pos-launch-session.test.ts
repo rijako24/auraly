@@ -156,6 +156,8 @@ test("enrolled configuration is projected from Edge without a cloud bootstrap", 
       warehouseId: "warehouse-a",
       warehouseCode: "",
       warehouseName: "Bodega principal",
+      costCenterId: null,
+      costCenterName: null,
       warehouseAllowsNegativeStockSales: true,
       hasActiveEdgeEnrollment: true,
       fiscalReadyForOnlineSales: true,
@@ -164,6 +166,17 @@ test("enrolled configuration is projected from Edge without a cloud bootstrap", 
       fiscalWarningMessages: ["warning"],
     },
   );
+});
+
+test("enrolled configuration keeps its protected cost center when opening setup", () => {
+  const selected = enrolledWorkspaceOption({
+    businessId: "business-a", businessName: "Auraly", warehouseId: "warehouse-a",
+    warehouseName: "Bodega principal", warehouseAllowsNegativeStockSales: false,
+    fiscalReady: false, fiscalWarnings: [], dianQuotaAvailable: null,
+    costCenterId: "center-a", costCenterName: "CAJA · Caja principal",
+  });
+  assert.equal(selected.costCenterId, "center-a");
+  assert.equal(selected.costCenterName, "CAJA · Caja principal");
 });
 test("order printing selects the installed transport without changing issuance ownership", () => {
   assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-app");

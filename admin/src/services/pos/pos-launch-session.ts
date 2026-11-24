@@ -9,6 +9,8 @@ export type EnrolledWorkspaceSnapshot = {
   businessName: string;
   warehouseId: string;
   warehouseName: string;
+  costCenterId?:string|null;
+  costCenterName?:string|null;
   warehouseAllowsNegativeStockSales: boolean;
   fiscalReady: boolean;
   fiscalWarnings: string[];
@@ -21,6 +23,8 @@ export type EnrolledWorkspaceOption = {
   warehouseId: string;
   warehouseCode: string;
   warehouseName: string;
+  costCenterId?:string|null;
+  costCenterName?:string|null;
   warehouseAllowsNegativeStockSales: boolean;
   hasActiveEdgeEnrollment: boolean;
   fiscalReadyForOnlineSales: boolean;
@@ -38,6 +42,7 @@ export function enrolledWorkspaceOption(
     warehouseId: workstation.warehouseId,
     warehouseCode: "",
     warehouseName: workstation.warehouseName,
+    costCenterId:workstation.costCenterId??null, costCenterName:workstation.costCenterName??null,
     warehouseAllowsNegativeStockSales:
       workstation.warehouseAllowsNegativeStockSales,
     hasActiveEdgeEnrollment: true,

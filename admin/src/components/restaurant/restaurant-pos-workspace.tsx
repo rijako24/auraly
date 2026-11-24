@@ -805,7 +805,7 @@ export function RestaurantPosWorkspace({ option }: {
       const result = await restaurantAccountApi.complete(
         draft.account.accountId, option.workSessionId,
         { expectedVersion: version, payments,
-          documentType: checkoutDocumentType }, checkoutKey);
+          documentType: checkoutDocumentType, ...(option.costCenterId ? { costCenterId: option.costCenterId } : {}) }, checkoutKey);
       setCheckoutPreview(null);
       setCheckoutKey(null);
       toast.success(`Mesa facturada · ${result.receipt.documentNumber}`);

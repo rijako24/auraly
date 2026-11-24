@@ -39,6 +39,7 @@ export async function authorizePosEnrollment(
     body: JSON.stringify({
       businessId: option.businessId,
       warehouseId: option.warehouseId,
+      costCenterId: option.costCenterId??null,
       deviceName: window.navigator.userAgentData?.platform
         ? `Auraly · ${window.navigator.userAgentData.platform}`
         : `Auraly · ${window.navigator.platform || "Windows"}`,

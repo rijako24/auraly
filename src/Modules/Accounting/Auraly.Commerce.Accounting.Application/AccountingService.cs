@@ -518,6 +518,7 @@ public sealed partial class AccountingService(
         AccountingUserIdentity user, AccountingCostCenterQuery query, CancellationToken cancellationToken = default)
     {
         if (!user.Permissions.Contains(AccountingPermissionCodes.Read) &&
+            !user.Permissions.Contains(Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCreate) &&
             !user.Permissions.Contains(AccountingPermissionCodes.ManualCreate) &&
             !user.Permissions.Contains(ExpensePermissionCodes.Create) &&
             !user.Permissions.Contains(ExpensePermissionCodes.Configure) &&

@@ -122,6 +122,8 @@ export type SalesWorkspaceOption = {
   pointOfSaleMode?: "DirectSale" | "Store" | "RestaurantBar";
   restaurantRequireWaiterCredential?: boolean;
   timeZone?: string;
+  costCenterId?: string | null;
+  costCenterName?: string | null;
 };
 
 export type SalesWorkspaceContext = Omit<
@@ -311,6 +313,28 @@ function currentPosStorageScope(): { tenantId: string | null; userId: string | n
   };
 }
 
+export function rememberedSalesCostCenter(option: Pick<SalesWorkspaceOption, "businessId" | "warehouseId">): {costCenterId:string|null;costCenterName:string|null} {
+  const scope=currentPosStorageScope();
+  const key=posWorkspaceStorageKey(scope.tenantId,scope.userId);
+  const value=key ? window.localStorage.getItem(`${key}:cost-center:${option.businessId}:${option.warehouseId}`) : null;
+  if (!value) return {costCenterId:null,costCenterName:null};
+  try {
+    const saved = JSON.parse(value) as { costCenterId: string | null; costCenterName: string | null };
+    if (!saved || (saved.costCenterId !== null && typeof saved.costCenterId !== "string") ||
+        (saved.costCenterName !== null && typeof saved.costCenterName !== "string")) throw new Error();
+    return { costCenterId: saved.costCenterId, costCenterName: saved.costCenterName };
+  } catch {
+    throw new Error("No fue posible leer el centro de costo recordado. Selecciona nuevamente el centro de esta caja.");
+  }
+}
+
+export function rememberSalesCostCenter(option: Pick<SalesWorkspaceOption,"businessId"|"warehouseId"|"costCenterId"|"costCenterName">) {
+  const scope=currentPosStorageScope();
+  const key=posWorkspaceStorageKey(scope.tenantId,scope.userId);
+  if(key) window.localStorage.setItem(`${key}:cost-center:${option.businessId}:${option.warehouseId}`,
+    JSON.stringify({costCenterId:option.costCenterId??null,costCenterName:option.costCenterName??null}));
+}
+
 export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[]> {
   const scope = currentPosStorageScope();
   const cacheKey = posWorkspaceOptionsCacheKey(scope.tenantId, scope.userId);
@@ -372,10 +396,12 @@ export async function selectSalesWorkspace(
       body: JSON.stringify({
         businessId: option.businessId,
         warehouseId: option.warehouseId,
+        costCenterId: option.costCenterId === undefined ? rememberedSalesCostCenter(option).costCenterId : option.costCenterId,
       }),
     },
   );
   const session = await openOnlineWorkSession(selected.businessId, selected.warehouseId);
+  rememberSalesCostCenter(selected);
   const scope = currentPosStorageScope();
   const storageKey = posWorkspaceStorageKey(scope.tenantId, scope.userId);
   if (storageKey)
@@ -436,6 +462,17 @@ export class OnlinePosClient implements PosClient {
     private readonly preparedPrintBranding = false,
     private readonly tenantName: string | null = null,
   ) {}
+
+  async configureCostCenter(costCenterId: string | null) {
+    const selected = await request<SalesWorkspaceContext>("/api/commerce/v1/pos/workspace/select", {
+      method:"POST", headers:{"X-Business-Id":this.context.businessId},
+      body:JSON.stringify({businessId:this.context.businessId,warehouseId:this.context.warehouseId,costCenterId}),
+    });
+    this.context.costCenterId=selected.costCenterId??null;
+    this.context.costCenterName=selected.costCenterName??null;
+    rememberSalesCostCenter(this.context);
+    return {costCenterId:this.context.costCenterId,costCenterName:this.context.costCenterName};
+  }
 
   async openWorkSession() {
     const session = await openOnlineWorkSession(this.context.businessId, this.context.warehouseId);
@@ -629,6 +666,7 @@ export class OnlinePosClient implements PosClient {
       serverConnected: true,
       pushConnected: true,
       deviceSeriesCode: "00",
+      costCenterId:this.context.costCenterId??null, costCenterName:this.context.costCenterName??null,
       businessId: this.context.businessId,
       warehouseId: this.context.warehouseId,
       pointOfSaleMode: this.context.pointOfSaleMode ?? "DirectSale",
@@ -1087,7 +1125,7 @@ export class OnlinePosClient implements PosClient {
     try {
       const mutation = this.mutation({
         expectedVersion: this.version(draftId),
-        payments, credit, documentType,
+        payments, credit, documentType, ...(this.context.costCenterId ? { costCenterId: this.context.costCenterId } : {}),
       }, "POST", `online-sale-${draftId}`, authorization?.approvalRequestId);
       mutation.headers = {
         ...mutation.headers,
@@ -1467,6 +1505,7 @@ export class OnlinePosClient implements PosClient {
     const invoiceRequest = (requestedOrderIds: string[]) => ({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,
+      ...(this.context.costCenterId ? { costCenterId: this.context.costCenterId } : {}),
       userId: this.userId,
       orderIds: requestedOrderIds,
       paymentMethodCode,

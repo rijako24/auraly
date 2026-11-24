@@ -397,12 +397,23 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
         var partyId = Guid.NewGuid();
         var tableId = Guid.NewGuid();
         var stationId = Guid.NewGuid();
+        var costCenterId=Guid.NewGuid();
         using var waiter = fixture.CreateUserClient(waiterId, "restaurant.attend");
         using var cashier = fixture.CreateAdminClient(
             "businesses.update", "sales.create", "restaurant.commands.read");
         await RegisterWaiterAndModeAsync(waiterId, partyId);
         try
         {
+            await using(var setup=new SqlConnection(fixture.ConnectionString))
+            {
+                await setup.OpenAsync();
+                await using var center=new SqlCommand("""
+                    INSERT dbo.AccountingCostCenters(CostCenterId,TenantId,Code,Name,IsDefault,IsActive,CreatedAt)
+                    VALUES(@Center,@Tenant,@Code,N'Caja restaurante',0,1,SYSUTCDATETIME());
+                    """,setup);
+                center.Parameters.AddWithValue("@Center",costCenterId);center.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+                center.Parameters.AddWithValue("@Code","REST-"+costCenterId.ToString("N")[..12]);await center.ExecuteNonQueryAsync();
+            }
             using (var created = await cashier.PostAsJsonAsync(
                 "/api/commerce/v1/restaurant/tables",
                 new CreateRestaurantTableRequest(tableId, fixture.BusinessId,
@@ -492,7 +503,7 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             var checkout = new CompleteRestaurantAccountRequest(workSessionId,
                 new CompleteOnlineSalesDraftRequest(sent.Draft.Account.Version,
                     [new OnlineSalesPayment("Cash", settlement.NetAmount, null)],
-                    DocumentType: documentType));
+                    DocumentType: documentType,CostCenterId:costCenterId));
             var key = Guid.NewGuid().ToString("N");
             CompleteOnlineOrderSaleResponse result;
             using (var completed = await CompleteAsync(cashier, account.AccountId,
@@ -519,7 +530,10 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                        line.AddedByUserId,line.AddedAt,
                        account.Status,account.ReleasedAt,
                        (SELECT COUNT(*) FROM dbo.SalesDocuments d
-                        WHERE d.DocumentId=@DocumentId),fact.WaiterPartyId,fact.WaiterName,projected.BilledByUserId,projected.TableId,projected.TableName,document.TableNameSnapshot
+                        WHERE d.DocumentId=@DocumentId),fact.WaiterPartyId,fact.WaiterName,projected.BilledByUserId,projected.TableId,projected.TableName,document.TableNameSnapshot,
+                       document.CostCenterId,
+                       (SELECT COUNT(DISTINCT line.CostCenterId) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId WHERE entry.SourceDocumentId=document.DocumentId),
+                       (SELECT MIN(CONVERT(nvarchar(36),line.CostCenterId)) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId WHERE entry.SourceDocumentId=document.DocumentId)
                 FROM dbo.SalesDocuments document
                 JOIN reporting.SalesReportDocuments projected ON projected.DocumentId=document.DocumentId
                 JOIN reporting.SalesReportLineFacts fact ON fact.SourceDocumentId=document.DocumentId AND fact.SourceLineNumber=1
@@ -533,6 +547,9 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             query.Parameters.AddWithValue("@AccountId", account.AccountId);
             await using var reader = await query.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
+            Assert.Equal(costCenterId,reader.GetGuid(13));
+            Assert.Equal(1,reader.GetInt32(14));
+            Assert.Equal(costCenterId,Guid.Parse(reader.GetString(15)));
             Assert.Equal(tableId, reader.GetGuid(0));
             Assert.Equal(fixture.UserId, reader.GetGuid(1));
             Assert.Equal(waiterId, reader.GetGuid(2));

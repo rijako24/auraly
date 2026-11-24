@@ -66,7 +66,7 @@ public sealed class PosEnrollmentService(
         if (!user.Permissions.Contains(CommercePermissionCodes.EnrolledDevicesEnroll))
             throw new PosEnrollmentForbiddenException(
                 $"No tienes permiso para preparar dispositivos de punto de venta.");
-        if (request.BusinessId == Guid.Empty ||
+        if (request.CostCenterId == Guid.Empty || request.BusinessId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.DeviceName))
             throw new PosEnrollmentValidationException(
@@ -79,7 +79,7 @@ public sealed class PosEnrollmentService(
         var workspace = await store.ResolveWorkspaceAsync(
             user.TenantId, request with { DeviceName = deviceName }, cancellationToken)
             ?? throw new PosEnrollmentForbiddenException(
-                "La sede o bodega no pertenece a la empresa autenticada.");
+                "La sede, bodega o centro de costo no pertenece a la empresa autenticada o está inactivo.");
         if (workspace.PointOfSaleMode != "DirectSale")
             throw new PosEnrollmentValidationException(
                 "Esta sede funciona solo en la web. Solo Venta directa permite preparar una caja sin conexión.");

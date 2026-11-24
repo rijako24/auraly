@@ -16,6 +16,32 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PosSaleCompletionServiceTests
 {
+    [Theory]
+    [InlineData(PosSaleDocumentTypes.Invoice, true)]
+    [InlineData(PosSaleDocumentTypes.Invoice, false)]
+    [InlineData(PosSaleDocumentTypes.Receipt, true)]
+    [InlineData(PosSaleDocumentTypes.Receipt, false)]
+    public async Task Selected_cost_center_is_frozen_in_the_offline_upload_and_null_keeps_automatic(string documentType, bool explicitCenter)
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            await fixture.Sales.ProvisionDocumentSeriesAsync(new(Guid.NewGuid(), fixture.Scope.DeviceId,
+                PosSaleDocumentTypes.Receipt, "CVI", "03", 8, 100, 99999));
+            var draft=await fixture.AddLineAsync();
+            Guid? center=explicitCenter?Guid.NewGuid():null;
+            var issued=await fixture.CompleteAsync(draft.DraftId,documentType:documentType,costCenterId:center);
+            var pending=Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
+            var restored=PosSaleContractSerializer.Deserialize(pending.Payload);
+            Assert.Equal(center,restored.CostCenterId);
+            Assert.Equal(issued.IssuedSale.DocumentId.Value,restored.DocumentId);
+            if(!explicitCenter) Assert.DoesNotContain("costCenterId",pending.Payload,StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(pending.Payload,PosSaleContractSerializer.Serialize(restored));
+            await Assert.ThrowsAsync<InvalidOperationException>(()=>fixture.CompleteAsync(
+                draft.DraftId,documentType:documentType,costCenterId:Guid.NewGuid()));
+            Assert.Equal(pending.Payload,Assert.Single(await fixture.Sales.GetPendingOutboxAsync()).Payload);
+        });
+    }
+
     [Fact]
     public async Task Invalid_fiscal_customer_does_not_consume_the_offline_draft_or_number()
     {
@@ -586,7 +612,7 @@ public sealed class PosSaleCompletionServiceTests
             PosSaleCreditTerms? credit = null,
             IReadOnlySet<string>? permissions = null,
             string documentType = PosSaleDocumentTypes.Invoice,
-            string customerIdentification = "222222222") =>
+            string customerIdentification = "222222222", Guid? costCenterId = null) =>
             new PosSaleCompletionService(Drafts, Issuance, Sales, Printer).CompleteAsync(
                 draftId,
                 new CompletePosSaleCommand(
@@ -602,7 +628,7 @@ public sealed class PosSaleCompletionServiceTests
                     80,
                     Permissions: permissions,
                     Credit: credit,
-                    DocumentType: documentType));
+                    DocumentType: documentType, CostCenterId:costCenterId));
     }
 
     private sealed class RecordingPrinter : IPosReceiptPrinter

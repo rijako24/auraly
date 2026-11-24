@@ -42,6 +42,62 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         _client ?? throw new InvalidOperationException("The test host has not started.");
 
     [Fact]
+    public async Task Cost_center_configuration_is_protected_and_offline_receipt_does_not_reload_configuration()
+    {
+        var runtime=_factory!.Services.GetRequiredService<PosEdgeRuntimeContext>();
+        var store=_factory.Services.GetRequiredService<PosEdgeEnrollmentStore>();
+        store.Save(CreateEnrollmentPackage(runtime.DeviceId.Value) with {
+            TenantId=runtime.TenantId.Value,BusinessId=runtime.BusinessId.Value,WarehouseId=runtime.WarehouseId.Value });
+        var active=(await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active"))!;
+        var center=Guid.NewGuid();
+        var centerRequests=0;
+        var paths=new System.Collections.Concurrent.ConcurrentQueue<string>();
+        _serverHandler.BeforeSend=request=>{paths.Enqueue(request.RequestUri!.AbsolutePath);return Task.CompletedTask;};
+        _serverHandler.Reply=request=>request.RequestUri!.AbsolutePath switch {
+            "/api/pos/v1/work-sessions/opened"=>new(HttpStatusCode.OK){Content=JsonContent.Create(new {workSessionId=active.Scope.WorkSessionId.Value})},
+            "/api/pos/v1/accounting/cost-centers"=>CenterPage(),
+            _=>null,
+        };
+        HttpResponseMessage CenterPage()
+        {
+            centerRequests++;
+            return new(HttpStatusCode.OK){Content=JsonContent.Create(new {items=new[]{new {
+                costCenterId=center,code="BOX",name="Caja transporte",isActive=true}},page=1,pageSize=1,totalCount=1,totalPages=1})};
+        }
+        using(var configured=await Client.PutAsJsonAsync("/edge/v1/configuration/cost-center",new SelectPosCostCenterRequest(center)))
+        {
+            Assert.True(configured.IsSuccessStatusCode,await configured.Content.ReadAsStringAsync());
+            Assert.Equal(center,(await configured.Content.ReadFromJsonAsync<PosCostCenterConfiguration>())!.CostCenterId);
+        }
+        Assert.Equal(1,centerRequests);
+        Assert.Equal(center,store.Load()!.CostCenterId);
+        Assert.Equal(center,runtime.CostCenter.CostCenterId);
+        using(var invalid=await Client.PutAsJsonAsync("/edge/v1/configuration/cost-center",new SelectPosCostCenterRequest(Guid.NewGuid())))
+            Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
+        Assert.Equal(2,centerRequests);
+        Assert.Equal(center,store.Load()!.CostCenterId);
+        Assert.Equal(center,runtime.CostCenter.CostCenterId);
+        var configurationReads=paths.Count(path=>path.EndsWith("/cost-centers",StringComparison.Ordinal));
+        _serverHandler.Reply=null;
+        using var capture=await Client.PostAsJsonAsync("/edge/v1/capture",new CaptureRequest("770123",null));
+        capture.EnsureSuccessStatusCode();
+        var draft=(await capture.Content.ReadFromJsonAsync<PosCaptureResult>())!.Draft!;
+        using var completed=await Client.PostAsJsonAsync($"/edge/v1/drafts/{draft.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(null,[new("Cash",draft.PayableAmount,null)],DocumentType:PosSaleDocumentTypes.Receipt));
+        Assert.True(completed.IsSuccessStatusCode,await completed.Content.ReadAsStringAsync());
+        var immutable=PosSaleContractSerializer.Deserialize(Assert.Single(await _factory.Services
+            .GetRequiredService<PosEdgeSaleStore>().GetPendingOutboxAsync()).Payload);
+        Assert.Equal(center,immutable.CostCenterId);
+        Assert.Equal(configurationReads,paths.Count(path=>path.EndsWith("/cost-centers",StringComparison.Ordinal)));
+        using var cleared=await Client.PutAsJsonAsync("/edge/v1/configuration/cost-center",new SelectPosCostCenterRequest(null));
+        cleared.EnsureSuccessStatusCode();
+        Assert.Null(store.Load()!.CostCenterId);
+        Assert.Null(runtime.CostCenter.CostCenterId);
+        Assert.Equal(configurationReads,paths.Count(path=>path.EndsWith("/cost-centers",StringComparison.Ordinal)));
+        Assert.Equal(center,immutable.CostCenterId);
+    }
+
+    [Fact]
     public async Task Seller_selection_and_paged_search_work_offline_and_reject_foreign_drafts()
     {
         var catalog=_factory!.Services.GetRequiredService<PosCatalogStore>();
@@ -1882,6 +1938,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         var ids = new Dictionary<string, string?>
         {
             ["PosEdge:DatabasePath"] = _path,
+            ["PosEdge:EnrollmentPackagePath"] = _path + ".enrollment",
             ["PosEdge:SessionToken"] = Token,
             ["PosEdge:AllowedOrigin"] = "http://127.0.0.1:47830",
             ["PosEdge:ServerUrl"] = "http://127.0.0.1:59999",
@@ -2087,7 +2144,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         _client?.Dispose();
         if (_factory is not null) await _factory.DisposeAsync();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        foreach (var path in new[] { _path, $"{_path}-wal", $"{_path}-shm" })
+        foreach (var path in new[] { _path, $"{_path}-wal", $"{_path}-shm", $"{_path}.enrollment", $"{_path}.enrollment.new" })
             if (File.Exists(path)) File.Delete(path);
         if (Directory.Exists(_secretPath))
             Directory.Delete(_secretPath, recursive: true);

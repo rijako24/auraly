@@ -90,6 +90,7 @@ import {
   rememberedSalesWorkspaceKey,
   rememberSalesWorkspace,
   selectSalesWorkspace,
+  rememberSalesCostCenter,
   salesWorkspaceKey,
   closePrintPreview,
   openHalfLetterPrintPreview,
@@ -370,6 +371,7 @@ export default function PosPage() {
     deviceSeriesCode: "\u2014",
     businessId: "",
     warehouseId: "",
+    costCenterId: null as string|null, costCenterName: null as string|null,
     pointOfSaleMode: "DirectSale",
     timeZone: undefined as string | undefined,
     businessName: "",
@@ -783,6 +785,7 @@ export default function PosPage() {
                 deviceSeriesCode: health.deviceSeriesCode,
                 businessId: health.businessId,
                 warehouseId: health.warehouseId,
+                costCenterId: health.costCenterId ?? null, costCenterName: health.costCenterName ?? null,
                 pointOfSaleMode: health.pointOfSaleMode ?? "DirectSale",
                 timeZone: health.timeZone ?? undefined,
                 businessName: health.businessName,
@@ -924,6 +927,7 @@ export default function PosPage() {
         deviceSeriesCode: health.deviceSeriesCode,
         businessId: health.businessId,
         warehouseId: health.warehouseId,
+        costCenterId: health.costCenterId ?? null, costCenterName: health.costCenterName ?? null,
         pointOfSaleMode: health.pointOfSaleMode ?? "DirectSale",
         timeZone: health.timeZone ?? undefined,
         businessName: health.businessName,
@@ -2991,6 +2995,7 @@ export default function PosPage() {
     setSetupError(null);
     if (option.pointOfSaleMode === "RestaurantBar" && !isOrderRecoveryWorkspace(window.location.href)) {
       rememberSalesWorkspace(option);
+      rememberSalesCostCenter(option);
       window.localStorage.setItem("selected_business_id", option.businessId);
       router.push("/pos/restaurant");
       return;
@@ -3009,6 +3014,11 @@ export default function PosPage() {
       );
     }
     if (activation === "keep-edge") {
+      if (!client?.configureCostCenter) throw new Error("Esta versión de la caja no permite configurar el centro de costo.");
+      if (option.costCenterId!==workstation.costCenterId) {
+        const selected=await client.configureCostCenter(option.costCenterId??null);
+        setWorkstation(current=>({...current,...selected}));
+      }
       setDocumentType(initialDocumentType);
       window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
       setWorkspaceChanging(false);
@@ -3020,6 +3030,11 @@ export default function PosPage() {
       client?.mode === "online" &&
       rememberedSalesWorkspaceKey() === requestedWorkspace
     ) {
+      if (!client.configureCostCenter) throw new Error("No está disponible la configuración de centro de costo.");
+      if (option.costCenterId!==workstation.costCenterId) {
+        const selected=await client.configureCostCenter(option.costCenterId??null);
+        setWorkstation(current=>({...current,...selected}));
+      }
       setWorkspaceChanging(false);
       focusScanner();
       return;
@@ -3044,6 +3059,7 @@ export default function PosPage() {
         deviceSeriesCode: "\u2014",
         businessId: context.businessId,
         warehouseId: context.warehouseId,
+        costCenterId:context.costCenterId??null, costCenterName:context.costCenterName??null,
         pointOfSaleMode: context.pointOfSaleMode ?? "DirectSale",
         timeZone: context.timeZone,
         businessName: context.businessName,
@@ -3169,6 +3185,7 @@ export default function PosPage() {
     setWorkspaceChanging(true);
     setSetupLoading(true);
     if (client.mode === "edge") {
+      setWorkspaceConfigurationOffline(!serverConnected);
       setCanEnrollOffline(false);
       setEnrollmentAvailability(null);
       setOnlineOptions([enrolledWorkspaceOption(workstation)]);
@@ -3267,6 +3284,7 @@ export default function PosPage() {
         enrollmentCapacity={enrollmentAvailability}
         onEnroll={prepareInstalledPos}
         enrollmentState={client?.mode === "edge" ? "enrolled" : edgeEnrollmentRequired ? "available" : "web"}
+        loadCostCenterPage={client instanceof PosEdgeClient ? query=>client.costCenterPage(query) : undefined}
         configurationOffline={workspaceConfigurationOffline}
         configuredDocumentType={workspaceChanging ? documentType : undefined}
       />

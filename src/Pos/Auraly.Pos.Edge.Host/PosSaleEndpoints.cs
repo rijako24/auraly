@@ -172,6 +172,7 @@ internal static class PosSaleHostModule
             HttpContext http,
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
+            PosEdgeRuntimeContext runtime,
             PosFiscalRuntimeSettings fiscalRuntime,
             PosCashDrawer cashDrawer,
             PosSynchronizationSignal synchronization,
@@ -283,7 +284,7 @@ internal static class PosSaleHostModule
                                 .Append(CommercePermissionCodes.SalesBelowCost)
                                 .ToHashSet(StringComparer.Ordinal),
                         credit,
-                        session.DisplayName),
+                        session.DisplayName, CostCenterId: runtime.CostCenter.CostCenterId),
                     ct);
                 if (authorization is not null)
                     await authorizer.CompleteAsync(authorization, ct);

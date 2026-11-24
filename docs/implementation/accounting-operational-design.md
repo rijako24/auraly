@@ -1585,3 +1585,36 @@ read that zone together with the existing editability check and pass the
 canonical `BusinessCalendar.StartOfDay` instant to `OpeningPositionsValidate`.
 Posting reuses the accepted source instant. No extra SQL round trip, per-line
 lookup, timezone default or historical transaction rewrite is introduced.
+
+### Centro explícito de la factura y automático del POS (2026-11-24)
+
+El encabezado nullable `SalesDocuments.CostCenterId` conserva la selección de la
+caja al emitir. El selector inicial ofrece Automático (`null`) y el catálogo
+compartido del tenant, sin asignaciones a bodega. La política aprobada mantiene
+el automático también con contabilidad activa: asignación de sede/operación y,
+en su ausencia, centro predeterminado. No se impone elegir manualmente ni se
+crea un centro nuevo desde una venta.
+
+`SqlAccountingPostingProcessor.ResolveAndFreezeCostCenterAsync` toma primero el
+centro explícito del encabezado y conserva su pertenencia al tenant. Si está
+vacío, ejecuta la resolución automática existente. Los asientos conservan sus
+snapshots y la dimensión ya aplicada; un cambio posterior de la caja o del nombre
+del centro no reescribe historia. Sin contabilidad activa se conservan el modo
+comercial y sus submayores, sin forzar un asiento por seleccionar un centro.
+
+La captura web y el enrolamiento validan centros activos. La aceptación online
+valida de nuevo en el comando transaccional ya existente, antes de confirmar la
+reserva de números; un rechazo revierte la preparación y permite corregirla.
+La recepción del documento verifica identidad y tenant dentro de su lectura de
+referencias, sin reinterpretar la activación actual de un centro de un documento
+que ya fue emitido. Una venta anónima con centro explícito añade una sola lectura
+de referencias, combinada con la de cliente/sede cuando existe cliente. La venta
+anónima automática conserva cero lecturas de referencias. No hay I/O por producto
+ni línea, ni otra regla de contabilización, writer o cola. El viaje del catálogo es una
+página de hasta 100 filas, con el orden/filtros canónicos previos a paginar.
+
+El cambio es aditivo y no rellena ni reprocesa documentos históricos. La reversión
+de UI puede conservar el backend nuevo. Un rollback completo de los processors
+requiere terminar los trabajos nuevos y drenar los outboxes offline con centro
+explícito o suspenderlos hasta el roll-forward; no se ejecutan con una versión que ignore su dimensión ni se
+eliminan las columnas para forzar un retroceso.

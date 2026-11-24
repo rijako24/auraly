@@ -1,4 +1,6 @@
 ﻿using System.Security.Claims;
+using Auraly.Application.WorkSessions;
+using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Payables;
@@ -136,6 +138,19 @@ public static class AccountingApi
             string? sortBy, string? sortDirection, Guid[]? ids, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListCostCentersAsync(context.User.ToAccountingIdentity(),
                 new(search,isActive,isDefault,costCenterId,page ?? 1,pageSize ?? 50,sortBy ?? "code",sortDirection ?? "asc",ids is { Length: > 0 } ? ids : null),token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/pos/v1/accounting/cost-centers", async (HttpContext context,
+            string? search, bool? isActive, bool? isDefault, Guid? costCenterId, int? page, int? pageSize,
+            string? sortBy, string? sortDirection, Guid[]? ids,
+            AccountingService service, WorkSessionService sessions, IUserService users, CancellationToken token) =>
+            await ExecuteAsync(async () =>
+            {
+                var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
+                if (!actor.Permissions.Contains(Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCreate))
+                    throw new AccountingForbiddenException("No tienes permiso para configurar el centro de costo de facturación.");
+                return Results.Ok(await service.ListCostCentersAsync(
+                    new(actor.UserId,actor.TenantId,actor.BusinessId,actor.Permissions),
+                    new(search,isActive,isDefault,costCenterId,page??1,pageSize??50,sortBy??"code",sortDirection??"asc",ids is {Length:>0}?ids:null),token));
+            })).RequireAuthorization("pos.enrolled");
         endpoints.MapGet("/api/commerce/v1/accounting/cost-center-assignments", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListCostCenterAssignmentsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPut("/api/commerce/v1/accounting/cost-center-assignments", async (HttpContext context, SaveAccountingCostCenterAssignmentRequest request, AccountingService service, CancellationToken token) =>
@@ -263,6 +278,7 @@ public static class AccountingApi
     private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)
     {
         try { return await action(); }
+        catch (WorkSessionForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
         catch (AccountingForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
         catch (AccountingValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
         catch (AccountingConflictException exception) { return Results.Problem(exception.Message, statusCode: 409); }
@@ -270,6 +286,7 @@ public static class AccountingApi
     private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action, Func<T, IResult> success)
     {
         try { return success(await action()); }
+        catch (WorkSessionForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
         catch (AccountingForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
         catch (AccountingValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
         catch (AccountingConflictException exception) { return Results.Problem(exception.Message, statusCode: 409); }

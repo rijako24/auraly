@@ -12,6 +12,13 @@ public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials 
         PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null) =>
         SendCoreAsync(method, path, body, user, token, idempotencyKey, "Pedidos");
 
+    public async Task<JsonElement> SendConfigurationAsync(HttpMethod method, string path, JsonElement? body,
+        PosLocalUserSession user, CancellationToken token)
+    {
+        await workSessionOpenings.EnsureUploadedAsync(user.WorkSessionId, token);
+        return await SendCoreAsync(method, path, body, user, token, null, "Configuración");
+    }
+
     public async Task<JsonElement> SendPortfolioAsync(HttpMethod method, string path, JsonElement? body,
         PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null)
     {
@@ -55,7 +62,7 @@ public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials 
                         ? problem.Title : capability=="Pedidos"?"OrdersUnavailable":"ServerRequestFailed",
                     problem?.Detail ?? (capability=="Pedidos"
                         ? "No fue posible procesar los pedidos."
-                        : "No fue posible procesar cartera."));
+                        : "No fue posible procesar " + capability.ToLowerInvariant() + "."));
             }
             return await response.Content.ReadFromJsonAsync<JsonElement>(token);
         }

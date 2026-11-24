@@ -427,7 +427,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 P("@DocumentId", upload.DocumentId),
                 P("@Payload", PosSaleContractSerializer.Serialize(upload)),
                 P("@Now", now), P("@AuditTime", now.UtcDateTime)
-            ], ct);
+            ], ct, acceptedCostCenterId: request.CostCenterId, tenantId: user.TenantId);
         await transaction.CommitAsync(ct);
         return new(upload, false);
     }

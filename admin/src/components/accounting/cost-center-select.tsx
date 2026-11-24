@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { accountingApi, type AccountingCostCenter } from "@/services/api/accounting";
+import { accountingApi, type AccountingCostCenter, type AccountingCostCenterQuery, type AccountingCostCenterPage } from "@/services/api/accounting";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
 
@@ -41,9 +41,9 @@ export function useCostCenterLabels(selectedIds: readonly (string | null | undef
 }
 
 export function CostCenterSelect({ value, onChange, selected, selectedName, ariaLabel, disabled = false,
-  includeInactive = false, excludeId, emptyLabel = "Automático" }: {
+  includeInactive = false, excludeId, emptyLabel = "Automático", tenantIdOverride, loadPage, wrapLabels = false, className }: {
   value: string | null;
-  onChange: (id: string | null) => void;
+  onChange: (id: string | null, row?: AccountingCostCenter) => void;
   selected?: AccountingCostCenter;
   selectedName?: string | null;
   ariaLabel: string;
@@ -51,8 +51,13 @@ export function CostCenterSelect({ value, onChange, selected, selectedName, aria
   includeInactive?: boolean;
   excludeId?: string;
   emptyLabel?: string;
+  tenantIdOverride?: string | null;
+  wrapLabels?: boolean;
+  className?: string;
+  loadPage?: (query: AccountingCostCenterQuery) => Promise<AccountingCostCenterPage>;
 }) {
-  const tenantId = useTenantContextStore(state => state.selectedTenantId);
+  const contextTenantId = useTenantContextStore(state => state.selectedTenantId);
+  const tenantId = tenantIdOverride === undefined ? contextTenantId : tenantIdOverride;
   const client = useQueryClient();
   const option = (row: AccountingCostCenter) => ({ value: row.costCenterId, label: `${row.code} · ${row.name}${row.isActive ? "" : " (inactivo)"}` });
   return <PagedEntitySelect<AccountingCostCenter>
@@ -61,14 +66,16 @@ export function CostCenterSelect({ value, onChange, selected, selectedName, aria
     selectedOption={selected ? option(selected) : value ? { value, label: selectedName ?? "Consultando centro seleccionado…" } : null}
     leadingOptions={[{ value: "__automatic__", label: emptyLabel }]}
     disabled={disabled || !tenantId}
+    wrapLabels={wrapLabels}
+    className={className}
     ariaLabel={ariaLabel}
     placeholder={emptyLabel}
     searchPlaceholder="Buscar centro por código o nombre…"
     onChange={(id, _, row) => {
       if (row) client.setQueryData(["accounting-cost-center", tenantId, row.costCenterId], row);
-      onChange(id === "__automatic__" ? null : id);
+      onChange(id === "__automatic__" ? null : id, row);
     }}
-    loadPage={(search, page, pageSize) => accountingApi.costCenterPage({ search, page, pageSize, isActive: includeInactive ? undefined : true })}
+    loadPage={(search, page, pageSize) => (loadPage ?? accountingApi.costCenterPage)({ search, page, pageSize, isActive: includeInactive ? undefined : true })}
     getOption={row => row.costCenterId === excludeId ? null : option(row)}
   />;
 }

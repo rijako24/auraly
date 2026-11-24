@@ -45,7 +45,7 @@ export default function RestaurantPosPage() {
       }
       window.localStorage.setItem("selected_business_id", option.businessId);
       rememberSalesWorkspace(option);
-      setSelected({ ...option, workSessionId: "workSessionId" in context
+      setSelected({ ...option, costCenterId:"costCenterId" in context ? context.costCenterId : null, costCenterName:"costCenterName" in context ? context.costCenterName : null, workSessionId: "workSessionId" in context
         ? context.workSessionId : undefined });
     } catch {
       router.replace("/pos?workspace=change");

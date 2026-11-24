@@ -280,6 +280,8 @@ public sealed class ReceivePosSaleService(
         bool lookupExisting,
         CancellationToken cancellationToken)
     {
+        if (request.CostCenterId == Guid.Empty)
+            throw new PosSaleInvalidException("El centro de costo seleccionado no es válido.");
         ValidateDocumentNumber(request);
         ValidateRestaurantMetadata(request);
         ValidateSettlement(request);

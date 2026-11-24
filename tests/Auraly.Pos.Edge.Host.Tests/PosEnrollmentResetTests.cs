@@ -20,6 +20,37 @@ public sealed class PosEnrollmentResetTests(Xunit.Abstractions.ITestOutputHelper
     private string Keys => Path.Combine(directory, "keys");
     private PosEdgeEnrollmentStore Enrollments => new(Path.Combine(directory, "enrollment.protected"), Keys, Database);
 
+    [Fact]
+    public void Cost_center_configuration_survives_protected_package_reload_and_can_return_to_automatic()
+    {
+        Directory.CreateDirectory(directory);
+        var center=Guid.NewGuid();
+        var package=Package() with {CostCenterId=center,CostCenterName="Caja principal"};
+        Enrollments.Save(package);
+        Assert.Equal(center,Enrollments.Load()!.CostCenterId);
+        Assert.Equal("Caja principal",Enrollments.Load()!.CostCenterName);
+        var restored=Enrollments.Load()!;
+        var runtime=new PosEdgeRuntimeContext(new(restored.TenantId),new(restored.BusinessId),
+            new(restored.WarehouseId),new(restored.DeviceId),false,restored.CostCenterId,restored.CostCenterName);
+        Assert.Equal(center,runtime.CostCenter.CostCenterId);
+        var store=Enrollments;
+        Parallel.For(0,16,index=>
+        {
+            var selected=Guid.NewGuid();
+            Assert.True(store.TryUpdatePackage(current=>current with {CostCenterId=selected,CostCenterName=$"Caja {index}"},
+                onSaved: saved=>runtime.ApplyCostCenter(new(saved.CostCenterId,saved.CostCenterName))));
+        });
+        var persisted=store.Load()!;
+        Assert.Equal(persisted.CostCenterId,runtime.CostCenter.CostCenterId);
+        Assert.Equal(persisted.CostCenterName,runtime.CostCenter.CostCenterName);
+        Assert.True(store.TryUpdatePackage(current=>current with {CostCenterId=null,CostCenterName=null},
+            onSaved:saved=>runtime.ApplyCostCenter(new(saved.CostCenterId,saved.CostCenterName))));
+        Assert.Null(runtime.CostCenter.CostCenterId);
+        Assert.Null(Enrollments.Load()!.CostCenterId);
+        Assert.Null(Enrollments.Load()!.CostCenterName);
+        Assert.Equal(package.DocumentSeries,Enrollments.Load()!.DocumentSeries);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

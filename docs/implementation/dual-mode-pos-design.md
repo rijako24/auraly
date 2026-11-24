@@ -519,3 +519,47 @@ restaurarlo al cerrar. Las capturas de aceptación muestran el viewport real;
 una captura de toda la página incluye contenido fuera de la pantalla y no
 demuestra por sí sola la presentación del modal. El ajuste no cambia la captura,
 confirmación, impresión, cuentas ni viajes de red del pago.
+
+### Centro de costo de facturación (2026-11-24)
+
+La preparación de sede, bodega y documento permite elegir un centro de costo del
+catálogo paginado del tenant. El valor inicial es **Automático**, incluso con
+contabilidad activa. `null` conserva la asignación vigente por sede/operación y,
+si no existe, el centro predeterminado del tenant. No inventa un centro faltante:
+el motor conserva su estado de configuración pendiente cuando no puede resolverlo.
+La selección explícita debe estar activa y pertenecer al tenant.
+
+`SalesDocuments.CostCenterId` es nullable, como dimensión del documento emitido.
+La selección se aplica al facturar: venta directa, tienda, mesa o pedido recuperado
+y facturación de pedidos desde esa caja. Un pedido sin facturar sigue siendo un
+pedido; no genera un asiento ni congela una dimensión de una factura inexistente.
+Una factura aceptada y sus reintentos conservan el centro original, aunque después
+se cambie la configuración. El processor contable existente resuelve y congela
+ese centro; devoluciones conservan su regla de heredar el asiento original.
+
+La web recuerda la selección en el alcance existente de tenant, usuario, sede y
+bodega y vuelve a validarla en el servidor. La caja enrolada protege la selección
+en su paquete existente, incluido el enrolamiento inicial. Cambiarla exige conexión;
+la emisión sin conexión toma la configuración local protegida y congela el ID en
+el outbox original. La sincronización valida pertenencia al tenant sin invalidar
+una venta ya emitida porque su centro se desactivó después.
+
+El selector consulta sólo al abrir/buscar/paginar, con una consulta canónica por
+página y sin polling. La elección web se valida en el comando de workspace actual;
+la caja preparada reutiliza el adaptador autenticado y catálogo contable actuales.
+La aceptación online comprueba el centro dentro de su mismo comando SQL existente;
+no añade viajes por línea. La recepción reúne cliente/sede y centro en una sola
+lectura de referencias: una venta anónima con centro explícito necesita esa lectura,
+mientras que una venta anónima automática conserva cero lecturas de referencias.
+El posting conserva su mismo comando de resolución. Se mantienen los presupuestos del
+motor: menos de dos segundos locales entre `StartedAt` y `CompletedAt`, medidos
+sin diagnósticos concurrentes. Se verifican automático, explícito, rechazo sin
+consumo, replay, móvil y emisión/sincronización offline antes de publicar.
+
+El despliegue añade columnas nullable, sin backfill ni cambios de facturas/asientos
+históricos. Un rollback de aplicación conserva las columnas y las fuentes ya
+aceptadas; no se eliminan IDs usados ni se reprocesa historia. La publicación debe
+mantener API, workers y POS instalable con el mismo contrato para que ningún emisor
+nuevo quede conectado a un processor antiguo que ignore la dimensión explícita.
+Una reversión completa exige drenar también los outboxes offline con centro
+explícito o mantenerlos detenidos hasta restaurar el processor compatible.

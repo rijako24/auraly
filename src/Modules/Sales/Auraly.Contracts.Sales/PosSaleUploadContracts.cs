@@ -369,7 +369,9 @@ public sealed record PosSaleUploadRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     SaleCollectionMode CollectionMode = SaleCollectionMode.Session,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    Guid? SellerId = null);
+    Guid? SellerId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Guid? CostCenterId = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

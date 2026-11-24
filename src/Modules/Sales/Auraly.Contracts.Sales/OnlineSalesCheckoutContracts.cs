@@ -35,7 +35,8 @@ public sealed record CompleteOnlineSalesDraftRequest(
     long ExpectedVersion,
     IReadOnlyList<OnlineSalesPayment> Payments,
     OnlineSalesCreditTerms? Credit = null,
-    string DocumentType = PosSaleDocumentTypes.Invoice);
+    string DocumentType = PosSaleDocumentTypes.Invoice,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? CostCenterId = null);
 
 public sealed record OnlineSalesReceiptLine(
     string ProductCode,

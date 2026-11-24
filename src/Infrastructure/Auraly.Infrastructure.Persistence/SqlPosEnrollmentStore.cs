@@ -49,11 +49,13 @@ public sealed class SqlPosEnrollmentStore(
     {
         const string sql = """
             SELECT b.BusinessId,b.Name,w.WarehouseId,w.Code,w.Name,
-                   w.AllowNegativeStockSales,b.PointOfSaleMode
+                   w.AllowNegativeStockSales,b.PointOfSaleMode,center.CostCenterId,center.Code+N' · '+center.Name
             FROM dbo.Businesses b
             JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=@CostCenterId AND center.TenantId=b.TenantId AND center.IsActive=1
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
+              AND (@CostCenterId IS NULL OR center.CostCenterId IS NOT NULL)
               AND w.WarehouseId=@WarehouseId AND b.IsActive=1;
             """;
         await using var connection = connections.Create();
@@ -62,6 +64,7 @@ public sealed class SqlPosEnrollmentStore(
         Add(command, "@TenantId", tenantId);
         Add(command, "@BusinessId", request.BusinessId);
         Add(command, "@WarehouseId", request.WarehouseId);
+        Add(command, "@CostCenterId", (object?)request.CostCenterId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return ReadWorkspace(reader);
@@ -83,11 +86,11 @@ public sealed class SqlPosEnrollmentStore(
             WHERE TenantId=@TenantId AND RequestedByUserId=@UserId
               AND DeviceName=@DeviceName AND RedeemedAt IS NULL AND ExpiresAt>@Now;
             INSERT dbo.PosEnrollmentSessions
-              (EnrollmentSessionId,TenantId,BusinessId,WarehouseId,
+              (EnrollmentSessionId,TenantId,BusinessId,WarehouseId,CostCenterId,
                RequestedByUserId,RequestedByDisplayName,DeviceName,
                RedemptionCodeHash,ExpiresAt,CreatedAt)
             VALUES
-              (@SessionId,@TenantId,@BusinessId,@WarehouseId,
+              (@SessionId,@TenantId,@BusinessId,@WarehouseId,@CostCenterId,
                @UserId,@DisplayName,@DeviceName,@CodeHash,@ExpiresAt,@Now);
             COMMIT;
             """;
@@ -98,6 +101,7 @@ public sealed class SqlPosEnrollmentStore(
         Add(sqlCommand, "@TenantId", command.User.TenantId);
         Add(sqlCommand, "@BusinessId", workspace.BusinessId);
         Add(sqlCommand, "@WarehouseId", workspace.WarehouseId);
+        Add(sqlCommand, "@CostCenterId", (object?)workspace.CostCenterId ?? DBNull.Value);
         Add(sqlCommand, "@UserId", command.User.UserId);
         Add(sqlCommand, "@DisplayName", command.User.DisplayName);
         Add(sqlCommand, "@DeviceName", command.Request.DeviceName);
@@ -220,7 +224,8 @@ public sealed class SqlPosEnrollmentStore(
             receiptDocumentSeries,
             trustedPublicKeys,
             now, ReusesDevice: existing is not null && data.ReusesDevice is not false,
-            BusinessAddress: data.BusinessAddress, BusinessPhone: data.BusinessPhone);
+            BusinessAddress: data.BusinessAddress, BusinessPhone: data.BusinessPhone,
+            CostCenterId: data.CostCenterId, CostCenterName: data.CostCenterName);
     }
 
     private static async Task EnsureDeviceCapacityAsync(
@@ -367,10 +372,11 @@ public sealed class SqlPosEnrollmentStore(
                   SELECT 1 FROM dbo.FiscalIssuerConfigurations production
                   WHERE production.BusinessId=e.BusinessId AND production.Environment=1
                     AND production.IsActive=1
-              ) THEN 1 ELSE 0 END),e.ReusesDevice,b.Address,b.Phone
+              ) THEN 1 ELSE 0 END),e.ReusesDevice,b.Address,b.Phone,e.CostCenterId,center.Code+N' · '+center.Name
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1 AND b.PointOfSaleMode=N'DirectSale'
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=e.CostCenterId AND center.TenantId=e.TenantId
             LEFT JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice'
              AND fs.EmitterKind=N'Device' AND fs.IsActive=1
@@ -413,7 +419,9 @@ public sealed class SqlPosEnrollmentStore(
             reader.IsDBNull(23) ? null : reader.GetString(23),
             reader.GetBoolean(24), reader.IsDBNull(25) ? null : reader.GetBoolean(25),
             reader.IsDBNull(26) ? null : reader.GetString(26),
-            reader.IsDBNull(27) ? null : reader.GetString(27));
+            reader.IsDBNull(27) ? null : reader.GetString(27),
+            reader.IsDBNull(28) ? null : reader.GetGuid(28),
+            reader.IsDBNull(29) ? null : reader.GetString(29));
     }
 
     private static async Task<string> AllocateSeriesCodeAsync(
@@ -547,7 +555,9 @@ public sealed class SqlPosEnrollmentStore(
         new(
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-            reader.GetBoolean(5),reader.GetString(6));
+            reader.GetBoolean(5),reader.GetString(6),
+            CostCenterId:reader.IsDBNull(7)?null:reader.GetGuid(7),
+            CostCenterName:reader.IsDBNull(8)?null:reader.GetString(8));
 
     private static void Add(SqlCommand command, string name, object value) =>
         command.Parameters.AddWithValue(name, value);
@@ -592,5 +602,6 @@ public sealed class SqlPosEnrollmentStore(
         bool ProductionActive,
         bool? ReusesDevice,
         string? BusinessAddress,
-        string? BusinessPhone);
+        string? BusinessPhone,
+        Guid? CostCenterId, string? CostCenterName);
 }

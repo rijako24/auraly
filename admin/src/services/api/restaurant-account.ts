@@ -399,7 +399,7 @@ export const restaurantAccountApi = {
     { expectedAccountVersion }),
   complete: (accountId: string, workSessionId: string,
     checkout: { expectedVersion: number; payments: PosPaymentInput[];
-      documentType: PosSaleDocumentType }, idempotencyKey: string) =>
+      documentType: PosSaleDocumentType; costCenterId?:string|null }, idempotencyKey: string) =>
     apiClient.post<RestaurantCheckoutResponse>(
       `/commerce/v1/restaurant/accounts/${accountId}/complete`,
       { workSessionId, checkout },

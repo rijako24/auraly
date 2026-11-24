@@ -380,7 +380,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     state.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
                     request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
-            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(state.SourceOrderId), SellerId:draft.SellerId);
+            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(state.SourceOrderId), SellerId:draft.SellerId, CostCenterId:request.CostCenterId);
 
         DemandValidPreparedFiscalSnapshot(upload, fiscalMaterial);
 
@@ -435,8 +435,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 P("@DocumentId", upload.DocumentId),
                 P("@Payload", PosSaleContractSerializer.Serialize(upload)),
                 P("@Now", now)
-            ],
-            cancellationToken);
+            ], cancellationToken, acceptedCostCenterId: request.CostCenterId, tenantId: user.TenantId);
         var nextDraft = await ReadDraftAsync(
             connection, transaction, nextDraftId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -843,6 +842,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             .Append('|')
             .Append(request.ExpectedVersion.ToString(CultureInfo.InvariantCulture))
             .Append('|').Append(request.DocumentType);
+        if (request.CostCenterId is { } center) value.Append("|cost-center:").Append(center.ToString("D"));
         foreach (var payment in request.Payments)
         {
             if(payment.PaymentMethodId is {} form) value.Append("|form:").Append(form.ToString("D")).Append(':').Append(payment.PaymentMethodVersion).Append(':').Append(payment.AccountId).Append(':').Append(payment.PaymentMethodCode).Append(':').Append(payment.PaymentMethodName);

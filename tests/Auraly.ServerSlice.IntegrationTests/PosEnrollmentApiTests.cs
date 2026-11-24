@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 using Microsoft.Data.SqlClient;
@@ -39,26 +40,38 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         }
     }
 
-    [Fact]
-    public async Task Authorized_user_enrolls_and_same_installation_can_recover_a_lost_response()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Authorized_user_enrolls_and_same_installation_can_recover_a_lost_response(bool explicitCostCenter)
     {
         await PrepareInitialCashierAsync();
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.EnrolledDevicesEnroll,
             CommercePermissionCodes.SalesCreate);
 
+        Guid? costCenterId=null;
+        if(explicitCostCenter)
+        {
+            costCenterId=Guid.NewGuid();
+            using var configuration=fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
+            using var center=await configuration.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers",
+                new CreateCostCenterRequest(costCenterId.Value,fixture.TenantId,"ENROLL-"+costCenterId.Value.ToString("N")[..12],"Caja enrolada",null,false));
+            Assert.True(center.IsSuccessStatusCode,await center.Content.ReadAsStringAsync());
+        }
         using var authorizationResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/enrollments",
             new CreatePosEnrollmentRequest(
                 fixture.BusinessId,
                 fixture.WarehouseId,
-                "Equipo recepción"));
+                "Equipo recepción",costCenterId));
         authorizationResponse.EnsureSuccessStatusCode();
         var authorization =
             await authorizationResponse.Content.ReadFromJsonAsync<PosEnrollmentAuthorization>();
         Assert.NotNull(authorization);
         Assert.Equal(fixture.BusinessId, authorization.Workspace.BusinessId);
         Assert.Equal(fixture.WarehouseId, authorization.Workspace.WarehouseId);
+        Assert.Equal(costCenterId,authorization.Workspace.CostCenterId);
         Assert.True(authorization.ExpiresAt > DateTimeOffset.UtcNow);
 
         var redeemRequest = new RedeemPosEnrollmentRequest(
@@ -79,6 +92,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.NotNull(package.BusinessAddress);
         Assert.NotNull(package.BusinessPhone);
         Assert.Equal(fixture.WarehouseId, package.WarehouseId);
+        Assert.Equal(costCenterId,package.CostCenterId);
         Assert.Matches("^(?!00)\\d{2}$", package.DocumentSeries.SeriesCode);
         Assert.NotEmpty(package.DeviceSecret);
         Assert.False(package.ReusesDevice);

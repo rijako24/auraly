@@ -17,6 +17,8 @@ public sealed class PosSaleRestaurantMetadataTests
         Assert.DoesNotContain("\"addedByUserId\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\"addedAt\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.Null(PosSaleContractSerializer.Deserialize(json).TableId);
+        Assert.DoesNotContain("costCenterId",json,StringComparison.OrdinalIgnoreCase);
+        Assert.Null(PosSaleContractSerializer.Deserialize(json).CostCenterId);
     }
 
     [Fact]
@@ -70,6 +72,21 @@ public sealed class PosSaleRestaurantMetadataTests
         await Assert.ThrowsAsync<PosSaleInvalidException>(() =>
             receiver.ReceiveAsync(new PosDeviceIdentity(sale.DeviceId, sale.TenantId),
                 "restaurant-metadata-test", sale));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Empty_cost_center_is_rejected_for_direct_and_restaurant_sales(bool restaurant)
+    {
+        var sale=Sale() with {CostCenterId=Guid.Empty,TableId=restaurant?Guid.NewGuid():null};
+        var user=new OnlineSalesUserIdentity(sale.SoldByUserId,sale.TenantId,
+            new HashSet<string>{CommercePermissionCodes.SalesCreate});
+        var receiver=new ReceivePosSaleService(null!,null!,null!,null!,TimeProvider.System);
+        var error=await Assert.ThrowsAsync<PosSaleInvalidException>(()=>
+            restaurant ? receiver.ReceivePreparedOnlineAsync(user,"empty-center",sale,isCheckoutReplay:false) :
+                receiver.ReceiveOnlineAsync(user,"empty-center",sale));
+        Assert.Contains("centro de costo",error.Message);
     }
 
     private static PosSaleUploadRequest Sale() => new(

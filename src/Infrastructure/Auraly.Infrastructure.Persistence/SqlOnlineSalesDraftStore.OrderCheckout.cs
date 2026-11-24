@@ -162,7 +162,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 P("@Key", idempotencyKey), P("@Hash", requestHash),
                 P("@DocumentId", upload.DocumentId),
                 P("@Payload", PosSaleContractSerializer.Serialize(upload)), P("@Now", now)
-            ], ct);
+            ], ct, acceptedCostCenterId: request.CostCenterId, tenantId: user.TenantId);
         await transaction.CommitAsync(ct);
         return new(upload, false);
     }
@@ -312,7 +312,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
                 Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
-                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed));
+                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed), CostCenterId:request.CostCenterId);
         }
         else
         {
@@ -345,7 +345,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
                 Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
-                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed));
+                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed), CostCenterId:request.CostCenterId);
         }
 
         if (upload.FiscalSnapshot is not null)
@@ -582,6 +582,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             .Append(sourceId.ToString("D")).Append('|')
             .Append(Convert.ToHexString(snapshotVersion)).Append('|')
             .Append(request.DocumentType);
+        if (request.CostCenterId is { } center) value.Append("|cost-center:").Append(center.ToString("D"));
         foreach (var payment in request.Payments)
             value.Append('|').Append(payment.MethodCode).Append(':')
                 .Append(payment.Amount.ToString(CultureInfo.InvariantCulture)).Append(':')

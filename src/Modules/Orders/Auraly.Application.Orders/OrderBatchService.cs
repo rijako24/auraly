@@ -263,7 +263,7 @@ public sealed class OrderBatchService(
                                 request.PaymentMethodId, request.PaymentMethodVersion, request.PaymentFormCode,
                                 request.PaymentFormName, request.AccountId)
                             : null,
-                        DocumentType: documentType),
+                        DocumentType: documentType, CostCenterId: request.CostCenterId),
                     OperationKey(lease.OperationId, orderId, "invoice"),
                     cancellationToken);
                 results.Add(new(
@@ -391,7 +391,7 @@ public sealed class OrderBatchService(
         if (!actor.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OrderForbiddenException(
                 $"No tienes permiso para crear ventas.");
-        if (request.WorkSessionId == Guid.Empty ||
+        if (request.CostCenterId == Guid.Empty || request.WorkSessionId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
             request.UserId != actor.UserId ||
             request.OrderIds.Count is < 1 or > 50 ||
@@ -463,6 +463,7 @@ public sealed class OrderBatchService(
         if (request.CardFranchiseCode is not null || request.ApprovalNumber is not null)
             value += "|" + System.Text.Json.JsonSerializer.Serialize(new {
                 request.CardFranchiseCode, request.ApprovalNumber });
+        if (request.CostCenterId is { } center) value += "|cost-center:" + center.ToString("D");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 

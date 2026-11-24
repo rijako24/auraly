@@ -78,13 +78,13 @@ public sealed class SalesWorkspaceService(
         CancellationToken cancellationToken = default)
     {
         DemandWorkspacePermission(user);
-        if (selection.BusinessId == Guid.Empty || selection.WarehouseId == Guid.Empty)
+        if (selection.BusinessId == Guid.Empty || selection.WarehouseId == Guid.Empty || selection.CostCenterId == Guid.Empty)
             throw new SalesWorkspaceValidationException(
                 "La sede y la bodega son obligatorias.");
 
         var selected = await directory.ResolveAsync(user.TenantId, selection, cancellationToken)
             ?? throw new SalesWorkspaceForbiddenException(
-                "La sede o bodega no pertenece a la empresa autenticada o está inactiva.");
+                "La sede, bodega o centro de costo no pertenece a la empresa autenticada o está inactivo.");
         if (!HasDirectSalesPermission(user) && selected.PointOfSaleMode != "RestaurantBar")
             throw new SalesWorkspaceForbiddenException(
                 "El permiso de atención solo permite abrir sedes de restaurante.");

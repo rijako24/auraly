@@ -18,6 +18,9 @@ import {
   type PosPreparationHealth,
 } from "./pos-preparation-progress";
 import { posPublicError } from "./pos-public-error";
+import { CostCenterSelect } from "@/components/accounting/cost-center-select";
+import type { AccountingCostCenterQuery, AccountingCostCenterPage } from "@/services/api/accounting";
+import { rememberedSalesCostCenter } from "@/services/pos/online-pos-client";
 
 export type PosSetupPreparation = {
   health: PosPreparationHealth | null;
@@ -47,18 +50,34 @@ type Props = {
   configurationOffline?: boolean;
   configuredDocumentType?: PosSaleDocumentType;
   preparation?: PosSetupPreparation | null;
+  loadCostCenterPage?: (query:AccountingCostCenterQuery)=>Promise<AccountingCostCenterPage>;
 };
 
-export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType, enrollmentState = "web", configurationOffline = false, configuredDocumentType, preparation = null }: Props) {
+export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType, enrollmentState = "web", configurationOffline = false, configuredDocumentType, preparation = null, loadCostCenterPage }: Props) {
   const businesses = useMemo(() => Array.from(new Map(options.map((option) => [option.businessId, option.businessName]))), [options]);
   const [businessId, setBusinessId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
+  const [costCenterId, setCostCenterId] = useState<string|null>(null);
+  const [costCenterName, setCostCenterName] = useState<string|null>(null);
+  const [tenantId, setTenantId] = useState<string|null>(null);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
   const [busy, setBusy] = useState(false);
   const [prepareInstalled, setPrepareInstalled] = useState(false);
   const [fiscalError, setFiscalError] = useState<string | null>(null);
   const warehouses = useMemo(() => options.filter((option) => option.businessId === businessId), [businessId, options]);
   const selected = useMemo(() => warehouses.find((option) => option.warehouseId === warehouseId), [warehouseId, warehouses]);
+  useEffect(() => {
+    setTenantId(window.localStorage.getItem("selected_tenant_id"));
+    if(!businessId||!warehouseId) return;
+    const option=options.find(row=>row.businessId===businessId&&row.warehouseId===warehouseId);
+    try {
+      const saved=option?.costCenterId!==undefined ? option : rememberedSalesCostCenter({businessId,warehouseId});
+      setCostCenterId(saved.costCenterId??null);
+      setCostCenterName(saved.costCenterName??null);
+    } catch (error) {
+      setFiscalError(error instanceof Error ? error.message : "Revisa el centro de costo de esta caja.");
+    }
+  }, [businessId,warehouseId,options]);
   const offlineAllowed = (selected?.pointOfSaleMode ?? "DirectSale") === "DirectSale";
 
   useEffect(() => {
@@ -105,8 +124,8 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
           return;
         }
       }
-      if (mode === "enroll") await onEnroll?.(selected, documentType);
-      else await onSelect(selected, documentType);
+      if (mode === "enroll") await onEnroll?.({...selected,costCenterId,costCenterName}, documentType);
+      else await onSelect({...selected,costCenterId,costCenterName}, documentType);
     } catch (caught) {
       setFiscalError(caught instanceof Error ? caught.message : "No fue posible cargar esta ubicación.");
     } finally { setBusy(false); }
@@ -118,13 +137,20 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
   const preparing = Boolean(preparation);
   return <main className="relative min-h-screen overflow-auto bg-[#071a1d] p-4 text-white sm:p-5">
     {preparing ? <button type="button" onClick={preparation!.onBack} className="fixed left-4 top-4 z-20 inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-[#0b2428] px-3 text-sm font-semibold"><ArrowLeft className="h-4 w-4" />Volver</button> : onCancel ? <button type="button" onClick={onCancel} className="fixed left-4 top-4 z-20 inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-[#0b2428] px-3 text-sm font-semibold"><ArrowLeft className="h-4 w-4" />Volver</button> : <Link href="/dashboard" className="fixed left-4 top-4 z-20 inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-[#0b2428] px-3 text-sm font-semibold"><ArrowLeft className="h-4 w-4" />Panel</Link>}
-    <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-5xl items-center py-14"><section className="grid w-full min-w-0 overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b2428] shadow-2xl md:grid-cols-[minmax(0,.72fr)_minmax(0,1.45fr)]">
+    <div className="mx-auto flex min-h-[calc(100dvh-2rem)] sm:min-h-[calc(100dvh-2.5rem)] max-w-5xl items-center py-14 md:py-6"><section className="grid w-full min-w-0 overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b2428] shadow-2xl md:grid-cols-[minmax(0,.72fr)_minmax(0,1.45fr)]">
       <aside className="min-w-0 break-words bg-gradient-to-br from-teal-400/20 to-transparent p-7"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-300 text-[#071a1d]"><MonitorSmartphone /></span><p className="mt-7 text-xs font-bold uppercase tracking-[.15em] text-teal-200">{tenantName || "Auraly"}</p><h1 className="mt-2 text-3xl font-black">{preparing ? "Preparando tu caja" : "Prepara facturación"}</h1><p className="mt-3 text-sm leading-6 text-slate-300">Hola, {userDisplayName}. {preparing ? "La preparación continúa aquí. Verás el avance real, y si algo falla podrás reintentar." : "Confirma ubicación y documento en una sola pantalla. La activación DIAN se administra únicamente desde Configuración fiscal."}</p><ol className="mt-7 space-y-3 text-sm">{preparing ? <><Step number="1" text="Identidad local" active /><Step number="2" text="Catálogo y precios" active={preparation?.health?.identityReady === true} /><Step number="3" text="Validación final" active={preparation?.health?.preparationStage === "Finalizing"} /></> : <><Step number="1" text="Sede y bodega" active={!!selected} /><Step number="2" text="Documento de venta" active /><Step number="3" text={invoice ? "Validación fiscal" : "Entrar a ventas"} active={!invoice || fiscalReady} /></>}</ol></aside>
       <div className="min-w-0 p-6 md:p-9">{preparation ? <PreparationPanel value={preparation} /> : loading ? <Loading /> : <div className="space-y-5">
         {businesses.length === 1
           ? <div className="rounded-xl border border-teal-300/30 bg-[#102e33] px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wider text-teal-200">Sede activa</p><p className="mt-1 font-semibold text-white">{businesses[0][1]}</p></div>
           : <Combo title="Sede" icon={Building2} value={businessId} onChange={(value) => { setBusinessId(value); setWarehouseId(""); }} disabled={configurationOffline} items={businesses.map(([id, name]) => ({ id, name }))} />}
         <Combo title="Bodega" icon={Warehouse} value={warehouseId} onChange={setWarehouseId} disabled={configurationOffline || !businessId} items={warehouses.map((option) => ({ id: option.warehouseId, name: [option.warehouseCode, option.warehouseName].filter(Boolean).join(" · ") }))} />
+        {selected && <div><p className="mb-2 block text-sm font-semibold">Centro de costo</p>
+          <CostCenterSelect value={costCenterId} selectedName={costCenterName} ariaLabel="Centro de costo de facturación"
+            className="min-h-12 rounded-xl border-teal-300/30 bg-[#102e33] px-4 py-3 font-semibold text-white hover:bg-[#15383e] hover:text-white"
+            wrapLabels tenantIdOverride={tenantId} disabled={configurationOffline} loadPage={loadCostCenterPage}
+            onChange={(id,row)=>{setCostCenterId(id);setCostCenterName(row?`${row.code} · ${row.name}`:null);}} />
+          <p className="mt-2 text-xs leading-5 text-slate-300">Automático usa la asignación contable de la sede o el centro predeterminado de la empresa. Puedes elegir otro centro para las facturas de esta caja.</p>
+        </div>}
         {selected && <InventoryPolicyNotice allowsNegativeStock={selected.warehouseAllowsNegativeStockSales}/>}
         {selected && <div><p className="mb-2 text-sm font-semibold">{forcedDocumentType ? "Documento de habilitación" : "Documento predeterminado"}</p><div className="grid grid-cols-2 gap-2"><DocumentButton active={invoice} icon={FileKey2} title="Factura electrónica" disabled={configurationOffline} onClick={() => setDocumentType("SalesInvoice")} /><DocumentButton active={!invoice} icon={Receipt} title="Comprobante de venta" disabled={Boolean(forcedDocumentType) || configurationOffline} onClick={() => setDocumentType("SalesReceipt")} /></div><p className="mt-2 text-xs text-slate-400">{forcedDocumentType ? "El asistente mantiene la factura electrónica para enviar el documento al set de pruebas DIAN." : "Un cliente configurado para factura electrónica la fuerza automáticamente sin cambiar este predeterminado."}</p></div>}
         {selected && invoice && !fiscalReady && <div className="rounded-2xl border border-amber-300/25 bg-amber-100/10 p-5 text-amber-100"><div className="flex gap-3"><FileKey2 className="h-6 w-6 shrink-0" /><div><p className="font-bold">Facturación electrónica pendiente</p><p className="mt-1 text-sm">El POS no configura certificados ni resoluciones. Un administrador debe completar la activación DIAN para esta sede.</p><Link href="/dashboard/settings/fiscal" className="mt-3 inline-block font-bold underline">Abrir configuración fiscal</Link></div></div></div>}
