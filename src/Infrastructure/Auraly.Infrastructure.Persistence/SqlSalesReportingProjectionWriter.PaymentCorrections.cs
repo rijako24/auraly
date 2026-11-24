@@ -82,6 +82,10 @@ public sealed partial class SqlSalesReportingProjectionWriter
             JOIN reporting.SalesReportDocuments report ON report.DocumentId=sale.DocumentId
               AND report.DocumentType=sale.DocumentType AND report.TenantId=@Tenant AND report.BusinessId=@Business
             WHERE EXISTS(SELECT 1 FROM @Dispatch captured WHERE captured.DocumentId=sale.DocumentId)
+              OR EXISTS(SELECT 1 FROM accounting.SalePaymentCorrections correction
+                WHERE correction.TenantId=@Tenant AND correction.BusinessId=@Business
+                  AND correction.DocumentId=sale.DocumentId
+                  AND correction.PostingStatus IN(N'Posted',N'CommercialEffectsApplied'))
               OR (sale.CollectionMode=N'Session' AND EXISTS(
                 SELECT 1 FROM dbo.WorkSessionClosures closure
                 JOIN dbo.WorkSessionClosureReconciliations correction ON correction.WorkSessionClosureId=closure.WorkSessionClosureId

@@ -84,7 +84,7 @@ export default function InvoicesPage() {
   if(!businessId)return <PageError message="Selecciona una sede para consultar sus facturas."/>;
   if(!user?.permissions.includes("sales.reprint"))return <PageError message="No tienes permiso para consultar y reimprimir facturas."/>;
   return <div className="min-w-0 space-y-3">{error&&<p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-    <PosInvoiceSearchDialog key={businessId} embedded timeZone={business?.timeZone??undefined} busy={!printingReady} canCorrect={user.permissions.includes("sales.payments.correct")&&user.permissions.includes("work-sessions.closures.reconcile")&&user.permissions.includes("work-sessions.differences.read")} canCorrectDispatch={user.permissions.includes("sales.payments.correct")&&user.permissions.includes("dispatches.settle")}
+    <PosInvoiceSearchDialog correctionBusinessId={businessId} key={businessId} embedded timeZone={business?.timeZone??undefined} busy={!printingReady} canCorrect={user.permissions.includes("sales.payments.correct")} canCorrectDispatch={user.permissions.includes("sales.payments.correct")&&user.permissions.includes("dispatches.settle")}
       scopeKey={businessId} onSearchRoleOptions={roleOptions} onSearch={search} onSearchCustomers={customers} onSearchProducts={products} onDetail={detail} onReprint={reprint} onCancel={()=>undefined}/>
   </div>;
 }

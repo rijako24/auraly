@@ -8,6 +8,32 @@ public sealed partial class SqlDispatchDeliveryStore
 {
     private const string PaymentColumns = "PaymentId,ApplicationType,MethodCode,Amount,Reference,EvidenceUrl,PaymentMethodId,PaymentMethodVersion,FormName,CardFranchiseCode,ApprovalNumber,VerifiedBy,VerifiedAt,OriginalMethod,OriginalFormName,CorrectionReason,CorrectedBy,CorrectedAt";
 
+    public async Task<IReadOnlyList<DispatchDeliveryPaymentDetail>> GetPaymentCorrectionsAsync(
+        DispatchActorIdentity actor, Guid dispatchId, Guid documentId, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.Dispatches dispatch
+              JOIN dbo.DispatchSourceDocuments document ON document.DispatchId=dispatch.DispatchId
+              JOIN dbo.SalesDocuments sale ON sale.DocumentId=document.SourceDocumentId AND sale.BusinessId=dispatch.BusinessId
+              JOIN dispatch.Closures closure ON closure.DispatchId=dispatch.DispatchId AND closure.BusinessId=dispatch.BusinessId
+              WHERE dispatch.DispatchId=@Id AND dispatch.TenantId=@TenantId AND dispatch.BusinessId=@BusinessId
+                AND sale.DocumentId=@Document AND sale.DocumentType=N'SalesReceipt' AND closure.Status=N'PendingReview')
+              THROW 51000,N'Selecciona un comprobante de esta sede cuyo despacho esté pendiente de revisión.',1;
+            """ + $"\nSELECT {PaymentColumns} FROM dispatch.EffectivePayments(@Id) payment WHERE payment.ApplicationType IN(N'InvoicePayment',N'CreditAdvance') AND EXISTS(SELECT 1 FROM dbo.DispatchSourceDocuments document WHERE document.DispatchSourceDocumentId=payment.DispatchSourceDocumentId AND document.DispatchId=@Id AND document.SourceDocumentId=@Document) ORDER BY PaymentId;", connection);
+        Scope(command, actor, dispatchId);
+        command.Parameters.AddWithValue("@Document", documentId);
+        var result = new List<DispatchDeliveryPaymentDetail>();
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct)) result.Add(ReadPayment(reader, 0));
+            return result;
+        }
+        catch (SqlException error) when (error.Number == 51000) { throw new DispatchConflictException(error.Message); }
+    }
+
     public Task<DispatchPaymentReviewResult> VerifyPaymentAsync(DispatchActorIdentity actor, Guid dispatchId,
         Guid paymentId, VerifyDispatchPaymentRequest request, CancellationToken ct) =>
         ReviewPaymentAsync(actor, dispatchId, paymentId, request.IsVerified, null, request.ExpectedCorrectedAt, ct);

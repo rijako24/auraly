@@ -64,7 +64,10 @@ public sealed partial class SqlWorkSessionStore
                 CASE WHEN input.OriginalTenderCategory LIKE N'PostedAccount:%'
                   THEN TRY_CONVERT(uniqueidentifier,SUBSTRING(input.OriginalTenderCategory,15,36)) END,
                 sale.AccountId,mapping.AccountId,bank.AccountId)) original
-            WHERE ready.SourceType=usage.SourceType;
+            WHERE ready.SourceType=usage.SourceType
+              AND NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments direct
+                WHERE direct.TenantId=session.TenantId AND direct.BusinessId=session.BusinessId
+                  AND direct.CorrectsSaleDocumentId=input.SourceId AND direct.PaymentCorrectionVerificationKey=input.VerificationKey);
             IF @LockType=1
               UPDATE form SET TypeLockedAt=@Now
               FROM reference.PaymentMethods form

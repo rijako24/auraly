@@ -71,6 +71,10 @@ public static class DispatchingApi
             DeclareDispatchShortageRequest request, DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.DeclareShortageAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
 
+        group.MapGet("/{dispatchId:guid}/documents/{documentId:guid}/payment-corrections", async (
+            ClaimsPrincipal principal, Guid dispatchId, Guid documentId, DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.GetPaymentCorrectionsAsync(principal.ToDispatchIdentity(), dispatchId, documentId, ct), Results.Ok));
+
         group.MapGet("/{dispatchId:guid}/execution", async (ClaimsPrincipal principal, Guid dispatchId, bool? review,
             DispatchDeliveryService service, IMediaUrlResolver media, CancellationToken ct) =>
             await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct, review ?? false), Results.Ok,

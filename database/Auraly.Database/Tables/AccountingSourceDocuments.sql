@@ -24,6 +24,27 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
     -- A posted journal reversal remains a separate immutable source. The
     -- filtered unique key prevents two reversals of the same original.
     [ReversesDocumentId] UNIQUEIDENTIFIER NULL,
+    -- Derived by the same financial acceptance from an individual sale
+    -- correction. These are lookup/idempotency links, never another balance.
+    [CorrectsSaleDocumentId] UNIQUEIDENTIFIER NULL,
+    [PaymentCorrectionVerificationKey] NVARCHAR(200) NULL,
+    [PaymentCorrectionClosureId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [CK_AccountingSourceDocuments_SaleCorrection] CHECK (
+      ([CorrectsSaleDocumentId] IS NULL AND [PaymentCorrectionVerificationKey] IS NULL
+        AND [PaymentCorrectionClosureId] IS NULL)
+      OR ([SourceDocumentType]=N'WorkSessionClosureReconciliation'
+        AND [CorrectsSaleDocumentId] IS NOT NULL AND [CorrectsSaleDocumentId]<>[SourceDocumentId]
+        AND [PaymentCorrectionVerificationKey] IS NOT NULL AND LEN([PaymentCorrectionVerificationKey])>0
+        AND [PaymentCorrectionClosureId] IS NOT NULL AND ISJSON([PayloadJson])=1
+        AND JSON_QUERY([PayloadJson],N'$.paymentCorrections[1]') IS NULL
+        AND JSON_VALUE([PayloadJson],N'$.paymentCorrections[0].verificationKey') IS NOT NULL
+        AND JSON_VALUE([PayloadJson],N'$.paymentCorrections[0].verificationKey')=[PaymentCorrectionVerificationKey]
+        AND TRY_CAST(JSON_VALUE([PayloadJson],N'$.paymentCorrections[0].sourceId') AS uniqueidentifier) IS NOT NULL
+        AND TRY_CAST(JSON_VALUE([PayloadJson],N'$.paymentCorrections[0].sourceId') AS uniqueidentifier)=[CorrectsSaleDocumentId])),
+    CONSTRAINT [FK_AccountingSourceDocuments_CorrectedSale] FOREIGN KEY ([CorrectsSaleDocumentId])
+      REFERENCES [dbo].[SalesDocuments]([DocumentId]),
+    CONSTRAINT [FK_AccountingSourceDocuments_CorrectionClosure] FOREIGN KEY ([PaymentCorrectionClosureId])
+      REFERENCES [dbo].[WorkSessionClosures]([WorkSessionClosureId]),
     CONSTRAINT [CK_AccountingSourceDocuments_ManualReversal] CHECK ([ReversesDocumentId] IS NULL OR
       ([SourceDocumentType]=N'ManualAccountingVoucher' AND [ReversesDocumentId]<>[SourceDocumentId])),
     -- Derived from the immutable request, including legacy direct adjustments
@@ -47,6 +68,18 @@ GO
 CREATE UNIQUE INDEX [UX_AccountingSourceDocuments_ManualReversal]
     ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[ReversesDocumentId])
     WHERE [ReversesDocumentId] IS NOT NULL;
+GO
+
+CREATE UNIQUE INDEX [UX_AccountingSourceDocuments_SalePaymentCorrection]
+    ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[CorrectsSaleDocumentId],[PaymentCorrectionVerificationKey])
+    INCLUDE([AccountingPostingJobId],[PaymentCorrectionClosureId])
+    WHERE [CorrectsSaleDocumentId] IS NOT NULL;
+GO
+
+CREATE INDEX [IX_AccountingSourceDocuments_CorrectionClosure]
+    ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[PaymentCorrectionClosureId])
+    INCLUDE([CorrectsSaleDocumentId],[PaymentCorrectionVerificationKey],[AccountingPostingJobId])
+    WHERE [PaymentCorrectionClosureId] IS NOT NULL;
 GO
 
 CREATE INDEX [IX_AccountingSourceDocuments_AdjustmentObligation]

@@ -317,7 +317,9 @@ public sealed record WorkSessionPaymentVerificationItem(
     Guid? CorrectedPaymentMethodId = null,
     int? CorrectedPaymentMethodVersion = null,
     string? CorrectedPaymentMethodName = null,
-    decimal? CollectibleAmount = null);
+    decimal? CollectibleAmount = null,
+    Guid? AppliedCorrectionId = null,
+    string? CorrectionAccountingStatus = null);
 
 public sealed record WorkSessionPaymentVerificationGroup(
     string PaymentMethodCode,
@@ -446,7 +448,22 @@ public sealed record WorkSessionClosureReconciliationPayload(
     IReadOnlyList<WorkSessionClosureReconciliationAccountingLine> Lines,
     IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
     IReadOnlyList<WorkSessionAppliedPaymentCorrection>? PaymentCorrections = null,
-    WorkSessionCashShortageClaim? CashShortageClaim = null);
+    WorkSessionCashShortageClaim? CashShortageClaim = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? DirectSaleDocumentId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DirectRequestHash = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<WorkSessionMethodChange>? ClosureAllocations = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<WorkSessionMethodChange>? PreviouslyAppliedMethodChanges = null);
+
+public sealed record WorkSessionMethodChange(string PaymentMethodCode, decimal Amount);
+
+public sealed record SalePaymentCorrectionContext(Guid DocumentId, string DocumentNumber,
+    Guid WorkSessionClosureId, IReadOnlyList<WorkSessionPaymentVerificationItem> Items,
+    IReadOnlyList<string> CountableMethods);
+
+public sealed record CorrectSalePaymentRequest(Guid CorrectionId, WorkSessionPaymentCorrection Correction);
+
+public sealed record SalePaymentCorrectionAcceptance(Guid CorrectionId, Guid DocumentId,
+    Guid BusinessId, string AccountingStatus, bool IdempotentReplay = false);
 public static class CashMovementDirections
 {
     public const string In = "In";

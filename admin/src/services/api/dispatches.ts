@@ -69,6 +69,7 @@ async function offlineDelivery(id:string,request:DeliveryResultInput) { if(typeo
 async function offlineExpense(id:string,request:DispatchExpenseInput) { if(typeof navigator==="undefined"||navigator.onLine)return sendDispatchExpense(id,request); const evidence=await localEvidence([request.evidenceUrl]); const updated=await queueExpenseOperation(id,request,evidence); await Promise.all(evidence.map(value=>removePendingEvidence(value.placeholder))); return updated; }
 
 export const dispatchesApi = {
+  paymentCorrections: (id:string,documentId:string) => apiClient.get<DeliveryPayment[]>(`/commerce/v1/dispatches/${id}/documents/${documentId}/payment-corrections`),
   page: (params:{page?:number;pageSize?:number;search?:string;status?:string;from?:string;to?:string;mine?:boolean;orderBy?:string}) => apiClient.get<DispatchPage>("/commerce/v1/dispatches",withPagedDefaults(params)),
   routeOptions: (params:{page:number;pageSize:number;search?:string}) => apiClient.get<import("./routes").SalesRoutePage>("/commerce/v1/dispatches/options",params),
   reasons: (type:"NotDelivered"|"DeliveryReturn") => apiClient.get<DispatchReasonOption[]>("/commerce/v1/dispatches/delivery-reasons",{type}),

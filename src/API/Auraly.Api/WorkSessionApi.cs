@@ -175,6 +175,17 @@ public static class WorkSessionApi
                 context.User.ToWorkSessionIdentity(), closureId, paymentMethodCode,
                 page ?? 1, pageSize ?? 50, cancellationToken))));
 
+        group.MapGet("/sales/{documentId:guid}/payment-correction", async (
+            HttpContext context, Guid documentId, WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.GetSalePaymentCorrectionAsync(
+                context.User.ToWorkSessionIdentity(), documentId, cancellationToken))));
+
+        group.MapPost("/sales/{documentId:guid}/payment-correction", async (
+            HttpContext context, Guid documentId, CorrectSalePaymentRequest request,
+            WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.CorrectSalePaymentAsync(
+                context.User.ToWorkSessionIdentity(), documentId, request, cancellationToken))));
+
         group.MapPost("/closures/{closureId:guid}/payment-corrections/validate", async (
             HttpContext context, Guid closureId, WorkSessionPaymentCorrection[] corrections,
             WorkSessionService service, CancellationToken cancellationToken) =>

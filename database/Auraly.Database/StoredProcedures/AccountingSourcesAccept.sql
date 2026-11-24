@@ -77,6 +77,17 @@ BEGIN
             AND a.EffectiveFrom=CONVERT(date,s.OccurredAt)))))
       THROW 51731,N'The accounting source is missing or outside its acceptance scope.',1;
 
+    IF EXISTS(SELECT 1 FROM @Sources input
+      WHERE input.DocumentType=N'WorkSessionClosureReconciliation' AND JSON_VALUE(input.Payload,N'$.directSaleDocumentId') IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM dbo.SalesDocuments sale
+          JOIN dbo.WorkSessions session ON session.WorkSessionId=sale.WorkSessionId
+            AND session.BusinessId=sale.BusinessId AND session.TenantId=@TenantId AND session.Kind=N'Normal'
+          JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionId=session.WorkSessionId
+          WHERE sale.DocumentId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(input.Payload,N'$.directSaleDocumentId'))
+            AND sale.BusinessId=input.BusinessId AND sale.DocumentType=N'SalesReceipt' AND sale.CollectionMode=N'Session'
+            AND closure.WorkSessionClosureId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(input.Payload,N'$.workSessionClosureId'))))
+      THROW 51871,N'La corrección no pertenece al comprobante y al cierre de esta empresa.',1;
+
     -- A replay returns the accepted input unchanged. It never repairs or repeats
     -- an already accepted operation by creating another job.
     -- Read only the input keys. Source locks above serialize their acceptance;
@@ -246,12 +257,19 @@ BEGIN
       PRIMARY KEY(DocumentId,DocumentType));
     INSERT dbo.AccountingSourceDocuments
       (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,
-       OccurredAt,AcceptedAt,AccountingEntryRequired,ReversesDocumentId)
+       OccurredAt,AcceptedAt,AccountingEntryRequired,ReversesDocumentId,
+       CorrectsSaleDocumentId,PaymentCorrectionVerificationKey,PaymentCorrectionClosureId)
     OUTPUT inserted.SourceDocumentId,inserted.SourceDocumentType INTO @Accepted
     SELECT i.DocumentId,i.DocumentType,@TenantId,i.BusinessId,i.Payload,i.PayloadHash,
       i.OccurredAt,@Now,i.EntryRequired,
       CASE WHEN i.DocumentType=N'ManualAccountingVoucher'
-        THEN TRY_CONVERT(uniqueidentifier,JSON_VALUE(i.Payload,N'$.ReversesDocumentId')) END
+        THEN TRY_CONVERT(uniqueidentifier,JSON_VALUE(i.Payload,N'$.ReversesDocumentId')) END,
+      CASE WHEN i.DocumentType=N'WorkSessionClosureReconciliation'
+        THEN TRY_CONVERT(uniqueidentifier,JSON_VALUE(i.Payload,N'$.directSaleDocumentId')) END,
+      CASE WHEN i.DocumentType=N'WorkSessionClosureReconciliation' AND JSON_VALUE(i.Payload,N'$.directSaleDocumentId') IS NOT NULL
+        THEN JSON_VALUE(i.Payload,N'$.paymentCorrections[0].verificationKey') END,
+      CASE WHEN i.DocumentType=N'WorkSessionClosureReconciliation' AND JSON_VALUE(i.Payload,N'$.directSaleDocumentId') IS NOT NULL
+        THEN TRY_CONVERT(uniqueidentifier,JSON_VALUE(i.Payload,N'$.workSessionClosureId')) END
     FROM @Sources i
     WHERE (i.EntryRequired=1 OR @Requirement=1)
       AND NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)

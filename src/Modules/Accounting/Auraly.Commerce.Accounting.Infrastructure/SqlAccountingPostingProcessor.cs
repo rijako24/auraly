@@ -481,7 +481,9 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         var payload = ReadClosureReconciliation(source);
         return FinancialFacts.ClosureReconciliation(
-            $"Conciliación del cierre {payload.WorkSessionClosureId:D}", payload);
+            payload.DirectSaleDocumentId is { } saleId
+                ? $"Corrección del medio de recaudo del comprobante {saleId:D}"
+                : $"Conciliación del cierre {payload.WorkSessionClosureId:D}", payload);
     }
 
     private static WorkSessionClosureReconciliationPayload ReadClosureReconciliation(SourceEnvelope source)
@@ -500,6 +502,12 @@ public sealed partial class SqlAccountingPostingProcessor(
                 (correction.Amount != correction.OriginalAmount &&
                   string.IsNullOrWhiteSpace(correction.CounterpartCategory))) == true))
             throw new InvalidOperationException("The work-session reconciliation payload is inconsistent.");
+        if (payload.DirectSaleDocumentId is { } saleId && (saleId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(payload.DirectRequestHash) || payload.PaymentCorrections is not { Count: 1 } ||
+            payload.PaymentCorrections[0].SourceId != saleId || payload.PaymentCorrections[0].SourceDocumentType != "SalesReceipt" ||
+            payload.PaymentCorrections[0].MovementType is not ("Sale" or "CreditSale") ||
+            payload.PreviouslyAppliedMethodChanges is not null))
+            throw new InvalidOperationException("La corrección individual no coincide con su comprobante y evidencia aceptados.");
         if (payload.CashShortageClaim is { } claim)
         {
             var cashLine = payload.Lines.SingleOrDefault(line =>
@@ -3310,7 +3318,10 @@ public sealed partial class SqlAccountingPostingProcessor(
             var residual=payload.Lines.ToDictionary(line=>line.PaymentMethodCode,line=>line.Difference,StringComparer.OrdinalIgnoreCase);
             foreach(var line in payload.Lines)
             {
-                var correction=decimal.Round(line.VerifiedAmount-line.CountedAmount,4);
+                var alreadyApplied = payload.PreviouslyAppliedMethodChanges?
+                    .Where(item => item.PaymentMethodCode.Equals(line.PaymentMethodCode, StringComparison.OrdinalIgnoreCase))
+                    .Sum(item => item.Amount) ?? 0;
+                var correction=decimal.Round(line.VerifiedAmount-line.CountedAmount-alreadyApplied,4);
                 if(correction>0)
                 {
                     lines.Add(new(line.AccountingCategory,correction,0,null,description));

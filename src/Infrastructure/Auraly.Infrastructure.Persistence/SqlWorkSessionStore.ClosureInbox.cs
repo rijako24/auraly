@@ -46,7 +46,10 @@ public sealed partial class SqlWorkSessionStore
               selected.ReviewStatus,closure.WorkSessionId,session.WarehouseId,warehouse.Name,session.UserId,
               LTRIM(RTRIM(CONCAT(cashier.FirstName,N' ',cashier.LastName))),session.OpenedAt,
               closure.SalesCount,closure.CreditSalesCount,closure.ReturnCount,closure.TotalSales,
-              closure.TotalRefunds,closure.NetAmount,closure.ExpectedCash,
+              closure.TotalRefunds,closure.NetAmount,closure.ExpectedCash+COALESCE((
+                SELECT changed.Amount FROM accounting.ClosurePaymentCorrectionChanges changed
+                WHERE changed.TenantId=business.TenantId AND changed.BusinessId=selected.BusinessId
+                  AND changed.WorkSessionClosureId=closure.WorkSessionClosureId AND changed.PaymentMethodCode=N'Cash'),0),
               COALESCE((SELECT TOP(1) job.Status FROM dbo.AccountingPostingJobs job
                 WHERE job.SourceDocumentId IN(closure.WorkSessionClosureId,
                   (SELECT reconciliation.ReconciliationId FROM dbo.WorkSessionClosureReconciliations reconciliation

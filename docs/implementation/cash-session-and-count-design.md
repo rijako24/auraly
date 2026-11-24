@@ -188,6 +188,68 @@ La conciliación exige confirmar cada medio, registra valor verificado, motivo c
 
 ### Corrección del medio de recaudo y forma del tenant (18 de noviembre de 2026)
 
+La decisión del 24 de noviembre autoriza que **Guardar** desde Facturas acepte la
+corrección del comprobante seleccionado, sin confirmar los demás documentos ni
+la conciliación completa. Se reutilizan el permiso `sales.payments.correct`, el
+editor de corrección, la aceptación financiera y `SqlAccountingPostingProcessor`.
+Las plantillas iniciales conceden este permiso sólo a Administrador y
+Administrativo. No se autoriza un writer de saldos/asientos en las pantallas, ni
+otro motor o cola. La factura electrónica conserva su restricción de edición.
+
+El incremento debe conservar la disponibilidad operativa vigente, la evidencia
+original y la captura propia del transportador. Una corrección ya aplicada no
+puede volver a mover cuentas, cartera o caja al confirmar posteriormente el
+cierre/despacho. La aceptación individual debe probar también ese segundo paso;
+no basta con reutilizar el aspecto visual del formulario.
+
+Presupuesto de este incremento: la consulta del comprobante se acota a una sola
+factura y sus medios; la aceptación mantiene un número constante de viajes SQL,
+independiente de los medios seleccionados. La selección del catálogo conserva su
+único propietario y paginación. No se agregan polling, lecturas por partida ni
+confirmaciones implícitas de otros documentos. Los comandos repetidos conservan
+el ID y resultado autoritativo de la primera aceptación.
+
+En caja normal se conserva la disponibilidad vigente: comprobante de venta con
+sesión cerrada y conciliación pendiente. La corrección individual se acepta en
+`AccountingSourceDocuments` con el tipo existente
+`WorkSessionClosureReconciliation`; no crea una conciliación completa ni otra
+tabla de trabajos. Tres vínculos anulables de esa fuente identifican factura,
+recaudo original y cierre. Su clave única conserva una aceptación por recaudo;
+repetir el mismo ID y contenido devuelve el resultado, y reutilizarlo con otro
+contenido se rechaza. La cuenta destino se resuelve en el procesador canónico.
+
+El cierre posterior incorpora los medios ya aplicados y descuenta el cambio que
+ya movió cuentas. Si el conteo ciego ya había reconocido una diferencia entre
+medios, se conserva esa evidencia y se usa sólo su parte aún no atribuida. No se
+reescribe el conteo, el pago original, el documento fiscal ni un asiento previo.
+La cartera se ajusta con la disponibilidad canónica y el índice existente de
+reservas; no puede consumirse a la vez desde un abono y desde esta corrección.
+
+En despacho se conserva el momento de aplicación aprobado: el transportador
+captura el recaudo y el administrativo guarda su revisión; la aceptación
+financiera ocurre al confirmar la liquidación. Facturas abre el mismo editor
+para los recaudos del comprobante seleccionado y usa `CorrectPaymentAsync`,
+sin confirmar otros documentos ni la liquidación. La lectura de ese editor
+consulta solamente los pagos del documento, sin descargar la ejecución completa,
+sus productos, gastos ni evidencias. La interfaz indica expresamente cuándo
+la corrección está guardada en revisión y cuándo está aplicada.
+
+Reporting conserva su writer de proyecciones: al completar la corrección cambia
+el desglose de medios del documento existente y sus consolidados, sin insertar
+otra venta. La proyección inicial y la corrección pueden llegar en cualquier
+orden; ambas leen los mismos hechos financieros definitivos. El editor conserva
+los decimales del importe y muestra la forma e importe corregidos al consultar
+el resultado, incluso cuando el saldo disponible de cartera ya sea cero.
+
+Despliegue y rollback: los vínculos nuevos son anulables y las fuentes anteriores
+conservan su contenido e interpretación. Se aplica primero el esquema y luego
+las aplicaciones; repetir la publicación no reacepta fuentes ni genera efectos.
+Para volver a una versión anterior a esta capacidad deben finalizar tanto los
+trabajos nuevos como la conciliación de todos los cierres con correcciones
+individuales. Si queda alguno abierto, se debe corregir hacia adelante: una
+versión antigua no sabe descontar esos movimientos al conciliar. No se borran
+fuentes, partidas ni vínculos para facilitar un rollback.
+
 La corrección posterior conserva el documento comercial, `SalesPayments`, el XML,
 el CUFE y los artefactos fiscales originales. No vuelve a emitir ni cobra la venta.
 La captura se denomina **Corregir medio de recaudo** y exige la forma concreta del

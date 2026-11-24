@@ -235,6 +235,12 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
         using var reviewer=fixture.CreateAdminClient(DispatchPermissionCodes.Settle,DispatchPermissionCodes.Read,DispatchPermissionCodes.ReadAll,Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods);
         var filtered=(await reviewer.GetFromJsonAsync<DispatchPage>($"/api/commerce/v1/dispatches?page=1&pageSize=25&status=PendingSettlement&search={dispatch}"))!;
         Assert.Equal(dispatch,Assert.Single(filtered.Items).DispatchId);
+        var correctionContextUrl=$"/api/commerce/v1/dispatches/{dispatch}/documents/{sale}/payment-corrections";
+        using(var forbiddenContext=await driver.GetAsync(correctionContextUrl)) Assert.Equal(HttpStatusCode.Forbidden,forbiddenContext.StatusCode);
+        var correctionContext=(await reviewer.GetFromJsonAsync<DispatchDeliveryPaymentDetail[]>(correctionContextUrl))!;
+        Assert.Equal(payment.PaymentId,Assert.Single(correctionContext).PaymentId);
+        using(var foreignContext=await reviewer.GetAsync($"/api/commerce/v1/dispatches/{dispatch}/documents/{Guid.NewGuid()}/payment-corrections"))
+            Assert.Equal(HttpStatusCode.Conflict,foreignContext.StatusCode);
         var correction=new CorrectDispatchPaymentRequest(form.PaymentMethodId,form.Version,method,
             method=="Transfer"?"TRF-CORRECTED":null,franchise,card?"APPROVAL-CORRECTED":null,"Corrección verificada del soporte",null);
         using var corrected=await reviewer.PutAsJsonAsync($"/api/commerce/v1/dispatches/{dispatch}/payments/{payment.PaymentId}/correction",correction);

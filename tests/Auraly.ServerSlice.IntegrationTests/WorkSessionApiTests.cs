@@ -38,11 +38,22 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         using(var dispatch=await client.PutAsJsonAsync($"/api/commerce/v1/dispatches/{Guid.NewGuid():D}/payments/{Guid.NewGuid():D}/correction",
             new Auraly.Contracts.Dispatching.CorrectDispatchPaymentRequest(Guid.NewGuid(),1,"Cash",null,null,null,"Corrección",null)))
             Assert.Equal(HttpStatusCode.Forbidden,dispatch.StatusCode);
+        var sale=Guid.NewGuid();
+        using(var invoice=await client.GetAsync($"/api/commerce/v1/work-sessions/sales/{sale}/payment-correction"))
+            Assert.Equal(HttpStatusCode.Forbidden,invoice.StatusCode);
+        using(var invoice=await client.PostAsJsonAsync($"/api/commerce/v1/work-sessions/sales/{sale}/payment-correction",
+            new CorrectSalePaymentRequest(Guid.NewGuid(),null!)))
+            Assert.Equal(HttpStatusCode.Forbidden,invoice.StatusCode);
         using var scope=fixture.CreateScope();
         var service=scope.ServiceProvider.GetRequiredService<WorkSessionService>();
         using var counter=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
         await Assert.ThrowsAsync<WorkSessionForbiddenException>(()=>service.ValidatePaymentCorrectionsAsync(
             new(fixture.UserId,fixture.TenantId,new HashSet<string>{WorkSessionPermissionCodes.ReconcileClosures}),closure,corrections));
+        var denied=new WorkSessionIdentity(fixture.UserId,fixture.TenantId,new HashSet<string>{WorkSessionPermissionCodes.ReconcileClosures});
+        await Assert.ThrowsAsync<WorkSessionForbiddenException>(()=>service.GetSalePaymentCorrectionAsync(denied,sale));
+        await Assert.ThrowsAsync<WorkSessionForbiddenException>(()=>service.CorrectSalePaymentAsync(denied,sale,new(Guid.NewGuid(),null!)));
+        var allowed=denied with { Permissions=new HashSet<string>{Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods} };
+        await Assert.ThrowsAsync<WorkSessionValidationException>(()=>service.CorrectSalePaymentAsync(allowed,sale,new(Guid.NewGuid(),null!)));
         Assert.Equal(0,counter.Count);
     }
 

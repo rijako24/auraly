@@ -57,6 +57,8 @@
     <Build Include="Functions\OpenSessionForUser.sql" />
     <Build Include="Functions\ManualTreasuryMovements.sql" />
     <Build Include="Views\PortfolioPaymentOrigins.sql" />
+    <Build Include="Views\SalePaymentCorrections.sql" />
+    <Build Include="Views\ClosurePaymentCorrectionChanges.sql" />
     <Build Include="Tables\PaymentMethods.sql" />
     <Build Include="Tables\FinancialConcepts.sql" />
     <Build Include="Views\FinancialConceptDetails.sql" />

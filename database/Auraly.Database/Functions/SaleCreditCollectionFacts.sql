@@ -41,6 +41,13 @@ AS RETURN
       WITH(SourceLineId uniqueidentifier,Name nvarchar(160)) applied WHERE applied.SourceLineId=changed.CorrectionId) binding
     WHERE changed.MovementType=N'CreditSale'
     UNION ALL
+    SELECT sale.DocumentId,correction.CorrectionId,correction.TenderMethodCode,correction.Amount,
+      COALESCE(correction.ApprovalNumber,correction.Reference),correction.PaymentMethodName,sale.WorkSessionId
+    FROM SelectedSales sale
+    JOIN accounting.SalePaymentCorrections correction ON correction.DocumentId=sale.DocumentId
+      AND correction.TenantId=@TenantId AND correction.BusinessId=@BusinessId AND correction.MovementType=N'CreditSale'
+      AND correction.PostingStatus IN(N'Posted',N'CommercialEffectsApplied')
+    UNION ALL
     SELECT sale.DocumentId,payment.PaymentId,payment.MethodCode,payment.Amount,payment.Reference,payment.FormName,session.WorkSessionId
     FROM SelectedDispatches selected
     JOIN dbo.WorkSessions session ON session.DispatchId=selected.DispatchId AND session.Kind=N'Dispatch'

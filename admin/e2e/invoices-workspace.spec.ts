@@ -41,9 +41,9 @@ for(const viewport of [{width:1366,height:768},{width:390,height:844}]) for(cons
   await expect(panel.getByText("CVI00-00000001",{exact:true})).toBeVisible();
   await expect(panel.getByText("Banco transferencia con nombre largo para reconocer la cuenta")).toBeVisible();
   await expect(panel.getByText("Vendedor: Vendedora seleccionada")).toBeVisible();
-  if(canCorrect)await expect(panel.getByRole("link",{name:"Corregir pago de CVI00-00000001"})).toHaveAttribute("href","/dashboard/cash-differences?closure=closure-1");
-  else await expect(panel.getByRole("link",{name:"Corregir pago de CVI00-00000001"})).toHaveCount(0);
-  await expect(panel.getByRole("link",{name:"Corregir pago de VTA00-00000002"})).toHaveCount(0);
+  if(canCorrect)await expect(panel.getByRole("button",{name:"Corregir pago de CVI00-00000001"})).toBeEnabled();
+  else await expect(panel.getByRole("button",{name:"Corregir pago de CVI00-00000001"})).toHaveCount(0);
+  await expect(panel.getByRole("button",{name:"Corregir pago de VTA00-00000002"})).toHaveCount(0);
   await expect(panel.getByRole("button",{name:"Ver detalle de CVI00-00000001"})).toBeEnabled();
   await expect(panel.getByRole("button",{name:"Imprimir CVI00-00000001"})).toBeEnabled();
   await expect(panel).toContainText(/4:30|16:30/);

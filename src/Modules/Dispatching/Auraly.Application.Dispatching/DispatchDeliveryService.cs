@@ -16,6 +16,7 @@ public interface IDispatchDeliveryStore
     Task<DispatchExecutionDetail> SettleAsync(DispatchActorIdentity actor, Guid dispatchId, SettleDispatchRequest request, CancellationToken ct);
     Task<DispatchPaymentReviewResult> VerifyPaymentAsync(DispatchActorIdentity actor, Guid dispatchId, Guid paymentId, VerifyDispatchPaymentRequest request, CancellationToken ct);
     Task<DispatchPaymentReviewResult> CorrectPaymentAsync(DispatchActorIdentity actor, Guid dispatchId, Guid paymentId, CorrectDispatchPaymentRequest request, CancellationToken ct);
+    Task<IReadOnlyList<DispatchDeliveryPaymentDetail>> GetPaymentCorrectionsAsync(DispatchActorIdentity actor, Guid dispatchId, Guid documentId, CancellationToken ct);
 }
 
 public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
@@ -159,6 +160,15 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
         return store.CorrectPaymentAsync(actor, dispatchId, paymentId, request with {
             Reference = Text(request.Reference, 120), CardFranchiseCode = Text(request.CardFranchiseCode, 40),
             ApprovalNumber = Text(request.ApprovalNumber, 80), Reason = reason }, ct);
+    }
+
+    public Task<IReadOnlyList<DispatchDeliveryPaymentDetail>> GetPaymentCorrectionsAsync(
+        DispatchActorIdentity actor, Guid dispatchId, Guid documentId, CancellationToken ct)
+    {
+        Require(actor, DispatchPermissionCodes.Settle);
+        Require(actor, CommercePermissionCodes.SalesCorrectPaymentMethods);
+        Required(dispatchId, "DispatchId"); Required(documentId, "DocumentId");
+        return store.GetPaymentCorrectionsAsync(actor, dispatchId, documentId, ct);
     }
 
     private static void ValidateNativeTender(PaymentTender tender)

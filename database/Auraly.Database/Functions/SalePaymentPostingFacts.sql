@@ -8,17 +8,25 @@ AS RETURN
       payment.Amount+payment.RoundingAdjustment Amount,job.AccountingEntryRequired,job.Status PostingStatus,
       COALESCE(payment.AccountId,bank.AccountId,mapping.AccountId) AccountId,
       COALESCE(reversed.Amount,0) ReversedUncollectedAmount,
-      CASE WHEN correction.ProofCount=0 THEN payment.MethodCode ELSE correction.MethodCode END EffectiveMethodCode,
-      CASE WHEN correction.ProofCount=0 THEN payment.Amount+payment.RoundingAdjustment ELSE correction.Amount END EffectiveAmount,
-      CASE WHEN correction.ProofCount=0 THEN payment.CardFranchiseCode ELSE correction.CardFranchiseCode END EffectiveCardFranchiseCode,
-      CASE WHEN correction.ProofCount=0 THEN payment.ApprovalNumber ELSE correction.ApprovalNumber END EffectiveApprovalNumber,
-      CASE WHEN correction.ProofCount=0 THEN COALESCE(payment.AccountId,bank.AccountId,mapping.AccountId)
+      CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.TenderMethodCode
+        WHEN correction.ProofCount=0 THEN payment.MethodCode ELSE correction.MethodCode END EffectiveMethodCode,
+      CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.Amount
+        WHEN correction.ProofCount=0 THEN payment.Amount+payment.RoundingAdjustment ELSE correction.Amount END EffectiveAmount,
+      CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.CardFranchiseCode
+        WHEN correction.ProofCount=0 THEN payment.CardFranchiseCode ELSE correction.CardFranchiseCode END EffectiveCardFranchiseCode,
+      CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.ApprovalNumber
+        WHEN correction.ProofCount=0 THEN payment.ApprovalNumber ELSE correction.ApprovalNumber END EffectiveApprovalNumber,
+      CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.AccountId
+        WHEN correction.ProofCount=0 THEN COALESCE(payment.AccountId,bank.AccountId,mapping.AccountId)
         ELSE TRY_CONVERT(uniqueidentifier,correction.AccountId) END EffectiveAccountId,
-      CAST(CASE WHEN correction.ProofCount=0 OR (correction.ProofCount=1
+      CAST(CASE WHEN direct.SourceDocumentId IS NOT NULL THEN
+        CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') AND direct.AccountId IS NOT NULL THEN 1 ELSE 0 END
+        WHEN correction.ProofCount=0 OR (correction.ProofCount=1
         AND (correction.AccountId IS NOT NULL OR (correction.ConfiguredPayment=0 AND correction.AccountingEntryRequired=0))
         AND correction.PostingStatus IN(N'Posted',N'CommercialEffectsApplied'))
         THEN 1 ELSE 0 END AS bit) EffectivePaymentReady,
-      CASE WHEN correction.ProofCount=0 THEN payment.PaymentMethodName ELSE correction.PaymentMethodName END EffectiveFormName,
+      CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.PaymentMethodName
+        WHEN correction.ProofCount=0 THEN payment.PaymentMethodName ELSE correction.PaymentMethodName END EffectiveFormName,
       CONVERT(bit,CASE WHEN sale.CollectionMode=N'Session' OR EXISTS(
         SELECT 1 FROM dbo.DispatchSourceDocuments assigned
         JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=assigned.DispatchId AND dispatch.BusinessId=@BusinessId AND dispatch.TenantId=@TenantId
@@ -69,5 +77,7 @@ AS RETURN
       WHERE sale.CollectionMode=N'Session' AND closure.WorkSessionId=sale.WorkSessionId
         AND corrected.MovementType=N'Sale' AND corrected.SourceId=sale.DocumentId AND corrected.SourceNumber=payment.PaymentNumber
     ) correction
+    LEFT JOIN accounting.SalePaymentCorrections direct ON direct.TenantId=@TenantId AND direct.BusinessId=@BusinessId
+      AND direct.DocumentId=sale.DocumentId AND direct.VerificationKey=CONCAT(N'Sale:',CONVERT(nvarchar(36),sale.DocumentId),N':',payment.PaymentNumber)
     WHERE sale.DocumentId=@DocumentId AND sale.BusinessId=@BusinessId
 );

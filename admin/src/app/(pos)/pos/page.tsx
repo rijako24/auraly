@@ -4302,7 +4302,7 @@ export default function PosPage() {
       )}
 
       {invoiceSearchOpen && client && (
-        <PosInvoiceSearchDialog scopeKey={workstation.businessId} onSearchRoleOptions={searchHistoryRoleOptions} timeZone={orderTimeZone} canCorrect={activePosPermissions.includes("sales.payments.correct")&&activePosPermissions.includes("work-sessions.closures.reconcile")&&activePosPermissions.includes("work-sessions.differences.read")} canCorrectDispatch={activePosPermissions.includes("sales.payments.correct")&&activePosPermissions.includes("dispatches.settle")}
+        <PosInvoiceSearchDialog correctionBusinessId={workstation.businessId} scopeKey={workstation.businessId} onSearchRoleOptions={searchHistoryRoleOptions} timeZone={orderTimeZone} canCorrect={activePosPermissions.includes("sales.payments.correct")} canCorrectDispatch={activePosPermissions.includes("sales.payments.correct")&&activePosPermissions.includes("dispatches.settle")}
           busy={busy}
 
           onSearch={searchIssuedSales}

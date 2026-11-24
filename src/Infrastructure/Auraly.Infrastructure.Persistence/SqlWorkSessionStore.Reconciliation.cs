@@ -56,7 +56,10 @@ public sealed partial class SqlWorkSessionStore
                 WHERE job.SourceDocumentId IN(closure.WorkSessionClosureId,
                   (SELECT reconciliation.ReconciliationId FROM dbo.WorkSessionClosureReconciliations reconciliation
                    WHERE reconciliation.WorkSessionClosureId=closure.WorkSessionClosureId))
-                ORDER BY job.CreatedAt DESC),N'AccountingDisabled'),closure.ExpectedCash
+                ORDER BY job.CreatedAt DESC),N'AccountingDisabled'),closure.ExpectedCash+COALESCE((
+                  SELECT changed.Amount FROM accounting.ClosurePaymentCorrectionChanges changed
+                  WHERE changed.TenantId=business.TenantId AND changed.BusinessId=business.BusinessId
+                    AND changed.WorkSessionClosureId=closure.WorkSessionClosureId AND changed.PaymentMethodCode=N'Cash'),0)
             """ + "\n" + filter + """
             ORDER BY closure.ClosedAt DESC,closure.WorkSessionClosureId DESC
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
@@ -252,7 +255,7 @@ public sealed partial class SqlWorkSessionStore
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
               CorrectedApprovalNumber,CorrectedReference,CounterpartyName,
               CorrectedPaymentMethodId,CorrectedPaymentMethodVersion,CorrectedPaymentMethodName,
-              CollectibleAmount
+              CollectibleAmount,AppliedCorrectionId,CorrectionAccountingStatus
             FROM #PaymentVerifications
             ORDER BY SortOrder,OccurredAt,VerificationKey;
             SELECT JSON_QUERY(reconciliation.SnapshotJson,N'$.manualMovements')
@@ -314,12 +317,21 @@ public sealed partial class SqlWorkSessionStore
         {
             Guid businessId;
             decimal expectedCash;
+            var previouslyApplied = new List<WorkSessionMethodChange>();
             await using (var scope = new SqlCommand("""
                 SELECT session.BusinessId,closure.ExpectedCash
                 FROM dbo.WorkSessionClosures closure WITH(UPDLOCK,HOLDLOCK)
                 INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
                 INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
                 WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;
+                IF EXISTS(SELECT 1 FROM accounting.SalePaymentCorrections
+                  WHERE WorkSessionClosureId=@ClosureId AND TenantId=@TenantId
+                    AND PostingStatus NOT IN(N'Posted',N'CommercialEffectsApplied'))
+                  THROW 51871,N'Espera a que terminen las correcciones aceptadas antes de conciliar el cierre.',1;
+                SELECT PaymentMethodCode,Amount,AllocatedAmount FROM accounting.ClosurePaymentCorrectionChanges
+                WHERE WorkSessionClosureId=@ClosureId AND TenantId=@TenantId AND EXISTS(
+                  SELECT 1 FROM reference.Options optionValue WHERE optionValue.CatalogCode=N'cash-closure-method'
+                    AND optionValue.Code=PaymentMethodCode AND optionValue.IsActive=1);
                 """, connection, transaction))
             {
                 scope.Parameters.AddWithValue("@ClosureId", closureId);
@@ -329,6 +341,15 @@ public sealed partial class SqlWorkSessionStore
                     throw new WorkSessionNotFoundException("El cierre no existe en la empresa autenticada.");
                 businessId = reader.GetGuid(0);
                 expectedCash = reader.GetDecimal(1);
+                await reader.NextResultAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var code = reader.GetString(0);
+                    var amount = reader.GetDecimal(1);
+                    if (code == "Cash") expectedCash += amount;
+                    var applied = amount - reader.GetDecimal(2);
+                    if (applied != 0) previouslyApplied.Add(new(code, applied));
+                }
             }
             var existing = await ReadAcceptedReconciliationAsync(connection, transaction,
                 identity, closureId, businessId, idempotencyKey, requestHash, cancellationToken);
@@ -548,7 +569,7 @@ public sealed partial class SqlWorkSessionStore
             }).ToArray();
             var payload = new WorkSessionClosureReconciliationPayload(reconciliationId,closureId,identity.TenantId,businessId,
                 identity.UserId,reconciledAt,accountingLines,request.Reclassifications,verification.Corrections,
-                cashShortageClaim);
+                cashShortageClaim, PreviouslyAppliedMethodChanges: previouslyApplied.Count == 0 ? null : previouslyApplied);
             var hasFinancialEffects = cashShortageClaim is not null ||
                 verification.Corrections.Any(item => item.PaymentMethodId is not null || item.Amount != item.OriginalAmount ||
                     item.OriginalTenderCategory != item.TenderCategory);
@@ -569,10 +590,11 @@ public sealed partial class SqlWorkSessionStore
             return new(reconciliationId,closureId,businessId,status,reconciledAt,identity.UserId,normalizedLines,
                 request.Reclassifications,request.Note,accountingQueued ? "Pending" : "NotRequired");
         }
-        catch (SqlException exception) when (exception.Number is 2601 or 2627)
+        catch (SqlException exception) when (exception.Number is 2601 or 2627 or 51871)
         {
             await transaction.RollbackAsync(CancellationToken.None);
-            throw new WorkSessionConflictException("El cierre ya fue conciliado o la operación ya fue recibida.");
+            throw new WorkSessionConflictException(exception.Number == 51871 ? exception.Message
+                : "El cierre ya fue conciliado o la operación ya fue recibida.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
@@ -591,7 +613,15 @@ public sealed partial class SqlWorkSessionStore
         if (closureIds.Count == 0)
             return new Dictionary<Guid, IReadOnlyList<WorkSessionPaymentTotal>>();
         await using var command = new SqlCommand("""
-            WITH CorrectionDeltas AS
+            WITH DirectChanges AS
+            (
+              SELECT changed.WorkSessionClosureId,changed.PaymentMethodCode,changed.Amount
+              FROM OPENJSON(@ClosureIds) WITH(ClosureId uniqueidentifier '$') ids
+              JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionClosureId=ids.ClosureId
+              JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+              JOIN accounting.ClosurePaymentCorrectionChanges changed ON changed.WorkSessionClosureId=ids.ClosureId
+                AND changed.TenantId=session.TenantId AND changed.BusinessId=session.BusinessId
+            ), CorrectionDeltas AS
             (
               SELECT reconciliation.WorkSessionClosureId,shift.PaymentMethodCode,
                 SUM(shift.Delta) Delta
@@ -622,9 +652,10 @@ public sealed partial class SqlWorkSessionStore
               GROUP BY reconciliation.WorkSessionClosureId,shift.PaymentMethodCode
             )
             SELECT total.WorkSessionClosureId,total.PaymentMethodCode,
-              total.SalesAmount,total.RefundAmount,total.OtherAmount,total.NetAmount,
-              total.CountedAmount,total.Difference,
-              CASE WHEN reconciliationLine.ReconciliationId IS NULL THEN total.Difference
+              total.SalesAmount+COALESCE(direct.Amount,0),total.RefundAmount,total.OtherAmount,
+              total.NetAmount+COALESCE(direct.Amount,0),
+              total.CountedAmount,total.Difference-COALESCE(direct.Amount,0),
+              CASE WHEN reconciliationLine.ReconciliationId IS NULL THEN total.Difference-COALESCE(direct.Amount,0)
                 ELSE reconciliationLine.Difference+COALESCE(correction.Delta,0)
                   +COALESCE(reclassification.Delta,0) END,
               CAST(CASE WHEN closureOption.OptionId IS NULL THEN 0 ELSE 1 END AS bit),
@@ -643,6 +674,8 @@ public sealed partial class SqlWorkSessionStore
             LEFT JOIN ReclassificationDeltas reclassification
               ON reclassification.WorkSessionClosureId=total.WorkSessionClosureId
                 AND reclassification.PaymentMethodCode=total.PaymentMethodCode
+            LEFT JOIN DirectChanges direct ON direct.WorkSessionClosureId=total.WorkSessionClosureId
+              AND direct.PaymentMethodCode=total.PaymentMethodCode
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
             ORDER BY total.WorkSessionClosureId,COALESCE(closureOption.SortOrder,1000),
@@ -694,7 +727,10 @@ public sealed partial class SqlWorkSessionStore
             FROM dbo.WorkSessionClosures closure
             JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId AND session.Kind=N'Normal'
             WHERE closure.WorkSessionClosureId=@ClosureId;
-            SELECT movement.* INTO #ManualTreasury FROM #ClosureContext context
+            SELECT movement.* INTO #ManualTreasury FROM
+              (SELECT * FROM #ClosureContext WHERE @SelectedVerificationKeys IS NULL OR EXISTS(
+                SELECT 1 FROM #SelectedVerificationSources WHERE VerificationKey NOT LIKE N'Sale:%'
+                  AND VerificationKey NOT LIKE N'CreditSale:%')) context
             CROSS APPLY worksessions.ManualTreasuryMovements(context.TenantId,context.BusinessId,context.WorkSessionId) movement;
             CREATE UNIQUE CLUSTERED INDEX IX_ManualTreasury ON #ManualTreasury(MovementId);
 
@@ -702,8 +738,14 @@ public sealed partial class SqlWorkSessionStore
             -- over OPENJSON can be re-expanded for each enriched row; persist
             -- these transient keys once and join the selected page by identity.
             SELECT raw.[key] SnapshotIndex,raw.value RowJson INTO #ClosureCashRows
-            FROM #ClosureContext context CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements') raw
-            WHERE NOT EXISTS(SELECT 1 FROM #ManualTreasury manual
+            FROM (SELECT * FROM #ClosureContext WHERE @SelectedVerificationKeys IS NULL OR EXISTS(
+                SELECT 1 FROM #SelectedVerificationSources WHERE VerificationKey NOT LIKE N'Sale:%'
+                  AND VerificationKey NOT LIKE N'CreditSale:%')) context
+            CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements') raw
+            WHERE (@SelectedVerificationKeys IS NULL OR EXISTS(SELECT 1 FROM #SelectedVerificationSources selected
+                WHERE selected.SourceId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.workSessionMovementId'))
+                  OR selected.SourceId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.documentId'))))
+              AND NOT EXISTS(SELECT 1 FROM #ManualTreasury manual
               WHERE manual.MovementId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.workSessionMovementId')));
             SELECT detail.DocumentId,detail.ReasonName,detail.Notes,detail.Direction,detail.DocumentNumber,
               detail.Amount,detail.Reference,detail.OccurredAt,detail.WorkSessionMovementId,detail.MovementType,
@@ -722,7 +764,16 @@ public sealed partial class SqlWorkSessionStore
 
             """;
 
-    private const string PaymentVerificationFactsSql = PaymentVerificationPreparationSql +
+    private const string PaymentVerificationFactsSql = "DECLARE @SelectedVerificationKeys nvarchar(max)=NULL;\n" + PaymentVerificationFactsBodySql;
+
+    private const string PaymentVerificationFactsBodySql = """
+            CREATE TABLE #SelectedVerificationSources(VerificationKey nvarchar(200) COLLATE DATABASE_DEFAULT PRIMARY KEY,
+              SourceId uniqueidentifier);
+            IF @SelectedVerificationKeys IS NOT NULL
+              INSERT #SelectedVerificationSources SELECT value,TRY_CONVERT(uniqueidentifier,
+                SUBSTRING(value,CHARINDEX(N':',value)+1,36)) FROM OPENJSON(@SelectedVerificationKeys);
+            CREATE INDEX IX_SelectedVerificationSources_Source ON #SelectedVerificationSources(SourceId);
+            """ + PaymentVerificationPreparationSql +
         PaymentVerificationSourceSql + """
             -- OPENJSON array keys use BIN2. Normalize the generated public key
             -- before materializing it so it joins the saved decisions in this DB.
@@ -859,7 +910,9 @@ public sealed partial class SqlWorkSessionStore
                 FROM VerificationMovements movement
                 LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
                   AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
-                WHERE closureOption.OptionId IS NOT NULL OR movement.PaymentMethodCode=N'Credit'
+                WHERE (closureOption.OptionId IS NOT NULL OR movement.PaymentMethodCode=N'Credit')
+                  AND (@SelectedVerificationKeys IS NULL OR EXISTS(SELECT 1 FROM #SelectedVerificationSources selected
+                    WHERE selected.SourceId=movement.SourceId AND selected.VerificationKey=movement.VerificationKey COLLATE DATABASE_DEFAULT))
             )
             """;
 
@@ -883,10 +936,30 @@ public sealed partial class SqlWorkSessionStore
                    JSON_VALUE(value.value,N'$.reference') Reference,
                    TRY_CONVERT(uniqueidentifier,JSON_VALUE(value.value,N'$.paymentMethodId')) PaymentMethodId,
                    TRY_CONVERT(int,JSON_VALUE(value.value,N'$.paymentMethodVersion')) PaymentMethodVersion,
-                   JSON_VALUE(value.value,N'$.paymentMethodName') PaymentMethodName
+                   JSON_VALUE(value.value,N'$.paymentMethodName') PaymentMethodName,
+                   CONVERT(uniqueidentifier,NULL) AppliedCorrectionId,CONVERT(nvarchar(32),NULL) CorrectionAccountingStatus
                 INTO #CorrectionStatuses
                 FROM OPENJSON(@ReconciliationSnapshot,N'$.paymentCorrections') value;
             CREATE INDEX IX_CorrectionStatuses ON #CorrectionStatuses(VerificationKey);
+            INSERT #CorrectionStatuses
+            SELECT direct.VerificationKey,
+              CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.PaymentMethodCode ELSE movement.PaymentMethodCode END,
+              CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.Amount ELSE movement.Amount END,
+              direct.Reason,
+              CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN direct.TenderMethodCode ELSE movement.TenderMethodCode END,
+              direct.CardFranchiseCode,direct.ApprovalNumber,direct.Reference,direct.PaymentMethodId,
+              direct.PaymentMethodVersion,direct.PaymentMethodName,direct.SourceDocumentId,direct.PostingStatus
+            FROM #ClosureContext context
+            JOIN accounting.SalePaymentCorrections direct ON direct.WorkSessionClosureId=@ClosureId
+              AND direct.TenantId=context.TenantId AND direct.BusinessId=context.BusinessId
+            JOIN #EligibleMovements movement ON movement.VerificationKey=direct.VerificationKey
+            WHERE NOT EXISTS(SELECT 1 FROM #CorrectionStatuses saved WHERE saved.VerificationKey=direct.VerificationKey);
+            UPDATE movement SET PaymentMethodCode=correction.PaymentMethodCode,Amount=correction.Amount,
+              TenderMethodCode=correction.TenderMethodCode,Reference=correction.Reference,
+              CardFranchiseCode=correction.CardFranchiseCode,ApprovalNumber=correction.ApprovalNumber,
+              MovementType=CASE WHEN movement.MovementType=N'CreditSale' THEN N'Sale' ELSE movement.MovementType END
+            FROM #EligibleMovements movement JOIN #CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
+            WHERE correction.AppliedCorrectionId IS NOT NULL AND correction.CorrectionAccountingStatus IN(N'Posted',N'CommercialEffectsApplied');
             """;
 
     // Resolve each kind from the bounded page before combining its labels with
@@ -966,7 +1039,7 @@ public sealed partial class SqlWorkSessionStore
               correction.PaymentMethodId CorrectedPaymentMethodId,
               correction.PaymentMethodVersion CorrectedPaymentMethodVersion,
               correction.PaymentMethodName CorrectedPaymentMethodName,
-              counterparty.CollectibleAmount
+              counterparty.CollectibleAmount,correction.AppliedCorrectionId,correction.CorrectionAccountingStatus
             INTO #PaymentVerifications
             FROM
             """;
@@ -1031,7 +1104,7 @@ public sealed partial class SqlWorkSessionStore
             Guid closureId, Guid businessId,
             IReadOnlyList<WorkSessionPaymentVerificationDecision> decisions,
             IReadOnlyList<WorkSessionPaymentCorrection> corrections,
-            bool preview, CancellationToken cancellationToken)
+            bool preview, CancellationToken cancellationToken, bool lockPaymentTypes = false)
     {
         var rowsSql = corrections.Count == 0
             ? """
@@ -1041,7 +1114,9 @@ public sealed partial class SqlWorkSessionStore
                 FROM #EligibleMovements movement OPTION (RECOMPILE);
                 """ + "\n"
             : PaymentVerificationRowsSql(preview);
-        var validationSql = PaymentVerificationFactsSql + rowsSql + """
+        var validationSql = (preview
+            ? "DECLARE @SelectedVerificationKeys nvarchar(max)=@TargetKeys;\n" + PaymentVerificationFactsBodySql
+            : PaymentVerificationFactsSql) + rowsSql + """
             CREATE TABLE #Decisions(VerificationKey nvarchar(200) COLLATE Latin1_General_100_CI_AS,
               Status nvarchar(12));
             INSERT #Decisions(VerificationKey,Status)
@@ -1483,7 +1558,7 @@ public sealed partial class SqlWorkSessionStore
             throw new WorkSessionValidationException("No se encontraron todos los recaudos seleccionados para corregir.");
         await reader.CloseAsync();
         await ValidateConfiguredClosureCorrectionsAsync(connection, transaction, closureId, businessId,
-            applied, !preview, timeProvider.GetUtcNow(), cancellationToken);
+            applied, !preview || lockPaymentTypes, timeProvider.GetUtcNow(), cancellationToken);
         foreach (var correction in applied)
         {
             if (!correction.OriginalPaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase))
@@ -1556,7 +1631,9 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(25) ? null : reader.GetGuid(25),
                 reader.IsDBNull(26) ? null : reader.GetInt32(26),
                 reader.IsDBNull(27) ? null : reader.GetString(27),
-                reader.IsDBNull(28) ? null : reader.GetDecimal(28));
+                reader.IsDBNull(28) ? null : reader.GetDecimal(28),
+                reader.IsDBNull(29) ? null : reader.GetGuid(29),
+                reader.IsDBNull(30) ? null : reader.GetString(30));
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
         string rangesJson, string? status)

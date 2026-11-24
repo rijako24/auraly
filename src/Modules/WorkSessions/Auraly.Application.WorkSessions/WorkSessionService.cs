@@ -78,6 +78,10 @@ public interface IWorkSessionStore
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken);
     Task ValidatePaymentCorrectionsAsync(WorkSessionIdentity identity, Guid closureId,
         IReadOnlyList<WorkSessionPaymentCorrection> corrections, CancellationToken cancellationToken);
+    Task<SalePaymentCorrectionContext> GetSalePaymentCorrectionAsync(WorkSessionIdentity identity,
+        Guid documentId, CancellationToken cancellationToken);
+    Task<SalePaymentCorrectionAcceptance> CorrectSalePaymentAsync(WorkSessionIdentity identity,
+        Guid documentId, CorrectSalePaymentRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
         WorkSessionIdentity identity,
         Guid businessId,
@@ -450,6 +454,30 @@ public sealed class WorkSessionService(
             throw new WorkSessionValidationException("Selecciona un comprobante del cierre para corregir.");
         ValidatePaymentCorrections(corrections);
         return store.ValidatePaymentCorrectionsAsync(identity, closureId, corrections, cancellationToken);
+    }
+
+    public Task<SalePaymentCorrectionContext> GetSalePaymentCorrectionAsync(WorkSessionIdentity identity,
+        Guid documentId, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, CommercePermissionCodes.SalesCorrectPaymentMethods);
+        if (documentId == Guid.Empty)
+            throw new WorkSessionValidationException("Selecciona el comprobante y su sede para corregir el recaudo.");
+        return store.GetSalePaymentCorrectionAsync(identity, documentId, cancellationToken);
+    }
+
+    public async Task<SalePaymentCorrectionAcceptance> CorrectSalePaymentAsync(WorkSessionIdentity identity,
+        Guid documentId, CorrectSalePaymentRequest request, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, CommercePermissionCodes.SalesCorrectPaymentMethods);
+        if (documentId == Guid.Empty || request.CorrectionId == Guid.Empty || request.CorrectionId == documentId
+            || request.Correction is null || request.Correction.PaymentMethodId is null)
+            throw new WorkSessionValidationException("Selecciona el comprobante, su sede y una forma de pago configurada.");
+        ValidatePaymentCorrections([request.Correction]);
+        var result = await store.CorrectSalePaymentAsync(identity, documentId, request, cancellationToken);
+        if (!result.IdempotentReplay && result.AccountingStatus == "Pending")
+            await accountingProcessing.RequestPostingAsync(result.BusinessId, result.CorrectionId,
+                WorkSessionAccountingDocumentTypes.ClosureReconciliation, cancellationToken);
+        return result;
     }
 
     private static void ValidatePaymentCorrections(IReadOnlyList<WorkSessionPaymentCorrection> corrections)
