@@ -366,6 +366,7 @@ function Publish-Database {
         # el plan. El predeployment del DACPAC queda mecánico y no vuelve a enlazar
         # columnas legacy mientras SQLPackage aplica un plan ya calculado.
         $reviewedMigrations = @(
+            '20261123_PreflightRetirePendingCollection.sql',
             '20261116_PreflightRestaurantNativePayments.sql',
             '20260730_CollapseOrganizationScope.sql',
             '20260802_RemoveCashRegisterContext.sql',

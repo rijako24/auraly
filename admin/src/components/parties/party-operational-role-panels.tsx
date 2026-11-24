@@ -31,7 +31,7 @@ import type { WorkingHour } from "@/types/entities";
 
 const defaultHours: WorkingHour[] = [{ dayOfWeek: 1, openTime: "08:00", closeTime: "17:00", isActive: true }];
 
-type RegisterSave = (key: string, handler: () => Promise<void>) => () => void;
+type RegisterSave = (key: string, handler: () => Promise<void>, validate?: () => void) => () => void;
 
 const creditMoney = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
@@ -255,7 +255,7 @@ export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerS
   </div>;
 }
 
-export type PartyUserDraft = { selectedIds: string[]; active: boolean; approvalValidity: "once" | "8" | "168" | "always"; revokeApprovalCredential: boolean };
+export type PartyUserDraft = { username?: string; selectedIds: string[]; active: boolean; approvalValidity: "once" | "8" | "168" | "always"; revokeApprovalCredential: boolean };
 
 export function PartyUserRolePanel({ user, editing, registerSave, initialDraft, onDraftChange }: { user: UserRoleDetail; editing: boolean; registerSave: RegisterSave; initialDraft?: PartyUserDraft; onDraftChange?: (draft: PartyUserDraft) => void }) {
   const userId = user.userId;
@@ -264,6 +264,8 @@ export function PartyUserRolePanel({ user, editing, registerSave, initialDraft, 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [roleToAdd, setRoleToAdd] = useState("");
   const [active, setActive] = useState(true);
+  const [username, setUsername] = useState(initialDraft?.username ?? user.username);
+  const [usernameError, setUsernameError] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [roleError, setRoleError] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -277,6 +279,7 @@ export function PartyUserRolePanel({ user, editing, registerSave, initialDraft, 
     enabled: canManageApprovalCredential,
     retry: false,
   });
+  const refreshApprovalCredential = approvalCredential.refetch;
   const [approvalSecret, setApprovalSecret] = useState("");
   const [approvalConfirmation, setApprovalConfirmation] = useState("");
   const [approvalValidity, setApprovalValidity] = useState<"once" | "8" | "168" | "always">("always");
@@ -288,37 +291,49 @@ export function PartyUserRolePanel({ user, editing, registerSave, initialDraft, 
 
   useEffect(() => {
     setActive(initialDraft?.active ?? user.isActive);
+    setUsername(initialDraft?.username ?? user.username);
     setApprovalValidity(initialDraft?.approvalValidity ?? "always");
     setRevokeApprovalCredential(initialDraft?.revokeApprovalCredential ?? false);
     setNewPassword("");
     setApprovalSecret("");
     setApprovalConfirmation("");
-  }, [initialDraft, user.isActive]);
+  }, [initialDraft, user.isActive, user.username]);
   useEffect(() => { setSelectedIds(new Set(initialDraft?.selectedIds ?? scopedAssignments.map((item) => item.roleId))); }, [initialDraft, scopedAssignments]);
   useEffect(() => {
-    onDraftChange?.({ selectedIds: [...selectedIds], active, approvalValidity, revokeApprovalCredential });
-  }, [active, approvalValidity, onDraftChange, revokeApprovalCredential, selectedIds]);
+    onDraftChange?.({ username, selectedIds: [...selectedIds], active, approvalValidity, revokeApprovalCredential });
+  }, [active, approvalValidity, onDraftChange, revokeApprovalCredential, selectedIds, username]);
 
-  const save = async () => {
-    if (!businessId) return;
+  const validate = useCallback(() => {
     const nextRoleError = selectedIds.size === 0 ? "Este campo es requerido" : "";
     const nextPasswordError = newPassword && newPassword.length < 10 ? "Debe tener al menos 10 caracteres" : "";
-    setRoleError(nextRoleError); setPasswordError(nextPasswordError);
-    if (nextRoleError || nextPasswordError) throw new Error(nextRoleError || nextPasswordError);
+    const nextUsernameError = canManageUsers && (!username.trim() || username.trim().length > 100) ? "El nombre de usuario debe tener entre 1 y 100 caracteres." : "";
+    setRoleError(nextRoleError); setPasswordError(nextPasswordError); setUsernameError(nextUsernameError);
+    if (nextRoleError || nextPasswordError || nextUsernameError) throw new Error(nextRoleError || nextPasswordError || nextUsernameError);
+    if (canManageApprovalCredential && !revokeApprovalCredential && approvalSecret &&
+        (approvalSecret.length < 6 || approvalSecret !== approvalConfirmation))
+      throw new Error("La clave de autorización debe tener mínimo 6 caracteres y coincidir.");
+  }, [selectedIds, newPassword, canManageUsers, username, canManageApprovalCredential, revokeApprovalCredential, approvalSecret, approvalConfirmation]);
+  const save = useCallback(async () => {
+    if (!businessId) return;
+    validate();
+    if (canManageUsers && username.trim() !== user.username) {
+      try { await usersApi.update(userId, { username: username.trim() }); }
+      catch (error) { setUsernameError(error instanceof Error ? error.message : "No fue posible cambiar el nombre de usuario."); throw error; }
+    }
     const currentIds = new Set(scopedAssignments.map((item) => item.roleId));
-    await Promise.all([
+    const roleResults = await Promise.allSettled([
       ...[...selectedIds].filter((roleId) => !currentIds.has(roleId)).map((roleId) => usersApi.assignRole(userId, { roleId, businessId })),
       ...scopedAssignments.filter((item) => !selectedIds.has(item.roleId)).map((item) => usersApi.removeRole(userId, item.roleId, item.businessId)),
     ]);
+    const failedRole = roleResults.find(result => result.status === "rejected");
+    if (failedRole?.status === "rejected") throw failedRole.reason;
     if (active !== user.isActive) await (active ? usersApi.activate(userId) : usersApi.deactivate(userId));
     if (canManageUsers && newPassword) await usersApi.resetPassword(userId, newPassword);
     if (canManageApprovalCredential && revokeApprovalCredential) {
       await posApprovalClient.revokeUserCredential(userId);
       setRevokeApprovalCredential(false);
-      await approvalCredential.refetch();
+      await refreshApprovalCredential();
     } else if (canManageApprovalCredential && approvalSecret) {
-      if (approvalSecret.length < 6 || approvalSecret !== approvalConfirmation)
-        throw new Error("La clave de autorización debe tener mínimo 6 caracteres y coincidir.");
       await posApprovalClient.configureUserCredential(
         userId,
         approvalSecret,
@@ -327,17 +342,22 @@ export function PartyUserRolePanel({ user, editing, registerSave, initialDraft, 
       );
       setApprovalSecret("");
       setApprovalConfirmation("");
-      await approvalCredential.refetch();
+      await refreshApprovalCredential();
     }
     setNewPassword("");
-  };
-  useEffect(() => registerSave(`user-${userId}`, save), [registerSave, userId, businessId, user, scopedAssignments, selectedIds, active, newPassword, canManageUsers, canManageApprovalCredential, revokeApprovalCredential, approvalSecret, approvalConfirmation, approvalValidity]);
+  }, [businessId, userId, user, scopedAssignments, selectedIds, active, username, newPassword, canManageUsers, canManageApprovalCredential, revokeApprovalCredential, approvalSecret, approvalValidity, refreshApprovalCredential, validate]);
+  useEffect(() => registerSave(`user-${userId}`, save, validate), [registerSave, userId, save, validate]);
 
   const available = (roles.data?.items ?? []).filter((item) => item.isActive && !selectedIds.has(item.roleId));
   return <div className="space-y-5">
     <PanelHeader icon={KeyRound} title="Acceso al sistema" description="Inicio de sesión, roles y autorizaciones de caja.">
       <div className="flex items-center gap-3"><span className="text-sm text-slate-300">Usuario habilitado</span><Switch checked={active} onCheckedChange={setActive} disabled={!editing}/></div>
     </PanelHeader>
+    <section className="space-y-3 rounded-2xl border p-5">
+      <div><Label htmlFor={`username-${userId}`}>Nombre de usuario</Label><p className="text-sm text-muted-foreground">Identificador para iniciar sesión. Se guarda al pulsar “Guardar tercero”.</p></div>
+      <Input id={`username-${userId}`} value={username} onChange={event => { setUsername(event.target.value); setUsernameError(""); }} readOnly={!editing || !canManageUsers} maxLength={100} autoComplete="off" autoCapitalize="none" spellCheck={false} aria-invalid={Boolean(usernameError)} />
+      {usernameError && <p className="text-sm text-destructive" role="alert">{usernameError}</p>}
+    </section>
     <section className={`space-y-3 rounded-2xl border p-5 ${roleError ? "border-destructive" : ""}`}><div><h3 className="font-semibold">Roles en este negocio</h3><p className="text-sm text-muted-foreground">Definen los menús visibles y las acciones habilitadas en cada vista.</p></div>{editing&&<Select value={roleToAdd} onValueChange={(value) => { setRoleToAdd(""); setRoleError(""); setSelectedIds((current) => new Set(current).add(value)); }}><SelectTrigger aria-invalid={Boolean(roleError)} className={roleError ? "border-destructive" : ""}><SelectValue placeholder={roles.isLoading ? "Cargando roles..." : "Agregar rol"} /></SelectTrigger><SelectContent>{available.map((role) => <SelectItem key={role.roleId} value={role.roleId}>{role.name}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent></Select>}{roleError && <p className="text-sm text-destructive">{roleError}</p>}<div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((roleId) => { const role = roles.data?.items.find((item) => item.roleId === roleId); const assigned = scopedAssignments.find((item) => item.roleId === roleId); return <div key={roleId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{role?.name ?? assigned?.roleName ?? "Rol"}</p><p className="text-xs text-muted-foreground">{role?.description ?? "Permisos asignados"}</p></div>{editing&&<Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(roleId); return next; })}><X className="h-4 w-4" /></Button>}</div>; })}{selectedIds.size === 0 && <EmptyState text="Sin roles asignados en este negocio." />}</div></section>
     {editing&&canManageUsers&&<section className={`space-y-3 rounded-2xl border p-5 ${passwordError ? "border-destructive" : ""}`}><div><Label htmlFor={`reset-${userId}`}>Restablecer contraseña de acceso y modo sin conexión POS</Label><p className="text-sm text-muted-foreground">Por seguridad la contraseña actual nunca se puede consultar. Los puntos indican que ya existe una; escribe una nueva solo para reemplazarla.</p></div><Input id={`reset-${userId}`} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordError(""); }} aria-invalid={Boolean(passwordError)} className={`${passwordError ? "border-destructive" : ""} placeholder:text-foreground placeholder:opacity-100`} placeholder={configuredPasswordMask} />{passwordError && <p className="text-sm text-destructive">{passwordError}</p>}</section>}
     {canManageApprovalCredential&&<section className="space-y-4 rounded-2xl border p-5"><div><h3 className="font-semibold">Clave de autorización de supervisor</h3><p className="text-sm text-muted-foreground">Permite que este usuario autorice una sola acción sensible en la caja, como cerrar una sesión de venta. Es independiente de su contraseña de acceso.</p></div>{approvalCredential.data?.isConfigured&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-emerald-50 p-4 text-sm"><div><strong>Clave configurada</strong><p className="text-muted-foreground">{approvalCredential.data.isOneTime?"Válida para una sola autorización":approvalCredential.data.validUntil?`Vence ${new Date(approvalCredential.data.validUntil).toLocaleString("es-CO")}`:"Sin vencimiento"}</p></div>{editing&&<Button type="button" variant={revokeApprovalCredential?"outline":"destructive"} size="sm" onClick={()=>setRevokeApprovalCredential(value=>!value)}>{revokeApprovalCredential?"Conservar clave":"Revocar al guardar"}</Button>}</div>}{editing&&<div className="grid gap-4 md:grid-cols-3"><div className="space-y-2"><Label>Nueva clave</Label><Input type="password" minLength={6} maxLength={32} value={approvalSecret} onChange={event=>{setApprovalSecret(event.target.value);setRevokeApprovalCredential(false)}} autoComplete="new-password" placeholder="Mínimo 6 caracteres"/></div><div className="space-y-2"><Label>Confirmar clave</Label><Input type="password" minLength={6} maxLength={32} value={approvalConfirmation} onChange={event=>setApprovalConfirmation(event.target.value)} autoComplete="new-password"/></div><div className="space-y-2"><Label>Vigencia</Label><Select value={approvalValidity} onValueChange={value=>setApprovalValidity(value as typeof approvalValidity)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="once">Un solo uso</SelectItem><SelectItem value="8">8 horas</SelectItem><SelectItem value="168">1 semana</SelectItem><SelectItem value="always">Sin vencimiento</SelectItem></SelectContent></Select></div>{approvalConfirmation&&approvalSecret!==approvalConfirmation&&<p className="text-sm text-destructive md:col-span-3">Las claves no coinciden.</p>}<p className="text-xs text-muted-foreground md:col-span-3">La nueva clave o la revocación se aplicará al pulsar “Guardar tercero”.</p></div>}</section>}

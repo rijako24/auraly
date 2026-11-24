@@ -162,6 +162,8 @@ Carrier es la persona u organización responsable del transporte. Driver es la p
 
 Una cuenta de usuario es identidad de autenticación, no rol comercial. Conserva UserId, TenantId, PartyId opcional, usuario/correo de acceso normalizados, proveedor de identidad o hash seguro, estado, bloqueo, expiración y auditoría.
 
+La pestaña Usuario de la ficha del tercero muestra el nombre de acceso. Con `users.update` se puede editar al guardar el tercero mediante el comando de actualización de usuarios existente; Parties no escribe credenciales. El nombre se normaliza y debe ser único dentro del tenant, sin cambiar UserId, PartyId, roles, contraseña ni documentos históricos. La sincronización de seguridad existente lleva el nuevo nombre al POS; una caja desconectada lo recibe al sincronizar. Los clientes anteriores que omiten el nombre en la actualización mantienen el valor actual. No se requiere migración de datos.
+
 PartyId puede ser nulo para cuentas técnicas. Ser cliente, proveedor, empleado o vendedor no concede acceso. Permisos se asignan a UserId. No se migran contraseñas. Correo de acceso y correo fiscal pueden diferir.
 
 ## 5. Composición, no herencia
@@ -193,6 +195,8 @@ Una base compartida no autoriza consultas directas a tablas internas de otro mó
 La web normaliza y busca primero. Si Party existe, muestra roles y sedes y agrega solo el rol necesario. Agregar sede nunca crea otra Party ni concede usuario.
 
 La ficha tiene pestañas de información general, identificaciones, contactos, sedes, fiscal y roles. Cada pestaña consume el contrato de su módulo dueño.
+
+El listado de terceros conserva un único propietario de carga y una sola consulta SQL por página. La búsqueda exige todas las palabras, aunque coincidan en campos distintos (nombre, identificación o contactos activos); no cambia esa regla para ganar velocidad. La consulta calcula elegibilidad por rol y coincidencias por conjunto, cuenta las identidades filtradas y aplica orden y límite antes de cargar sus datos. Sus tablas temporales solo contienen claves/términos de la petición: no son nuevos maestros ni proyecciones persistidas. El enriquecimiento y las respuestas de las mutaciones comparten la misma proyección y las relaciones uno a uno respaldadas por las claves únicas de los roles.
 
 El POS:
 

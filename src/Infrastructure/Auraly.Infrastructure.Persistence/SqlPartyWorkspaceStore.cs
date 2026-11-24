@@ -14,31 +14,32 @@ public sealed partial class SqlPartyWorkspaceStore(
         COALESCE(p.DisplayName,p.LegalName,N'Sin nombre'),p.LegalName,p.FirstName,p.LastName,
         (SELECT TOP(1) Value FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.ContactType=N'Email' AND pc.IsActive=1 ORDER BY pc.IsPrimary DESC,pc.CreatedAt),
         (SELECT TOP(1) Value FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.ContactType=N'Phone' AND pc.IsActive=1 ORDER BY pc.IsPrimary DESC,pc.CreatedAt),
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId) THEN 1 ELSE 0 END,
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId) THEN 1 ELSE 0 END,
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId) THEN 1 ELSE 0 END,
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId) THEN 1 ELSE 0 END,
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId) THEN 1 ELSE 0 END,
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId) THEN 1 ELSE 0 END,
+        CASE WHEN customer.CustomerId IS NOT NULL THEN 1 ELSE 0 END,
+        CASE WHEN supplier.SupplierId IS NOT NULL THEN 1 ELSE 0 END,
+        CASE WHEN seller.SellerId IS NOT NULL THEN 1 ELSE 0 END,
+        CASE WHEN carrier.CarrierId IS NOT NULL THEN 1 ELSE 0 END,
+        CASE WHEN employee.EmployeeId IS NOT NULL THEN 1 ELSE 0 END,
+        CASE WHEN login.UserId IS NOT NULL THEN 1 ELSE 0 END,
         site.Name,site.CityName,
-        CASE WHEN EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId AND c.IsActive=1)
-        OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId AND s.IsActive=1)
-        OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId AND s.IsActive=1)
-        OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId AND c.IsActive=1)
-        OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId AND e.IsActive=1)
-        OR EXISTS(SELECT 1 FROM parties.Waiters w WHERE w.PartyId=p.PartyId AND w.TenantId=@TenantId AND w.IsActive=1)
-        OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.IsActive=1)
+        CASE WHEN customer.IsActive=1 OR supplier.IsActive=1 OR seller.IsActive=1 OR carrier.IsActive=1
+        OR employee.IsActive=1 OR waiter.IsActive=1 OR login.IsActive=1
         THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END,
         p.CompletionStatus,p.RowVersion,
-        (SELECT TOP(1) c.CustomerId FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId),
-        (SELECT TOP(1) s.SupplierId FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId),
-        (SELECT TOP(1) s.SellerId FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId),
-        (SELECT TOP(1) c.CarrierId FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId),
-        (SELECT TOP(1) e.EmployeeId FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId),
-        (SELECT TOP(1) u.UserId FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId),
-        (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId),
-        (SELECT TOP(1) s.DefaultPaymentDueDays FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId),
+        customer.CustomerId,supplier.SupplierId,seller.SellerId,carrier.CarrierId,employee.EmployeeId,login.UserId,
+        supplier.PurchaseEvidencePolicy,supplier.DefaultPaymentDueDays,
         waiter.WaiterId,waiter.Code,waiter.ShortName,waiter.IsActive
+        """;
+
+    // The tenant/party unique keys on each role make these joins one-to-one.
+    // Both the paged grid and mutation responses use this same projection.
+    private const string WorkspaceRoleJoins = """
+        LEFT JOIN dbo.Customers customer ON customer.PartyId=p.PartyId AND customer.TenantId=@TenantId
+        LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=p.PartyId AND supplier.TenantId=@TenantId
+        LEFT JOIN dbo.CommerceSellers seller ON seller.PartyId=p.PartyId AND seller.TenantId=@TenantId
+        LEFT JOIN dbo.Carriers carrier ON carrier.PartyId=p.PartyId AND carrier.TenantId=@TenantId
+        LEFT JOIN dbo.Employees employee ON employee.PartyId=p.PartyId AND employee.TenantId=@TenantId
+        LEFT JOIN dbo.AppUsers login ON login.PartyId=p.PartyId AND login.TenantId=@TenantId
+        LEFT JOIN parties.Waiters waiter ON waiter.PartyId=p.PartyId AND waiter.TenantId=@TenantId
         """;
 
     public async Task<PartyWorkspacePage> PageAsync(
@@ -49,53 +50,50 @@ public sealed partial class SqlPartyWorkspaceStore(
         var offset = (page - 1) * query.PageSize;
         const string scope = """
             FROM dbo.Parties p
+            JOIN #EligibleParties eligible ON eligible.PartyId=p.PartyId
             WHERE p.TenantId=@TenantId
-              AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
-                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
-                   OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
-                   OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
-                   OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId)
-                   OR EXISTS(SELECT 1 FROM parties.Waiters w WHERE w.PartyId=p.PartyId AND w.TenantId=@TenantId)
-                   OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId))
-              AND (@Search IS NULL OR NOT EXISTS(
-                   SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
-                   WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
-                     AND NOT (COALESCE(p.DisplayName,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR COALESCE(p.Identification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR COALESCE(p.NormalizedIdentification,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'
-                              OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc
-                                        WHERE pc.PartyId=p.PartyId AND pc.IsActive=1
-                                          AND COALESCE(pc.Value,N'') LIKE N'%'+LTRIM(RTRIM(term.value))+N'%'))))
-              AND (@Role IS NULL
-                   OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
-                   OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
-                   OR @Role=N'Seller' AND EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
-                   OR @Role=N'Carrier' AND EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
-                   OR @Role=N'Employee' AND EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId)
-                   OR @Role=N'Waiter' AND EXISTS(SELECT 1 FROM parties.Waiters w WHERE w.PartyId=p.PartyId AND w.TenantId=@TenantId)
-                   OR @Role=N'User' AND EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId))
-              AND (@IsActive IS NULL OR @IsActive=CASE WHEN
-                   EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId AND c.IsActive=1)
-                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId AND s.IsActive=1)
-                   OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId AND s.IsActive=1)
-                   OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId AND c.IsActive=1)
-                   OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId AND e.IsActive=1)
-                   OR EXISTS(SELECT 1 FROM parties.Waiters w WHERE w.PartyId=p.PartyId AND w.TenantId=@TenantId AND w.IsActive=1)
-                   OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.IsActive=1)
-                   THEN 1 ELSE 0 END)
+              AND (@Search IS NULL OR EXISTS(SELECT 1 FROM #SearchParties matched WHERE matched.PartyId=p.PartyId))
               AND (@Incomplete IS NULL OR @Incomplete=CASE WHEN p.CompletionStatus=N'Incomplete' THEN 1 ELSE 0 END)
               AND (@PartyId IS NULL OR p.PartyId=@PartyId)
-              AND (@RoleId IS NULL
-                   OR (@Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId AND c.CustomerId=@RoleId))
-                   OR (@Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId AND s.SupplierId=@RoleId))
-                   OR (@Role=N'Seller' AND EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId AND s.SellerId=@RoleId))
-                   OR (@Role=N'Carrier' AND EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId AND c.CarrierId=@RoleId))
-                   OR (@Role=N'Employee' AND EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId AND e.EmployeeId=@RoleId))
-                   OR (@Role=N'Waiter' AND EXISTS(SELECT 1 FROM parties.Waiters w WHERE w.PartyId=p.PartyId AND w.TenantId=@TenantId AND w.WaiterId=@RoleId))
-                   OR (@Role=N'User' AND EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.UserId=@RoleId)))
             """;
         await using var command = connection.CreateCommand();
+        // Resolve narrow eligibility/search keys once, then count and page them.
+        // Only that page receives role, contact and site details, in this same trip.
         command.CommandText = $"""
+            SET NOCOUNT ON;
+            WITH Roles AS (
+            SELECT PartyId,CustomerId RoleId,N'Customer' Code,IsActive FROM dbo.Customers WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId)
+            UNION ALL SELECT PartyId,SupplierId,N'Supplier',IsActive FROM dbo.Suppliers WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId)
+            UNION ALL SELECT PartyId,SellerId,N'Seller',IsActive FROM dbo.CommerceSellers WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId)
+            UNION ALL SELECT PartyId,CarrierId,N'Carrier',IsActive FROM dbo.Carriers WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId)
+            UNION ALL SELECT PartyId,EmployeeId,N'Employee',IsActive FROM dbo.Employees WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId)
+            UNION ALL SELECT PartyId,WaiterId,N'Waiter',IsActive FROM parties.Waiters WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId)
+            UNION ALL SELECT PartyId,UserId,N'User',IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND (@PartyId IS NULL OR PartyId=@PartyId) AND PartyId IS NOT NULL
+            )
+            SELECT PartyId INTO #EligibleParties FROM Roles GROUP BY PartyId
+            HAVING (@Role IS NULL OR MAX(CASE WHEN Code=@Role THEN 1 ELSE 0 END)=1)
+            AND (@RoleId IS NULL OR MAX(CASE WHEN Code=@Role AND RoleId=@RoleId THEN 1 ELSE 0 END)=1)
+            AND (@IsActive IS NULL OR @IsActive=MAX(CONVERT(tinyint,IsActive)));
+
+            CREATE TABLE #SearchParties(PartyId uniqueidentifier PRIMARY KEY);
+            IF @Search IS NOT NULL
+            BEGIN
+            SELECT DISTINCT LTRIM(RTRIM(value)) Value INTO #SearchTerms
+            FROM STRING_SPLIT(@Search,N' ') WHERE NULLIF(LTRIM(RTRIM(value)),N'') IS NOT NULL;
+            DECLARE @TermCount int=(SELECT COUNT(*) FROM #SearchTerms);
+            WITH Matches AS (
+            SELECT p.PartyId,term.Value FROM dbo.Parties p
+            JOIN #EligibleParties eligible ON eligible.PartyId=p.PartyId CROSS JOIN #SearchTerms term
+            WHERE p.TenantId=@TenantId AND (COALESCE(p.DisplayName,N'') LIKE N'%'+term.Value+N'%'
+            OR COALESCE(p.Identification,N'') LIKE N'%'+term.Value+N'%'
+            OR COALESCE(p.NormalizedIdentification,N'') LIKE N'%'+term.Value+N'%')
+            UNION
+            SELECT p.PartyId,term.Value FROM dbo.PartyContacts pc JOIN dbo.Parties p ON p.PartyId=pc.PartyId
+            JOIN #EligibleParties eligible ON eligible.PartyId=p.PartyId
+            CROSS JOIN #SearchTerms term WHERE p.TenantId=@TenantId AND pc.IsActive=1 AND COALESCE(pc.Value,N'') LIKE N'%'+term.Value+N'%'
+            )
+            INSERT #SearchParties SELECT PartyId FROM Matches GROUP BY PartyId HAVING COUNT(*)=@TermCount;
+            END;
             SELECT COUNT_BIG(1) {scope};
             WITH PageParties AS (
                 SELECT p.PartyId,p.DisplayName {scope}
@@ -105,7 +103,7 @@ public sealed partial class SqlPartyWorkspaceStore(
             SELECT {WorkspaceColumns}
             FROM PageParties pageParty
             JOIN dbo.Parties p ON p.PartyId=pageParty.PartyId
-            LEFT JOIN parties.Waiters waiter ON waiter.PartyId=p.PartyId AND waiter.TenantId=@TenantId
+            {WorkspaceRoleJoins}
             OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName
                         FROM dbo.PartySites ps JOIN dbo.Cities ci ON ci.CityId=ps.CityId
                         WHERE ps.PartyId=p.PartyId AND ps.IsActive=1
@@ -447,7 +445,7 @@ public sealed partial class SqlPartyWorkspaceStore(
         command.CommandText=$"""
             SELECT {WorkspaceColumns}
             FROM dbo.Parties p
-            LEFT JOIN parties.Waiters waiter ON waiter.PartyId=p.PartyId AND waiter.TenantId=@TenantId
+            {WorkspaceRoleJoins}
             OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName FROM dbo.PartySites ps
                         JOIN dbo.Cities ci ON ci.CityId=ps.CityId WHERE ps.PartyId=p.PartyId AND ps.IsActive=1
                         ORDER BY ps.IsPrimary DESC,ps.CreatedAt) site

@@ -6,7 +6,7 @@ BEGIN
     SET NOCOUNT ON;
     -- Paid obligations remain visible so retry returns the same accepted payment.
     SELECT source.SourceDocumentId,sale.CustomerId,receivable.ReceivableId,
-           payment.MethodCode,payment.Amount,payment.Reference,payment.BankAccountId,
+           payment.MethodCode,SUM(payment.Amount) Amount,payment.Reference,payment.BankAccountId,
            payment.PaymentMethodId,payment.PaymentMethodVersion,
            payment.CardFranchiseCode,payment.ApprovalNumber,
            payment.OriginalMethod PaymentKeyMethod
@@ -25,5 +25,11 @@ BEGIN
       AND payment.BusinessId=@BusinessId
       AND payment.MethodCode IN (N'Cash', N'Transfer', N'DebitCard', N'CreditCard')
       AND sale.CustomerId IS NOT NULL
-    ORDER BY source.SourceDocumentId,PaymentKeyMethod,payment.PaymentId;
+    -- Review can send several recorded tenders to the same configured form.
+    -- Consolidate identical evidence for the native payment; the delivery keeps
+    -- each original detail and its correction for audit and reporting.
+    GROUP BY source.SourceDocumentId,sale.CustomerId,receivable.ReceivableId,
+      payment.MethodCode,payment.Reference,payment.BankAccountId,payment.PaymentMethodId,
+      payment.PaymentMethodVersion,payment.CardFranchiseCode,payment.ApprovalNumber,payment.OriginalMethod
+    ORDER BY source.SourceDocumentId,PaymentKeyMethod,payment.PaymentMethodId;
 END

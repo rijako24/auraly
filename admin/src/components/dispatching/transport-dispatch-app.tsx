@@ -22,6 +22,7 @@ import { printPosHtmlDocument } from "@/services/pos/pos-browser-print";
 import { useBusinessDates } from "@/hooks/use-business-dates";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { RouteLocationMap } from "@/components/maps/route-location-map";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -119,11 +120,15 @@ function estimateDeliveryReturn(document:DeliveryDocument,quantities:Record<numb
 function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string;document:DeliveryDocument;onClose:()=>void;onSaved:(updated:DispatchExecution)=>void}){
   const hasCredit=document.creditAmount>0;
   const previouslyCollected=document.collectionMode==="Session";
-  const isCredit=document.creditAmount>=document.documentTotal||previouslyCollected&&hasCredit;
-  const recordedPayments=document.payments.filter(payment=>payment.applicationType!=="CreditDocument");
-  const recordedPayment=recordedPayments.length===1?recordedPayments[0]:null;
+  const recordedPayments=document.payments.filter(payment=>payment.applicationType==="InvoicePayment"||payment.applicationType==="CreditAdvance");
+  const [keepCurrent,setKeepCurrent]=useState(document.payments.some(payment=>payment.applicationType==="KeepCurrent"));
+  const multiplePaymentForms=new Set(recordedPayments.map(payment=>JSON.stringify([payment.paymentMethodId,payment.paymentMethod,payment.reference,payment.cardFranchiseCode,payment.approvalNumber]))).size>1;
+  const recordedPayment=multiplePaymentForms?null:recordedPayments[0]??null;
+  const [collectCredit,setCollectCredit]=useState(recordedPayments.some(payment=>payment.applicationType==="CreditAdvance"));
+  const isCredit=!collectCredit&&(document.creditAmount>=document.documentTotal||previouslyCollected&&hasCredit);
+  const canCaptureMoney=!previouslyCollected||hasCredit&&collectCredit;
   const recordedReturns=new globalThis.Map(document.returns.map(line=>[line.originalLineNumber,line]));
-  const initialMethod=recordedPayment?.paymentMethod==="Deposit"?"Transfer":recordedPayment?.paymentMethod??(isCredit?null:"Cash");
+  const initialMethod=keepCurrent?null:recordedPayment?.paymentMethod==="Deposit"?"Transfer":recordedPayment?.paymentMethod??(isCredit?null:"Cash");
   const [status,setStatus]=useState<"Delivered"|"NotDelivered">(document.deliveryStatus==="NotDelivered"?"NotDelivered":"Delivered");
   const [paymentMethod,setPaymentMethod]=useState<"Cash"|"Transfer"|"DebitCard"|"CreditCard"|null>(initialMethod);
   const tenant=useTenantContextStore(state=>state.selectedTenantId);
@@ -131,7 +136,7 @@ function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string
   const [selectedForm,setForm]=useState<PaymentMethod|null|undefined>(undefined);
   const originalForm=useQuery({queryKey:["dispatches","recorded-payment-form",tenant,business,recordedPayment?.paymentMethodId],
     queryFn:()=>paymentMethodsApi.list({page:1,pageSize:1,usage:"Receipts",paymentMethodId:recordedPayment!.paymentMethodId!}),
-    enabled:Boolean(!isCredit&&!previouslyCollected&&recordedPayment?.paymentMethodId&&tenant&&business),staleTime:5*60*1000});
+    enabled:Boolean(!isCredit&&canCaptureMoney&&recordedPayment?.paymentMethodId&&tenant&&business),staleTime:5*60*1000});
   const form=selectedForm===undefined?originalForm.data?.items[0]??null:selectedForm;
   const resolvingOriginal=Boolean(recordedPayment?.paymentMethodId)&&selectedForm===undefined&&originalForm.isPending;
   const [paymentReference,setPaymentReference]=useState(recordedPayment?.reference??"");
@@ -144,13 +149,14 @@ function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string
   const [capture,setCapture]=useState<{card?:CardPaymentDetails;transfer?:TransferPaymentDetails;form?:PaymentMethod|null}|null>(null);
   const captureForm=capture?.form===undefined?form:capture.form;
   const card=paymentMethod==="DebitCard"||paymentMethod==="CreditCard";
-  const paymentTypes=useReferenceOptions("payment-method",!isCredit&&!previouslyCollected);
+  const paymentTypes=useReferenceOptions("payment-method",!isCredit&&canCaptureMoney);
   const franchises=useReferenceOptions("card-franchise",Boolean(capture?.card));
   const selectForm=(selected:PaymentMethod)=>{
     if(selected.paymentMethodId===form?.paymentMethodId)return;
     setForm(selected);setPaymentReference("");setFranchise("");setApproval("");setDepositProof(null);setDepositEvidenceUrl(null);
   };
   const selectType=(code:"Cash"|"Transfer"|"DebitCard"|"CreditCard")=>{
+    setKeepCurrent(false);
     if(code===paymentMethod){if(code==="DebitCard"||code==="CreditCard")setCapture({card:{franchiseCode:franchise,approvalNumber:approval}});else if(code==="Transfer")setCapture({transfer:{reference:paymentReference,notes:""}});return;}
     setPaymentMethod(code);setForm(null);setCapture(code==="Transfer"?{form:null,transfer:{reference:"",notes:""}}:code!=="Cash"?{form:null,card:{franchiseCode:"",approvalNumber:""}}:null);setPaymentReference("");setFranchise("");setApproval("");setDepositProof(null);setDepositEvidenceUrl(null);
   };
@@ -177,7 +183,11 @@ function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string
   const reasons=useQuery({queryKey:["dispatches",tenant,business,"reasons","NotDelivered"],queryFn:()=>dispatchesApi.reasons("NotDelivered")});
   const returnedTotal=estimateDeliveryReturn(document,returns);
   const net=Math.max(0,Math.round((document.documentTotal-returnedTotal)*10000)/10000);
-  const immediateAmount=isCredit||previouslyCollected?0:Math.min(net,Math.max(0,document.documentTotal-document.creditAmount));
+  const creditAvailable=Math.max(0,document.creditCollectibleAmount??0);
+  const creditToCollect=Math.max(0,creditAvailable-returnedTotal);
+  const invoiceToCollect=hasCredit?Math.max(0,(document.uncollectedPaymentAmount??0)-Math.max(0,returnedTotal-creditAvailable)):
+    previouslyCollected?0:Math.min(net,Math.max(0,document.documentTotal-document.creditAmount));
+  const immediateAmount=invoiceToCollect+(collectCredit?creditToCollect:0);
   const selectedReturns=Object.values(returns).filter(value=>Number(value)>0).length;
   const deliveryStatus=status==="NotDelivered"?"NotDelivered":selectedReturns>0?"PartiallyDelivered":"Delivered";
   useEffect(()=>{if(status==="NotDelivered"&&!reason&&reasons.data?.[0])setReason(reasons.data[0].name)},[status,reason,reasons.data]);
@@ -196,16 +206,20 @@ function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string
     if(deliveryStatus!=="NotDelivered"&&depositProof)depositUrl=(await dispatchesApi.uploadEvidence(dispatchId,depositProof)).url;
     if(deliveryStatus!=="NotDelivered"&&signedProof)signedUrl=(await dispatchesApi.uploadEvidence(dispatchId,signedProof)).url;
     const payments:DeliveryResultInput["payments"]=[];
+    if(keepCurrent)payments.push({applicationType:"KeepCurrent",paymentMethod:null,amount:0,reference:null,evidenceUrl:null});
     if(deliveryStatus!=="NotDelivered"){
-      if(!isCredit&&paymentMethod&&immediateAmount>0)payments.push({applicationType:"InvoicePayment",paymentMethod,amount:immediateAmount,reference:paymentMethod==="Transfer"?paymentReference.trim():null,evidenceUrl:paymentMethod!=="Cash"?depositUrl:null,paymentMethodId:form?.paymentMethodId,paymentMethodVersion:form?.version,cardFranchiseCode:card?franchise:null,approvalNumber:card?approval.trim():null});
+      if(!keepCurrent&&paymentMethod&&immediateAmount>0){
+        const details={paymentMethod,reference:paymentMethod==="Transfer"?paymentReference.trim():null,evidenceUrl:paymentMethod!=="Cash"?depositUrl:null,paymentMethodId:form?.paymentMethodId,paymentMethodVersion:form?.version,cardFranchiseCode:card?franchise:null,approvalNumber:card?approval.trim():null};
+        if(invoiceToCollect>0)payments.push({...details,applicationType:"InvoicePayment",amount:invoiceToCollect});
+        if(collectCredit&&creditToCollect>0)payments.push({...details,applicationType:"CreditAdvance",amount:creditToCollect});
+      }
       if(document.creditAmount>0)payments.push({applicationType:"CreditDocument",paymentMethod:null,amount:0,reference:null,evidenceUrl:signedUrl});
     }
     const position=await currentPosition();
     return dispatchesApi.recordDelivery(dispatchId,{dispatchSourceDocumentId:document.dispatchSourceDocumentId,deliveryStatus,reason:deliveryStatus==="PartiallyDelivered"?"Devolución registrada durante la entrega":reason||null,notes:notes||null,latitude:position?.latitude??null,longitude:position?.longitude??null,occurredAt:new Date().toISOString(),idempotencyKey:crypto.randomUUID(),payments,returns:returnInputs});
   },onSuccess:updated=>{toast.success("Resultado de entrega guardado");onSaved(updated)},onError:error=>toast.error(errorMessage(error,"No fue posible guardar la entrega."))});
-  const paymentRequired=deliveryStatus!=="NotDelivered"&&immediateAmount>0;
-  const recordedCreditCollection=isCredit&&recordedPayments.length>0;
-  const invalid=recordedCreditCollection||recordedPayments.length>1||status==="NotDelivered"&&!reason.trim()||paymentRequired&&(!paymentMethod||!form||card&&(!franchise||!approval.trim())||paymentMethod==="Transfer"&&!paymentReference.trim())||hasCredit&&deliveryStatus!=="NotDelivered"&&!signedProof&&!signedEvidenceUrl;
+  const paymentRequired=!keepCurrent&&deliveryStatus!=="NotDelivered"&&immediateAmount>0;
+  const invalid=multiplePaymentForms||status==="NotDelivered"&&!reason.trim()||paymentRequired&&(!paymentMethod||!form||card&&(!franchise||!approval.trim())||paymentMethod==="Transfer"&&!paymentReference.trim())||hasCredit&&deliveryStatus!=="NotDelivered"&&!signedProof&&!signedEvidenceUrl;
   const paymentMethodField=<div className="space-y-2"><Label>{card?"Tarjeta o datáfono":"Forma de transferencia"}</Label>{resolvingOriginal&&capture?.form===undefined?<p role="status" className="text-sm text-muted-foreground">Cargando la forma registrada…</p>:<PaymentMethodSelect tenantId={tenant} businessId={business??""} usage="Receipts" methodCode={paymentMethod??undefined}
     className="min-h-11" wrapLabels autoSelectSingle={!recordedPayment?.paymentMethodId||selectedForm!==undefined||capture?.form!==undefined}
     value={captureForm?.paymentMethodId??""} name={captureForm?.name} ariaLabel="Forma de pago de la entrega"
@@ -214,24 +228,27 @@ function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string
     <Dialog open onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[96dvh] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto rounded-3xl">
       <DialogHeader><DialogTitle>Confirmar entrega</DialogTitle><DialogDescription>{document.customerName} · {document.documentNumber}</DialogDescription></DialogHeader>
       <div className="space-y-5">
-        <section className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-950 p-4 text-center text-white"><MiniMoney label="Factura" value={document.documentTotal}/><MiniMoney label="Devolución" value={returnedTotal}/><MiniMoney label={isCredit?"Venta a crédito":"A recibir"} value={isCredit?Math.max(0,document.creditAmount-returnedTotal):immediateAmount}/></section>
+        <section className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-950 p-4 text-center text-white"><MiniMoney label="Factura" value={document.documentTotal}/><MiniMoney label="Devolución" value={returnedTotal}/><MiniMoney label={keepCurrent?"A recibir":isCredit?"Venta a crédito":"A recibir"} value={keepCurrent?0:isCredit?Math.max(0,document.creditAmount-returnedTotal):immediateAmount}/></section>
         <Field label="¿Cómo terminó la visita?"><div className="grid grid-cols-2 gap-3"><DeliveryResultButton active={status==="Delivered"} icon={PackageCheck} title="Entregado" onClick={()=>{setStatus("Delivered");setReason("")}}/><DeliveryResultButton active={status==="NotDelivered"} icon={XCircle} title="No se entregó" onClick={()=>setStatus("NotDelivered")}/></div></Field>
         {status==="NotDelivered"&&<Field label="Motivo"><Select value={reason} onValueChange={setReason}><SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder={reasons.isLoading?"Cargando motivos…":"Selecciona el motivo"}/></SelectTrigger><SelectContent>{reasons.data?.map(item=><SelectItem key={item.dispatchReasonId} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select>{reasons.isError&&<p className="text-xs text-red-700">No fue posible cargar los motivos de no entrega.</p>}</Field>}
         {deliveryStatus!=="NotDelivered"&&<>
           <section className="flex flex-col items-stretch gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0"><strong className="block">Devolución de productos</strong><small className="text-muted-foreground">{selectedReturns?`${selectedReturns} producto(s) · ${money.format(returnedTotal)}`:"La entrega no tiene devoluciones"}</small></span><Button type="button" className="min-h-11 shrink-0" variant={selectedReturns?"secondary":"outline"} onClick={()=>setReturnsOpen(true)}>{selectedReturns?<><PackageX className="mr-2 h-4 w-4"/>Editar</>:<><Plus className="mr-2 h-4 w-4"/>Agregar devolución</>}</Button></section>
+          {hasCredit&&creditAvailable>0&&<Label className="flex items-start gap-3 rounded-xl border p-4"><Checkbox checked={collectCredit} onCheckedChange={value=>{setKeepCurrent(false);setCollectCredit(value===true);setPaymentMethod(value===true?"Cash":invoiceToCollect>0?"Cash":null);setForm(null);setCapture(null);}}/><span>Recaudar saldo de crédito<strong className="mt-1 block">{money.format(creditToCollect)}</strong><small className="mt-1 block font-normal text-muted-foreground">Se aplica al saldo de cartera al validar el cierre. Los abonos anteriores se conservan.</small></span></Label>}
           {immediateAmount>0?<>
-            <Field label={`Pago recibido · ${money.format(immediateAmount)}`}><div className="grid grid-cols-2 gap-3">{paymentTypes.data?.filter(option=>["Cash","Transfer","DebitCard","CreditCard"].includes(option.code)).map(option=><PaymentButton key={option.code} active={paymentMethod===option.code} icon={option.code==="Cash"?Banknote:option.code==="Transfer"?ReceiptText:CreditCard} title={option.label} onClick={()=>selectType(option.code as "Cash"|"Transfer"|"DebitCard"|"CreditCard")}/>)}</div></Field>
+            <Field label={keepCurrent?"Registrar un recaudo":`Pago recibido · ${money.format(immediateAmount)}`}><div className="grid grid-cols-2 gap-3">{paymentTypes.data?.filter(option=>["Cash","Transfer","DebitCard","CreditCard"].includes(option.code)).map(option=><PaymentButton key={option.code} active={paymentMethod===option.code} icon={option.code==="Cash"?Banknote:option.code==="Transfer"?ReceiptText:CreditCard} title={option.label} onClick={()=>selectType(option.code as "Cash"|"Transfer"|"DebitCard"|"CreditCard")}/>)}</div></Field>
             {paymentMethod==="Cash"&&(resolvingOriginal?<p role="status" className="text-sm text-muted-foreground">Cargando la forma de pago registrada…</p>:<PaymentMethodSelect key={paymentMethod} tenantId={tenant} businessId={business??""} usage="Receipts" methodCode={paymentMethod}
               className="min-h-11" wrapLabels autoSelectSingle={!recordedPayment?.paymentMethodId||selectedForm!==undefined} value={form?.paymentMethodId??""} name={form?.name} ariaLabel="Forma de pago de la entrega" onChange={selectForm}/>)}
             {originalForm.isError&&selectedForm===undefined&&<p role="alert" className="text-sm text-destructive">No fue posible consultar la forma registrada. <button type="button" className="underline" onClick={()=>void originalForm.refetch()}>Reintentar</button></p>}
-            {recordedPayments.length>1&&<p role="alert" className="text-sm text-destructive">Esta entrega tiene varias formas de pago. Consérvalas y revísalas desde el cierre; este formulario captura una sola forma.</p>}
+            {multiplePaymentForms&&<p role="alert" className="text-sm text-destructive">Esta entrega tiene varias formas de pago. Consérvalas y revísalas desde el cierre; este formulario captura una sola forma.</p>}
             {form&&paymentMethod==="Cash"&&<p className="rounded-xl bg-muted/40 p-3 text-sm">Cuenta configurada: {form.accountCode} · {form.accountName}</p>}
             {paymentMethod&&paymentMethod!=="Cash"&&<div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3"><span className="min-w-0 flex-1 break-words text-sm [overflow-wrap:anywhere]">{form&&<strong className="mb-1 block">{form.name}</strong>}{card?(approval?`Aprobación: ${approval}`:"Faltan los datos de la tarjeta"):(paymentReference?`Referencia: ${paymentReference}`:"Faltan los datos de la transferencia")}</span><Button type="button" variant="outline" size="sm" onClick={()=>selectType(paymentMethod)}>Datos del pago</Button></div>}
             {paymentMethod&&paymentMethod!=="Cash"&&<PhotoInput label={card?"Foto del comprobante de tarjeta (opcional)":"Foto de la transferencia (opcional)"} file={depositProof} onChange={setDepositProof}/>}
             {depositEvidenceUrl&&!depositProof&&<a className="block text-sm font-semibold text-teal-700" href={depositReadUrl??undefined} target="_blank" rel="noreferrer">Ver soporte guardado</a>}
-          </>:isCredit?<div className="space-y-2 rounded-2xl border bg-muted/30 p-4 text-sm"><Button type="button" variant="secondary" className="min-h-11 w-full" disabled><CreditCard className="mr-2 h-4 w-4"/>Crédito</Button><p>Sólo se confirma la entrega y su soporte. El pago se registra desde cartera o recibo de caja.</p>{recordedCreditCollection&&<p role="alert" className="text-destructive">Esta entrega conserva un recaudo ya registrado. Revísalo desde el cierre; no se elimina al confirmar otra entrega.</p>}</div>:<p className="rounded-2xl border p-4 text-sm">{previouslyCollected?"Pago ya registrado en la sesión original. Confirma únicamente la entrega.":"Sin importe por recaudar después de la devolución."}</p>}
+          </>:isCredit?<div className="space-y-2 rounded-2xl border bg-muted/30 p-4 text-sm"><Button type="button" variant="secondary" className="min-h-11 w-full" disabled><CreditCard className="mr-2 h-4 w-4"/>Crédito</Button><p>Se conserva el saldo de cartera hasta confirmar su recaudo.</p></div>:<p className="rounded-2xl border p-4 text-sm">{previouslyCollected?"Pago ya registrado en la sesión original. Confirma únicamente la entrega.":"Sin importe por recaudar después de la devolución."}</p>}
           {document.creditAmount>0&&<><PhotoInput label="Factura firmada por el cliente" file={signedProof} onChange={setSignedProof}/>{signedEvidenceUrl&&!signedProof&&<a className="block text-sm font-semibold text-teal-700" href={signedReadUrl??undefined} target="_blank" rel="noreferrer">Ver factura firmada guardada</a>}</>}
         </>}
+        <Button type="button" aria-pressed={keepCurrent} variant={keepCurrent?"secondary":"outline"} className="min-h-14 w-full whitespace-normal rounded-xl px-4 py-3 text-left" onClick={()=>{setKeepCurrent(true);setCollectCredit(false);setPaymentMethod(null);setForm(null);setCapture(null);}}>Mantener forma de pago actual</Button>
+        {keepCurrent&&<p className="rounded-xl bg-muted/30 p-3 text-sm">Se conserva el pago registrado. No se recauda dinero, no se cambia la cartera y no se mueve tu sesión de dinero.</p>}
         <Field label="Observaciones"><Textarea rows={2} className="min-h-20 resize-y" value={notes} onChange={event=>setNotes(event.target.value)} placeholder="Novedades de la entrega (opcional)" maxLength={500}/></Field>
       </div>
       <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t bg-background px-6 py-4"><Button className="min-h-11" variant="outline" onClick={onClose}>Cancelar</Button><Button className="min-h-11 bg-teal-600 hover:bg-teal-700" disabled={mutation.isPending||invalid} onClick={()=>mutation.mutate()}>{mutation.isPending?"Guardando…":"Confirmar entrega"}</Button></DialogFooter>
@@ -333,13 +350,13 @@ export function DispatchSettlementPanel({data,onChanged,onPaymentReview,readOnly
       <MoneyCard icon={PackageCheck} label="Devoluciones" value={summary?.returnTotal??returnsTotal}/>
       <MoneyCard icon={CircleDollarSign} label="Gastos aprobados" value={summary?.approvedCashExpenses??0}/>
     </div>
-    {(summary?.previouslyCollectedTotal??0)>0&&<p className="rounded-2xl border bg-muted/30 p-4 text-sm">Pagado antes del despacho: <strong>{money.format(summary!.previouslyCollectedTotal!)}</strong>. Este valor no se vuelve a recaudar en el cierre.</p>}
+    {(summary?.previouslyCollectedTotal??0)>0&&<p className="rounded-2xl border bg-muted/30 p-4 text-sm">Pagos conservados o recaudados fuera del despacho: <strong>{money.format(summary!.previouslyCollectedTotal!)}</strong>. Este valor no se vuelve a recaudar en el cierre.</p>}
     <DispatchPaymentGroups data={data} editable={!readOnly&&summary?.status==="PendingReview"} cashContent={cashContent} onChanged={onPaymentReview}/>
     <DispatchReturnLinks data={data} selections={returnSelections} onChange={setReturnSelections} disabled={readOnly||summary?.status!=="PendingReview"||action!==null}/>
     <section className="space-y-2"><h3 className="font-bold">Gastos presentados</h3>{data.expenses.length===0&&<div className="flex items-center gap-3 rounded-2xl border border-dashed bg-muted/20 p-4"><span className="rounded-2xl bg-teal-50 p-3 text-teal-700"><ReceiptText className="h-5 w-5"/></span><span><strong className="block text-sm">Sin gastos registrados</strong><small className="text-muted-foreground">El transportador no reportó gastos para este recorrido.</small></span></div>}{data.expenses.map(expense=><div key={expense.expenseId} className="flex flex-col gap-3 rounded-2xl border bg-card p-3 sm:flex-row sm:items-center sm:justify-between"><span><strong>{expense.category} · {money.format(expense.amount)}</strong>{expense.description&&<small className="block text-muted-foreground">{expense.description}</small>}{expense.evidenceUrl&&<a href={expense.evidenceReadUrl??expense.evidenceUrl} target="_blank" rel="noreferrer" className="text-xs font-semibold text-teal-700">Ver soporte</a>}{expense.approvalStatus==="Approved"&&<small className="block text-muted-foreground">{!expense.acceptedExpenseId?"Falta conciliar su documento de gasto":expense.acceptedExpenseStatus==="Processed"?"Gasto registrado":"Gasto aceptado, pendiente de procesamiento. Usa Actualizar para comprobarlo."}</small>}</span><div className="flex flex-wrap items-center gap-2"><Badge variant={expense.approvalStatus==="Approved"?"default":expense.approvalStatus==="Rejected"?"destructive":"secondary"}>{expense.approvalStatus==="Pending"?"Pendiente":expense.approvalStatus==="Approved"?"Aprobado":"Rechazado"}</Badge>{!readOnly&&summary?.status==="PendingReview"&&expense.approvalStatus==="Pending"&&<><Button size="sm" variant="outline" onClick={()=>setRejecting(expense)}>Rechazar</Button><Button size="sm" onClick={()=>setApproving(expense)}>Aprobar</Button></>}</div></div>)}</section>
     {approving&&<DispatchExpenseApprovalDialog dispatchId={data.dispatchId} expense={approving} onClose={()=>setApproving(null)} onSaved={approve}/>}
     {rejecting&&<RejectDispatchExpenseDialog dispatchId={data.dispatchId} expense={rejecting} onClose={()=>setRejecting(null)} onSaved={updated=>{setRejecting(null);onChanged(updated)}}/>}
-    {!readOnly&&summary?.status==="PendingReview"&&<Button className="h-12 w-full bg-teal-600 hover:bg-teal-700" disabled={action!==null||summary.balanceDifference!==0||data.expenses.some(item=>item.approvalStatus==="Pending"||item.approvalStatus==="Approved"&&(!item.acceptedExpenseId||item.acceptedExpenseStatus!=="Processed"))||data.documents.some(document=>document.payments.some(payment=>payment.applicationType!=="CreditDocument"&&payment.paymentMethod!=="Cash"&&!payment.verifiedAt))||difference!==0&&(!notes.trim()||cashFormIds.size!==1&&!differenceForm)} onClick={settle}>{action==="settle"?"Procesando…":"Aceptar liquidación"}</Button>}
+    {!readOnly&&summary?.status==="PendingReview"&&<Button className="h-12 w-full bg-teal-600 hover:bg-teal-700" disabled={action!==null||summary.balanceDifference!==0||data.expenses.some(item=>item.approvalStatus==="Pending"||item.approvalStatus==="Approved"&&(!item.acceptedExpenseId||item.acceptedExpenseStatus!=="Processed"))||data.documents.some(document=>document.payments.some(payment=>(payment.applicationType==="InvoicePayment"||payment.applicationType==="CreditAdvance")&&payment.paymentMethod!=="Cash"&&!payment.verifiedAt))||difference!==0&&(!notes.trim()||cashFormIds.size!==1&&!differenceForm)} onClick={settle}>{action==="settle"?"Procesando…":"Aceptar liquidación"}</Button>}
 
   </div>;
 }

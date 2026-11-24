@@ -29,11 +29,11 @@ test("cash groups its six source types and keeps individual verification where r
   );
   assert.deepEqual(
     cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Cash")).map(group => [group.label, group.items.length]),
-    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 1], ["Pagos a proveedores", 1], ["Entradas de dinero", 1], ["Salidas de dinero", 1]],
+    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 1], ["Pagos a proveedores", 1], ["Entradas de dinero", 1], ["Salidas de dinero", 1], ["Recaudos de facturas a crédito", 0]],
   );
   assert.deepEqual(
     cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Transfer")).map(group => [group.label, group.items.length]),
-    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 0], ["Pagos a proveedores", 0], ["Entradas de dinero", 0], ["Salidas de dinero", 0]],
+    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 0], ["Pagos a proveedores", 0], ["Entradas de dinero", 0], ["Salidas de dinero", 0], ["Recaudos de facturas a crédito", 0]],
   );
 });
 
@@ -48,6 +48,15 @@ test("bank and card entries and exits keep their signs and require every decisio
   assert.equal(isCashClosureMethodConfirmed("Transfer", bank, { "bank-in": "Verified" }, false), false);
   assert.equal(correctedCashClosureAmount("Transfer", bank, { "bank-in": "Verified", "bank-out": "Verified" }, {}, 0), -300);
   assert.equal(correctedCashClosureAmount("Card", bank, { "card-out": "Missing" }, {}, 0), 0);
+});
+
+test("el recaudo de crédito usa el saldo elegido sin volver a contar el importe original", () => {
+  const credit = items.filter(item => item.movementType === "CreditSale");
+  assert.equal(cashClosurePaymentGroups(credit).at(-1)?.items.length, 1);
+  const correction = { credit: { verificationKey: "credit", paymentMethodCode: "Transfer", amount: 10_000 } };
+  assert.equal(correctedCashClosureAmount("Transfer", credit, {}, correction, 0), 0);
+  assert.equal(correctedCashClosureAmount("Transfer", credit, { credit: "Verified" }, correction, 0), 10_000);
+  assert.equal(correctedCashClosureAmount("Credit", credit, { credit: "Verified" }, correction, 0), 0);
 });
 
 test("source correction moves a confirmed tender without changing physical cash", () => {

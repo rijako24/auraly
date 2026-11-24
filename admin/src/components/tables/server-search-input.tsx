@@ -67,10 +67,9 @@ export function ServerSearchInput({
         className={cn("pl-9 pr-9", inputClassName)}
       />
       {showSpinner && (
-        <Loader2
-          aria-label="Buscando"
-          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-teal-600"
-        />
+        <span className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-teal-600">
+          <Loader2 aria-label="Buscando" className="block h-4 w-4 animate-spin" />
+        </span>
       )}
     </label>
   );

@@ -30,7 +30,7 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
   const [correcting, setCorrecting] = useState<DeliveryPayment | null>(null);
   const [image, setImage] = useState<string | null>(null);
   const payments = data.documents.flatMap(document => document.payments
-    .filter(payment => payment.applicationType !== "CreditDocument")
+    .filter(payment => payment.applicationType === "InvoicePayment" || payment.applicationType === "CreditAdvance")
     .map(payment => ({ document, payment })));
   const verify = async (payment: DeliveryPayment, value: boolean) => {
     setBusy(payment.paymentId);
@@ -39,6 +39,7 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
     finally { setBusy(null); }
   };
   return <section className="space-y-3" aria-label="Recaudos por forma de pago">
+    {data.documents.some(document=>document.payments.some(payment=>payment.applicationType==="KeepCurrent"))&&<div className="rounded-xl border bg-muted/30 p-4"><h4 className="font-semibold">Forma de pago conservada</h4><p className="mt-1 text-sm text-muted-foreground">Estos documentos conservan el pago registrado. No generan recaudo ni dinero en la sesión del transportador.</p><ul className="mt-2 space-y-1 text-sm">{data.documents.filter(document=>document.payments.some(payment=>payment.applicationType==="KeepCurrent")).map(document=><li key={document.dispatchSourceDocumentId}>{document.documentNumber} · {document.customerName}</li>)}</ul></div>}
     {(["Cash", "Card", "Transfer"] as const).map(group => {
       const rows = payments.filter(row => groupOf(row.payment.paymentMethod) === group);
       const total = rows.reduce((sum, row) => sum + row.payment.amount, 0);

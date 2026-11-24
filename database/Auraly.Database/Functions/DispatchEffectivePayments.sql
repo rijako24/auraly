@@ -14,6 +14,26 @@ AS RETURN
       CROSS APPLY OPENJSON(job.AppliedPaymentMethodsJson) WITH(SourceLineId uniqueidentifier,MethodCode nvarchar(32),
         PaymentMethodId uniqueidentifier,Version int,Name nvarchar(160),BankAccountId uniqueidentifier) binding
       WHERE session.DispatchId=@DispatchId AND session.Kind=N'Dispatch'
+      UNION ALL
+      -- Credit collections are posted by the native CxC payment, not again by
+      -- the dispatch journal. Read its applied tender after the parent finishes;
+      -- later catalog edits must not rename or remap a completed collection.
+      SELECT DISTINCT recorded.DispatchDeliveryPaymentId,tender.MethodCode,tender.PaymentMethodId,
+        tender.PaymentMethodVersion,tender.PaymentMethodName,tender.BankAccountId
+      FROM dbo.DispatchDeliveryPayments recorded
+      JOIN dbo.DispatchSourceDocuments document ON document.DispatchSourceDocumentId=recorded.DispatchSourceDocumentId
+        AND document.DispatchId=recorded.DispatchId
+      JOIN dbo.CustomerPayments native ON native.BusinessId=recorded.BusinessId AND native.Status=N'Processed'
+        AND native.IdempotencyKey=CONCAT(N'dispatch-settlement:',LOWER(REPLACE(CONVERT(nvarchar(36),recorded.DispatchId),N'-',N'')),
+          N':payment:',LOWER(REPLACE(CONVERT(nvarchar(36),document.SourceDocumentId),N'-',N'')),N':',recorded.PaymentMethod)
+      JOIN dbo.CustomerPaymentTenders tender ON tender.PaymentId=native.PaymentId
+        AND tender.PaymentMethodId=COALESCE(recorded.ReviewedPaymentMethodId,recorded.PaymentMethodId)
+      JOIN dbo.WorkSessions session ON session.DispatchId=recorded.DispatchId AND session.Kind=N'Dispatch'
+      JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionId=session.WorkSessionId
+      JOIN dbo.AccountingPostingJobs financial ON financial.SourceDocumentId=closure.WorkSessionClosureId
+        AND financial.SourceDocumentType=N'DispatchCashDifference' AND financial.TenantId=session.TenantId
+        AND financial.BusinessId=session.BusinessId AND financial.Status IN(N'Posted',N'CommercialEffectsApplied')
+      WHERE recorded.DispatchId=@DispatchId AND recorded.ApplicationType=N'CreditAdvance'
     )
     SELECT payment.DispatchDeliveryPaymentId PaymentId,payment.DispatchId,payment.BusinessId,
       payment.DispatchSourceDocumentId,payment.ApplicationType,payment.Amount,payment.PaymentMethod OriginalMethod,

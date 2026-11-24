@@ -236,16 +236,21 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=closure.WorkSessionClosureId
               AND job.SourceDocumentType=N'DispatchCashDifference' AND job.TenantId=@TenantId AND job.BusinessId=@BusinessId
               AND job.Status IN(N'Posted',N'CommercialEffectsApplied');
+            DECLARE @CreditSalesJson nvarchar(max)=(SELECT DocumentId FROM #HistoryPage FOR JSON PATH);
+            SELECT credit.DocumentId,credit.PaymentId,credit.MethodCode,credit.Amount,credit.FormName
+            INTO #HistoryCreditCollections
+            FROM accounting.SaleCreditCollectionFacts(@TenantId,@BusinessId,@CreditSalesJson) credit;
             SELECT page.DocumentId,payment.PaymentNumber,CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveMethodCode ELSE original.MethodCode END MethodCode,
               CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveAmount ELSE payment.Amount END Amount,
               CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveFormName ELSE original.PaymentMethodName END FormName
             FROM #HistoryPage page CROSS APPLY accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,page.DocumentId) payment
             JOIN dbo.SalesPayments original ON original.DocumentId=page.DocumentId AND original.PaymentNumber=payment.PaymentNumber
-            WHERE page.CollectionMode=N'Session' AND payment.EffectiveAmount<>0
+            WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectiveAmount<>0
             UNION ALL
             SELECT page.DocumentId,payment.PaymentNumber,payment.MethodCode,payment.Amount+payment.RoundingAdjustment,payment.PaymentMethodName
             FROM #HistoryPage page JOIN dbo.SalesPayments payment ON payment.DocumentId=page.DocumentId
             WHERE page.CollectionMode=N'Dispatch' AND payment.Amount+payment.RoundingAdjustment<>0
+              AND NOT EXISTS(SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,page.DocumentId) kept WHERE kept.CollectedOutsideDispatch=1)
               AND NOT EXISTS(SELECT 1 FROM #HistoryContext context JOIN #ConfirmedHistoryDispatch confirmed ON confirmed.DispatchId=context.DispatchId WHERE context.DocumentId=page.DocumentId)
             UNION ALL
             SELECT page.DocumentId,CAST(ROW_NUMBER() OVER(PARTITION BY page.DocumentId ORDER BY payment.PaymentId) AS int),payment.MethodCode,payment.Amount,payment.FormName
@@ -254,9 +259,13 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN #HistoryPage page ON page.DocumentId=source.SourceDocumentId
             WHERE page.CollectionMode=N'Dispatch' AND payment.ApplicationType=N'InvoicePayment' AND payment.Amount<>0
             UNION ALL
-            SELECT page.DocumentId,0,N'Credit',sale.CreditAmount,sale.CreditPaymentMethodName
+            SELECT credit.DocumentId,-CONVERT(int,ROW_NUMBER() OVER(PARTITION BY credit.DocumentId ORDER BY credit.PaymentId)),
+              credit.MethodCode,credit.Amount,credit.FormName FROM #HistoryCreditCollections credit
+            UNION ALL
+            SELECT page.DocumentId,0,N'Credit',sale.CreditAmount-COALESCE(collected.Amount,0),sale.CreditPaymentMethodName
             FROM #HistoryPage page JOIN dbo.SalesDocuments sale ON sale.DocumentId=page.DocumentId
-            WHERE sale.CreditAmount>0
+            OUTER APPLY(SELECT SUM(Amount) Amount FROM #HistoryCreditCollections WHERE DocumentId=page.DocumentId) collected
+            WHERE sale.CreditAmount>COALESCE(collected.Amount,0)
             ORDER BY DocumentId,PaymentNumber;
             """;
         var search = request.Search?.Trim() ?? string.Empty;

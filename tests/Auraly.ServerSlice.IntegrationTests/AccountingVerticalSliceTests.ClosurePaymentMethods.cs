@@ -407,12 +407,12 @@ public sealed partial class AccountingVerticalSliceTests
             }
             var account = method == "Cash" ? await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin)
                 : await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, admin, method == "Transfer" ? "1118" : "1398",
-                    "Asset", method == "Transfer" ? "Bank" : method=="PendingCollection"?"General":"CardClearing", "Debit", bank);
+                    "Asset", method == "Transfer" ? "Bank" : "CardClearing", "Debit", bank);
             accountId = account.AccountId;
         }
         var options = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
         var request = new SavePaymentMethodRequest(Guid.NewGuid(), $"CLS-{Guid.NewGuid():N}", $"Forma de conciliación {method}",
-            options.Single(item => item.Code == method).Id, accountId.Value, true, method!="PendingCollection", false, false, true, 10);
+            options.Single(item => item.Code == method).Id, accountId.Value, true, true, false, false, true, 10);
         using var response = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{request.PaymentMethodId}", request);
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;

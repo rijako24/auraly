@@ -94,7 +94,7 @@ public sealed partial class SqlSalesReportingProcessor(
                         var value=JsonSerializer.Deserialize<WorkSessionClosureReconciliationPayload>(source.Payload,json)
                             ?? throw new InvalidOperationException("La corrección de caja no es válida.");
                         tenant=value.TenantId;owner=value.BusinessId;id=value.ReconciliationId;
-                        sales=(value.PaymentCorrections??[]).Where(item=>item.MovementType=="Sale").Select(item=>item.SourceId).Distinct().ToArray();
+                        sales=(value.PaymentCorrections??[]).Where(item=>item.MovementType is "Sale" or "CreditSale").Select(item=>item.SourceId).Distinct().ToArray();
                     }
                     else
                     {

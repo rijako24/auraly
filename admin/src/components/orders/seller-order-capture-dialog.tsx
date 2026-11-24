@@ -177,11 +177,6 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   const addFromSearch = (item: SellerCatalogItem, delta: number) => {
     change(item, delta);
     if (delta > 0) {
-      setQuery("");
-      setResults([]);
-      setSearched(false);
-      setHasMoreResults(false);
-      setNextOffset(0);
       requestAnimationFrame(() => searchRef.current?.focus());
     }
   };

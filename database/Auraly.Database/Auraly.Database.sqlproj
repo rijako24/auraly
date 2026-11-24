@@ -69,6 +69,7 @@
     <Build Include="Functions\ConfiguredPostingAccount.sql" />
     <Build Include="Functions\PaymentPostingCategory.sql" />
     <Build Include="Functions\SalePaymentPostingFacts.sql" />
+    <Build Include="Functions\SaleCreditCollectionFacts.sql" />
     <Build Include="Functions\PaymentMethodAccountReadiness.sql" />
     <Build Include="Functions\AccountingBankReferences.sql" />
     <Build Include="StoredProcedures\AccountingBankAccountsResolve.sql" />

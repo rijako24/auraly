@@ -1861,16 +1861,22 @@ su descripción no acredita implementación ni pruebas hasta cerrar la evidencia
   recupere desde POS. El transportador registra el dinero real en una sesión de
   recaudo del despacho. Las ventas directas y los históricos ya emitidos conservan
   su atribución; incorporarlos a un despacho no borra dinero de una sesión cerrada.
-- «Por recaudar» es una forma administrable del catálogo del tenant, con auxiliar
-  explícito y un tipo técnico estable para su semántica. Es opcional para pedidos
-  de contado facturados como comprobante, no crea CxC ni solicita cupo de crédito.
-  La venta, impuestos y costo se contabilizan de inmediato en el motor actual.
-  No es una espera fiscal o contable ni una quinta forma predeterminada obligatoria.
+- La decisión del 23 de noviembre reemplaza «Por recaudar» por una forma nativa
+  `Credit`, por ejemplo «Cartera a domicilio». Abre CxC en el auxiliar configurado;
+  no introduce otro tipo de pago, estado fiscal ni espera de contabilización.
+  El tenant nuevo recibe los cinco tipos nativos y puede configurar más formas.
 - La entrega registra la forma real y su soporte. La conciliación administrativa
   reubica el valor desde el auxiliar original al destino vigente, por el motor
   financiero existente. Con igual auxiliar e importe no crea otro asiento. No se
   vuelve a reconocer la venta ni se modifica el XML/CUFE/factura fiscal original.
-  La factura a crédito conserva su condición y sólo confirma entrega y soporte.
+  Una factura a crédito permite confirmar sólo entrega y soporte o recaudar todo
+  el saldo disponible actual. En este último caso el medio real exige forma y
+  soportes y reutiliza el pago nativo de CxC al liquidar. Conserva los abonos
+  anteriores, reduce la deuda una vez y no duplica el movimiento de la sesión.
+  El cuadre separa los abonos previos del dinero entregado por el transportador,
+  usando el saldo nativo. Al cerrar se conservan el crédito restante del cierre
+  y el total previamente recaudado en su snapshot; pagar esa CxC después no
+  altera el cuadre histórico del despacho ni vuelve a sumar su recaudo.
 - `WorkSessions` y `WorkSessionClosures` son los encabezados comunes, con tipo
   Normal/Dispatch y vínculo a DispatchId. Cada despacho tiene su sesión de recaudo
   y un cierre ciego, separado de la sesión POS. `DispatchSettlements` deja de ser
@@ -2427,3 +2433,39 @@ una conciliación que las contenga (incluida la reclasificación agregada) y cor
 un recaudo del despacho. Las acciones de Facturas y de ambos cierres se ocultan
 sin la capacidad. La captura inicial del cobro real por el transportador conserva
 su permiso y flujo de entregas; no se convierte en una corrección administrativa.
+
+### Mantener la forma de pago actual — 23 de noviembre de 2026
+
+La captura de entrega incorpora «Mantener forma de pago actual». Es una decisión
+de esa entrega, no un sexto tipo del catálogo ni otra forma de pago. Se conserva
+en `DispatchDeliveryPayments` como aplicación `KeepCurrent`, con importe cero,
+sin forma, banco ni soportes nuevos; usa el mismo ID de detalle y la misma
+aceptación idempotente. No puede combinarse con un recaudo en esa factura.
+
+La opción mantiene los pagos y soportes de la factura, sus cuentas y la cartera
+pendiente. No crea pagos, abonos, reclasificaciones ni movimientos en la sesión
+del transportador. El cierre separa estos documentos de efectivo, tarjetas y
+transferencias recaudadas. Para el cuadre reutiliza el total pagado fuera del
+despacho y conserva esa evidencia en el snapshot del cierre. La sesión común del
+despacho puede existir para su cierre, con recaudo cero.
+
+La lista de facturas y reporting conservan los medios originales. La proyección
+`SalePaymentPostingFacts.CollectedOutsideDispatch` comparte esa evidencia con
+Devoluciones: si hay mercancía pagada que se devuelve, se exige el reembolso
+administrativo real ya acordado y su vínculo, sin inventar efectivo ni anticipo.
+Con crédito no recaudado se conserva la aplicación nativa de la devolución a la
+cartera. Un reembolso aceptado impide retirar después la decisión que lo respaldó.
+
+No se crean tablas, motores, colas ni consultas por factura. El detalle incorpora
+su evidencia en los lotes existentes. El corte publica primero el esquema y los
+binarios compatibles; después de aceptar `KeepCurrent`, el rollback debe conservar
+su interpretación o avanzar con una corrección. No se borran entregas ni se
+reproducen documentos, inventario o movimientos financieros históricos.
+
+Si la revisión dirige dos detalles de un recaudo a la misma forma configurada,
+la consulta canónica de liquidación suma únicamente los que conservan los mismos
+datos de soporte. Los detalles originales no se borran. Referencias, franquicias,
+aprobaciones o versiones distintas para esa misma forma se rechazan en la revisión,
+antes de aceptar la liquidación; no se pierde evidencia ni se difiere ese error al
+worker. La consolidación ocurre dentro del comando existente, sin lecturas por
+detalle ni otro pago o motor.

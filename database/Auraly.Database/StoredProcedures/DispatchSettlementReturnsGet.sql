@@ -4,13 +4,16 @@ CREATE PROCEDURE dbo.DispatchSettlementReturnsGet
 AS
 BEGIN
     SET NOCOUNT ON;
+    DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
     SELECT source.SourceDocumentId,
            delivery.DeliveryStatus,
            line.LineNumber,
            CASE WHEN delivery.DeliveryStatus = N'NotDelivered' THEN assigned.AssignedQuantity ELSE returned.Quantity END,
            CASE WHEN delivery.DeliveryStatus = N'NotDelivered' THEN N'Sellable' ELSE returned.InventoryDisposition END,
            reason.Code,
-           sale.WarehouseId,sale.CollectionMode,source.CreditAmountSnapshot,source.DocumentTotalSnapshot
+           sale.WarehouseId,CASE WHEN EXISTS(SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,sale.DocumentId) payment
+             WHERE payment.CollectedOutsideDispatch=1) THEN N'Session' ELSE sale.CollectionMode END,
+           source.CreditAmountSnapshot,source.DocumentTotalSnapshot
     FROM dbo.DispatchSourceDocuments source
     INNER JOIN dbo.DispatchDeliveryEvents delivery
         ON delivery.DispatchSourceDocumentId = source.DispatchSourceDocumentId AND delivery.IsCurrent=1

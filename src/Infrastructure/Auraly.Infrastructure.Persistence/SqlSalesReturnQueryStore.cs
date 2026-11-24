@@ -308,7 +308,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             OUTER APPLY(SELECT SUM(returned.TotalAmount) Amount FROM dbo.SalesReturns returned
               WHERE returned.OriginalDocumentId=p.DocumentId AND returned.OriginalPaymentNumber=p.PaymentNumber
                 AND returned.EconomicResolution=N'Refund') prior
-            WHERE sale.DocumentId=@Id AND sale.CollectionMode=N'Session' AND p.EffectivePaymentReady=1
+            WHERE sale.DocumentId=@Id AND p.CollectedOutsideDispatch=1 AND p.EffectivePaymentReady=1
             UNION ALL
             SELECT CONVERT(int,ROW_NUMBER() OVER(ORDER BY payment.PaymentId)),payment.MethodCode,payment.Amount,
               COALESCE(prior.Amount,0),payment.CardFranchiseCode,payment.ApprovalNumber,payment.PaymentId

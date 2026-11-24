@@ -40,9 +40,12 @@ public sealed partial class AccountingVerticalSliceTests
     [InlineData("SalesReceipt","Partial",0)]
     [InlineData("SalesReceipt","NotDelivered",0)]
     [InlineData("SalesInvoice","Partial",4000)]
-    public Task Previously_collected_delivery_links_an_administrative_refund(string documentType,string returnCase,decimal credit)
+    [InlineData("SalesReceipt","Partial",0,true)]
+    [InlineData("SalesReceipt","NotDelivered",0,true)]
+    [InlineData("SalesInvoice","Partial",4000,true)]
+    public Task Previously_collected_delivery_links_an_administrative_refund(string documentType,string returnCase,decimal credit,bool keepCurrent=false)
         =>Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
-            documentType,"Cash",true,false,returnCase,credit,previouslyCollected:true);
+            documentType,"Cash",true,false,returnCase,credit,previouslyCollected:true,keepCurrent:keepCurrent);
 
     [Theory]
     [InlineData("SalesReceipt", "Cash", true, false)]
@@ -69,14 +72,8 @@ public sealed partial class AccountingVerticalSliceTests
     [InlineData("SalesInvoice", "Cash", true, false, "None", 4000, false, 0, true)]
     [InlineData("SalesReceipt", "Cash", false, false, "None", 0, false, -1000, false, true)]
     [InlineData("SalesReceipt", "Transfer", false, false, "None", 0, false, 1000)]
-    [InlineData("SalesReceipt", "Cash", false, false, "None", 0, false, 0, false, false, "PendingCollection")]
-    [InlineData("SalesReceipt", "DebitCard", false, false, "None", 0, false, 0, false, false, "PendingCollection")]
-    [InlineData("SalesReceipt", "CreditCard", false, false, "None", 0, false, 0, false, false, "PendingCollection")]
-    [InlineData("SalesReceipt", "Transfer", false, false, "None", 0, false, 0, false, false, "PendingCollection")]
-    [InlineData("SalesReceipt", "Transfer", false, false, "Partial", 0, false, 0, false, false, "PendingCollection")]
-    [InlineData("SalesReceipt", "Cash", false, false, "NotDelivered", 0, false, 0, false, false, "PendingCollection")]
     public async Task Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
-        string documentType, string method, bool sameForm, bool remap, string returnCase = "None", decimal creditPortion = 0, bool refundAfterCollection = false, decimal cashDifference = 0, bool previouslyCollected = false, bool splitCash = false, string originalMethod = "Cash", bool remapFormBeforeCollection = false, bool restartDuringLease = false, bool verifyReporting = false, bool projectBeforeSettlement = true, bool rebuildReporting = false)
+        string documentType, string method, bool sameForm, bool remap, string returnCase = "None", decimal creditPortion = 0, bool refundAfterCollection = false, decimal cashDifference = 0, bool previouslyCollected = false, bool splitCash = false, string originalMethod = "Cash", bool remapFormBeforeCollection = false, bool restartDuringLease = false, bool verifyReporting = false, bool projectBeforeSettlement = true, bool rebuildReporting = false, bool keepCurrent = false)
     {
         using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, CatalogPermissionCodes.Update);
@@ -84,28 +81,6 @@ public sealed partial class AccountingVerticalSliceTests
         using (var activation = await admin.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
             new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared"))) activation.EnsureSuccessStatusCode();
         var original = await CreateClosureFormAsync(admin, originalMethod);
-        if(originalMethod=="PendingCollection")
-        {
-            foreach(var usage in new[]{"Sales","Receipts","SupplierPayments","Payroll","VoucherReceipts","VoucherPayments"})
-            {
-                var hidden=(await admin.GetFromJsonAsync<PaymentMethodPage>($"/api/commerce/v1/payment-methods/?usage={usage}&paymentMethodId={original.PaymentMethodId}&page=1&pageSize=10"))!;
-                Assert.Empty(hidden.Items);
-            }
-            var usable=(await admin.GetFromJsonAsync<PaymentMethodPage>($"/api/commerce/v1/payment-methods/?usage=OrderReceipts&paymentMethodId={original.PaymentMethodId}&page=1&pageSize=10"))!;
-            Assert.Equal(original.PaymentMethodId,Assert.Single(usable.Items).PaymentMethodId);
-            var save=new SavePaymentMethodRequest(original.PaymentMethodId,original.Code,original.Name,original.PaymentTypeId,original.AccountId,true,false,false,false,true,10,original.RowVersion);
-            foreach(var invalid in new[]{save with{UseForReceipts=true},save with{UseForSupplierPayments=true},save with{UseForPayroll=true},save with{UseForVouchers=true}})
-            {
-                using var rejected=await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{original.PaymentMethodId}",invalid);
-                Assert.Equal(System.Net.HttpStatusCode.BadRequest,rejected.StatusCode);
-            }
-            var direct=WithUblSnapshot(fixture.CreateUniqueValidRequest()) with{Payments=[new(1,"PendingCollection",11900,null,
-                PaymentMethodId:original.PaymentMethodId,PaymentMethodVersion:original.Version,PaymentMethodCode:original.Code,PaymentMethodName:original.Name,AccountId:original.AccountId)]};
-            using var directClient=fixture.CreateClient();using var directUpload=fixture.CreateUploadMessage(direct);
-            using var forbiddenDirect=await directClient.SendAsync(directUpload);
-            Assert.Equal(System.Net.HttpStatusCode.BadRequest,forbiddenDirect.StatusCode);
-            Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@Id",direct.DocumentId));
-        }
         var target = sameForm ? original : await CreateClosureFormAsync(admin, method);
         var differenceCash=splitCash||cashDifference!=0&&method!="Cash"?await CreateClosureFormAsync(admin,"Cash"):null;
         var issuer = Guid.NewGuid(); var issuerSession = Guid.NewGuid(); var order = Guid.NewGuid(); var secondOrder = Guid.NewGuid();
@@ -127,12 +102,13 @@ public sealed partial class AccountingVerticalSliceTests
         {
             var(customer,site)=await CreateCustomerAsync();
             var upload=WithUblSnapshot(fixture.CreateUniqueValidRequest() with{
-                SourceOrderId=previouslyCollected?null:order,CollectionMode=previouslyCollected?SaleCollectionMode.Session:SaleCollectionMode.Dispatch,CustomerId=customer,CustomerPartySiteId=site,
+                SourceOrderId=previouslyCollected&&!keepCurrent?null:order,CollectionMode=previouslyCollected&&!keepCurrent?SaleCollectionMode.Session:SaleCollectionMode.Dispatch,CustomerId=customer,CustomerPartySiteId=site,
                 Credit=creditPortion==0?null:new PosSaleCreditContract(customer,creditPortion,new DateTimeOffset(2026,8,31,0,0,0,TimeSpan.FromHours(-5)),PartySiteId:site),
                 Payments=creditPortion==11900?[]:[new PosSalePaymentContract(1,"Cash",11900-creditPortion,null,PaymentMethodId:original.PaymentMethodId,
                     PaymentMethodVersion:original.Version,PaymentMethodCode:original.Code,PaymentMethodName:original.Name,AccountId:original.AccountId)]});
             var uploadConsecutive=upload.DocumentNumber.Consecutive;
-            if(previouslyCollected&&documentType==PosSaleDocumentTypes.Receipt)
+            if(creditPortion>0) upload=upload with{UblSnapshot=upload.UblSnapshot! with{PaymentFormCode="2",DueDate=new(2026,8,31)}};
+            if(documentType==PosSaleDocumentTypes.Receipt)
             {
                 var series=Guid.NewGuid();var code=$"RR{uploadConsecutive}";
                 await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
@@ -145,7 +121,6 @@ public sealed partial class AccountingVerticalSliceTests
                 upload=upload with{DocumentNumber=new(series,PosSaleDocumentTypes.Receipt,"CVI",code,uploadConsecutive,8,$"CVI{code}-{uploadConsecutive:D8}"),
                     CommercialSnapshot=upload.CommercialSnapshot with{DocumentType=PosSaleDocumentTypes.Receipt},FiscalSnapshot=null,UblSnapshot=null};
             }
-            if(creditPortion>0) upload=upload with{UblSnapshot=upload.UblSnapshot! with{PaymentFormCode="2",DueDate=new(2026,8,31)}};
             using var pos=fixture.CreateClient();using var message=fixture.CreateUploadMessage(upload);
             using var response=await pos.SendAsync(message);
             Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
@@ -196,8 +171,8 @@ public sealed partial class AccountingVerticalSliceTests
         await logistics.ReleaseAsync(actor, draft.DispatchId, new(prepared.RowVersion, Guid.NewGuid().ToString("N")), default);
         var before = await deliveries.GetAsync(actor, draft.DispatchId, default);
         var document = Assert.Single(before.Documents);
-        Assert.Equal(previouslyCollected?"Session":"Dispatch",document.CollectionMode);
-        if(previouslyCollected)
+        Assert.Equal(previouslyCollected&&!keepCurrent?"Session":"Dispatch",document.CollectionMode);
+        if(previouslyCollected&&!keepCurrent)
             await Assert.ThrowsAsync<DispatchValidationException>(()=>deliveries.RecordAsync(actor,draft.DispatchId,
                 new(document.DispatchSourceDocumentId,"Delivered",null,null,null,null,DateTimeOffset.UtcNow,
                     Guid.NewGuid().ToString("N"),[new("InvoicePayment","Cash",gross-creditPortion,null,null,original.PaymentMethodId,original.Version)],[]),default));
@@ -230,6 +205,7 @@ public sealed partial class AccountingVerticalSliceTests
             if(splitCash)capture.Add(new("InvoicePayment","Cash",collected/2,null,null,differenceCash!.PaymentMethodId,differenceCash.Version));
             if(creditPortion>0)capture.Add(new("CreditDocument",null,0,null,"https://qa.invalid/factura-firmada.png"));
         }
+        if(keepCurrent)capture.Add(new("KeepCurrent",null,0,null,null));
         var deliveryRequest = new RecordDispatchDeliveryRequest(document.DispatchSourceDocumentId, notDelivered ? "NotDelivered" : hasReturn ? "PartiallyDelivered" : "Delivered", notDelivered ? "Cliente ausente" : hasReturn ? "Devolución parcial" : null, null,
             null, null, DateTimeOffset.UtcNow, Guid.NewGuid().ToString("N"),
             capture,
@@ -241,7 +217,7 @@ public sealed partial class AccountingVerticalSliceTests
         var invoicePayments=Assert.Single(result.Documents).Payments.Where(item=>item.ApplicationType=="InvoicePayment").ToArray();
         Assert.Equal(notDelivered||collected==0?0:splitCash?2:1,invoicePayments.Length);
         var payment=invoicePayments.FirstOrDefault();
-        await deliveries.CloseRouteAsync(actor, draft.DispatchId,
+        if(!keepCurrent)await deliveries.CloseRouteAsync(actor, draft.DispatchId,
             new(method == "Cash" ? collected : 0, null, Guid.NewGuid().ToString("N"), card ? collected : 0, method == "Transfer" ? collected : 0), default);
         if (method != "Cash" && payment is not null) await deliveries.VerifyPaymentAsync(actor, draft.DispatchId, payment.PaymentId, new(true), default);
         async Task<PaymentMethodView> SaveTargetAsync(Guid account, bool active)
@@ -272,6 +248,12 @@ public sealed partial class AccountingVerticalSliceTests
                 new HashSet<string>{SalesReturnPermissionCodes.Create}),$"administrative-refund:{draft.DispatchId:N}",returnRequest);
             administrativeReturn=returned.ReturnId;
             await AssertBalancedAsync(returned.ReturnId);
+            if(keepCurrent)
+            {
+                var rejected=await Assert.ThrowsAsync<DispatchConflictException>(()=>deliveries.RecordAsync(actor,draft.DispatchId,
+                    deliveryRequest with{IdempotencyKey=Guid.NewGuid().ToString("N"),Payments=deliveryRequest.Payments.Where(payment=>payment.ApplicationType!="KeepCurrent").ToArray()},default));
+                Assert.Contains("reembolso",rejected.Message,StringComparison.OrdinalIgnoreCase);
+            }
             var queries=scope.ServiceProvider.GetRequiredService<SalesReturnQueryService>();
             var queryUser=new SalesReturnUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,
                 new HashSet<string>{SalesReturnPermissionCodes.Read});
@@ -281,6 +263,8 @@ public sealed partial class AccountingVerticalSliceTests
             Assert.Empty((await queries.ListReturnsAsync(queryUser with{TenantId=Guid.NewGuid()},new(1,10,null,"Processed",null,null,OriginalDocumentId:sale))).Items);
             acceptance=acceptance with{ReturnIds=[returned.ReturnId]};
         }
+        if(keepCurrent)await deliveries.CloseRouteAsync(actor,draft.DispatchId,
+            new(0,null,Guid.NewGuid().ToString("N"),0,0),default);
         var worker = ActivatorUtilities.CreateInstance<DispatchSettlementHostedService>(fixture.Services);
         using var leaseReads=restartDuringLease?new InventoryBalanceProcessingTests.CommandCounter(
             new SqlConnection(fixture.ConnectionString).Database,commandFilter:command=>command.CommandText=="dbo.DispatchSettlementOperationClaimGet"):null;
@@ -367,7 +351,7 @@ public sealed partial class AccountingVerticalSliceTests
             check.Parameters.AddWithValue("@Original", original.AccountId);
             await using var reader = await check.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync());
             Assert.Equal(1, reader.GetInt32(0)); Assert.Equal((sameAccount || collected==0) && cashDifference==0 ? 0 : 1, reader.GetInt32(1));
-            Assert.Equal(1, reader.GetInt32(2)); Assert.Equal(previouslyCollected?1:0, reader.GetInt32(3)); Assert.Equal(creditPortion>0?1:0, reader.GetInt32(4));
+            Assert.Equal(1, reader.GetInt32(2)); Assert.Equal(previouslyCollected&&!keepCurrent?1:0, reader.GetInt32(3)); Assert.Equal(creditPortion>0?1:0, reader.GetInt32(4));
             Assert.Equal(1, reader.GetInt32(5)); Assert.Equal(1, reader.GetInt32(6));
             if (!sameAccount && collected>0) { Assert.Equal(splitCash?collected/2:collected+(method=="Cash"?cashDifference:0), reader.GetDecimal(7)); Assert.Equal(collected, reader.GetDecimal(8)); }
             if(cashDifference!=0)

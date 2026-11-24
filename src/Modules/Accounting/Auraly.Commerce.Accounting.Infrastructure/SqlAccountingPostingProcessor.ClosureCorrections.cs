@@ -30,7 +30,7 @@ public sealed partial class SqlAccountingPostingProcessor
             JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId
               AND type.CatalogCode=N'payment-method' AND type.Code=input.TenderMethodCode AND type.IsActive=1
-            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
+            JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
             WHERE form.IsActive=1 AND ready.SourceType=CASE
                 WHEN input.MovementType IN(N'PayablePayment',N'CashOut') THEN N'SupplierPaymentMethod'
@@ -148,12 +148,14 @@ public sealed partial class SqlAccountingPostingProcessor
         if (payload.CashShortageClaim is { } claim)
             await ApplyCashShortageClaimAsync(connection, transaction, payload, claim, token);
         var changes = (payload.PaymentCorrections ?? [])
-            .Where(item => item.Amount != item.OriginalAmount)
+            .Where(item => item.Amount != item.OriginalAmount || item.MovementType == "CreditSale")
             .Select(item => new
             {
                 item.MovementType, item.SourceId, item.SubledgerId, item.CustomerId,
-                Delta = item.Amount - item.OriginalAmount,
-                AdjustmentId = ids.NewId(), NewReceivableId = ids.NewId(),
+                Delta = item.MovementType == "CreditSale" ? item.Amount : item.Amount - item.OriginalAmount,
+                AdjustmentId = item.MovementType == "CreditSale"
+                    ? item.CorrectionId ?? throw new InvalidOperationException("El recaudo de crédito requiere su identidad aceptada.") : ids.NewId(),
+                NewReceivableId = ids.NewId(),
                 NewOpeningId = ids.NewId(), NewCreditId = ids.NewId(), NewCreditTransactionId = ids.NewId()
             }).ToArray();
         if (changes.Length == 0) return [];
@@ -172,21 +174,21 @@ public sealed partial class SqlAccountingPostingProcessor
               NewOpeningId uniqueidentifier,NewCreditId uniqueidentifier,NewCreditTransactionId uniqueidentifier);
             IF @@ROWCOUNT<>@Count THROW 51607,'The closure correction payload is incomplete.',1;
             IF EXISTS(SELECT 1 FROM #Changes WHERE Delta=0 OR MovementType NOT IN
-              (N'Sale',N'ReceivablePayment',N'PayablePayment',N'Refund',N'CashIn',N'CashOut'))
+              (N'Sale',N'CreditSale',N'ReceivablePayment',N'PayablePayment',N'Refund',N'CashIn',N'CashOut'))
               THROW 51607,'The closure correction type is invalid.',1;
 
             CREATE TABLE #Receivable(ReceivableId uniqueidentifier PRIMARY KEY,
               Adjustment decimal(19,4),AdjustmentId uniqueidentifier);
             INSERT #Receivable SELECT SubledgerId,-SUM(Delta),
               CONVERT(uniqueidentifier,MIN(CONVERT(nvarchar(36),AdjustmentId)))
-            FROM #Changes WHERE MovementType IN(N'Sale',N'ReceivablePayment')
+            FROM #Changes WHERE MovementType IN(N'Sale',N'CreditSale',N'ReceivablePayment')
               AND SubledgerId IS NOT NULL GROUP BY SubledgerId;
             DELETE FROM #Receivable WHERE Adjustment=0;
             INSERT @PortfolioChanges SELECT ReceivableId,Adjustment FROM #Receivable;
             """ + PortfolioBalanceChangesSql("Receivables", "ReceivableId", PortfolioBalanceChangeKind.Adjustment) + """
             INSERT dbo.ReceivableTransactions(ReceivableTransactionId,ReceivableId,
-              TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
-            SELECT AdjustmentId,ReceivableId,N'Adjustment',Adjustment,@ReconciliationId,@At,@Now
+              TransactionType,Amount,SourceDocumentId,SourceDocumentType,OccurredAt,CreatedAt)
+            SELECT AdjustmentId,ReceivableId,N'Adjustment',Adjustment,@ReconciliationId,@CreditParentDocumentType,@At,@Now
             FROM #Receivable;
 
             CREATE TABLE #NewReceivable(SourceId uniqueidentifier PRIMARY KEY,
@@ -251,7 +253,7 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@At", payload.ReconciledAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(token);
-        return changes.Where(item => item.CustomerId.HasValue && item.MovementType is "Sale" or "ReceivablePayment" or "Refund")
+        return changes.Where(item => item.CustomerId.HasValue && item.MovementType is "Sale" or "CreditSale" or "ReceivablePayment" or "Refund")
             .Select(item => item.CustomerId!.Value).Distinct().ToArray();
     }
 }

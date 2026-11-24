@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Parties;
+using Auraly.Contracts.Authentication;
+using Auraly.Contracts.Authorization;
+using Auraly.Platform.Application.Identity.DTOs;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -8,6 +11,102 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Renaming_the_linked_username_preserves_identity_credentials_roles_and_offline_sync()
+    {
+        var id = Guid.NewGuid(); var party = Guid.NewGuid(); var roleId = Guid.NewGuid();
+        var oldName = $"rename-{id:N}"; var newName = $"renamed-{id:N}";
+        const string password = "Auraly-Rename-Test-2026!";
+        var hash = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 4);
+        var verifier = PosOfflinePasswordHasher.Hash(password, DateTimeOffset.UtcNow);
+        await ExecuteAsync("""
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedAt)
+              VALUES(@Party,@Tenant,N'NaturalPerson',N'Usuario de prueba',N'Incomplete',1,SYSUTCDATETIME());
+            INSERT dbo.AppUsers(UserId,TenantId,PartyId,Username,NormalizedUsername,Email,NormalizedEmail,
+                PasswordHash,PosOfflinePasswordSalt,PosOfflinePasswordHash,PosOfflinePasswordIterations,
+                PosOfflinePasswordChangedAt,FirstName,LastName,IsActive,CreatedAt)
+              VALUES(@Id,@Tenant,@Party,@Username,UPPER(@Username),@Email,UPPER(@Email),@Hash,@Salt,@OfflineHash,
+                @Iterations,@ChangedAt,N'Usuario',N'Prueba',1,SYSUTCDATETIME());
+            INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,IsActive,CreatedAt)
+              VALUES(@Role,@Tenant,N'Usuario de prueba',@RoleName,1,SYSUTCDATETIME());
+            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+              SELECT NEWID(),@Role,PermissionId,SYSUTCDATETIME() FROM dbo.Permissions WHERE Resource=N'sales.create';
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+              VALUES(NEWID(),@Id,@Role,@Business,SYSUTCDATETIME());
+            """, new("@Id", id), new("@Party", party), new("@Tenant", fixture.TenantId),
+            new("@Username", oldName), new("@Email", $"{oldName}@auraly.test"), new("@Hash", hash),
+            new("@Salt", verifier.Salt), new("@OfflineHash", verifier.Hash), new("@Iterations", verifier.Iterations),
+            new("@ChangedAt", verifier.ChangedAt), new("@Role", roleId), new("@RoleName", $"RENAME-{id:N}"), new("@Business", fixture.BusinessId));
+        var request = new UpdateUserRequest(null, null, null, null, $"  {newName}  ");
+        using var denied = fixture.CreateAdminClient(PartyWorkspacePermissionCodes.Read);
+        using var denial = await denied.PutAsJsonAsync($"/api/v1/users/{id}", request);
+        Assert.Equal(HttpStatusCode.Forbidden, denial.StatusCode);
+        using var admin = fixture.CreateAdminClient("users.update", PartyWorkspacePermissionCodes.Read);
+        foreach (var invalid in new[] { " ", new string('u', 101) })
+        {
+            using var invalidResponse = await admin.PutAsJsonAsync($"/api/v1/users/{id}", request with { Username = invalid });
+            Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+        }
+        var occupied = await ScalarAsync<string>("SELECT Username FROM dbo.AppUsers WHERE UserId=@Id", new SqlParameter("@Id", fixture.UserId));
+        using var duplicate = await admin.PutAsJsonAsync($"/api/v1/users/{id}", request with { Username = occupied!.ToLowerInvariant() });
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        using var renamed = await admin.PutAsJsonAsync($"/api/v1/users/{id}", request);
+        renamed.EnsureSuccessStatusCode();
+        Assert.Equal(newName, (await renamed.Content.ReadFromJsonAsync<UserDto>())!.Username);
+        using var replay = await admin.PutAsJsonAsync($"/api/v1/users/{id}", request);
+        replay.EnsureSuccessStatusCode();
+        var detail = await admin.GetFromJsonAsync<PartyWorkspaceDetail>($"/api/commerce/v1/parties/{party}");
+        Assert.Equal(newName, detail!.User!.Username);
+        Assert.Equal(id, detail.User.UserId);
+        Assert.Single(detail.User.Roles, role => role.RoleId == roleId);
+        Assert.Equal(hash, await ScalarAsync<string>("SELECT PasswordHash FROM dbo.AppUsers WHERE UserId=@Id", new SqlParameter("@Id", id)));
+        using var client = fixture.CreateClient();
+        using var snapshotRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/pos/v1/identity/snapshot?businessId={fixture.BusinessId}");
+        snapshotRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString());
+        snapshotRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var snapshotResponse = await client.SendAsync(snapshotRequest);
+        snapshotResponse.EnsureSuccessStatusCode();
+        var snapshot = await snapshotResponse.Content.ReadFromJsonAsync<PosOfflineIdentitySnapshot>();
+        var offline = Assert.Single(snapshot!.Users, item => item.UserId == id);
+        Assert.Equal(newName, offline.Username);
+        Assert.True(PosOfflinePasswordHasher.Verify(password, offline.PasswordVerifier));
+        foreach (var name in new[] { oldName, newName.ToUpperInvariant() })
+        {
+            using var login = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
+            { Content = JsonContent.Create(new AuthenticationLoginRequest(name, "@auraly-e2e", password)) };
+            login.Headers.Add(AuthenticationDefaults.ClientIdHeader, Guid.NewGuid().ToString());
+            using var response = await client.SendAsync(login);
+            Assert.Equal(name == oldName ? HttpStatusCode.Unauthorized : HttpStatusCode.OK, response.StatusCode);
+        }
+        // The selected tenant cannot rename an account belonging to another tenant.
+        var otherTenant = Guid.NewGuid();
+        var otherId = Guid.NewGuid();
+        await ExecuteAsync("""
+            INSERT dbo.Tenants(TenantId,Name,Email,IsActive,CreatedAt) VALUES(@Tenant,N'Otro tenant',@Email,1,SYSUTCDATETIME());
+            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
+              VALUES(@Id,@Tenant,@Username,UPPER(@Username),@Email,UPPER(@Email),N'Otro',N'Usuario',1,SYSUTCDATETIME());
+            """, new("@Tenant", otherTenant), new("@Id", otherId), new("@Username", newName), new("@Email", $"{otherTenant:N}@auraly.test"));
+        using var crossTenant = await admin.PutAsJsonAsync($"/api/v1/users/{otherId}", request with { Username = oldName });
+        Assert.Equal(HttpStatusCode.Forbidden, crossTenant.StatusCode);
+        var rivalId = Guid.NewGuid();
+        await ExecuteAsync("""
+            INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
+              VALUES(@Id,@Tenant,@Username,UPPER(@Username),@Email,UPPER(@Email),N'Otro',N'Usuario',1,SYSUTCDATETIME());
+            """, new("@Tenant", fixture.TenantId), new("@Id", rivalId), new("@Username", $"rival-{rivalId:N}"), new("@Email", $"{rivalId:N}@auraly.test"));
+        var racingName = $"concurrent-{id:N}";
+        var responses = await Task.WhenAll(new[] { id, rivalId }.Select(target =>
+            admin.PutAsJsonAsync($"/api/v1/users/{target}", request with { Username = racingName })));
+        try
+        {
+            Assert.Single(responses, response => response.StatusCode == HttpStatusCode.OK);
+            var conflict = Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Conflict);
+            Assert.Contains("nombre de usuario", await conflict.Content.ReadAsStringAsync());
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AppUsers WHERE TenantId=@Tenant AND NormalizedUsername=UPPER(@Name)",
+            new("@Tenant", fixture.TenantId), new("@Name", racingName)));
+    }
+
     [Fact]
     public async Task Party_and_user_account_are_linked_without_moving_security_roles_to_party()
     {

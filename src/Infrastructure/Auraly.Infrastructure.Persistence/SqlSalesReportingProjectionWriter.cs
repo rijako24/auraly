@@ -60,8 +60,8 @@ public sealed partial class SqlSalesReportingProjectionWriter(
             netTotal: reportedTotal,
             netCost: recognizedCost.Amount,
             grossProfit: value.CommercialSnapshot.UntaxedAmount - recognizedCost.Amount,
-            creditSales: credit,
-            collected: value.Payments.Sum(payment => payment.CollectedAmount)+paymentDelta,
+            creditSales: credit+paymentDelta.Credit,
+            collected: value.Payments.Sum(payment => payment.CollectedAmount)+paymentDelta.Collected,
             refunded: 0,
             now, cancellationToken,unknownCostDocumentCount:recognizedCost.Complete?0:1);
         await RefreshProductRotationAsync(session, value.BusinessId, value.DocumentId,

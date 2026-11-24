@@ -41,31 +41,40 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
             AND (@ExcludedMethod IS NULL OR MethodCode<>@ExcludedMethod)
             AND (@Search IS NULL OR Code LIKE @Search OR Name LIKE @Search)
             AND (@Usage IS NULL OR IsActive=1 AND IsReady=1 AND
-              ((@Usage=N'Sales' AND UseForSales=1 AND MethodCode<>N'PendingCollection')
+              ((@Usage=N'Sales' AND UseForSales=1)
                OR (@Usage=N'OrderReceipts' AND UseForSales=1) OR (@Usage=N'Receipts' AND UseForReceipts=1)
                OR (@Usage=N'ServiceInvoices' AND UseForSales=1 AND MethodCode IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard'))
                OR (@Usage=N'TipPayments' AND UseForSupplierPayments=1 AND MethodCode IN(N'Cash',N'Transfer'))
                OR (@Usage=N'SupplierPayments' AND UseForSupplierPayments=1) OR (@Usage=N'Payroll' AND UseForPayroll=1)
-               OR (@Usage IN(N'VoucherReceipts',N'VoucherPayments') AND UseForVouchers=1 AND EXISTS(
-                 SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@Tenant,MethodCode,AccountId) readiness
-                 WHERE readiness.SourceType=CASE WHEN @Usage=N'VoucherReceipts' THEN N'CustomerPaymentMethod' ELSE N'SupplierPaymentMethod' END))))
+               OR (@Usage=N'VoucherReceipts' AND UseForVouchers=1 AND IsReceiptAccountReady=1)
+               OR (@Usage=N'VoucherPayments' AND UseForVouchers=1 AND IsSupplierPaymentAccountReady=1)))
             AND (@Usage IS NULL OR EXISTS(SELECT 1 FROM dbo.AccountingAccounts account
               WHERE account.TenantId=@Tenant AND account.AccountId=reference.PaymentMethodDetails.AccountId))
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand($"""
-            SELECT {Columns} FROM reference.PaymentMethodDetails WHERE {filter}
-            ORDER BY SortOrder,Code,PaymentMethodId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
-            SELECT COUNT(*) FROM reference.PaymentMethodDetails WHERE {filter};
+            SET NOCOUNT ON;
+            SELECT PaymentMethodId,SortOrder,Code INTO #EligiblePaymentForms
+            FROM reference.PaymentMethodDetails WHERE {filter};
+            WITH PageForms AS (
+              SELECT PaymentMethodId FROM #EligiblePaymentForms
+              ORDER BY SortOrder,Code,PaymentMethodId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY
+            )
+            SELECT {Columns} FROM reference.PaymentMethodDetails
+            WHERE TenantId=@Tenant AND PaymentMethodId IN(SELECT PaymentMethodId FROM PageForms)
+            ORDER BY SortOrder,Code,PaymentMethodId;
+            SELECT COUNT(*) FROM #EligiblePaymentForms;
             """, connection);
         command.Parameters.AddWithValue("@Tenant", user.TenantId);
-        command.Parameters.AddWithValue("@Id", (object?)query.PaymentMethodId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@Active", (object?)query.IsActive ?? DBNull.Value);
-        command.Parameters.AddWithValue("@Method", (object?)query.MethodCode ?? DBNull.Value);
-        command.Parameters.AddWithValue("@ExcludedMethod", (object?)query.ExcludeMethodCode ?? DBNull.Value);
-        command.Parameters.AddWithValue("@Search", string.IsNullOrEmpty(query.Search) ? DBNull.Value : $"%{query.Search}%");
-        command.Parameters.AddWithValue("@Usage", (object?)query.Usage ?? DBNull.Value);
+        // Match the validated contract lengths so different types/searches reuse
+        // the same parameterized plan instead of compiling one per string length.
+        command.Parameters.Add(new("@Id", SqlDbType.UniqueIdentifier) { Value = (object?)query.PaymentMethodId ?? DBNull.Value });
+        command.Parameters.Add(new("@Active", SqlDbType.Bit) { Value = (object?)query.IsActive ?? DBNull.Value });
+        command.Parameters.Add(new("@Method", SqlDbType.NVarChar, 32) { Value = (object?)query.MethodCode ?? DBNull.Value });
+        command.Parameters.Add(new("@ExcludedMethod", SqlDbType.NVarChar, 32) { Value = (object?)query.ExcludeMethodCode ?? DBNull.Value });
+        command.Parameters.Add(new("@Search", SqlDbType.NVarChar, 162) { Value = string.IsNullOrEmpty(query.Search) ? DBNull.Value : $"%{query.Search}%" });
+        command.Parameters.Add(new("@Usage", SqlDbType.NVarChar, 64) { Value = (object?)query.Usage ?? DBNull.Value });
         command.Parameters.AddWithValue("@Offset", checked((query.Page - 1) * query.PageSize));
         command.Parameters.AddWithValue("@Size", query.PageSize);
         var items = new List<PaymentMethodView>();
@@ -109,7 +118,7 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
               WHERE TenantId=@Tenant AND AccountId=@Account
                 AND (@Active=0 OR IsActive=1 AND AllowsPosting=1 AND FinancialFunction IS NOT NULL))
               THROW 51220,N'El tipo o auxiliar de la forma de pago no está disponible.',1;
-            IF (@Type IN(N'Credit',N'PendingCollection') AND (@Receipts=1 OR @Suppliers=1 OR @Payroll=1 OR @VoucherUsage=1))
+            IF (@Type=N'Credit' AND (@Receipts=1 OR @Suppliers=1 OR @Payroll=1 OR @VoucherUsage=1))
               OR (@Payroll=1 AND @Type NOT IN(N'Cash',N'Transfer'))
               THROW 51220,N'El tipo no admite los usos seleccionados.',1;
             IF @Active=1 AND EXISTS(SELECT 1 FROM (VALUES

@@ -1574,3 +1574,14 @@ expense payment, order recovery/save/batch emission and direct sale with receipt
 rendering. External DIAN and physical
 printing are outside this local evidence. The temporary test servers are not the
 final user demo, and this does not certify the remaining redesign.
+
+### Initial advance cut boundary — 23 November 2026
+
+Linking an existing customer or supplier advance compares its native transaction
+instants with the start of the opening day in the business's configured time
+zone. A preceding local evening may have the same UTC date as the opening and
+remains eligible; a transaction at the boundary is rejected. Save and approval
+read that zone together with the existing editability check and pass the
+canonical `BusinessCalendar.StartOfDay` instant to `OpeningPositionsValidate`.
+Posting reuses the accepted source instant. No extra SQL round trip, per-line
+lookup, timezone default or historical transaction rewrite is introduced.

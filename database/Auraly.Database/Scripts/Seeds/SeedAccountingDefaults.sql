@@ -11,7 +11,6 @@ USING (SELECT initial.*,meaning.FinancialFunction FROM (VALUES
   (N'Bank',N'Bancos',N'111005',N'Bancos nacionales',N'Asset',0,2,N'Debit'),
   (N'DebitCardClearing',N'Tarjeta débito por conciliar',N'13809501',N'Tarjetas débito por conciliar',N'Asset',0,3,N'Debit'),
   (N'CreditCardClearing',N'Tarjeta crédito por conciliar',N'13809502',N'Tarjetas crédito por conciliar',N'Asset',0,4,N'Debit'),
-  (N'PendingCollection',N'Recaudos de pedidos pendientes',NULL,NULL,N'Asset',0,64,N'Debit'),
   (N'SupplierDebitCard',N'Pagos a proveedores con tarjeta débito',NULL,NULL,N'Asset',0,62,N'Debit'),
   (N'SupplierCreditCard',N'Pagos a proveedores con tarjeta de crédito corporativa',NULL,NULL,N'Liability',0,63,N'Credit'),
   (N'TransferClearing',N'Transferencias por conciliar',N'13809503',N'Transferencias por conciliar',N'Asset',0,5,N'Debit'),
@@ -87,7 +86,7 @@ WHEN NOT MATCHED THEN INSERT(ProfileCode,Category,DisplayName,AccountCode,Accoun
 -- These purposes need the tenant's actual bank/card auxiliary. No invented
 -- bank number, automatic acquiring receivable or generic corporate-card debt.
 UPDATE dbo.AccountingConfigurationProfileAccounts SET IsRequired=0
-WHERE ProfileCode=N'AURALY_CO' AND Category IN(N'SupplierDebitCard',N'SupplierCreditCard',N'PendingCollection');
+WHERE ProfileCode=N'AURALY_CO' AND Category IN(N'SupplierDebitCard',N'SupplierCreditCard');
 
 -- Initial tenant forms are configuration, not another runtime payment catalog.
 -- Cards here collect money; corporate supplier cards remain explicit setup.
@@ -135,7 +134,6 @@ USING (VALUES
   (N'PosPaymentMethod',N'CreditCard',N'CreditCardClearing'),
   (N'PosPaymentMethod',N'Transfer',N'Bank'),
   (N'PosPaymentMethod',N'Credit',N'AccountsReceivable'),
-  (N'PosPaymentMethod',N'PendingCollection',N'PendingCollection'),
   (N'ClosurePaymentMethod',N'Cash',N'Cash'),
   (N'ClosurePaymentMethod',N'Card',N'CardClearing'),
   (N'ClosurePaymentMethod',N'Transfer',N'TransferClearing'),

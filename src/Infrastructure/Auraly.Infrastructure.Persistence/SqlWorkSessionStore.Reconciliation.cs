@@ -251,7 +251,8 @@ public sealed partial class SqlWorkSessionStore
               CorrectedPaymentMethodCode,CorrectedAmount,CorrectionReason,
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
               CorrectedApprovalNumber,CorrectedReference,CounterpartyName,
-              CorrectedPaymentMethodId,CorrectedPaymentMethodVersion,CorrectedPaymentMethodName
+              CorrectedPaymentMethodId,CorrectedPaymentMethodVersion,CorrectedPaymentMethodName,
+              CollectibleAmount
             FROM #PaymentVerifications
             ORDER BY SortOrder,OccurredAt,VerificationKey;
             SELECT JSON_QUERY(reconciliation.SnapshotJson,N'$.manualMovements')
@@ -382,7 +383,8 @@ public sealed partial class SqlWorkSessionStore
                 StringComparer.OrdinalIgnoreCase);
             foreach (var correction in verification.Corrections)
             {
-                differences[correction.OriginalPaymentMethodCode] += correction.OriginalAmount;
+                if (correction.MovementType != "CreditSale")
+                    differences[correction.OriginalPaymentMethodCode] += correction.OriginalAmount;
                 differences[correction.PaymentMethodCode] -= correction.Amount;
             }
             foreach (var correction in request.Reclassifications)
@@ -558,7 +560,7 @@ public sealed partial class SqlWorkSessionStore
                     JsonSerializer.Serialize(payload, Json), reconciledAt, ids.NewId())], reconciledAt,
                 hasFinancialEffects ? AccountingJobRequirement.PreserveCommercialEffects : AccountingJobRequirement.AccountingEntryOnly,
                 cancellationToken) > 0;
-            if (accountingQueued && verification.Corrections.Any(item => item.MovementType == "Sale"))
+            if (accountingQueued && verification.Corrections.Any(item => item.MovementType is "Sale" or "CreditSale"))
                 await SqlSalesReportingJobWriter.InsertPaymentCorrectionAsync(connection, transaction, businessId, reconciliationId,
                     "WorkSessionClosureReconciliation", ids.NewId(), reconciledAt, cancellationToken);
             if (cashShortageClaim is not null && !accountingQueued)
@@ -897,15 +899,18 @@ public sealed partial class SqlWorkSessionStore
               SELECT movement.VerificationKey,CAST(NULL AS nvarchar(100)) DocumentNumber,
                 COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
                   NULLIF(party.Identification,N''),NULLIF(sale.CustomerIdentification,N''),N'Cliente') CustomerName,
-                CAST(NULL AS nvarchar(300)) CounterpartyName
+                CAST(NULL AS nvarchar(300)) CounterpartyName,availableCredit.AvailableAmount CollectibleAmount
               FROM #PagedMovements movement CROSS JOIN #ClosureContext context
               JOIN dbo.SalesDocuments sale ON sale.DocumentId=movement.SourceId AND sale.BusinessId=context.BusinessId
               LEFT JOIN dbo.Customers customer ON customer.CustomerId=sale.CustomerId AND customer.TenantId=context.TenantId
               LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=context.TenantId
+              LEFT JOIN dbo.Receivables creditBalance ON creditBalance.SourceDocumentId=sale.DocumentId
+                AND creditBalance.SourceDocumentType=sale.DocumentType AND creditBalance.BusinessId=context.BusinessId AND creditBalance.SourceLineId IS NULL
+              OUTER APPLY accounting.ObligationAvailability(context.BusinessId,N'Receivable',creditBalance.ReceivableId,creditBalance.OutstandingAmount,NULL) availableCredit
               WHERE movement.MovementType=N'CreditSale'
               UNION ALL
               SELECT movement.VerificationKey,origin.DocumentNumber,NULL,
-                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),NULLIF(party.Identification,N''))
+                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),NULLIF(party.Identification,N'')),CONVERT(decimal(19,4),NULL)
               FROM #PagedMovements movement CROSS JOIN #ClosureContext context
               LEFT JOIN dbo.WorkSessionMovements cash ON cash.WorkSessionMovementId=movement.SourceId
               JOIN dbo.CustomerPayments payment ON payment.PaymentId=COALESCE(cash.DocumentId,movement.SourceId)
@@ -919,7 +924,7 @@ public sealed partial class SqlWorkSessionStore
               WHERE movement.MovementType=N'ReceivablePayment'
               UNION ALL
               SELECT movement.VerificationKey,origin.DocumentNumber,NULL,
-                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),NULLIF(party.Identification,N''))
+                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),NULLIF(party.Identification,N'')),CONVERT(decimal(19,4),NULL)
               FROM #PagedMovements movement CROSS JOIN #ClosureContext context
               LEFT JOIN dbo.WorkSessionMovements cash ON cash.WorkSessionMovementId=movement.SourceId
               JOIN dbo.SupplierPayments payment ON payment.PaymentId=COALESCE(cash.DocumentId,movement.SourceId)
@@ -960,7 +965,8 @@ public sealed partial class SqlWorkSessionStore
               movement.SortOrder,
               correction.PaymentMethodId CorrectedPaymentMethodId,
               correction.PaymentMethodVersion CorrectedPaymentMethodVersion,
-              correction.PaymentMethodName CorrectedPaymentMethodName
+              correction.PaymentMethodName CorrectedPaymentMethodName,
+              counterparty.CollectibleAmount
             INTO #PaymentVerifications
             FROM
             """;
@@ -1217,7 +1223,7 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(NULLIF(customerPayment.TenderCount,0),supplierPayment.TenderCount,0) TenderCount,
               cashReason.CounterpartAccountingCategory,
               CAST(CASE WHEN
-                (source.MovementType=N'Sale' AND sale.ProcessingStatus=N'Completed') OR
+                (source.MovementType IN(N'Sale',N'CreditSale') AND sale.ProcessingStatus=N'Completed') OR
                 (source.MovementType=N'RestaurantTip' AND restaurantTip.Status=N'Captured') OR
                 (source.MovementType=N'Refund' AND saleReturn.Status=N'Processed') OR
                 (source.MovementType=N'ReceivablePayment' AND customerPayment.Status=N'Processed') OR
@@ -1236,6 +1242,8 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(evidence.ApprovalNumber,source.ApprovalNumber),
               source.Reference,
               COALESCE(CASE
+                WHEN source.MovementType=N'CreditSale' AND creditOpening.AccountId IS NOT NULL
+                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),creditOpening.AccountId))
                 WHEN source.SourceDocumentType=N'ManualAccountingVoucher' AND manual.AccountId IS NOT NULL
                   THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),manual.AccountId))
                 WHEN source.MovementType=N'ReceivablePayment' AND customerPayment.TenderCount=1 AND customerPayment.AccountId IS NOT NULL
@@ -1253,7 +1261,8 @@ public sealed partial class SqlWorkSessionStore
               correctedTenderCategory.Category,
               CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturns returned WITH(UPDLOCK,HOLDLOCK,FORCESEEK(IX_SalesReturns_Original_Status(OriginalDocumentId)))
                 WHERE returned.OriginalDocumentId=sale.DocumentId AND returned.BusinessId=@BusinessId
-                  AND returned.EconomicResolution=N'Refund') THEN 1 ELSE 0 END AS bit) HasRefunds
+                  AND returned.EconomicResolution=N'Refund') THEN 1 ELSE 0 END AS bit) HasRefunds,
+              availableCredit.AvailableAmount
             FROM #Corrections correction
             LEFT JOIN #PaymentVerifications source ON source.VerificationKey COLLATE Latin1_General_100_CI_AS = correction.VerificationKey
             LEFT JOIN #ManualTreasury manual ON manual.MovementId=source.SourceId AND source.SourceDocumentType=N'ManualAccountingVoucher'
@@ -1288,7 +1297,7 @@ public sealed partial class SqlWorkSessionStore
                   CASE WHEN correction.PaymentMethodCode=source.PaymentMethodCode
                     THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
             LEFT JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesDocuments(DocumentId)))
-              ON source.MovementType=N'Sale' AND sale.DocumentId=source.SourceId AND sale.BusinessId=@BusinessId
+              ON source.MovementType IN(N'Sale',N'CreditSale') AND sale.DocumentId=source.SourceId AND sale.BusinessId=@BusinessId
             LEFT JOIN sales.RestaurantAccountCollections restaurantTip WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_RestaurantAccountCollections(CollectionId)))
               ON source.MovementType=N'RestaurantTip'
                 AND restaurantTip.CollectionId=source.SourceId
@@ -1300,6 +1309,10 @@ public sealed partial class SqlWorkSessionStore
             LEFT JOIN dbo.Receivables saleReceivable WITH(UPDLOCK,HOLDLOCK,FORCESEEK(UQ_Receivables_Source(SourceDocumentId,SourceDocumentType)))
               ON saleReceivable.SourceDocumentId=sale.DocumentId
                 AND saleReceivable.SourceDocumentType=sale.DocumentType AND saleReceivable.BusinessId=@BusinessId
+            LEFT JOIN dbo.AccountingEntryLines creditOpening ON source.MovementType=N'CreditSale'
+              AND creditOpening.EntryId=saleReceivable.OpeningEntryId AND creditOpening.LineNumber=saleReceivable.OpeningEntryLineNumber
+            OUTER APPLY(SELECT AvailableAmount FROM accounting.ObligationAvailability(@BusinessId,N'Receivable',saleReceivable.ReceivableId,saleReceivable.OutstandingAmount,NULL)
+              WHERE source.MovementType=N'CreditSale') availableCredit
             LEFT JOIN #CorrectionPaymentReferences paymentReference ON paymentReference.SourceId=source.SourceId
               AND paymentReference.MovementType=source.MovementType
             LEFT JOIN #CorrectionCustomerPayments customerPayment
@@ -1384,14 +1397,20 @@ public sealed partial class SqlWorkSessionStore
             var movementType = reader.GetString(1);
             if (movementType == "Sale" && reader.GetBoolean(38))
                 throw new WorkSessionValidationException("El recaudo tiene reembolsos aceptados. Conserva su medio y resuelve cualquier ajuste desde contabilidad.");
-            if (movementType == "CreditSale" || !reader.GetBoolean(18))
+            if (!reader.GetBoolean(18))
                 throw new WorkSessionValidationException("Solo se puede corregir un movimiento de dinero ya procesado.");
             var originalMethod = reader.GetString(4);
             var native = requested[reader.GetString(0)];
             var originalAmount = reader.GetDecimal(5);
             var method = reader.GetString(6);
             var amount = reader.GetDecimal(7);
-            if (amount != originalAmount)
+            if (movementType == "CreditSale")
+            {
+                if (native.PaymentMethodId is null || reader.IsDBNull(13) || reader.IsDBNull(39) ||
+                    amount <= 0 || amount != reader.GetDecimal(39) || amount > originalAmount)
+                    throw new WorkSessionValidationException("Selecciona una forma de pago configurada y el saldo disponible actual de la factura a crédito. Conserva sus abonos y resuelve las aplicaciones pendientes antes de corregirla.");
+            }
+            else if (amount != originalAmount)
                 throw new WorkSessionValidationException("Corregir el medio de recaudo conserva el importe original. Resuelve las diferencias de valor mediante su ajuste correspondiente.");
             var originalTender = reader.GetString(26);
             var tender = reader.IsDBNull(27)
@@ -1444,7 +1463,7 @@ public sealed partial class SqlWorkSessionStore
             var subledgerId = reader.IsDBNull(13) ? (Guid?)null : reader.GetGuid(13);
             var counterpartCategory = movementType switch
             {
-                "Sale" or "ReceivablePayment" => AccountingCategories.AccountsReceivable,
+                "Sale" or "CreditSale" or "ReceivablePayment" => AccountingCategories.AccountsReceivable,
                 "PayablePayment" => AccountingCategories.AccountsPayable,
                 "RestaurantTip" => AccountingCategories.RestaurantTipsPayable,
                 "Refund" => AccountingCategories.CustomerCreditsPayable,
@@ -1536,7 +1555,8 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(24) ? null : reader.GetString(24),
                 reader.IsDBNull(25) ? null : reader.GetGuid(25),
                 reader.IsDBNull(26) ? null : reader.GetInt32(26),
-                reader.IsDBNull(27) ? null : reader.GetString(27));
+                reader.IsDBNull(27) ? null : reader.GetString(27),
+                reader.IsDBNull(28) ? null : reader.GetDecimal(28));
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
         string rangesJson, string? status)

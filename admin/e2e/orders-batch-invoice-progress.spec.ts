@@ -3,7 +3,7 @@ import { login } from "./support/auth";
 
 test.use({ timezoneId: "Asia/Tokyo" });
 
-for (const paymentCode of ["Cash", "DebitCard", "CreditCard", "Transfer", "PendingCollection", "Credit"] as const) {
+for (const paymentCode of ["Cash", "DebitCard", "CreditCard", "Transfer", "Credit"] as const) {
 test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalación`, async ({ page, baseURL }) => {
   test.setTimeout(120_000);
   await page.clock.setFixedTime(new Date("2026-11-17T01:30:00Z"));
@@ -173,7 +173,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
       const creditFilter = url.searchParams.get("methodCode") === "Credit";
       if (creditFilter) expect(url.searchParams.get("excludeMethodCode")).toBeNull();
       else expect(url.searchParams.get("excludeMethodCode")).toBe("Credit");
-      if(paymentCode==="PendingCollection")expect(url.searchParams.get("usage")).toBe("OrderReceipts");
+      expect(url.searchParams.get("usage")).toBe("OrderReceipts");
       body = { items: [{ paymentMethodId: creditFilter ? "form-credit-native" : "form-cash-native", code: creditFilter ? "CREDIT-BATCH" : "CASH-BATCH", name: longPaymentName,
         methodCode: creditFilter ? "Credit" : paymentCode === "Credit" ? "Cash" : paymentCode,
         bankAccountId: paymentCode === "Transfer" ? "bank-configured" : null, accountCode: "111005", accountName: "Cuenta configurada",
@@ -235,8 +235,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
 
   await page.goto("/dashboard/orders#edgeToken=edge-test-token");
   await expect(page.getByText("PED-001")).toBeVisible();
-  if(paymentCode==="PendingCollection") await page.getByRole("button",{name:"Comprobante de venta",exact:true}).click();
-  const invoiceAction = page.getByRole("button", { name: paymentCode==="PendingCollection"?"Emitir de contado (3)":paymentCode==="Credit"?"Facturar a crédito (3)":"Facturar de contado (3)" });
+  const invoiceAction = page.getByRole("button", { name: paymentCode==="Credit"?"Facturar a crédito (3)":"Facturar de contado (3)" });
   const refreshButton = page.getByRole("button", { name: "Actualizar pedidos", exact: true });
   await expect(refreshButton).toBeEnabled();
   const readsBeforeRefresh = orderReads;
@@ -331,7 +330,6 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     paymentMethodId: paymentCode === "Credit" ? "form-credit-native" : "form-cash-native",
     paymentFormCode: paymentCode === "Credit" ? "CREDIT-BATCH" : "CASH-BATCH" })]));
   expect(invoiceRequests.every(request => request.paymentMethodCode === paymentCode)).toBe(true);
-  if(paymentCode==="PendingCollection")expect(invoiceRequests.every(request=>request.documentType==="SalesReceipt")).toBe(true);
   if (paymentCode === "DebitCard" || paymentCode === "CreditCard")
     expect(invoiceRequests.every(request => request.cardFranchiseCode === "Visa" && request.approvalNumber === "APPROVAL-456" && request.paymentReference === null)).toBe(true);
   if (paymentCode === "Transfer")

@@ -15,6 +15,8 @@ export function effectiveUserRoleAssignments(
   );
 }
 
-export function snapshotSaveHandlers(handlers: Map<string, () => Promise<void>>) {
+export type PartyRoleSaveHandler = { save: () => Promise<void>; validate?: () => void };
+
+export function snapshotSaveHandlers<T>(handlers: ReadonlyMap<string, T>) {
   return [...handlers.values()];
 }

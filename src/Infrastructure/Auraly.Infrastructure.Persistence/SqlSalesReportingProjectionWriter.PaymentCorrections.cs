@@ -41,11 +41,11 @@ public sealed partial class SqlSalesReportingProjectionWriter
     // facts gives the -old/+actual effect without inserting another sale/return.
     // Missing projections are intentional: ProjectSale uses this same refresh
     // when the original source arrives later, so delivery order cannot lose it.
-    private static async Task<decimal> RefreshSalePaymentFactsAsync(SalesReportingSqlSession session,
+    private static async Task<(decimal Collected, decimal Credit)> RefreshSalePaymentFactsAsync(SalesReportingSqlSession session,
         Guid tenantId, Guid businessId, IReadOnlyCollection<Guid> saleIds, bool updateDaily,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (saleIds.Count == 0) return 0;
+        if (saleIds.Count == 0) return (0, 0);
         await using var command = new SqlCommand("""
             DECLARE @Input TABLE(DocumentId uniqueidentifier PRIMARY KEY);
             INSERT @Input SELECT DISTINCT value FROM OPENJSON(@Sales) WITH(value uniqueidentifier '$');
@@ -81,7 +81,7 @@ public sealed partial class SqlSalesReportingProjectionWriter
               AND sale.BusinessId=@Business AND sale.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
             JOIN reporting.SalesReportDocuments report ON report.DocumentId=sale.DocumentId
               AND report.DocumentType=sale.DocumentType AND report.TenantId=@Tenant AND report.BusinessId=@Business
-            WHERE (sale.CollectionMode=N'Dispatch' AND EXISTS(SELECT 1 FROM @Dispatch captured WHERE captured.DocumentId=sale.DocumentId))
+            WHERE EXISTS(SELECT 1 FROM @Dispatch captured WHERE captured.DocumentId=sale.DocumentId)
               OR (sale.CollectionMode=N'Session' AND EXISTS(
                 SELECT 1 FROM dbo.WorkSessionClosures closure
                 JOIN dbo.WorkSessionClosureReconciliations correction ON correction.WorkSessionClosureId=closure.WorkSessionClosureId
@@ -90,10 +90,28 @@ public sealed partial class SqlSalesReportingProjectionWriter
                   AND financial.BusinessId=@Business AND financial.Status IN(N'Posted',N'CommercialEffectsApplied')
                 CROSS APPLY OPENJSON(correction.SnapshotJson,N'$.paymentCorrections') WITH(
                   SourceId uniqueidentifier '$.sourceId',MovementType nvarchar(32) '$.movementType') changed
-                WHERE closure.WorkSessionId=sale.WorkSessionId AND changed.SourceId=sale.DocumentId AND changed.MovementType=N'Sale'));
+                WHERE closure.WorkSessionId=sale.WorkSessionId AND changed.SourceId=sale.DocumentId AND changed.MovementType IN(N'Sale',N'CreditSale')));
             IF EXISTS(SELECT 1 FROM @Candidates sale CROSS APPLY accounting.SalePaymentPostingFacts(@Tenant,@Business,sale.DocumentId) payment
-              WHERE sale.CollectionMode=N'Session' AND payment.EffectivePaymentReady=0)
+              WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectivePaymentReady=0)
               THROW 51619,N'La corrección no tiene evidencia financiera definitiva.',1;
+
+            DECLARE @CreditCollections TABLE(DocumentId uniqueidentifier,PaymentId uniqueidentifier,
+              MethodCode nvarchar(32),Amount decimal(19,4),Reference nvarchar(160),WorkSessionId uniqueidentifier,
+              PRIMARY KEY(DocumentId,PaymentId));
+            DECLARE @CreditSalesJson nvarchar(max)=(SELECT DocumentId FROM @Candidates FOR JSON PATH);
+            INSERT @CreditCollections
+            SELECT payment.DocumentId,payment.PaymentId,payment.MethodCode,payment.Amount,payment.Reference,payment.WorkSessionId
+            FROM accounting.SaleCreditCollectionFacts(@Tenant,@Business,@CreditSalesJson) payment;
+
+            DECLARE @CreditBalances TABLE(DocumentId uniqueidentifier PRIMARY KEY,Amount decimal(19,4),Delta decimal(19,4));
+            INSERT @CreditBalances
+            SELECT selected.DocumentId,sale.CreditAmount-COALESCE(collected.Amount,0),
+              sale.CreditAmount-COALESCE(collected.Amount,0)-report.CreditAmount
+            FROM @Candidates selected JOIN dbo.SalesDocuments sale ON sale.DocumentId=selected.DocumentId
+            JOIN reporting.SalesReportDocuments report ON report.DocumentId=selected.DocumentId AND report.DocumentType=selected.DocumentType
+            OUTER APPLY(SELECT SUM(Amount) Amount FROM @CreditCollections WHERE DocumentId=selected.DocumentId) collected;
+            IF EXISTS(SELECT 1 FROM @CreditBalances WHERE Amount<0)
+              THROW 51619,N'Los recaudos corregidos superan el crédito original de la factura.',1;
 
             DECLARE @Wanted TABLE(DocumentId uniqueidentifier,PaymentNumber int,MethodCode nvarchar(32),
               Amount decimal(19,4),Reference nvarchar(160),WorkSessionId uniqueidentifier,PRIMARY KEY(DocumentId,PaymentNumber));
@@ -102,10 +120,11 @@ public sealed partial class SqlSalesReportingProjectionWriter
               native.MethodCode,native.Amount,native.Reference,native.WorkSessionId
             FROM (
               SELECT sale.DocumentId,payment.PaymentNumber Sequence,CONVERT(uniqueidentifier,NULL) PaymentId,
-                payment.EffectiveMethodCode MethodCode,payment.EffectiveAmount Amount,original.Reference,sale.WorkSessionId
+                payment.EffectiveMethodCode MethodCode,payment.EffectiveAmount Amount,original.Reference,
+                CASE WHEN sale.CollectionMode=N'Session' THEN sale.WorkSessionId END WorkSessionId
               FROM @Candidates sale CROSS APPLY accounting.SalePaymentPostingFacts(@Tenant,@Business,sale.DocumentId) payment
               JOIN dbo.SalesPayments original ON original.DocumentId=sale.DocumentId AND original.PaymentNumber=payment.PaymentNumber
-              WHERE sale.CollectionMode=N'Session' AND payment.EffectiveAmount<>0
+              WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectiveAmount<>0
               UNION ALL
               SELECT sale.DocumentId,0,payment.PaymentId,payment.MethodCode,payment.Amount,payment.Reference,session.WorkSessionId
               FROM (SELECT DISTINCT DispatchId FROM @Dispatch) captured
@@ -114,16 +133,20 @@ public sealed partial class SqlSalesReportingProjectionWriter
               JOIN @Candidates sale ON sale.DocumentId=document.SourceDocumentId
               JOIN dbo.WorkSessions session ON session.DispatchId=captured.DispatchId AND session.Kind=N'Dispatch'
               WHERE sale.CollectionMode=N'Dispatch' AND payment.ApplicationType=N'InvoicePayment' AND payment.Amount<>0
+              UNION ALL
+              SELECT credit.DocumentId,2147483647,credit.PaymentId,credit.MethodCode,credit.Amount,credit.Reference,credit.WorkSessionId
+              FROM @CreditCollections credit
             ) native;
 
-            DECLARE @Changed TABLE(DocumentId uniqueidentifier PRIMARY KEY,BusinessLocalDate date,Delta decimal(19,4));
+            DECLARE @Changed TABLE(DocumentId uniqueidentifier PRIMARY KEY,BusinessLocalDate date,Delta decimal(19,4),CreditDelta decimal(19,4));
             INSERT @Changed
-            SELECT sale.DocumentId,sale.BusinessLocalDate,COALESCE(new.Total,0)-COALESCE(old.Total,0)
+            SELECT sale.DocumentId,sale.BusinessLocalDate,COALESCE(new.Total,0)-COALESCE(old.Total,0),credit.Delta
             FROM @Candidates sale
+            JOIN @CreditBalances credit ON credit.DocumentId=sale.DocumentId
             OUTER APPLY(SELECT SUM(Amount) Total FROM @Wanted WHERE DocumentId=sale.DocumentId) new
             OUTER APPLY(SELECT SUM(Amount) Total FROM reporting.SalesReportPaymentFacts
               WHERE SourceDocumentId=sale.DocumentId AND SourceDocumentType=sale.DocumentType AND MovementType=N'Payment') old
-            WHERE EXISTS(SELECT PaymentNumber,MethodCode,Amount,Reference,WorkSessionId FROM @Wanted WHERE DocumentId=sale.DocumentId
+            WHERE credit.Delta<>0 OR EXISTS(SELECT PaymentNumber,MethodCode,Amount,Reference,WorkSessionId FROM @Wanted WHERE DocumentId=sale.DocumentId
               EXCEPT SELECT PaymentNumber,MethodCode,Amount,Reference,WorkSessionId FROM reporting.SalesReportPaymentFacts
                 WHERE SourceDocumentId=sale.DocumentId AND SourceDocumentType=sale.DocumentType AND MovementType=N'Payment')
               OR EXISTS(SELECT PaymentNumber,MethodCode,Amount,Reference,WorkSessionId FROM reporting.SalesReportPaymentFacts
@@ -138,27 +161,40 @@ public sealed partial class SqlSalesReportingProjectionWriter
               N'Payment',wanted.MethodCode,wanted.Amount,wanted.Reference,wanted.WorkSessionId,@Now
             FROM @Wanted wanted JOIN @Changed changed ON changed.DocumentId=wanted.DocumentId
               JOIN @Candidates sale ON sale.DocumentId=wanted.DocumentId;
-            UPDATE report SET CollectedAmount=COALESCE(wanted.Total,0),ProjectedAt=@Now
+            DELETE fact FROM reporting.SalesReportPaymentFacts fact JOIN @Changed changed ON changed.DocumentId=fact.SourceDocumentId
+              JOIN @Candidates sale ON sale.DocumentId=changed.DocumentId AND sale.DocumentType=fact.SourceDocumentType
+            WHERE fact.TenantId=@Tenant AND fact.BusinessId=@Business AND fact.MovementType=N'Credit';
+            INSERT reporting.SalesReportPaymentFacts(SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
+              BusinessLocalDate,MovementType,MethodCode,Amount,WorkSessionId,ProjectedAt)
+            SELECT sale.DocumentId,sale.DocumentType,0,@Tenant,@Business,sale.BusinessLocalDate,N'Credit',N'Credit',credit.Amount,sale.WorkSessionId,@Now
+            FROM @Candidates sale JOIN @Changed changed ON changed.DocumentId=sale.DocumentId
+            JOIN @CreditBalances credit ON credit.DocumentId=sale.DocumentId WHERE credit.Amount>0;
+            UPDATE report SET CollectedAmount=COALESCE(wanted.Total,0),CreditAmount=credit.Amount,ProjectedAt=@Now
             FROM reporting.SalesReportDocuments report JOIN @Changed changed ON changed.DocumentId=report.DocumentId
+            JOIN @CreditBalances credit ON credit.DocumentId=changed.DocumentId
             OUTER APPLY(SELECT SUM(Amount) Total FROM @Wanted WHERE DocumentId=changed.DocumentId) wanted
             WHERE report.TenantId=@Tenant AND report.BusinessId=@Business;
             IF @UpdateDaily=1
             BEGIN
-              DECLARE @Days TABLE(BusinessLocalDate date PRIMARY KEY,Delta decimal(19,4));
-              INSERT @Days SELECT BusinessLocalDate,SUM(Delta) FROM @Changed GROUP BY BusinessLocalDate HAVING SUM(Delta)<>0;
-              UPDATE daily SET Collected=daily.Collected+changed.Delta,UpdatedAt=@Now
+              DECLARE @Days TABLE(BusinessLocalDate date PRIMARY KEY,Delta decimal(19,4),CreditDelta decimal(19,4));
+              INSERT @Days SELECT BusinessLocalDate,SUM(Delta),SUM(CreditDelta) FROM @Changed GROUP BY BusinessLocalDate
+                HAVING SUM(Delta)<>0 OR SUM(CreditDelta)<>0;
+              UPDATE daily SET Collected=daily.Collected+changed.Delta,CreditSales=daily.CreditSales+changed.CreditDelta,UpdatedAt=@Now
               FROM reporting.SalesReportDailyTotals daily JOIN @Days changed ON changed.BusinessLocalDate=daily.BusinessLocalDate
               WHERE daily.BusinessId=@Business AND daily.CurrencyCode=N'COP';
               IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @Days)
                 THROW 51619,N'Falta el consolidado de la venta corregida.',1;
             END;
-            SELECT COALESCE(SUM(Delta),0) FROM @Changed;
+            SELECT COALESCE(SUM(Delta),0),COALESCE(SUM(CreditDelta),0) FROM @Changed;
             """, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@Tenant", tenantId);
         command.Parameters.AddWithValue("@Business", businessId);
         command.Parameters.AddWithValue("@Now", now);
         command.Parameters.AddWithValue("@UpdateDaily", updateDaily);
         command.Parameters.Add("@Sales", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(saleIds);
-        return Convert.ToDecimal(await command.ExecuteScalarAsync(cancellationToken));
+        await using var result = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await result.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("No se obtuvo el resultado autoritativo de la proyección del recaudo.");
+        return (result.GetDecimal(0), result.GetDecimal(1));
     }
 }

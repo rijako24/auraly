@@ -194,12 +194,14 @@ La captura se denomina **Corregir medio de recaudo** y exige la forma concreta d
 catálogo compartido del tenant. Efectivo no pide referencia; transferencia exige
 referencia; débito/crédito exigen franquicia vigente y aprobación. La factura
 emitida y el recaudo corregido se presentan como datos distintos. Las diferencias
-de valor siguen su proceso propio, no esta selección: toda nueva corrección conserva
+de valor siguen su proceso propio, no esta selección: corregir dinero ya recaudado conserva
 el importe original, tanto en ventas como en abonos de clientes, pagos a proveedores
 y movimientos de caja. La captura muestra ese importe de sólo lectura y la
 aceptación lo comprueba aunque la solicitud no provenga de la interfaz. Los
 snapshots ya aceptados conservan su interpretación original; no se reescriben ni
 se vuelven a aceptar para aplicar esta restricción.
+Una venta a crédito aún no recaudada usa su saldo disponible actual, según la
+extensión de recaudo de crédito descrita abajo; no reemplaza abonos anteriores.
 
 `WorkSessionService` / `SqlWorkSessionStore` conservan autorización, aceptación,
 snapshot, hash e idempotencia de la única conciliación. Su contrato se extiende con
@@ -208,12 +210,16 @@ La versión se valida al aceptar; no congela cuentas para el procesamiento futur
 La cuenta de origen se obtiene del auxiliar efectivamente utilizado por el pago
 original o de los bindings del trabajo ya terminado, con alcance tenant/sede.
 El seed de tipos conserva las identidades históricas de `BankTransfer` y
-`Deposit`, aunque estén desactivadas. `PendingCollection` usa una identidad nueva
-en instalaciones nuevas; si ya existe se conserva su ID por la clave catálogo/código.
-Repetir el seed no sustituye tipos referenciados ni agrega opciones duplicadas.
-El mapping de cierre de `PendingCollection` no exige conteo: representa recaudo
-pendiente, nunca efectivo ni crédito comercial. Su presencia en el catálogo no
-lo habilita para una venta directa ni crea un movimiento de sesión.
+`Deposit`, aunque estén desactivadas. La decisión del 23 de noviembre retira
+`PendingCollection`: no se crea en instalaciones nuevas y las formas anteriores
+se desactivan sin borrar identidades ni documentos. La migración versionada se
+detiene si queda un comprobante de ese tipo sin completar; repetirla no vuelve
+a incrementar versiones ni notificar sedes. «Cartera a domicilio» es un nombre
+de forma del tipo nativo `Credit`, con su auxiliar de CxC; no otro tipo técnico.
+El pipeline ejecuta `20261123_PreflightRetirePendingCollection.sql`, de sólo
+lectura, antes de las migraciones y del plan DACPAC. El retiro incluye la misma
+comprobación canónica; no se publica una política que impida completar un
+documento anterior pendiente. Los hosts deben permanecer detenidos durante el corte.
 Si esa evidencia no existe o es ambigua, se rechaza la corrección configurada sin
 adivinar una cuenta de configuración actual ni reparar documentos anteriores.
 
@@ -226,6 +232,23 @@ Cambiar entre dos bancos o datáfonos del mismo tipo puede producir una
 reclasificación. Con igual auxiliar e importe sólo se conserva evidencia: el
 trabajo termina como `CommercialEffectsApplied`, sin un asiento vacío o duplicado.
 Repetir un comando terminado devuelve el resultado y no resuelve otra vez cuentas.
+
+La extensión del 23 de noviembre permite registrar el recaudo real de una
+venta a crédito por todo su saldo disponible, conservando los abonos anteriores.
+La aceptación reserva ese saldo mediante `accounting.SourcePositionIndex`; el
+mismo processor aplica una transacción `Adjustment` de CxC una sola vez, contra
+el auxiliar histórico. El cierre ya contiene el dinero declarado: la corrección
+no genera otro ingreso de sesión. Sin contabilidad se aplica el mismo saldo sin
+crear asiento. Una forma nativa y sus soportes son obligatorios.
+
+`accounting.SaleCreditCollectionFacts` es la lectura común de esas correcciones
+y de los recaudos de crédito del despacho completados financieramente. Reporting
+y la lista paginada de Facturas la reutilizan: sustituyen el medio de la parte
+recaudada y conservan como crédito la parte no reclasificada. Una reserva pendiente
+no cambia la presentación. Los pagos ordinarios de cartera no reclasifican la
+venta original. La lectura recibe las identidades del lote de cada página y
+procesa sus cierres y despachos en conjunto, sin viajes ni consultas por factura;
+no modifica `SalesPayments`, XML, CUFE ni importes de la venta.
 
 La devolución posterior consulta el recaudo efectivamente aplicado, no vuelve a
 usar el datáfono o soporte original después de una corrección. La proyección

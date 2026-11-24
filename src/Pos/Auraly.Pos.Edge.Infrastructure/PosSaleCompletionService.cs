@@ -2,6 +2,7 @@ using System.Data;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
@@ -236,12 +237,10 @@ public sealed class PosSaleCompletionService(
             throw new ArgumentOutOfRangeException(nameof(command), "El ancho del recibo debe ser de 58 u 80 mm.");
         var draft = await drafts.GetAsync(draftId, ct)
             ?? throw new KeyNotFoundException("La venta activa no existe.");
-        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(draft.SourceOrderId,command.DocumentType,
-            command.Credit is not null,command.Payments.Select(payment=>new SalePaymentPurpose(payment.MethodCode,
-                payment.PaymentMethodId is {} form && form!=Guid.Empty,!string.IsNullOrWhiteSpace(payment.Reference)||
-                payment.TenderedAmount is not null||payment.BankAccountId is not null||!string.IsNullOrWhiteSpace(payment.Notes)||
-                !string.IsNullOrWhiteSpace(payment.CardFranchiseCode)||!string.IsNullOrWhiteSpace(payment.ApprovalNumber))).ToArray(),OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId));
+        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(draft.SourceOrderId,OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId));
         if(paymentPurposeError is not null) throw new InvalidOperationException(paymentPurposeError);
+        if (command.Payments.Any(payment => !PortfolioPaymentMethods.IsSupported(payment.MethodCode)))
+            throw new InvalidOperationException("Selecciona un medio de dinero válido. La cartera se registra mediante Crédito cliente.");
         if (draft.Status != PosDraftStatus.Active || draft.Lines.Count == 0)
             throw new InvalidOperationException("Sólo se puede finalizar una venta activa con productos.");
         if (draft.Lines.Any(line => SaleBelowCostPolicy.IsBelowCost(

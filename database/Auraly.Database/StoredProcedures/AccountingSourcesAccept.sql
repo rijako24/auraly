@@ -313,6 +313,20 @@ BEGIN
       target.Kind,target.PositionId,target.SourceLineId,target.Amount,target.EffectKind,target.ReversesTransactionId FROM @CreditTargets target
     JOIN @Accepted accepted ON accepted.DocumentId=target.DocumentId AND accepted.DocumentType=N'ManualAccountingVoucher';
 
+    -- A credit-to-money correction reserves the remaining debt until its single
+    -- financial transaction applies. The same index/availability owner protects
+    -- competing receipts; replay does not recreate this derived evidence.
+    INSERT accounting.SourcePositionIndex(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,EffectId,
+      SubledgerKind,SubledgerId,SourceLineId,Amount,EffectKind)
+    SELECT source.DocumentId,source.DocumentType,@TenantId,source.BusinessId,correction.CorrectionId,
+      N'Receivable',correction.SubledgerId,correction.CorrectionId,correction.Amount,N'Adjustment'
+    FROM @Accepted accepted JOIN @Sources source
+      ON source.DocumentId=accepted.DocumentId AND source.DocumentType=accepted.DocumentType
+    CROSS APPLY OPENJSON(source.Payload,N'$.paymentCorrections') WITH(
+      MovementType nvarchar(32) '$.movementType',CorrectionId uniqueidentifier '$.correctionId',
+      SubledgerId uniqueidentifier '$.subledgerId',Amount decimal(19,4) '$.amount') correction
+    WHERE source.DocumentType=N'WorkSessionClosureReconciliation' AND correction.MovementType=N'CreditSale';
+
     -- Configuration protection is derived from first acceptance, including pending
     -- jobs. It has no amounts or independent writer and is never repeated on replay.
     DECLARE @ReferencedAccounts TABLE(AccountId uniqueidentifier PRIMARY KEY);

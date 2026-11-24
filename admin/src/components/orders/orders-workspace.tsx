@@ -212,8 +212,7 @@ export function OrdersWorkspace({
   const businessId = workspaceBusinessId ?? selectedBusinessId;
   const [paymentSelection, setPaymentSelection] = useState<{ tenantId: string | null; businessId: string | null | undefined; form: PaymentMethod; details?: OrderInvoicePaymentDetails }>();
   const paymentForm = paymentSelection && paymentSelection.tenantId === tenantId && paymentSelection.businessId === businessId &&
-    (paymentSelection.form.methodCode === "Credit") === (paymentMethodCode === "Credit") &&
-    (paymentSelection.form.methodCode !== "PendingCollection" || documentType === "SalesReceipt") ? paymentSelection.form : undefined;
+    (paymentSelection.form.methodCode === "Credit") === (paymentMethodCode === "Credit") ? paymentSelection.form : undefined;
   const paymentDetails = paymentForm ? paymentSelection?.details : undefined;
   const [paymentCapture, setPaymentCapture] = useState<{
     tenantId: string | null; formId: string; card?: CardPaymentDetails; transfer?: TransferPaymentDetails;
@@ -800,7 +799,7 @@ export function OrdersWorkspace({
                   <button
                     type="button"
                     aria-pressed={documentType === "SalesInvoice"}
-                    onClick={() => {setDocumentType("SalesInvoice");if(paymentForm?.methodCode==="PendingCollection")selectPaymentForm(undefined);}}
+                    onClick={() => setDocumentType("SalesInvoice")}
                     className={`min-h-8 rounded-lg px-2.5 text-xs font-semibold transition ${
                       documentType === "SalesInvoice"
                         ? "bg-teal-700 text-white shadow-sm"
@@ -849,13 +848,13 @@ export function OrdersWorkspace({
                   </button>
                 </div>
                 {onInvoiceSelected && <PagedEntitySelect<PaymentMethod>
-                  queryKey={["payment-method-choices", tenantId, businessId, documentType === "SalesReceipt" ? "OrderReceipts" : "Sales", paymentMethodCode]}
+                  queryKey={["payment-method-choices", tenantId, businessId, "OrderReceipts", paymentMethodCode]}
                   preload={paymentMethodCode === "Credit"} autoSelectSingle={paymentMethodCode === "Credit"}
                   value={paymentForm?.paymentMethodId ?? ""}
                   selectedOption={paymentForm ? { value: paymentForm.paymentMethodId, label: paymentForm.name } : null}
                   onChange={(_value, _option, item) => selectPaymentForm(item)}
                   loadPage={async (search, page, pageSize) => {
-                    const result = await loadPaymentMethods({ page, pageSize, search, usage: documentType === "SalesReceipt" ? "OrderReceipts" : "Sales",
+                    const result = await loadPaymentMethods({ page, pageSize, search, usage: "OrderReceipts",
                       ...(paymentMethodCode === "Credit" ? { methodCode: "Credit" } : { excludeMethodCode: "Credit" }) });
                     return { ...result, totalPages: Math.ceil(result.totalCount / pageSize) };
                   }}

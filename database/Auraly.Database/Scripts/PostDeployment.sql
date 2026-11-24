@@ -193,6 +193,7 @@ GO
 :r .\Migrations\20261115_LinkHistoricalCustomerCredits.sql
 :r .\Migrations\20261116_LinkHistoricalSupplierCredits.sql
 :r .\Migrations\20261116_CompleteReviewedMegafruverPaymentCatalog.sql
+:r .\Migrations\20261123_RetirePendingCollection.sql
 -- The additive preparation is superseded by the common profile bootstrap.
 -- Existing forms and their chosen accounts/flags remain untouched.
 SET XACT_ABORT ON;

@@ -17,7 +17,8 @@ CREATE TABLE [accounting].[SourcePositionIndex]
     CONSTRAINT [PK_SourcePositionIndex] PRIMARY KEY ([SourceDocumentId],[SourceDocumentType],[EffectId],[SubledgerKind]),
     CONSTRAINT [FK_SourcePositionIndex_Source] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType])
       REFERENCES [dbo].[AccountingSourceDocuments]([SourceDocumentId],[SourceDocumentType]),
-    CONSTRAINT [CK_SourcePositionIndex_Type] CHECK ([SourceDocumentType]=N'ManualAccountingVoucher'),
+    CONSTRAINT [CK_SourcePositionIndex_Type] CHECK ([SourceDocumentType]=N'ManualAccountingVoucher' OR
+      ([SourceDocumentType]=N'WorkSessionClosureReconciliation' AND [SubledgerKind]=N'Receivable' AND [EffectKind]=N'Adjustment')),
     CONSTRAINT [CK_SourcePositionIndex_Kind] CHECK ([SubledgerKind] IN(N'Payable',N'Receivable',N'SupplierCredit',N'CustomerCredit')),
     CONSTRAINT [CK_SourcePositionIndex_Amount] CHECK ([Amount]>0),
     CONSTRAINT [CK_SourcePositionIndex_Effect] CHECK (

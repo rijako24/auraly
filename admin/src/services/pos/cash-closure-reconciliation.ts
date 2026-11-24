@@ -68,5 +68,6 @@ export function cashClosurePaymentGroups<T extends CashClosureVerification>(
     { key: "PayablePayment", label: "Pagos a proveedores", items: items.filter(item => item.movementType === "PayablePayment") },
     { key: "CashIn", label: "Entradas de dinero", items: items.filter(item => item.movementType === "CashIn") },
     { key: "CashOut", label: "Salidas de dinero", items: items.filter(item => item.movementType === "CashOut") },
+    { key: "CreditSale", label: "Recaudos de facturas a crédito", items: items.filter(item => item.movementType === "CreditSale") },
   ];
 }

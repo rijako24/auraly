@@ -1,6 +1,9 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Platform.Domain.Repositories;
 using Auraly.Platform.Infrastructure.Data;
+using Auraly.Platform.Application.Common.Exceptions;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 
 namespace Auraly.Platform.Infrastructure.Repositories;
 
@@ -257,7 +260,15 @@ public class UnitOfWork : IUnitOfWork
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            return await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException error) when (error.InnerException is SqlException { Number: 2601 or 2627 } sql
+            && sql.Message.Contains("UX_AppUsers_Tenant_Username", StringComparison.Ordinal))
+        {
+            throw new ConflictException("El nombre de usuario ya está en uso.", error);
+        }
     }
 
     public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default)

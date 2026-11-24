@@ -76,6 +76,17 @@ public sealed partial class SqlDispatchDeliveryStore
                   VerifiedAt=CASE WHEN @Verified=1 THEN COALESCE(VerifiedAt,SYSUTCDATETIME()) END
                 WHERE DispatchDeliveryPaymentId=@PaymentId;
               END;
+              -- A native CxC payment permits one tender per configured form.
+              -- Equal evidence is consolidated by the settlement query. Different
+              -- authorizations/references cannot be silently merged into one.
+              IF EXISTS(SELECT 1 FROM dispatch.EffectivePayments(@Id)
+                WHERE ApplicationType IN(N'InvoicePayment',N'CreditAdvance')
+                GROUP BY DispatchSourceDocumentId,ApplicationType,OriginalMethod,PaymentMethodId
+                HAVING MIN(MethodCode)<>MAX(MethodCode) OR MIN(PaymentMethodVersion)<>MAX(PaymentMethodVersion)
+                  OR MIN(COALESCE(Reference,N''))<>MAX(COALESCE(Reference,N''))
+                  OR MIN(COALESCE(CardFranchiseCode,N''))<>MAX(COALESCE(CardFranchiseCode,N''))
+                  OR MIN(COALESCE(ApprovalNumber,N''))<>MAX(COALESCE(ApprovalNumber,N'')))
+                THROW 51000,N'Esta forma ya tiene otro soporte en la factura. Conserva una forma distinta o confirma los mismos datos del recaudo real.',1;
               DECLARE @Gross decimal(19,4),@Transfer decimal(19,4),@Cards decimal(19,4);
               SELECT @Gross=GrossCash,@Transfer=TransferTotal,@Cards=CardTotal FROM dispatch.PaymentTotals(@Id);
               DECLARE @Expenses decimal(19,4)=(SELECT COALESCE(SUM(ApprovedAmount),0) FROM dbo.DispatchExpenses

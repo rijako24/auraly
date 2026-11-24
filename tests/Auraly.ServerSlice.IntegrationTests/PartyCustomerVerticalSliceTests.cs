@@ -519,6 +519,16 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/parties?page=1&pageSize=10&search=Comercial%203331");
         Assert.NotNull(multiTermPage);
         Assert.Contains(multiTermPage.Items, value => value.PartyId == customer.PartyId);
+        foreach (var search in new[] { "Comercial compras@unificada.test", "unificada 3007773311", "unificada unificada 3007773311" })
+        {
+            var contactMatch = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+                $"/api/commerce/v1/parties?page=1&pageSize=10&search={Uri.EscapeDataString(search)}");
+            Assert.Equal(customer.PartyId, Assert.Single(contactMatch!.Items).PartyId);
+            Assert.Equal(1, contactMatch.TotalCount);
+        }
+        var missingTerm = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+            "/api/commerce/v1/parties?page=1&pageSize=10&search=noexistetermino%203007773311");
+        Assert.Empty(missingTerm!.Items);
 
         var supplierPage = await admin.GetFromJsonAsync<PartyWorkspacePage>(
             $"/api/commerce/v1/parties?page=1&pageSize=1&role=Supplier&roleId={supplier.SupplierId:D}");
@@ -614,6 +624,13 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var inactive = await inactiveResponse.Content.ReadFromJsonAsync<PartyWorkspaceItem>();
         Assert.NotNull(inactive);
         Assert.False(inactive.IsActive);
+        foreach (var activeFilter in new[] { true, false })
+        {
+            var filtered = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+                $"/api/commerce/v1/parties?page=1&pageSize=1&role=Supplier&partyId={customer.PartyId:D}&isActive={activeFilter}");
+            if (activeFilter) Assert.Empty(filtered!.Items);
+            else Assert.Equal(customer.PartyId, Assert.Single(filtered!.Items).PartyId);
+        }
 
         using var denied = fixture.CreateAdminClient(PartyWorkspacePermissionCodes.Read);
         using var deniedResponse = await denied.PostAsJsonAsync(

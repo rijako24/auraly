@@ -2442,6 +2442,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         validate.Parameters.AddWithValue("@TenantId", source.TenantId);
         validate.Parameters.AddWithValue("@BusinessId", source.BusinessId);
         validate.Parameters.AddWithValue("@EffectiveOn", source.OccurredAt.Date);
+        validate.Parameters.AddWithValue("@EffectiveAt", source.OccurredAt);
         validate.Parameters.AddWithValue("@HistoricalCatchup", opening.HistoricalCatchup == true);
         validate.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(opening.Lines.Select(line => new
         {
@@ -3328,6 +3329,27 @@ public sealed partial class SqlAccountingPostingProcessor(
             }
             foreach(var correction in payload.PaymentCorrections ?? [])
             {
+                if (correction.MovementType == "CreditSale")
+                {
+                    if (correction.SubledgerId is null || correction.CorrectionId is null || correction.Amount <= 0 ||
+                        correction.Amount > correction.OriginalAmount || correction.PaymentMethodId is null ||
+                        correction.OriginalTenderCategory is null)
+                        throw new InvalidOperationException("La corrección de crédito no conserva la obligación, importe e identidad aceptados.");
+                    residual[correction.PaymentMethodCode] -= correction.Amount;
+                    // The blind count already moved the real money against the
+                    // pending-difference account. Clear that account against the
+                    // original receivable, without recognizing the cash twice.
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending, correction.Amount, 0, null, description));
+                    lines.Add(new(correction.OriginalTenderCategory, 0, correction.Amount, correction.PartyId, description));
+                    var group = payload.Lines.Single(line => line.PaymentMethodCode.Equals(
+                        correction.PaymentMethodCode, StringComparison.OrdinalIgnoreCase)).AccountingCategory;
+                    if (correction.TenderCategory is { } destination && !destination.Equals(group, StringComparison.OrdinalIgnoreCase))
+                    {
+                        lines.Add(new(destination, correction.Amount, 0, correction.PartyId, description));
+                        lines.Add(new(group, 0, correction.Amount, null, description));
+                    }
+                    continue;
+                }
                 residual[correction.OriginalPaymentMethodCode]+=correction.OriginalAmount;
                 residual[correction.PaymentMethodCode]-=correction.Amount;
                 var delta=correction.Amount-correction.OriginalAmount;

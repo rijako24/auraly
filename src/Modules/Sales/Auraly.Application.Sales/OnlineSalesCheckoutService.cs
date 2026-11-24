@@ -247,14 +247,6 @@ public sealed class OnlineSalesCheckoutService(
     private readonly Dictionary<Guid, OnlineSalesFiscalKeyContext>
         _fiscalKeyContextByBusiness = [];
 
-    private static readonly HashSet<string> PaymentMethods =
-    [
-        "Cash",
-        "DebitCard",
-        "CreditCard",
-        "Transfer",
-        "PendingCollection"
-    ];
 
     public Task WarmSettlementBatchAsync(
         OnlineSalesUserIdentity user,
@@ -692,7 +684,7 @@ public sealed class OnlineSalesCheckoutService(
                     credit.PaymentMethodCode,credit.PaymentMethodName,credit.AccountId) : null))
             throw new OnlineSalesDraftValidationException("La identidad de las formas de pago no es válida.");
         if (request.Payments.Any(payment =>
-                !PaymentMethods.Contains(payment.MethodCode) ||
+                !PortfolioPaymentMethods.IsSupported(payment.MethodCode) ||
                 payment.Amount <= 0 ||
                 payment.Amount + payment.RoundingAdjustment <= 0m ||
                 payment.Reference?.Length > 160 ||

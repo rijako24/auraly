@@ -31,9 +31,6 @@ public sealed class ReportingPaymentCorrectionsTests(ServerSliceFixture fixture,
     [InlineData("DebitCard", "Cash", "None", true, false)]
     [InlineData("CreditCard", "Cash", "None", true, false)]
     [InlineData("Cash", "Cash", "None", true, false)]
-    [InlineData("Transfer", "PendingCollection", "None", false, false)]
-    [InlineData("Transfer", "PendingCollection", "Partial", true, false)]
-    [InlineData("Cash", "PendingCollection", "NotDelivered", true, false)]
     public async Task Confirmed_dispatch_refreshes_only_actual_tenders_and_survives_replay_and_rebuild(
         string method, string original, string returned, bool before, bool rebuild)
     {

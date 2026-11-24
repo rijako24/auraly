@@ -290,7 +290,9 @@ public sealed partial class SqlSalesReturnStore(
             -- aggregate lock order. Never change a captured manifest behind it.
             DECLARE @ActiveDispatch uniqueidentifier,@DispatchSource uniqueidentifier,@Delivery nvarchar(24),@Collection nvarchar(16);
             SELECT @ActiveDispatch=dispatch.DispatchId,@DispatchSource=source.DispatchSourceDocumentId,
-              @Delivery=delivery.DeliveryStatus,@Collection=sale.CollectionMode
+              @Delivery=delivery.DeliveryStatus,@Collection=CASE WHEN sale.CollectionMode=N'Session' OR EXISTS(
+                SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,sale.DocumentId) payment
+                WHERE payment.CollectedOutsideDispatch=1) THEN N'Session' ELSE sale.CollectionMode END
             FROM dbo.DispatchSourceDocuments source WITH(READCOMMITTEDLOCK,FORCESEEK(IX_DispatchSourceDocuments_Source(SourceDocumentId)))
             JOIN dbo.Dispatches dispatch WITH(UPDLOCK,HOLDLOCK) ON source.DispatchId=dispatch.DispatchId
             JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId
@@ -490,7 +492,7 @@ public sealed partial class SqlSalesReturnStore(
                   AND s.OriginalPaymentNumber=p.PaymentNumber
                   AND s.EconomicResolution=N'Refund'
             ) reversed
-            WHERE sale.DocumentId=@DocumentId AND sale.CollectionMode=N'Session'
+            WHERE sale.DocumentId=@DocumentId AND p.CollectedOutsideDispatch=1
               AND p.PaymentNumber=@PaymentNumber AND p.EffectivePaymentReady=1;
             """, connection, transaction);
         card.Parameters.AddWithValue("@DocumentId", request.OriginalDocumentId);

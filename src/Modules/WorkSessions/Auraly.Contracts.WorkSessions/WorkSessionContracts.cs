@@ -316,7 +316,8 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? CounterpartyName = null,
     Guid? CorrectedPaymentMethodId = null,
     int? CorrectedPaymentMethodVersion = null,
-    string? CorrectedPaymentMethodName = null);
+    string? CorrectedPaymentMethodName = null,
+    decimal? CollectibleAmount = null);
 
 public sealed record WorkSessionPaymentVerificationGroup(
     string PaymentMethodCode,

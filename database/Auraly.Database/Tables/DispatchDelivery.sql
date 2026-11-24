@@ -39,9 +39,12 @@ CREATE TABLE [dbo].[DispatchDeliveryPayments] (
       ([ReviewedPaymentMethodId] IS NULL AND [ReviewedPaymentMethodVersion] IS NULL AND [CorrectedBy] IS NULL AND [CorrectedAt] IS NULL AND [CorrectionReason] IS NULL)
       OR ([ReviewedPaymentMethodId] IS NOT NULL AND [ReviewedPaymentMethodVersion] IS NOT NULL AND [ReviewedPaymentMethodVersion]>0 AND [CorrectedBy] IS NOT NULL AND [CorrectedAt] IS NOT NULL AND [CorrectionReason] IS NOT NULL AND LEN(LTRIM(RTRIM([CorrectionReason])))>0)),
     CONSTRAINT [CK_DispatchDeliveryPayments_FormIdentity] CHECK (([PaymentMethodId] IS NULL AND [PaymentMethodVersion] IS NULL) OR ([PaymentMethodId] IS NOT NULL AND [PaymentMethodVersion] IS NOT NULL AND [PaymentMethodVersion]>0)),
-    CONSTRAINT [CK_DispatchDeliveryPayments_Application] CHECK ([ApplicationType] IN (N'InvoicePayment',N'CreditDocument',N'CreditAdvance')),
+    CONSTRAINT [CK_DispatchDeliveryPayments_Application] CHECK ([ApplicationType] IN (N'InvoicePayment',N'CreditDocument',N'CreditAdvance',N'KeepCurrent')),
     CONSTRAINT [CK_DispatchDeliveryPayments_Shape] CHECK (
       ([ApplicationType]=N'CreditDocument' AND [PaymentMethod] IS NULL AND [Amount]=0 AND [EvidenceUrl] IS NOT NULL)
+      OR ([ApplicationType]=N'KeepCurrent' AND [PaymentMethod] IS NULL AND [Amount]=0 AND [PaymentMethodId] IS NULL
+        AND [PaymentMethodVersion] IS NULL AND [Reference] IS NULL AND [CardFranchiseCode] IS NULL
+        AND [ApprovalNumber] IS NULL AND [EvidenceUrl] IS NULL)
       OR ([ApplicationType] IN (N'InvoicePayment',N'CreditAdvance') AND [PaymentMethod] IN (N'Cash',N'Deposit',N'Transfer',N'DebitCard',N'CreditCard') AND [Amount]>0))
 );
 GO

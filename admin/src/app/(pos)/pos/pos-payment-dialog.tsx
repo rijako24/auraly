@@ -63,7 +63,6 @@ export function PosPaymentDialog({
   onCancel,
   onConfirm,
   portfolioDirection,
-  allowPendingCollection=false,
   portfolioPaymentDate,
   onBack,
   maxPaymentMethods,
@@ -88,7 +87,6 @@ export function PosPaymentDialog({
     methodLabels: Readonly<Record<string, string>>,
   ) => Promise<void>;
   portfolioDirection?: "receivable" | "payable";
-  allowPendingCollection?: boolean;
   portfolioPaymentDate?: { value: string; today?: string; onChange: (value: string) => void };
   onBack?: () => void;
   maxPaymentMethods?: number;
@@ -110,15 +108,11 @@ export function PosPaymentDialog({
   const catalogReady = formCatalog?.contractVersion === 2;
   const effectiveMaximum = maxPaymentMethods ?? (portfolioDirection ? 10 : undefined);
   const forms = useMemo(() => (catalogReady ? formCatalog.forms : []).filter(form => portfolioDirection === "receivable" ? form.useForReceipts : portfolioDirection === "payable" ? form.useForSupplierPayments : form.useForSales), [catalogReady, formCatalog, portfolioDirection]);
-  const pendingEligible=allowPendingCollection&&documentType==="SalesReceipt"&&!portfolioDirection;
   const methods=useMemo(()=>{
-    const options=(paymentMethods.data??[]).filter(option=>option.code!=="PendingCollection"&&(!portfolioDirection||
-      option.code==="Cash"||option.code==="Transfer"||option.code==="DebitCard"||option.code==="CreditCard"))
-      .slice(0,5).map((option,index)=>({code:option.code,label:option.label,shortcut:`F${index+1}`}));
-    const pending=pendingEligible&&forms.some(form=>form.methodCode==="PendingCollection")
-      ?paymentMethods.data?.find(option=>option.code==="PendingCollection"):null;
-    return pending?[...options,{code:pending.code,label:pending.label,shortcut:""}]:options;
-  },[paymentMethods.data,portfolioDirection,pendingEligible,forms]);
+    return (paymentMethods.data??[]).filter(option=>!portfolioDirection||
+      option.code==="Cash"||option.code==="Transfer"||option.code==="DebitCard"||option.code==="CreditCard")
+      .map((option,index)=>({code:option.code,label:option.label,shortcut:index<5?`F${index+1}`:""}));
+  },[paymentMethods.data,portfolioDirection]);
   const shortcutCount=methods.filter(method=>method.shortcut).length;
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
@@ -269,16 +263,10 @@ export function PosPaymentDialog({
     if (busy || !catalogReady || !settlementConfigurationLoaded) return;
     if (requestedMethod && !forms.some(form => form.methodCode === requestedMethod)) return;
     setCreditError(null);
-    if(requestedMethod==="PendingCollection"){
-      if(!pendingEligible) return;
-      const id=crypto.randomUUID();
-      const payment=selectOnlyForm({id,methodCode:requestedMethod,amount:paymentTotalForCollection(total),reference:null,notes:null,bankAccountId:null});
-      setPayments([payment]);setActivePaymentId(id);setPendingFocusId(id);return;
-    }
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
       : null;
-    if (requestedMethod && (payments.some(payment=>payment.methodCode==="PendingCollection") || settlement.missing <= 0 || payments.length >= (effectiveMaximum ?? Number.POSITIVE_INFINITY))) {
+    if (requestedMethod && (settlement.missing <= 0 || payments.length >= (effectiveMaximum ?? Number.POSITIVE_INFINITY))) {
       const current = active ?? payments[0];
       if (!current) return;
       const updated = selectOnlyForm({ ...current, methodCode: requestedMethod, paymentMethodId: null,
@@ -310,7 +298,7 @@ export function PosPaymentDialog({
     if (payment.paymentMethodId && requiresCardCapture(nextMethod.code)) openCardCapture(id, payment);
     else if (payment.paymentMethodId && nextMethod.code === "Transfer") openTransferCapture(id, payment);
     else setPendingFocusId(id);
-  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, forms, methods, openCardCapture, openTransferCapture, payments, pendingEligible, total, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
+  }, [activePaymentId, busy, catalogReady, effectiveMaximum, focusAmount, forms, methods, openCardCapture, openTransferCapture, payments, requiresCardCapture, selectOnlyForm, settlement.missing, settlementConfigurationLoaded]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -318,9 +306,7 @@ export function PosPaymentDialog({
     setPendingFocusId(null);
   }, [focusAmount, pendingFocusId, payments]);
 
-  const pendingValid=!payments.some(payment=>payment.methodCode==="PendingCollection")||
-    pendingEligible&&payments.length===1&&payments[0].amount===paymentTotalForCollection(total);
-  const canSubmit = pendingValid && settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded && catalogReady &&
+  const canSubmit = settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded && catalogReady &&
     (!portfolioDirection || !portfolioPaymentDate || Boolean(portfolioPaymentDate.value)) &&
     payments.every(payment=>
       forms.some(form=>form.paymentMethodId===payment.paymentMethodId && form.version===payment.paymentMethodVersion && form.methodCode===payment.methodCode)) &&
@@ -510,7 +496,6 @@ export function PosPaymentDialog({
           </div>
           {!documentTypeReady&&<p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Completa la configuración de factura electrónica para poder emitir esta venta.</p>}</>}
         </section>
-        {!pendingValid&&<p role="alert" className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Por recaudar requiere el valor completo de un comprobante de pedido. Cambia el medio de pago o el documento para continuar.</p>}
         {effectiveMaximum === 1 && <p className="mt-3 text-sm text-slate-500">Para varias facturas se usa un solo medio de pago.</p>}
 
         <div className={`mt-5 grid grid-cols-2 gap-2 ${portfolioDirection ? "sm:grid-cols-4" : "md:grid-cols-3 xl:grid-cols-5"}`}>
@@ -590,7 +575,7 @@ export function PosPaymentDialog({
                   type="text"
                   inputMode="decimal"
                   data-payment-amount="true"
-                  aria-label={payment.methodCode==="PendingCollection"?"Importe por recaudar":`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
+                  aria-label={`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
                   value={amountDrafts[payment.id] ?? formatMoneyValue(payment.amount, portfolioDirection ? 4 : 2)}
                   onFocus={(event) => event.currentTarget.select()}
                   onKeyDown={(event) => handleAmountKeyDown(event, payment.id)}

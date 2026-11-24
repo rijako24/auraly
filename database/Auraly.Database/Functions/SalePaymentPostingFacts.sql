@@ -18,7 +18,13 @@ AS RETURN
         AND (correction.AccountId IS NOT NULL OR (correction.ConfiguredPayment=0 AND correction.AccountingEntryRequired=0))
         AND correction.PostingStatus IN(N'Posted',N'CommercialEffectsApplied'))
         THEN 1 ELSE 0 END AS bit) EffectivePaymentReady,
-      CASE WHEN correction.ProofCount=0 THEN payment.PaymentMethodName ELSE correction.PaymentMethodName END EffectiveFormName
+      CASE WHEN correction.ProofCount=0 THEN payment.PaymentMethodName ELSE correction.PaymentMethodName END EffectiveFormName,
+      CONVERT(bit,CASE WHEN sale.CollectionMode=N'Session' OR EXISTS(
+        SELECT 1 FROM dbo.DispatchSourceDocuments assigned
+        JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=assigned.DispatchId AND dispatch.BusinessId=@BusinessId AND dispatch.TenantId=@TenantId
+        JOIN dbo.DispatchDeliveryPayments kept ON kept.DispatchSourceDocumentId=assigned.DispatchSourceDocumentId
+          AND kept.DispatchId=assigned.DispatchId AND kept.ApplicationType=N'KeepCurrent'
+        WHERE assigned.SourceDocumentId=sale.DocumentId AND dispatch.Status<>N'Cancelled') THEN 1 ELSE 0 END) CollectedOutsideDispatch
     FROM dbo.SalesDocuments sale
     JOIN dbo.Businesses business ON business.BusinessId=sale.BusinessId AND business.TenantId=@TenantId
     JOIN dbo.SalesPayments payment ON payment.DocumentId=sale.DocumentId

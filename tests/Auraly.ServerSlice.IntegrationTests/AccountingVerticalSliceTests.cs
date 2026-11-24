@@ -4101,7 +4101,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
               DocumentNumberSnapshot,CustomerNameSnapshot,SellerNameSnapshot,
               DocumentTotalSnapshot,CreditAmountSnapshot,Status,CreatedAt)
             VALUES(
-              @SourceId,@DispatchId,@SalesDocumentId,N'SalesInvoice',N'FACTURA-PRUEBA',
+              @SourceId,@DispatchId,@SalesDocumentId,(SELECT DocumentType FROM dbo.SalesDocuments WHERE DocumentId=@SalesDocumentId),N'FACTURA-PRUEBA',
               N'Cliente prueba',N'Vendedor prueba',@Expected,
               (SELECT CreditAmount FROM dbo.SalesDocuments WHERE DocumentId=@SalesDocumentId),N'Delivered',SYSUTCDATETIME());
             INSERT dbo.DispatchDeliveryPayments(

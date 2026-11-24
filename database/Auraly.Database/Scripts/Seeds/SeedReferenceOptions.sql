@@ -107,8 +107,6 @@ VALUES
 ('10000000-0000-0000-0000-000000000004',N'payment-method',N'Transfer',N'Transferencia',NULL,40),
 ('10000000-0000-0000-0000-000000000005',N'payment-method',N'Credit',N'Crédito cliente',NULL,50),
 -- Identifiers 6 and 7 belong to historical BankTransfer and Deposit options.
--- Match existing PendingCollection by catalog/code; never reuse those identities.
-('10000000-0000-0000-0000-000000000008',N'payment-method',N'PendingCollection',N'Por recaudar',N'Sólo para comprobantes de pedidos pendientes de recaudo.',60),
 ('10100000-0000-0000-0000-000000000001',N'cash-closure-method',N'Cash',N'Efectivo',NULL,10),
 ('10100000-0000-0000-0000-000000000002',N'cash-closure-method',N'Card',N'Tarjeta',NULL,20),
 ('10100000-0000-0000-0000-000000000003',N'cash-closure-method',N'Transfer',N'Transferencia',NULL,30),
@@ -352,8 +350,7 @@ USING (VALUES
   (N'DebitCard',N'Card',CAST(1 AS bit),20),
   (N'CreditCard',N'Card',CAST(1 AS bit),20),
   (N'Transfer',N'Transfer',CAST(1 AS bit),30),
-  (N'Credit',N'Credit',CAST(0 AS bit),40),
-  (N'PendingCollection',N'PendingCollection',CAST(0 AS bit),50)
+  (N'Credit',N'Credit',CAST(0 AS bit),40)
 ) AS source(PaymentMethodCode,ClosureMethodCode,RequiresCount,SortOrder)
 ON target.PaymentMethodCode=source.PaymentMethodCode
 WHEN MATCHED THEN UPDATE SET ClosureMethodCode=source.ClosureMethodCode,

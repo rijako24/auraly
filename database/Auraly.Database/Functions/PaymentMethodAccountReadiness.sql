@@ -1,4 +1,5 @@
 -- Specializes the existing posting readiness policy for tenant payment forms.
+-- This predicate is read-only; posting locks its selected account rows explicitly.
 -- A bank/clearing/credit auxiliary keeps its financial meaning in every consumer.
 CREATE FUNCTION accounting.PaymentMethodAccountReadiness(
     @TenantId uniqueidentifier,@MethodCode nvarchar(32),@AccountId uniqueidentifier)
@@ -9,10 +10,9 @@ AS RETURN
     FROM dbo.AccountingAccounts account
     CROSS JOIN (VALUES(N'PosPaymentMethod'),(N'CustomerPaymentMethod'),(N'SupplierPaymentMethod')) usage(SourceType)
     CROSS APPLY accounting.PaymentPostingCategory(usage.SourceType,@MethodCode) category
-    CROSS APPLY accounting.PostingAccountReadiness(@TenantId,category.Category,account.AccountId) readiness
+    CROSS APPLY accounting.PostingAccountEligibility(@TenantId,category.Category,account.AccountId) readiness
     WHERE account.TenantId=@TenantId AND account.AccountId=@AccountId
       AND account.FinancialFunction=CASE
-        WHEN @MethodCode=N'PendingCollection' AND usage.SourceType=N'PosPaymentMethod' THEN N'General'
         WHEN @MethodCode=N'Cash' THEN N'Cash'
         WHEN @MethodCode=N'Transfer' THEN N'Bank'
         WHEN @MethodCode=N'Credit' AND usage.SourceType=N'PosPaymentMethod' THEN N'Receivable'

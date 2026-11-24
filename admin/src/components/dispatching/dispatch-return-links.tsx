@@ -20,7 +20,7 @@ export function DispatchReturnLinks({data,selections,onChange,disabled}:{
   const user=useAuthStore(state=>state.user?.userId);
   const canRead=useAuthStore(state=>state.user?.permissions.includes("sales.returns.read")??false);
   const canCreate=useAuthStore(state=>state.user?.permissions.includes("sales.returns.create")??false);
-  const documents=data.documents.filter(document=>document.collectionMode!=="Dispatch"&&
+  const documents=data.documents.filter(document=>(document.collectionMode!=="Dispatch"||document.payments.some(payment=>payment.applicationType==="KeepCurrent"))&&
     ((document.deliveryStatus==="NotDelivered"?document.documentTotal:document.returnTotal??0)>document.creditAmount || selections[document.sourceDocumentId]?.length));
   const [selected,setSelected]=useState("");
   const document=documents.find(item=>item.sourceDocumentId===selected)??documents[0];

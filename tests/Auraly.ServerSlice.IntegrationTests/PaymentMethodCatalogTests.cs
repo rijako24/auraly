@@ -15,6 +15,76 @@ public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Retiring_the_old_collection_type_preserves_history_and_is_replay_safe(bool unfinishedSale)
+    {
+        var sale=fixture.CreateUniqueValidRequest();
+        using(var message=fixture.CreateUploadMessage(sale))
+        using(var accepted=await fixture.CreateClient().SendAsync(message))
+            Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync();
+        var formId=Guid.NewGuid();
+        await using(var arrange=new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'payment-method' AND Code=N'PendingCollection')
+              INSERT reference.Options(OptionId,CatalogCode,Code,Label,IsActive,SortOrder,CreatedAt,UpdatedAt)
+              VALUES(NEWID(),N'payment-method',N'PendingCollection',N'Por recaudar',0,60,SYSUTCDATETIME(),SYSUTCDATETIME());
+            INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,
+              UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers,IsActive,SortOrder,Version,CreatedAt,UpdatedAt)
+            SELECT @Tenant,@Form,CONVERT(nvarchar(36),@Form),N'Forma histórica',type.OptionId,account.AccountId,1,0,0,0,0,1,10,3,SYSUTCDATETIME(),SYSUTCDATETIME()
+            FROM reference.Options type CROSS APPLY(SELECT TOP(1) AccountId FROM dbo.AccountingAccounts
+              WHERE TenantId=@Tenant AND FinancialFunction=N'Cash' ORDER BY AccountId) account
+            WHERE type.CatalogCode=N'payment-method' AND type.Code=N'PendingCollection';
+            UPDATE dbo.SalesPayments SET MethodCode=N'PendingCollection' WHERE DocumentId=@Sale;
+            IF @Unfinished=1 UPDATE dbo.AccountingPostingJobs SET Status=N'AccountingPendingConfiguration'
+              WHERE SourceDocumentId=@Sale AND SourceDocumentType=N'SalesInvoice';
+            SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages outbox JOIN dbo.Businesses business ON business.BusinessId=outbox.BusinessId
+              WHERE business.TenantId=@Tenant AND outbox.Stream=N'Configuration';
+            """,connection,transaction))
+        {
+            arrange.Parameters.AddWithValue("@Tenant",fixture.TenantId);arrange.Parameters.AddWithValue("@Form",formId);
+            arrange.Parameters.AddWithValue("@Sale",sale.DocumentId);arrange.Parameters.AddWithValue("@Unfinished",unfinishedSale);
+            var before=Convert.ToInt32(await arrange.ExecuteScalarAsync());
+            var migration=await File.ReadAllTextAsync(Path.Combine(ServerSliceFixture.FindRepositoryRoot(),"database","Auraly.Database",
+                "Scripts","Migrations","20261123_RetirePendingCollection.sql"));
+            var preflight=await File.ReadAllTextAsync(Path.Combine(ServerSliceFixture.FindRepositoryRoot(),"database","Auraly.Database",
+                "Scripts","Migrations","20261123_PreflightRetirePendingCollection.sql"));
+            migration=migration.Replace(@":r .\20261123_PreflightRetirePendingCollection.sql",preflight,StringComparison.Ordinal);
+            migration=System.Text.RegularExpressions.Regex.Replace(migration,@"(?im)^\s*GO\s*$",string.Empty);
+            if(unfinishedSale)
+            {
+                await using var blocked=new SqlCommand(migration,connection,transaction);
+                var error=await Assert.ThrowsAsync<SqlException>(async()=>{await blocked.ExecuteNonQueryAsync();});
+                Assert.Equal(51923,error.Number);
+            }
+            else
+            {
+                for(var replay=0;replay<2;replay++)
+                {
+                    await using var apply=new SqlCommand(migration,connection,transaction);await apply.ExecuteNonQueryAsync();
+                }
+                await using var verify=new SqlCommand("""
+                    SELECT IsActive,Version FROM reference.PaymentMethods WHERE PaymentMethodId=@Form;
+                    SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages outbox JOIN dbo.Businesses business ON business.BusinessId=outbox.BusinessId
+                      WHERE business.TenantId=@Tenant AND outbox.Stream=N'Configuration';
+                    SELECT COUNT(*) FROM dbo.Businesses WHERE TenantId=@Tenant;
+                    SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Sale AND MethodCode=N'PendingCollection';
+                    SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Sale;
+                    SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Sale;
+                    """,connection,transaction);
+                verify.Parameters.AddWithValue("@Tenant",fixture.TenantId);verify.Parameters.AddWithValue("@Form",formId);verify.Parameters.AddWithValue("@Sale",sale.DocumentId);
+                await using var reader=await verify.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());Assert.False(reader.GetBoolean(0));Assert.Equal(4,reader.GetInt32(1));
+                await reader.NextResultAsync();Assert.True(await reader.ReadAsync());var notifications=reader.GetInt32(0)-before;
+                await reader.NextResultAsync();Assert.True(await reader.ReadAsync());Assert.Equal(reader.GetInt32(0),notifications);
+                foreach(var expected in new[]{1,1,1}){await reader.NextResultAsync();Assert.True(await reader.ReadAsync());Assert.Equal(expected,reader.GetInt32(0));}
+            }
+        }
+        // A THROW with XACT_ABORT can abort the nested migration and the outer fixture.
+        if(transaction.Connection is not null)await transaction.RollbackAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Reference_seed_preserves_historical_payment_identities_and_replays_without_collision(bool pendingAlreadyExists)
     {
         await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
@@ -57,7 +127,10 @@ public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.
         {
             Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000006"),reader.GetGuid(0));Assert.Equal("BankTransfer",reader.GetString(1));Assert.False(reader.GetBoolean(2));
             Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000007"),reader.GetGuid(0));Assert.Equal("Deposit",reader.GetString(1));Assert.False(reader.GetBoolean(2));
-            Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse(pendingAlreadyExists?"3f8a7b01-769f-493f-a4ca-4c7c76e523bc":"10000000-0000-0000-0000-000000000008"),reader.GetGuid(0));Assert.Equal("PendingCollection",reader.GetString(1));Assert.True(reader.GetBoolean(2));
+            if (pendingAlreadyExists)
+            {
+                Assert.True(await reader.ReadAsync());Assert.Equal(Guid.Parse("3f8a7b01-769f-493f-a4ca-4c7c76e523bc"),reader.GetGuid(0));Assert.Equal("PendingCollection",reader.GetString(1));Assert.False(reader.GetBoolean(2));
+            }
             Assert.False(await reader.ReadAsync());
         }
         await transaction.RollbackAsync();

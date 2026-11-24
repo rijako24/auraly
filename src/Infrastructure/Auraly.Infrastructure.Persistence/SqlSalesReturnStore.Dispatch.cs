@@ -59,7 +59,8 @@ public sealed partial class SqlSalesReturnStore
               AND sale.BusinessId=dispatch.BusinessId
             WHERE dispatch.DispatchId=@Dispatch AND dispatch.TenantId=@Tenant AND dispatch.BusinessId=@Business
               AND dispatch.Status=N'SettlementProcessing'
-              AND ((@CreditOnly=0 AND sale.CollectionMode=N'Dispatch') OR (@CreditOnly=1 AND source.CreditAmountSnapshot>=
+              AND ((@CreditOnly=0 AND sale.CollectionMode=N'Dispatch' AND NOT EXISTS(
+                SELECT 1 FROM accounting.SalePaymentPostingFacts(@Tenant,@Business,sale.DocumentId) payment WHERE payment.CollectedOutsideDispatch=1)) OR (@CreditOnly=1 AND source.CreditAmountSnapshot>=
                 CASE WHEN delivery.DeliveryStatus=N'NotDelivered' THEN source.DocumentTotalSnapshot ELSE delivery.ReturnTotal END))
               AND (delivery.DeliveryStatus=N'NotDelivered' OR EXISTS(
                 SELECT 1 FROM dbo.DispatchDeliveryReturns returned WHERE returned.DispatchSourceDocumentId=source.DispatchSourceDocumentId))

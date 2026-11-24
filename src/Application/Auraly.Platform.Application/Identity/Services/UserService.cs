@@ -139,6 +139,17 @@ public class UserService : IUserService
         {
             var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
                 ?? throw new NotFoundException(nameof(AppUser), userId);
+            if (request.Username is not null)
+            {
+                var username = request.Username.Trim();
+                if (username.Length is 0 or > 100)
+                    throw new DomainValidationException("username", "El nombre de usuario debe tener entre 1 y 100 caracteres.");
+                var normalizedUsername = username.ToUpperInvariant();
+                if (await _unitOfWork.AppUsers.ExistsWithUsernameAsync(user.TenantId, normalizedUsername, userId, ct))
+                    throw new ConflictException("El nombre de usuario ya está en uso.");
+                user.Username = username;
+                user.NormalizedUsername = normalizedUsername;
+            }
             if (request.FirstName is not null) user.FirstName = request.FirstName;
             if (request.LastName is not null) user.LastName = request.LastName;
             if (request.PhoneNumber is not null) user.PhoneNumber = request.PhoneNumber;

@@ -73,7 +73,7 @@ public sealed partial class SqlAccountingPostingProcessor
             JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=requested.FormId
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
               AND type.IsActive=1 AND type.Code=requested.MethodCode
-            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
+            JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) readiness
             WHERE form.IsActive=1 AND readiness.SourceType=@Usage
               AND ((@Payroll=1 AND form.UseForPayroll=1) OR (@Payroll=0 AND ((@Usage=N'PosPaymentMethod' AND form.UseForSales=1)
@@ -129,7 +129,7 @@ public sealed partial class SqlAccountingPostingProcessor
             FROM reference.PaymentMethods form WITH(HOLDLOCK)
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId
               AND type.CatalogCode=N'payment-method' AND type.IsActive=1 AND type.Code=@Method
-            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=form.TenantId AND account.AccountId=form.AccountId
+            JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=form.TenantId AND account.AccountId=form.AccountId
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
             WHERE form.TenantId=@Tenant AND form.PaymentMethodId=@Id AND form.IsActive=1
               AND ((@Settlement=0 AND form.UseForSales=1 AND ready.SourceType=N'PosPaymentMethod')
@@ -175,7 +175,7 @@ public sealed partial class SqlAccountingPostingProcessor
             JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
               AND type.IsActive=1 AND type.Code=input.MethodCode
-            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
+            JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) readiness
             WHERE form.IsActive=1 AND ((@Usage=N'Receipts' AND form.UseForReceipts=1)
                 OR (@Usage=N'SupplierPayments' AND form.UseForSupplierPayments=1)

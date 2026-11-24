@@ -67,9 +67,16 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             source.CustomerId,source.CustomerNameSnapshot,source.DeliveryAddressSnapshot,source.DocumentTotalSnapshot,source.CreditAmountSnapshot,
             destination.Latitude,destination.Longitude,COALESCE(delivery.DeliveryStatus,N'Pending'),delivery.Reason,delivery.Notes,delivery.Latitude,delivery.Longitude,delivery.OccurredAt,
             COALESCE(delivery.ReturnTotal,0),sale.UntaxedAmount+sale.TaxAmount,sale.PayableAmount-sale.UntaxedAmount-sale.TaxAmount,
-            sale.UntaxedAmount+sale.TaxAmount-COALESCE(prior.Unrounded,0),sale.PayableAmount-sale.UntaxedAmount-sale.TaxAmount-COALESCE(prior.Rounding,0),sale.CollectionMode
+            sale.UntaxedAmount+sale.TaxAmount-COALESCE(prior.Unrounded,0),sale.PayableAmount-sale.UntaxedAmount-sale.TaxAmount-COALESCE(prior.Rounding,0),sale.CollectionMode,
+            COALESCE(available.AvailableAmount,0),COALESCE(uncollected.Amount,0)
           FROM dbo.DispatchSourceDocuments source INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=source.DispatchId
           INNER JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId
+          LEFT JOIN dbo.Receivables receivable ON receivable.SourceDocumentId=sale.DocumentId
+            AND receivable.SourceDocumentType=sale.DocumentType AND receivable.BusinessId=sale.BusinessId AND receivable.SourceLineId IS NULL
+          OUTER APPLY accounting.ObligationAvailability(sale.BusinessId,N'Receivable',receivable.ReceivableId,receivable.OutstandingAmount,NULL) available
+          OUTER APPLY(SELECT SUM(payment.Amount-payment.ReversedUncollectedAmount) Amount
+            FROM accounting.SalePaymentPostingFacts(dispatch.TenantId,sale.BusinessId,sale.DocumentId) payment
+            WHERE sale.CollectionMode=N'Dispatch') uncollected
           LEFT JOIN dbo.DispatchDocumentSequences custom ON custom.DispatchId=source.DispatchId AND custom.DispatchSourceDocumentId=source.DispatchSourceDocumentId
           OUTER APPLY(SELECT TOP(1) stop.Sequence,stop.PartySiteId FROM dbo.SalesRouteStops stop LEFT JOIN dbo.PartySites stopSite ON stopSite.PartySiteId=stop.PartySiteId WHERE stop.RouteId=dispatch.RouteId AND stop.CustomerId=source.CustomerId AND stop.IsActive=1 ORDER BY CASE WHEN stopSite.AddressLine=source.DeliveryAddressSnapshot THEN 0 ELSE 1 END,stop.Sequence,stop.RouteStopId) routeStop
           OUTER APPLY(SELECT TOP(1) site.Latitude,site.Longitude FROM dbo.Customers customer INNER JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1 WHERE customer.CustomerId=source.CustomerId ORDER BY CASE WHEN site.PartySiteId=routeStop.PartySiteId THEN 0 WHEN site.IsPrimary=1 THEN 1 ELSE 2 END,site.CreatedAt) destination
@@ -84,7 +91,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
           JOIN dbo.SalesReturns returned ON returned.ReturnId=selected.ReturnId AND returned.BusinessId=operation.BusinessId
           WHERE operation.DispatchId=@Id ORDER BY returned.DocumentNumber,returned.ReturnId;
         """,connection))
-        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct)){var documentId=reader.GetGuid(0);documents.Add(new(documentId,reader.GetGuid(1),reader.GetString(2),reader.GetString(3),Convert.ToInt32(reader.GetValue(4)),NullableGuid(reader,5),reader.GetString(6),NullableString(reader,7),reader.GetDecimal(8),reader.GetDecimal(9),NullableDecimal(reader,10),NullableDecimal(reader,11),reader.GetString(12),NullableString(reader,13),NullableString(reader,14),NullableDecimal(reader,15),NullableDecimal(reader,16),reader.IsDBNull(17)?null:reader.GetDateTimeOffset(17),lines.GetValueOrDefault(documentId)??[],payments.GetValueOrDefault(documentId)??[],returns.GetValueOrDefault(documentId)??[],reader.GetDecimal(18),new(reader.GetDecimal(19),reader.GetDecimal(20),reader.GetDecimal(21),reader.GetDecimal(22)),reader.GetString(23)));}
+        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct)){var documentId=reader.GetGuid(0);documents.Add(new(documentId,reader.GetGuid(1),reader.GetString(2),reader.GetString(3),Convert.ToInt32(reader.GetValue(4)),NullableGuid(reader,5),reader.GetString(6),NullableString(reader,7),reader.GetDecimal(8),reader.GetDecimal(9),NullableDecimal(reader,10),NullableDecimal(reader,11),reader.GetString(12),NullableString(reader,13),NullableString(reader,14),NullableDecimal(reader,15),NullableDecimal(reader,16),reader.IsDBNull(17)?null:reader.GetDateTimeOffset(17),lines.GetValueOrDefault(documentId)??[],payments.GetValueOrDefault(documentId)??[],returns.GetValueOrDefault(documentId)??[],reader.GetDecimal(18),new(reader.GetDecimal(19),reader.GetDecimal(20),reader.GetDecimal(21),reader.GetDecimal(22)),reader.GetString(23),reader.GetDecimal(24),reader.GetDecimal(25)));}
           await reader.NextResultAsync(ct);
           while(await reader.ReadAsync(ct)) linkedReturns.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3),reader.GetString(4)));
         }
@@ -126,13 +133,24 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
                     await reader.CloseAsync();await tx.CommitAsync(ct);return(await GetAsync(actor,dispatchId,ct))!;
                 }
             }
-            Guid sourceDocumentId;decimal total,credit,originalUnrounded,originalRounding,returnedUnrounded,returnedRounding;string collectionMode;
+            Guid sourceDocumentId;decimal total,credit,originalUnrounded,originalRounding,returnedUnrounded,returnedRounding,creditAvailable,creditOutstanding,uncollectedAmount;string collectionMode;bool hasKeptRefund;
             await using(var document=new SqlCommand("""
               SELECT source.SourceDocumentId,source.DocumentTotalSnapshot,source.CreditAmountSnapshot,sale.CollectionMode,
                 sale.UntaxedAmount+sale.TaxAmount,sale.PayableAmount-sale.UntaxedAmount-sale.TaxAmount,
-                COALESCE(prior.Unrounded,0),COALESCE(prior.Rounding,0)
+                COALESCE(prior.Unrounded,0),COALESCE(prior.Rounding,0),COALESCE(available.AvailableAmount,0),
+                COALESCE(receivable.OutstandingAmount,0),COALESCE(uncollected.Amount,0),
+                CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.DispatchDeliveryPayments kept
+                  WHERE kept.DispatchSourceDocumentId=source.DispatchSourceDocumentId AND kept.ApplicationType=N'KeepCurrent')
+                  AND EXISTS(SELECT 1 FROM dbo.SalesReturns returned WITH(UPDLOCK,HOLDLOCK,FORCESEEK(IX_SalesReturns_Original_Status(OriginalDocumentId)))
+                    WHERE returned.OriginalDocumentId=sale.DocumentId AND returned.BusinessId=sale.BusinessId AND returned.EconomicResolution=N'Refund') THEN 1 ELSE 0 END)
               FROM dbo.DispatchSourceDocuments source INNER JOIN dbo.Dispatches dispatch WITH(UPDLOCK,HOLDLOCK) ON dispatch.DispatchId=source.DispatchId
               INNER JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK) ON sale.DocumentId=source.SourceDocumentId
+              LEFT JOIN dbo.Receivables receivable WITH(UPDLOCK,HOLDLOCK) ON receivable.SourceDocumentId=sale.DocumentId
+                AND receivable.SourceDocumentType=sale.DocumentType AND receivable.BusinessId=sale.BusinessId AND receivable.SourceLineId IS NULL
+              OUTER APPLY accounting.ObligationAvailability(sale.BusinessId,N'Receivable',receivable.ReceivableId,receivable.OutstandingAmount,NULL) available
+              OUTER APPLY(SELECT SUM(payment.Amount-payment.ReversedUncollectedAmount) Amount
+                FROM accounting.SalePaymentPostingFacts(dispatch.TenantId,sale.BusinessId,sale.DocumentId) payment
+                WHERE sale.CollectionMode=N'Dispatch') uncollected
               OUTER APPLY(SELECT SUM(returned.UntaxedAmount+returned.TaxAmount) Unrounded,
                 SUM(returned.TotalAmount-returned.UntaxedAmount-returned.TaxAmount) Rounding
                 FROM dbo.SalesReturns returned WHERE returned.OriginalDocumentId=sale.DocumentId) prior
@@ -141,8 +159,11 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
                 AND dispatch.Status IN(N'Released',N'InDelivery',N'PendingSettlement')
                 AND NOT EXISTS(SELECT 1 FROM dispatch.Closures WHERE DispatchId=dispatch.DispatchId);
             """,connection,tx))
-            { Scope(document,actor,dispatchId);document.Parameters.AddWithValue("@DocumentId",request.DispatchSourceDocumentId);await using var reader=await document.ExecuteReaderAsync(ct);if(!await reader.ReadAsync(ct))throw new DispatchConflictException("El documento no está disponible para este transportador.");sourceDocumentId=reader.GetGuid(0);total=reader.GetDecimal(1);credit=reader.GetDecimal(2);collectionMode=reader.GetString(3);originalUnrounded=reader.GetDecimal(4);originalRounding=reader.GetDecimal(5);returnedUnrounded=reader.GetDecimal(6);returnedRounding=reader.GetDecimal(7); }
+            { Scope(document,actor,dispatchId);document.Parameters.AddWithValue("@DocumentId",request.DispatchSourceDocumentId);await using var reader=await document.ExecuteReaderAsync(ct);if(!await reader.ReadAsync(ct))throw new DispatchConflictException("El documento no está disponible para este transportador.");sourceDocumentId=reader.GetGuid(0);total=reader.GetDecimal(1);credit=reader.GetDecimal(2);collectionMode=reader.GetString(3);originalUnrounded=reader.GetDecimal(4);originalRounding=reader.GetDecimal(5);returnedUnrounded=reader.GetDecimal(6);returnedRounding=reader.GetDecimal(7);creditAvailable=reader.GetDecimal(8);creditOutstanding=reader.GetDecimal(9);uncollectedAmount=reader.GetDecimal(10);hasKeptRefund=reader.GetBoolean(11); }
 
+            var keepCurrent=request.Payments.Any(value=>value.ApplicationType==DeliveryPaymentApplications.KeepCurrent);
+            if(hasKeptRefund&&!keepCurrent)
+                throw new DispatchConflictException("El pago conservado tiene un reembolso aceptado. Conserva esa decisión y revisa el reembolso desde Devoluciones.");
             var lineData=new Dictionary<int,DispatchReturnLine>();
             await using(var lines=new SqlCommand("""
               IF EXISTS(SELECT 1 FROM OPENJSON(@ReturnInputs) WITH(OriginalLineNumber int,Quantity decimal(19,6),
@@ -178,23 +199,28 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
                     originalRounding,returnedUnrounded,returnedRounding,returnTotal);
             }
             catch(ArgumentException error){throw new DispatchValidationException(error.Message);}
-            var due=Math.Max(0,total-returnTotal);var money=request.Payments.Where(x=>x.ApplicationType!=DeliveryPaymentApplications.CreditDocument).Sum(x=>x.Amount);
+            var due=Math.Max(0,total-returnTotal);var money=request.Payments.Where(x=>x.ApplicationType is DeliveryPaymentApplications.InvoicePayment or DeliveryPaymentApplications.CreditAdvance).Sum(x=>x.Amount);
             var signed=request.Payments.Count(x=>x.ApplicationType==DeliveryPaymentApplications.CreditDocument);
             if(credit>0)
             {
-                var uncollectedPaidPortion=collectionMode=="Dispatch"?decimal.Min(total-credit,due):0m;
-                if(request.Payments.Any(value=>value.ApplicationType==DeliveryPaymentApplications.CreditAdvance) ||
-                    request.DeliveryStatus!=DeliveryStatuses.NotDelivered && (signed!=1 || money!=uncollectedPaidPortion))
-                    throw new DispatchValidationException("La venta conserva su condición de crédito. Confirma su soporte y recauda únicamente la porción de contado pendiente del pedido. La deuda se paga desde cartera o recibo de caja.");
+                var invoiceAmount = request.Payments.Where(value => value.ApplicationType == DeliveryPaymentApplications.InvoicePayment).Sum(value => value.Amount);
+                var advanceAmount = request.Payments.Where(value => value.ApplicationType == DeliveryPaymentApplications.CreditAdvance).Sum(value => value.Amount);
+                var pendingInvoice = Math.Max(0, uncollectedAmount - Math.Max(0, returnTotal - creditOutstanding));
+                var pendingCredit = Math.Max(0, creditAvailable - returnTotal);
+                if(request.DeliveryStatus!=DeliveryStatuses.NotDelivered &&
+                    (signed!=1 || !keepCurrent&&invoiceAmount!=pendingInvoice || advanceAmount>0 &&
+                        (advanceAmount!=pendingCredit || creditAvailable!=creditOutstanding)))
+                    throw new DispatchValidationException("Confirma el soporte del crédito y recauda sólo su saldo disponible actual, conservando los abonos anteriores. Espera las aplicaciones pendientes antes de recaudarlo.");
             }
             else if(collectionMode=="Session")
             {
                 if(signed>0 || money!=0) throw new DispatchValidationException("La venta ya fue pagada en su sesión original. Confirma la entrega sin registrar otro recaudo.");
             }
             else
-            { if(signed>0||request.Payments.Any(x=>x.ApplicationType==DeliveryPaymentApplications.CreditAdvance))throw new DispatchValidationException("Una factura de contado no puede registrarse como una venta a crédito.");if(request.DeliveryStatus!=DeliveryStatuses.NotDelivered&&money!=due)throw new DispatchValidationException("Los pagos y la mercancía devuelta deben cubrir exactamente el valor de la factura entregada.");if(money>due)throw new DispatchValidationException("Los pagos superan el valor neto de la factura entregada."); }
+            { if(signed>0||request.Payments.Any(x=>x.ApplicationType==DeliveryPaymentApplications.CreditAdvance))throw new DispatchValidationException("Una factura de contado no puede registrarse como una venta a crédito.");if(!keepCurrent&&request.DeliveryStatus!=DeliveryStatuses.NotDelivered&&money!=due)throw new DispatchValidationException("Los pagos y la mercancía devuelta deben cubrir exactamente el valor de la factura entregada.");if(money>due)throw new DispatchValidationException("Los pagos superan el valor neto de la factura entregada."); }
 
-            if(collectionMode=="Dispatch" && request.Payments.Any(value=>value.ApplicationType!=DeliveryPaymentApplications.CreditDocument && value.PaymentMethodId is null))
+            if(request.Payments.Any(value=>(value.ApplicationType is DeliveryPaymentApplications.InvoicePayment or DeliveryPaymentApplications.CreditAdvance) &&
+                (collectionMode=="Dispatch" || value.ApplicationType==DeliveryPaymentApplications.CreditAdvance) && value.PaymentMethodId is null))
                 throw new DispatchValidationException("Selecciona la forma de pago configurada para cada recaudo del pedido.");
 
             await using(var clear=new SqlCommand("DELETE dbo.DispatchDeliveryPayments WHERE DispatchSourceDocumentId=@DocumentId;DELETE dbo.DispatchDeliveryReturns WHERE DispatchSourceDocumentId=@DocumentId;UPDATE dbo.DispatchDeliveryEvents SET IsCurrent=0 WHERE DispatchSourceDocumentId=@DocumentId AND IsCurrent=1;",connection,tx))
@@ -399,7 +425,8 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             EXEC worksessions.DispatchSessionEnsure @TenantId,@BusinessId,@Id,@UserId,0,@Session OUTPUT;
             DECLARE @Snapshot nvarchar(max)=(SELECT @Closure workSessionClosureId,@Session workSessionId,
               @Id dispatchId,@UserId closedByUserId,@ClosedAt closedAt,@Declared declaredCash,
-              @CardDeclared declaredCard,@TransferDeclared declaredTransfer,@ReceiptTemplateVersion receiptTemplateVersion FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
+              @CardDeclared declaredCard,@TransferDeclared declaredTransfer,@PreviouslyCollected previouslyCollectedTotal,
+              @ReceiptTemplateVersion receiptTemplateVersion FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
             DECLARE @Totals nvarchar(max)=(SELECT method paymentMethodCode,amount salesAmount,
               CONVERT(decimal(19,4),0) refundAmount,CONVERT(decimal(19,4),0) otherAmount,
               amount netAmount,counted countedAmount,counted-amount difference
@@ -454,7 +481,8 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF EXISTS(SELECT 1 FROM dispatch.EffectivePayments(@Id) payment
               JOIN dbo.DispatchSourceDocuments source ON source.DispatchSourceDocumentId=payment.DispatchSourceDocumentId
               JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId AND sale.BusinessId=@BusinessId
-              WHERE sale.CollectionMode=N'Dispatch' AND payment.ApplicationType=N'InvoicePayment' AND payment.PaymentMethodId IS NULL)
+              WHERE (sale.CollectionMode=N'Dispatch' AND payment.ApplicationType=N'InvoicePayment' OR payment.ApplicationType=N'CreditAdvance')
+                AND payment.PaymentMethodId IS NULL)
               THROW 51000,N'Completa las formas de pago de los recaudos del pedido antes de aceptar la liquidación.',1;
             -- Link documents already accepted by Returns. No refund, credit or
             -- inventory effect is generated by linking them to the delivery.
@@ -470,7 +498,8 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
               AND returned.Status=N'Processed' AND returned.EconomicResolution IN(N'Refund',N'CustomerCredit')
             JOIN dbo.DispatchSourceDocuments source ON source.SourceDocumentId=returned.OriginalDocumentId
               AND source.DispatchId=@Id AND returned.AcceptedAt>=source.CreatedAt
-            JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId AND sale.CollectionMode=N'Session'
+            JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId AND (sale.CollectionMode=N'Session' OR EXISTS(
+              SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,sale.DocumentId) payment WHERE payment.CollectedOutsideDispatch=1))
             JOIN dbo.DispatchDeliveryEvents delivery ON delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId AND delivery.IsCurrent=1
               AND (delivery.DeliveryStatus=N'NotDelivered' OR delivery.ReturnTotal>0)
             JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=returned.ReturnId AND posting.SourceDocumentType=N'SalesReturn'
@@ -478,7 +507,8 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF (SELECT COUNT(*) FROM @LinkedReturns)<>(SELECT COUNT(*) FROM OPENJSON(@ReturnIds))
               THROW 51000,N'Vincula devoluciones de estas ventas con su reembolso o aplicación a cartera terminado, registradas después de asignarlas al despacho.',1;
             IF EXISTS(SELECT 1 FROM dbo.DispatchSourceDocuments source
-              JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId AND sale.CollectionMode=N'Session'
+              JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId AND (sale.CollectionMode=N'Session' OR EXISTS(
+                SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,sale.DocumentId) payment WHERE payment.CollectedOutsideDispatch=1))
               JOIN dbo.DispatchDeliveryEvents delivery ON delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId AND delivery.IsCurrent=1
               OUTER APPLY(SELECT SUM(TotalAmount) Amount FROM @LinkedReturns WHERE OriginalDocumentId=source.SourceDocumentId) linked
               WHERE source.DispatchId=@Id AND (

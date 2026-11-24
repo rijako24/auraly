@@ -100,13 +100,15 @@ public sealed partial class SqlAccountingPostingProcessor
             JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.PaymentMethodId=input.PaymentMethodId AND form.TenantId=@Tenant
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.Code=input.MethodCode
               AND type.CatalogCode=N'payment-method' AND type.IsActive=1
-            JOIN dbo.AccountingAccounts account WITH(HOLDLOCK) ON account.AccountId=form.AccountId AND account.TenantId=@Tenant
+            JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.AccountId=form.AccountId AND account.TenantId=@Tenant
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
             WHERE form.IsActive=1 AND form.UseForReceipts=1 AND ready.SourceType=N'CustomerPaymentMethod';
             DECLARE @DifferenceAccount uniqueidentifier;
             SELECT @DifferenceAccount=form.AccountId FROM reference.PaymentMethods form WITH(HOLDLOCK)
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
               AND type.Code=N'Cash' AND type.IsActive=1
+            JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts))
+              ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
             WHERE form.PaymentMethodId=@DifferenceForm AND form.TenantId=@Tenant AND form.IsActive=1
               AND form.UseForReceipts=1 AND ready.SourceType=N'CustomerPaymentMethod';

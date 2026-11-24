@@ -37,15 +37,6 @@ public sealed class OrderBatchService(
     OnlineSalesCheckoutService checkout,
     InvoiceChargeService invoiceCharges)
 {
-    private static readonly HashSet<string> PaymentMethods =
-    [
-        "Cash",
-        "Credit",
-        "DebitCard",
-        "CreditCard",
-        "Transfer",
-        "PendingCollection"
-    ];
     private const int ProgressCheckpointSize = 5;
 
     public async Task<IReadOnlyList<OrderCreditValidationIssue>> ValidateCreditAsync(
@@ -405,7 +396,7 @@ public sealed class OrderBatchService(
             request.UserId != actor.UserId ||
             request.OrderIds.Count is < 1 or > 50 ||
             request.OrderIds.Any(id => id == Guid.Empty) ||
-            !PaymentMethods.Contains(request.PaymentMethodCode) ||
+            (request.PaymentMethodCode != "Credit" && !PortfolioPaymentMethods.IsSupported(request.PaymentMethodCode)) ||
             request.DocumentType is not (
                 PosSaleDocumentTypes.Invoice or PosSaleDocumentTypes.Receipt) ||
             request.PaymentReference?.Length > 160 ||
@@ -416,11 +407,7 @@ public sealed class OrderBatchService(
         if (!PaymentMethodEvidence.IsValidSet([new(request.PaymentMethodId, request.PaymentMethodVersion,
                 request.PaymentFormCode, request.PaymentFormName, request.AccountId)]))
             throw new OrderValidationException("La identidad de la forma de pago no es válida.");
-        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(request.OrderIds.First(),request.DocumentType,
-            request.PaymentMethodCode=="Credit",[new(request.PaymentMethodCode,request.PaymentMethodId is {} formId&&formId!=Guid.Empty,
-                !string.IsNullOrWhiteSpace(request.PaymentReference)||request.BankAccountId is not null||
-                !string.IsNullOrWhiteSpace(request.PaymentNotes)||!string.IsNullOrWhiteSpace(request.CardFranchiseCode)||
-                !string.IsNullOrWhiteSpace(request.ApprovalNumber))],OrderCollectionPaymentPolicy.ForNewSale(request.OrderIds.First()));
+        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(request.OrderIds.First(),OrderCollectionPaymentPolicy.ForNewSale(request.OrderIds.First()));
         if(paymentPurposeError is not null)throw new OrderValidationException(paymentPurposeError);
         if (request.PaymentMethodCode == "Transfer" &&
             string.IsNullOrWhiteSpace(request.PaymentReference))

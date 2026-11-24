@@ -121,6 +121,11 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
   el siguiente. Una operación ya aplicada conserva su resultado y replay no
   vuelve a resolver cuentas ni repite efectos. No se guarda una copia completa
   de configuración de formas por operación.
+  La consulta del catálogo usa `PaymentMethodAccountReadiness` como predicado
+  puro sobre `PostingAccountEligibility`: no toma bloqueos de primer uso.
+  El motor financiero bloquea explícitamente las filas concretas de cuentas
+  seleccionadas con `UPDLOCK/HOLDLOCK` dentro de su transacción. Leer opciones
+  no bloquea su configuración ni sustituye esa validación al contabilizar.
   La captura administrativa conserva Pagar / Ir a pagar y registra importes
   sin vuelto/redondeo de venta; el POS conserva su captura de venta vigente.
   Las diferencias se clasifican por concepto e importe explícitos; sólo elegir

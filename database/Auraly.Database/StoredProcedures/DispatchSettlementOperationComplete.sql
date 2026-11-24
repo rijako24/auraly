@@ -23,11 +23,16 @@ BEGIN
         FROM dbo.Dispatches dispatch
         CROSS APPLY dispatch.SettlementDocuments(dispatch.DispatchId,dispatch.BusinessId) settlementDocument
         LEFT JOIN dbo.DocumentProcessingJobs job ON settlementDocument.DocumentId = job.DocumentId
-           AND settlementDocument.DocumentType = job.DocumentType
+           AND settlementDocument.DocumentType = job.DocumentType AND job.BusinessId=dispatch.BusinessId
+           AND settlementDocument.DocumentType=N'SalesReturn'
         LEFT JOIN dbo.AccountingPostingJobs financial ON financial.SourceDocumentId=settlementDocument.DocumentId
           AND financial.SourceDocumentType=settlementDocument.DocumentType
-        WHERE dispatch.DispatchId=@DispatchId AND (job.Status IS NULL OR job.Status <> N'Completed'
-          OR financial.Status IS NULL OR financial.Status NOT IN(N'Posted',N'CommercialEffectsApplied'))
+          AND financial.TenantId=dispatch.TenantId AND financial.BusinessId=dispatch.BusinessId
+        -- Portfolio payments enter the financial engine directly. Only returns
+        -- have an operational inventory document before their financial effects.
+        WHERE dispatch.DispatchId=@DispatchId AND
+          (settlementDocument.DocumentType=N'SalesReturn' AND (job.Status IS NULL OR job.Status<>N'Completed')
+            OR financial.Status IS NULL OR financial.Status NOT IN(N'Posted',N'CommercialEffectsApplied'))
     )
         THROW 51000, N'Los documentos de la liquidación aún no terminaron sus efectos financieros.', 1;
 

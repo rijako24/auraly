@@ -1444,7 +1444,7 @@ public sealed partial class SqlAccountingStore(
     private const string OpeningBalancePositionsValidationSql = """
         DECLARE @ReconciliationLines nvarchar(max)=(SELECT LineNumber,AccountId,PartyId,Debit,Credit,
           LineId,ExistingPayableId,ExistingReceivableId,OpeningDocumentNumber,OpeningIssuedOn,OpeningDueOn,OpeningPartySiteId,ExistingSupplierCreditId,ExistingCustomerCreditId,OpeningAdvanceReference,OpeningAdvanceOn,OpeningAdvancePartySiteId FROM @OpeningLines FOR JSON PATH);
-        EXEC accounting.OpeningPositionsValidate @TenantId,@BusinessId,@EffectiveOn,@ReconciliationLines;
+        EXEC accounting.OpeningPositionsValidate @TenantId,@BusinessId,@EffectiveOn,@ReconciliationLines,@EffectiveAt=@EffectiveAt;
         """;
 
     // Save and approval validate the same scoped batch. Neither path resolves
@@ -1481,7 +1481,7 @@ public sealed partial class SqlAccountingStore(
             IsolationLevel.Serializable, cancellationToken);
         try
         {
-            await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
+            var zone = await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
             byte[]? expectedVersion = null;
             if (!string.IsNullOrWhiteSpace(request.RowVersion))
             {
@@ -1530,6 +1530,7 @@ public sealed partial class SqlAccountingStore(
                 command.Parameters.AddWithValue("@TenantId", user.TenantId);
                 command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                 command.Parameters.AddWithValue("@EffectiveOn", request.EffectiveOn.ToDateTime(TimeOnly.MinValue));
+                command.Parameters.AddWithValue("@EffectiveAt", BusinessCalendar.StartOfDay(request.EffectiveOn, zone));
                 command.Parameters.AddWithValue("@Currency", request.CurrencyCode);
                 command.Parameters.AddWithValue("@Description", request.Description.Trim());
                 command.Parameters.AddWithValue("@UserId", user.UserId);
@@ -1577,7 +1578,7 @@ public sealed partial class SqlAccountingStore(
             IsolationLevel.Serializable, cancellationToken);
         try
         {
-            await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
+            var zone = await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
             DateOnly effectiveOn;
             await using (var command = new SqlCommand("""
                 SELECT EffectiveOn FROM dbo.AccountingOpeningBalanceBatches WITH(UPDLOCK,HOLDLOCK)
@@ -1604,6 +1605,7 @@ public sealed partial class SqlAccountingStore(
                 validate.Parameters.AddWithValue("@TenantId", user.TenantId);
                 validate.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                 validate.Parameters.AddWithValue("@EffectiveOn", effectiveOn.ToDateTime(TimeOnly.MinValue));
+                validate.Parameters.AddWithValue("@EffectiveAt", BusinessCalendar.StartOfDay(effectiveOn, zone));
                 await using var reader = await validate.ExecuteReaderAsync(cancellationToken);
                 await reader.ReadAsync(cancellationToken);
                 var count = reader.GetInt32(0);
@@ -1643,19 +1645,23 @@ public sealed partial class SqlAccountingStore(
         }
     }
 
-    private static async Task EnsureOpeningBalancesEditableAsync(
+    private static async Task<TimeZoneInfo> EnsureOpeningBalancesEditableAsync(
         SqlConnection connection, SqlTransaction transaction, AccountingUserIdentity user,
         CancellationToken cancellationToken)
     {
-        if (!await CanEditOpeningBalancesAsync(
-                connection, transaction, user.TenantId, true, cancellationToken))
+        var editable = await CanEditOpeningBalancesAsync(
+            connection, transaction, user.TenantId, true, cancellationToken, user.BusinessId);
+        if (!editable.CanEdit)
             throw new AccountingConflictException(
                 "Los saldos iniciales no se pueden modificar porque la activación está en curso o ya existen movimientos contables.");
+        if (editable.TimeZone is null)
+            throw new AccountingValidationException("La sede de los saldos iniciales no pertenece a esta empresa.");
+        return TimeZoneInfo.FindSystemTimeZoneById(BusinessCalendar.NormalizeZoneId(editable.TimeZone));
     }
 
-    private static async Task<bool> CanEditOpeningBalancesAsync(
+    private static async Task<(bool CanEdit, string? TimeZone)> CanEditOpeningBalancesAsync(
         SqlConnection connection, SqlTransaction? transaction, Guid tenantId,
-        bool lockSettings, CancellationToken cancellationToken)
+        bool lockSettings, CancellationToken cancellationToken, Guid? businessId = null)
     {
         var lockHint = lockSettings ? " WITH(UPDLOCK,HOLDLOCK)" : string.Empty;
         await using var command = new SqlCommand($"""
@@ -1673,10 +1679,14 @@ public sealed partial class SqlAccountingStore(
                               WHERE TenantId=@TenantId AND AcceptedAt>=@ActivatedAt)
                AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries
                               WHERE TenantId=@TenantId AND PostedAt>=@ActivatedAt) THEN 1
-              ELSE 0 END);
+              ELSE 0 END),
+              (SELECT TimeZone FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId);
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
-        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken));
+        command.Parameters.Add("@BusinessId", SqlDbType.UniqueIdentifier).Value = (object?)businessId ?? DBNull.Value;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return (reader.GetBoolean(0), reader.IsDBNull(1) ? null : reader.GetString(1));
     }
 
     private static async Task<AccountingOpeningBalanceView?> ReadOpeningBalanceAsync(
@@ -1769,7 +1779,7 @@ public sealed partial class SqlAccountingStore(
         var canEditOpeningBalances = await CanEditOpeningBalancesAsync(
             connection, null, user.TenantId, false, cancellationToken);
         return new(status, currency,
-            storedEffectiveFrom, storedOpeningMode, activatedAt, issues, canEditOpeningBalances);
+            storedEffectiveFrom, storedOpeningMode, activatedAt, issues, canEditOpeningBalances.CanEdit);
     }
 
     public async Task<AccountingReadinessView> ActivateAsync(
@@ -1815,8 +1825,8 @@ public sealed partial class SqlAccountingStore(
             if (wasReady)
             {
                 allowReadyReconfiguration = request.OpeningBalanceMode == "ImportedAndApproved"
-                    && await CanEditOpeningBalancesAsync(
-                        connection, transaction, user.TenantId, true, cancellationToken);
+                    && (await CanEditOpeningBalancesAsync(
+                        connection, transaction, user.TenantId, true, cancellationToken)).CanEdit;
                 if (request.OpeningBalanceMode == "ImportedAndApproved" && !allowReadyReconfiguration)
                     throw new AccountingConflictException(
                         "No se puede reemplazar el inicio en cero porque ya existen movimientos contables.");
@@ -1882,7 +1892,7 @@ public sealed partial class SqlAccountingStore(
             var canEdit = await CanEditOpeningBalancesAsync(
                 connection, transaction, user.TenantId, true, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return stored with { CanEditOpeningBalances = canEdit };
+            return stored with { CanEditOpeningBalances = canEdit.CanEdit };
         }
     }
 

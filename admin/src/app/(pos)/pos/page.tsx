@@ -4269,7 +4269,6 @@ export default function PosPage() {
       {paymentOpen && draft && saleSettlement && (
         <PosPaymentDialog
           client={client}
-          allowPendingCollection={Boolean(draft?.sourceOrderId)}
           total={saleSettlement.netAmount}
           grossTotal={saleSettlement.grossAmount}
           withholdingTotal={saleSettlement.withholdingTotal}

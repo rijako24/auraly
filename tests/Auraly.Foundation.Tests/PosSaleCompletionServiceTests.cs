@@ -39,7 +39,6 @@ public sealed class PosSaleCompletionServiceTests
     [InlineData("Transfer")]
     [InlineData("DebitCard")]
     [InlineData("CreditCard")]
-    [InlineData("PendingCollection")]
     public async Task Recovered_order_receipt_preserves_dispatch_custody_in_local_sale_and_upload(string method)
     {
         await WithFixtureAsync(async fixture =>
@@ -84,8 +83,9 @@ public sealed class PosSaleCompletionServiceTests
 
     [Theory]
     [InlineData(false, false)]
+    [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Pending_collection_rejects_direct_receipt_and_electronic_invoice_without_consuming_draft(bool order, bool invoice)
+    public async Task Retired_payment_protocol_is_rejected_without_consuming_the_draft(bool order, bool invoice)
     {
         await WithFixtureAsync(async fixture =>
         {

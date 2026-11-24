@@ -49,7 +49,7 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
         var reason = Text(request.Reason, 160);
         if (request.DeliveryStatus != DeliveryStatuses.Delivered && reason is null)
             throw new DispatchValidationException("Indica un motivo para una entrega parcial o fallida.");
-        if (request.DeliveryStatus == DeliveryStatuses.NotDelivered && (request.Payments.Count > 0 || request.Returns.Count > 0))
+        if (request.DeliveryStatus == DeliveryStatuses.NotDelivered && (request.Payments.Any(payment=>payment.ApplicationType!=DeliveryPaymentApplications.KeepCurrent) || request.Returns.Count > 0))
             throw new DispatchValidationException("Una entrega no realizada no puede incluir pagos ni mercancía devuelta.");
         if (request.Payments.Count > DispatchLimits.MaximumPaymentsPerDocument || request.Returns.Count > 500)
             throw new DispatchValidationException("El resultado de entrega supera la cantidad de detalles permitida.");
@@ -59,10 +59,20 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
             CardFranchiseCode = Text(payment.CardFranchiseCode, PaymentTenderBreakdown.MaximumCardFranchiseLength),
             ApprovalNumber = Text(payment.ApprovalNumber, PaymentTenderBreakdown.MaximumApprovalLength) }).ToArray();
         foreach (var payment in payments) ValidatePayment(payment);
-        var money = payments.Where(value => value.ApplicationType != DeliveryPaymentApplications.CreditDocument).ToArray();
+        var money = payments.Where(value => value.ApplicationType is DeliveryPaymentApplications.InvoicePayment or DeliveryPaymentApplications.CreditAdvance).ToArray();
+        var kept=payments.Count(value=>value.ApplicationType==DeliveryPaymentApplications.KeepCurrent);
+        if(kept>1 || kept>0&&money.Length>0)
+            throw new DispatchValidationException("Mantener la forma de pago actual no admite otro recaudo en esta entrega.");
         if (money.Any(value => value.PaymentMethodId.HasValue))
         {
-            try { PaymentTenderBreakdown.Create(money.Select(value => new PaymentTender(value.PaymentMethod ?? "", value.Amount,
+            if (money.GroupBy(value => (value.ApplicationType, value.PaymentMethodId)).Any(group => group.Count() > 1))
+                throw new DispatchValidationException("Cada forma se registra una sola vez por aplicación de la factura.");
+            // A single real tender can cover its unpaid cash portion and its
+            // receivable portion. Validate that evidence once; applications
+            // retain their separate canonical financial owners.
+            var tenders = money.GroupBy(value => new { value.PaymentMethodId,value.PaymentMethodVersion,value.PaymentMethod,
+                value.Reference,value.CardFranchiseCode,value.ApprovalNumber }).Select(group => group.First() with { Amount=group.Sum(value=>value.Amount) });
+            try { PaymentTenderBreakdown.Create(tenders.Select(value => new PaymentTender(value.PaymentMethod ?? "", value.Amount,
                 Reference: value.Reference, CardFranchiseCode: value.CardFranchiseCode, ApprovalNumber: value.ApprovalNumber,
                 PaymentMethodId: value.PaymentMethodId, PaymentMethodVersion: value.PaymentMethodVersion)),
                 money.Sum(value => value.Amount), 1, PortfolioPaymentMethods.Supported); }
@@ -159,6 +169,13 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
 
     private static void ValidatePayment(DispatchDeliveryPaymentInput value)
     {
+        if(value.ApplicationType==DeliveryPaymentApplications.KeepCurrent)
+        {
+            if(value.Amount!=0 || value.PaymentMethod is not null || value.PaymentMethodId.HasValue || value.PaymentMethodVersion.HasValue
+                || value.Reference is not null || value.EvidenceUrl is not null || value.CardFranchiseCode is not null || value.ApprovalNumber is not null)
+                throw new DispatchValidationException("Mantener el pago actual sólo conserva la información existente; no registra dinero ni otro medio de pago.");
+            return;
+        }
         if (value.ApplicationType == DeliveryPaymentApplications.CreditDocument)
         {
             if (value.Amount != 0 || value.PaymentMethod is not null || value.PaymentMethodId.HasValue || value.PaymentMethodVersion.HasValue
