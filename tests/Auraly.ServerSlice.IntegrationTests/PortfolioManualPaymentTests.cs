@@ -361,10 +361,19 @@ public sealed partial class PayablesVerticalSliceTests
                     .Select(item => item.Clone()));
             }
             Assert.NotEmpty(sourceReads);
+            Assert.Contains(sourceReads, item => item.GetProperty("Executes").GetInt64() > 0);
             Assert.All(sourceReads, item =>
             {
+                var rows = item.GetProperty("Rows").GetInt64();
+                // An untaken branch has no reads; SQL may compile a scan for it.
+                // Keep the seek and row limits on every source actually read.
+                if (item.GetProperty("Executes").GetInt64() == 0)
+                {
+                    Assert.Equal(0, rows);
+                    return;
+                }
                 Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
-                Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, 1);
+                Assert.InRange(rows, 0, 1);
             });
         }
     }
