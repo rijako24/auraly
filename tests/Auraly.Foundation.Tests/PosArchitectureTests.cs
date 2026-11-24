@@ -203,7 +203,7 @@ public sealed class PosArchitectureTests
             paymentDialog,
             StringComparison.Ordinal);
         Assert.Contains(
-            "shortcut:`F${index+1}`",
+            "shortcut:index<5?`F${index+1}`:\"\"",
             paymentDialog.Replace(" ", "", StringComparison.Ordinal),
             StringComparison.Ordinal);
 
@@ -365,7 +365,7 @@ public sealed class PosArchitectureTests
         Assert.DoesNotContain("invoicePrintMode", page, StringComparison.Ordinal);
         Assert.Contains("printAfterInvoice,", page, StringComparison.Ordinal);
         Assert.DoesNotContain("invoicePrintMode", ordersWorkspace, StringComparison.Ordinal);
-        Assert.Contains("checked={printAfterInvoice}", ordersWorkspace, StringComparison.Ordinal);
+        Assert.Contains("aria-pressed={printAfterInvoice}", ordersWorkspace, StringComparison.Ordinal);
         Assert.Contains("printAfterInvoice,", ordersWorkspace, StringComparison.Ordinal);
         Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
         Assert.Contains("{ordersCount}", page, StringComparison.Ordinal);
