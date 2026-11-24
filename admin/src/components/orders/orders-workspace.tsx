@@ -778,7 +778,7 @@ export function OrdersWorkspace({
                   onCheckedChange={() => void toggleSelectAllMatching()}
                   className="h-5 w-5 rounded-md"
                 />
-                {selectingAll ? "Seleccionando…" : "Seleccionar disponibles"}
+                {selectingAll ? "Seleccionando…" : "Seleccionar"}
               </label>
               <Button
                 type="button"
@@ -824,7 +824,7 @@ export function OrdersWorkspace({
               </div>
             </div>
             <div className="min-w-0">
-              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+              <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                 {onConfigurePrinting && (
                   <Button type="button" variant="outline" size="icon"
                     title="Configurar plantillas e impresoras"
@@ -833,7 +833,7 @@ export function OrdersWorkspace({
                     <Printer className="h-4 w-4" />
                   </Button>
                 )}
-                <div className="grid h-9 grid-cols-2 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Condición de pago">
+                <div className="grid h-9 min-w-0 flex-1 grid-cols-2 rounded-xl border border-slate-200 bg-white p-1 shadow-sm sm:flex-none" aria-label="Condición de pago">
                   <button type="button" aria-pressed={paymentMethodCode === "Cash"}
                     disabled={working || selectingAll}
                     onClick={() => setPaymentMethodCode("Cash")}
@@ -847,7 +847,7 @@ export function OrdersWorkspace({
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>
-                {onInvoiceSelected && <PagedEntitySelect<PaymentMethod>
+                {onInvoiceSelected && <div className="w-full min-w-0 sm:w-44"><PagedEntitySelect<PaymentMethod>
                   queryKey={["payment-method-choices", tenantId, businessId, "OrderReceipts", paymentMethodCode]}
                   preload={paymentMethodCode === "Credit"} autoSelectSingle={paymentMethodCode === "Credit"}
                   value={paymentForm?.paymentMethodId ?? ""}
@@ -860,30 +860,25 @@ export function OrdersWorkspace({
                   }}
                   getOption={(item) => ({ value: item.paymentMethodId, label: item.name, description: item.code })}
                   ariaLabel="Forma de pago del lote" placeholder="Forma de pago"
-                  className="h-9 w-full sm:w-44 [&>span:first-child]:truncate [&>span:first-child]:whitespace-nowrap" wrapLabels
+                  className="h-9 w-full [&>span:first-child]:truncate [&>span:first-child]:whitespace-nowrap" wrapLabels
                   contentClassName="w-[min(28rem,calc(100vw-2rem))]"
                   searchPlaceholder="Buscar forma de pago…" disabled={working || selectingAll || !connected}
-                />}
+                /></div>}
                 {paymentMethodCode === "Cash" && paymentForm && ["DebitCard","CreditCard","Transfer"].includes(paymentForm.methodCode) &&
                   <Button type="button" variant="outline" size="sm" disabled={working || selectingAll || !connected}
                     onClick={() => openPaymentDetails(paymentForm, paymentDetails)}>Datos del pago</Button>}
 
-                <label className="col-span-2 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 sm:col-span-1">
-                  <Checkbox
-                    checked={printAfterInvoice}
-                    disabled={working}
-                    onCheckedChange={(checked) => setPrintAfterInvoice(checked === true)}
-                    aria-label="Imprimir al facturar"
-                    className="h-4 w-4 rounded"
-                  />
-                  <Printer className="h-3.5 w-3.5 text-teal-700" />
-                  Imprimir al facturar
-                </label>
+                <Button type="button" variant="outline" size="icon" disabled={working}
+                  aria-label="Imprimir al facturar" title="Imprimir al facturar" aria-pressed={printAfterInvoice}
+                  onClick={() => setPrintAfterInvoice(value => !value)}
+                  className={`h-9 w-9 shrink-0 rounded-xl ${printAfterInvoice ? "border-teal-600 bg-teal-700 text-white hover:bg-teal-800 hover:text-white" : "border-slate-200 bg-white text-slate-700 hover:border-teal-300 hover:bg-teal-50"}`}>
+                  <Printer className="h-4 w-4" aria-hidden="true" />
+                </Button>
                 <Button
                   type="button"
                   disabled={!selectedOrders.length || working || selectingAll || !onInvoiceSelected}
                   onClick={() => void invoiceSelected(paymentMethodCode)}
-                  className="col-span-2 w-full whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:col-span-1 sm:w-auto"
+                  className="min-w-48 flex-1 whitespace-nowrap bg-teal-700 text-white hover:bg-teal-800 sm:min-w-0 sm:flex-none sm:w-auto"
                 >
                   {working ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { login } from "./support/auth";
+import { expectNoHorizontalOverflow } from "./support/layout-bounds";
 
 test.use({ timezoneId: "Asia/Tokyo" });
 
@@ -58,6 +59,11 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   };
   const completed = new Set<string>();
   const sequence: string[] = [];
+  const invoiceGates = orders.map(() => {
+    let release!: () => void;
+    const promise = new Promise<void>(resolve => { release = resolve; });
+    return { promise, release };
+  });
   let brandingReads = 0;
   let orderReads = 0;
   const longPaymentName = "Medio del lote · Recepción de pedidos y ventas del mostrador principal";
@@ -195,7 +201,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
       expect(request.orderIds).toHaveLength(1);
       const order = orders.find((candidate) => candidate.orderId === request.orderIds[0])!;
       sequence.push(`invoice:start:${order.orderNumber}`);
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await invoiceGates[orders.indexOf(order)]?.promise;
       completed.add(order.orderId);
       sequence.push(`invoice:end:${order.orderNumber}`);
       body = {
@@ -247,7 +253,14 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toBeVisible();
   if (paymentCode !== "Credit") await page.getByRole("button", { name: "De contado", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Forma de pago del lote" })).toBeVisible();
-  await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
+  const printToggle = page.getByRole("button", { name: "Imprimir al facturar", exact: true });
+  await expect(printToggle).toHaveAttribute("aria-pressed", "true");
+  expect((await printToggle.boundingBox())!.width).toBeLessThanOrEqual(40);
+  await printToggle.click();
+  await expect(printToggle).toHaveAttribute("aria-pressed", "false");
+  await printToggle.click();
+  await expect(printToggle).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("checkbox", { name: "Seleccionar", exact: true }).click();
   await page.getByRole("button", { name: "Imprimir (3)" }).click();
   await expect.poll(() => sequence).toEqual([
     "print:start:PED-001",
@@ -305,11 +318,28 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     }
     await expect(page.getByRole("dialog", { name: /Datos de la/ })).toHaveCount(0);
   } else await expect(page.getByRole("dialog", { name: /Datos de la/ })).toHaveCount(0);
+  if (paymentCode === "Cash") {
+    for (const viewport of [{ width: 390, height: 844 }, { width: 1366, height: 768 }]) {
+      await page.setViewportSize(viewport);
+      await printToggle.scrollIntoViewIfNeeded();
+      await expectNoHorizontalOverflow(printToggle.locator(".."));
+      const bounds = await printToggle.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`orders-print-icon-${viewport.width}.png`), fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
   await invoiceAction.click();
 
-  await expect(page.getByText("1/3", { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("2/3", { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("3/3", { exact: true })).toBeVisible({ timeout: 10_000 });
+  // Hold each simulated response until its progress is observed. A fast
+  // production build must not finish the whole sequence between two assertions.
+  for (const [index, gate] of invoiceGates.entries()) {
+    await expect(page.getByText(`${index}/3`, { exact: true })).toBeVisible({ timeout: 10_000 });
+    gate.release();
+  }
   await expect.poll(() => sequence).toEqual([
     "invoice:start:PED-001",
     "invoice:end:PED-001",
@@ -351,7 +381,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   sequence.length = 0;
   await page.reload();
   await expect(page.getByText("PED-004")).toBeVisible();
-  await page.getByRole("checkbox", { name: "Seleccionar disponibles" }).click();
+  await page.getByRole("checkbox", { name: "Seleccionar", exact: true }).click();
   await page.getByRole("combobox", { name: "Forma de pago del lote" }).click();
   await page.getByRole("option", { name: /Medio del lote/ }).click();
   const chargeButton = page.getByRole("button", { name: "Facturar 2 pedidos con cargo" });
@@ -363,7 +393,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   await chargeDialog.getByRole("button", { name: /Domicilio/ }).click();
   await chargeDialog.getByRole("button", { name: "Agregar cargo" }).click();
   await chargeDialog.getByRole("button", { name: "Facturar 2 pedidos con 1 cargo" }).click();
-  await expect(page.getByText("2/2", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("2 pedidos emitidos correctamente.", { exact: true })).toBeVisible();
   await expect.poll(() => invoiceRequests.length).toBe(5);
   expect(invoiceRequests.slice(3)).toEqual([
     expect.objectContaining({

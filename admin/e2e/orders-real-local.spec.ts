@@ -152,7 +152,9 @@ for (const scenario of [
   await page.goto("/dashboard/orders");
   for (const order of orders) await page.getByRole("checkbox", { name: `Seleccionar ${order.orderNumber}`, exact: true }).check();
   await page.getByRole("button", { name: "Comprobante de venta", exact: true }).click();
-  await page.getByRole("checkbox", { name: "Imprimir al facturar", exact: true }).uncheck();
+  const printToggle = page.getByRole("button", { name: "Imprimir al facturar", exact: true });
+  if (await printToggle.getAttribute("aria-pressed") === "true") await printToggle.click();
+  await expect(printToggle).toHaveAttribute("aria-pressed", "false");
   const invoiceResponses: Response[] = [];
   const creditValidations: Response[] = [];
   page.on("response", response => {
