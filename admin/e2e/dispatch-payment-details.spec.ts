@@ -108,6 +108,7 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
       }
       await expect(details).toBeVisible();
       expect(submitted).toHaveLength(0);
+      await expect(details.getByRole("textbox", { name: card ? "Número de aprobación" : "Referencia", exact: true })).toBeFocused();
       if (card) {
         await details.getByRole("combobox", { name: "Franquicia" }).click();
         await page.getByRole("option", { name: "Visa", exact: true }).click();

@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Pencil, Loader2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { PaymentMethodSelect } from "@/components/payments/payment-method-select";
+import { usePaymentEvidenceFocus } from "@/components/payments/use-payment-evidence-focus";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -109,6 +110,7 @@ function CorrectionDialog({ dispatchId, payment, onClose, onSaved }: {
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const card = form?.methodCode === "DebitCard" || form?.methodCode === "CreditCard";
+  const evidenceInput = usePaymentEvidenceFocus(card || form?.methodCode === "Transfer", form?.paymentMethodId);
   const franchises = useReferenceOptions("card-franchise", card);
   const valid = form && reason.trim() && (!card || franchise && approval.trim()) && (form.methodCode !== "Transfer" || reference.trim());
   const save = async () => {
@@ -129,8 +131,8 @@ function CorrectionDialog({ dispatchId, payment, onClose, onSaved }: {
         value={form?.paymentMethodId ?? ""} name={form?.name} ariaLabel="Nueva forma de pago del despacho" disabled={saving}
         onChange={value => { setForm(value); setReference(""); setFranchise(""); setApproval(""); }}/>
       {form && <p className="rounded-xl bg-muted/50 p-3 text-sm">Cuenta configurada: {form.accountCode} · {form.accountName}</p>}
-      {form?.methodCode === "Transfer" && <div className="space-y-2"><Label htmlFor="dispatch-correction-reference">Referencia de transferencia</Label><Input id="dispatch-correction-reference" maxLength={120} value={reference} onChange={event => setReference(event.target.value)}/></div>}
-      {card && <><div className="space-y-2"><Label>Franquicia</Label><Select value={franchise} onValueChange={setFranchise}><SelectTrigger aria-label="Franquicia de la corrección"><SelectValue placeholder="Selecciona la franquicia"/></SelectTrigger><SelectContent>{franchises.data?.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label htmlFor="dispatch-correction-approval">Número de aprobación</Label><Input id="dispatch-correction-approval" maxLength={80} value={approval} onChange={event => setApproval(event.target.value)}/></div></>}
+      {form?.methodCode === "Transfer" && <div className="space-y-2"><Label htmlFor="dispatch-correction-reference">Referencia de transferencia</Label><Input ref={evidenceInput} data-payment-evidence id="dispatch-correction-reference" maxLength={120} value={reference} onChange={event => setReference(event.target.value)}/></div>}
+      {card && <><div className="space-y-2"><Label>Franquicia</Label><Select value={franchise} onValueChange={setFranchise}><SelectTrigger aria-label="Franquicia de la corrección"><SelectValue placeholder="Selecciona la franquicia"/></SelectTrigger><SelectContent>{franchises.data?.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label htmlFor="dispatch-correction-approval">Número de aprobación</Label><Input ref={evidenceInput} data-payment-evidence id="dispatch-correction-approval" maxLength={80} value={approval} onChange={event => setApproval(event.target.value)}/></div></>}
       <div className="space-y-2"><Label htmlFor="dispatch-correction-reason">Motivo de la corrección</Label><Textarea id="dispatch-correction-reason" maxLength={500} value={reason} onChange={event => setReason(event.target.value)}/></div>
     </div>
     <div className="flex justify-end gap-2"><Button variant="outline" disabled={saving} onClick={onClose}>Cancelar</Button><Button disabled={saving || !valid} onClick={() => void save()}>{saving ? "Guardando…" : "Guardar corrección"}</Button></div>

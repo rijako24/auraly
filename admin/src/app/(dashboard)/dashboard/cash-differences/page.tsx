@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { PaymentMethodSelect } from "@/components/payments/payment-method-select";
+import { usePaymentEvidenceFocus } from "@/components/payments/use-payment-evidence-focus";
 import type { PaymentMethod, PaymentMethodQuery } from "@/services/api/payment-methods";
 import { workSessionDifferencesApi, type DispatchClosureInboxItem, type ClosureManualMovement, type ClosurePaymentCorrection, type ClosurePaymentTotal, type ClosurePaymentVerification, type WorkSessionClosure } from "@/services/api/work-session-differences";
 import { tenantsApi } from "@/services/api/tenants";
@@ -328,7 +329,8 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
     (confirmed[code] ?? false) || groupCount(code) > 0 && !groupRequiresVerification(code) ||
       Object.values(displayCorrections).some(correction => correction.paymentMethodCode === code &&
         loadedItems[correction.verificationKey] !== undefined &&
-        !requiresIndividualCashClosureVerification(loadedItems[correction.verificationKey])));
+        (!requiresIndividualCashClosureVerification(loadedItems[correction.verificationKey]) ||
+          verificationStatus[correction.verificationKey] === "Verified")));
   const expectedAmount = (item: ClosurePaymentTotal) => item.paymentMethodCode === "Cash"
     ? closure.expectedCash ?? item.netAmount : item.netAmount;
   const differences = Object.fromEntries(countable.map(item => [item.paymentMethodCode,
@@ -466,6 +468,7 @@ function CorrectionEditor({ item, businessId, methods, current, onClose, onRemov
   const amount = item.movementType === "CreditSale" ? item.collectibleAmount ?? 0 : item.amount;
   const method = tender === "DebitCard" || tender === "CreditCard" ? "Card" : tender;
   const isCard = tender === "DebitCard" || tender === "CreditCard";
+  const evidenceInput = usePaymentEvidenceFocus(Boolean(form) && (isCard || tender === "Transfer"), form?.id);
   const cardFranchises = useReferenceOptions("card-franchise", isCard);
   const manualVoucher = item.sourceDocumentType === "ManualAccountingVoucher";
   const electronic = item.sourceDocumentType === "SalesInvoice" || item.sourceDocumentType === "ServiceInvoice";
@@ -533,10 +536,10 @@ function CorrectionEditor({ item, businessId, methods, current, onClose, onRemov
           <Select value={franchise} onValueChange={setFranchise} disabled={validating}><SelectTrigger aria-label="Franquicia"><SelectValue placeholder="Selecciona la franquicia" /></SelectTrigger>
             <SelectContent>{(cardFranchises.data ?? []).map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent>
           </Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-approval">Número de aprobación</Label>
-          <Input id="closure-correction-approval" disabled={validating} value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} />
+          <Input ref={evidenceInput} data-payment-evidence id="closure-correction-approval" disabled={validating} value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} />
         </div></>}
         {tender === "Transfer" && <div className="space-y-1.5"><Label htmlFor="closure-correction-reference">Referencia de transferencia</Label>
-          <Input id="closure-correction-reference" disabled={validating} value={reference} onChange={event => setReference(event.target.value)} maxLength={160} />
+          <Input ref={evidenceInput} data-payment-evidence id="closure-correction-reference" disabled={validating} value={reference} onChange={event => setReference(event.target.value)} maxLength={160} />
         </div>}
         <div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor del recaudo</Label>
           <Input id="closure-correction-amount" readOnly disabled value={money.format(Math.abs(amount))} />

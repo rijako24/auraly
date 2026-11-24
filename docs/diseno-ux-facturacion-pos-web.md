@@ -640,9 +640,25 @@ Con confirmación:
 Las confirmaciones destructivas nombran el impacto y el botón peligroso no recibe
 foco por defecto.
 
+Los detalles de tarjeta y transferencia comparten la misma captura en POS,
+Pedidos, cartera y entregas. Al abrir, el primer texto editable recibe el foco:
+aprobación para tarjeta y referencia para transferencia. Si primero debe elegirse
+una forma del catálogo, el foco pasa al texto al terminar esa selección. Cancelar
+el selector conserva su retorno normal; escribir o cambiar franquicia no vuelve
+a enfocar ni selecciona el texto ya digitado. Las correcciones de recaudo usan
+la misma regla. Este comportamiento no consulta ni modifica pagos.
+
 ---
 
 ## 15. Permisos
+
+Roles deriva las vistas del menú canónico, incluidas las que permiten cualquiera
+de varios permisos, como Punto de venta, Restaurante y Cierres de caja. La
+agrupación presenta las acciones dentro de su vista sin crear permisos nuevos ni
+modificar asignaciones al abrir. Activar una vista con alternativas concede sólo
+su primera alternativa disponible en el orden del menú; desactivarla retira las
+alternativas que la mantienen visible. Los permisos compartidos conservan su
+identidad y efecto global.
 
 Si el usuario no puede:
 

@@ -138,6 +138,7 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
   await page.keyboard.press("F2");
   const card = page.getByRole("dialog", { name: "Datos de la tarjeta" });
   await expect(card).toBeVisible();
+  await expect(card.getByPlaceholder("Aprobación del datáfono")).toBeFocused();
   await card.getByPlaceholder("Aprobación del datáfono").fill("AP-001");
   await card.getByRole("button", { name: /Guardar datos/ }).click();
   const restorePreviousVersion = failureStatus === 503 && acceptedStatus === "Accepted";
@@ -289,16 +290,19 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
   await page.keyboard.press("F2");
   const transfer = page.getByRole("dialog", { name: "Datos de la transferencia" });
   await expect(transfer).toBeVisible();
+  await expect(transfer.getByRole("textbox", { name: "Referencia", exact: true })).toBeFocused();
   await transfer.getByRole("button", { name: "Cerrar datos de transferencia" }).click();
   await page.keyboard.press("F1");
   await expect(checkout.getByRole("combobox", { name: "Medio de pago" })).toContainText("Efectivo");
   await page.keyboard.press("F3");
   let card = page.getByRole("dialog", { name: "Datos de la tarjeta" });
   await expect(card).toBeVisible();
+  await expect(card.getByPlaceholder("Aprobación del datáfono")).toBeFocused();
   await card.getByRole("button", { name: "Cerrar datos de tarjeta" }).click();
   await page.keyboard.press("F4");
   card = page.getByRole("dialog", { name: "Datos de la tarjeta" });
   await expect(card).toBeVisible();
+  await expect(card.getByPlaceholder("Aprobación del datáfono")).toBeFocused();
   await card.getByPlaceholder("Aprobación del datáfono").fill("CREDIT-001");
   await card.getByRole("button", { name: /Guardar datos/ }).click();
   await checkout.getByRole("button", { name: "Oficio", exact: true }).click();

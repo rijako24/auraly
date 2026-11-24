@@ -25,5 +25,11 @@ export function PaymentMethodSelect({ tenantId, businessId, usage, value, name, 
     }}
     getOption={method => ({ value: method.paymentMethodId, label: method.name,
       description: `${method.code} · ${method.accountCode} · ${method.accountName}` })}
+    onSelectionComplete={trigger => {
+      const evidence = trigger.closest("[role='dialog']")?.querySelector<HTMLInputElement>("input[data-payment-evidence]:not(:disabled)");
+      if (!evidence) return false;
+      evidence.focus({ preventScroll: true });
+      return true;
+    }}
     onChange={(_id, _option, method) => { if (method) onChange(method); }} />;
 }

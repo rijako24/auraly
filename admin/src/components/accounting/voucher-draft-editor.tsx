@@ -637,9 +637,10 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         </tbody></table></div>
       </fieldset>}
     </fieldset>
-    <footer className="relative z-20 flex flex-wrap items-center gap-4 rounded-2xl border bg-background p-4 shadow-lg sm:sticky sm:bottom-0">
-      <div className="min-w-0 flex-1 basis-full text-sm sm:basis-0">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={differencePending ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(difference)} · {lines.length} partidas</p></>}
+    <footer aria-label="Totales y acciones del comprobante" className="relative z-20 space-y-3 rounded-2xl border bg-background p-4 shadow-lg sm:sticky sm:bottom-0">
+      <div className="min-w-0 text-sm">{!form.adjustment && <div className="flex flex-wrap gap-x-4 gap-y-1"><b>Débito {money.format(debit)}</b><span>Crédito {money.format(credit)}</span><span className={differencePending ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(difference)} · {lines.length} partidas</span></div>}
         <p className="text-muted-foreground">{saved?.status === "Posted" ? "Comprobante contabilizado: contenido inmutable." : saved?.sentAt ? "Comprobante aceptado; consulta su estado contable. El contenido está congelado." : "Guarda un borrador para seguir editando, o guarda el comprobante definitivo para contabilizarlo."}</p></div>
+      <div className="flex flex-wrap items-center justify-end gap-2">
       <Button variant="outline" disabled={busy} onClick={close}>{modal ? closeLabel : "Volver"}</Button>
       {saved && !dirty && <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{phase === "refresh" ? "Consultando estado…" : "Actualizar estado"}</Button>}
       {saved?.sentAt && saved.status !== "Posted" && permissions.includes("accounting.postings.retry") && <Button disabled={busy} onClick={() => void retry()}>{phase === "retry" ? "Solicitando reintento…" : "Reintentar contabilización"}</Button>}
@@ -649,6 +650,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       {saved && !saved.sentAt && !readOnly && <Button variant="destructive" disabled={busy} onClick={() => setDeleteOpen(true)}>{phase === "discard" ? "Descartando…" : "Descartar borrador"}</Button>}
       {!readOnly && <Button variant="outline" disabled={busy || !dirty} onClick={() => void save()}><Save className="mr-2 h-4 w-4" />{phase === "save" ? "Guardando…" : "Guardar borrador"}</Button>}
       {!readOnly && permissions.includes("accounting.manual.send") && <Button disabled={busy || receiptAttributionConflict || fiscalDocument && !form.fiscalCapture?.calculationHash} onClick={() => void saveAndPost()}><Send className="mr-2 h-4 w-4" />{phase === "send" ? "Contabilizando…" : "Guardar comprobante"}</Button>}
+      </div>
     </footer>
     {entryOpen && <AccountingDocumentDialog documentId={saved?.documentId} hasFiscalDocument={!!saved?.row.fiscalDocumentType} onClose={() => setEntryOpen(false)} />}
     {reversalOpen && saved?.reversalDocumentId && <AccountingDocumentDialog documentId={saved.reversalDocumentId} onClose={() => setReversalOpen(false)} />}

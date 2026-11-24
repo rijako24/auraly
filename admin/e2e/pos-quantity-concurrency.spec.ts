@@ -47,13 +47,40 @@ for (const mode of ["DirectSale", "Store"]) for (const trigger of ["Enter", "Tab
         }
         quantity = request.quantity; version++; body = snapshot();
         if (writes.length === 1) await firstResponse;
-      } else if (path.includes("/orders")) body = { items: [], totalCount: 0, totalPages: 0, page: 1, pageSize: 25 };
+      } else if (path.includes("/orders")) {
+        const items = mode === "DirectSale" && trigger === "Enter" ? [1,2,3].map(index => ({
+          orderId:`order-${index}`,orderNumber:`PED-000${index}`,customerName:`Cliente ${index}`,
+          customerId:`customer-${index}`,status:"Confirmed",createdAt:"2026-11-24T12:00:00Z",
+          total:10000,currency:"COP",lineCount:1,canInvoice:true,canRecover:true,
+        })) : [];
+        body = { items, totalCount: items.length, totalPages: 1, page: 1, pageSize: 25 };
+      }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
     try {
       await page.goto("/pos");
       const input = page.getByRole("spinbutton", { name: "Cantidad de Producto por peso", exact: true });
       await expect(input).toHaveValue("1");
+      if (mode === "DirectSale" && trigger === "Enter") {
+        await page.getByRole("tab", { name: /^Pedidos/ }).click();
+        for (const viewport of [{ width: 1918, height: 866 }, { width: 1536, height: 693 }, { width: 1366, height: 768 }]) {
+          await page.setViewportSize(viewport);
+          const geometry = await page.evaluate(() => ({
+            height: document.documentElement.scrollHeight, viewport: innerHeight,
+            width: document.documentElement.scrollWidth, viewportWidth: innerWidth,
+            headerTop: document.querySelector("main > header")!.getBoundingClientRect().top,
+          }));
+          expect(geometry.height, JSON.stringify({ viewport, geometry })).toBeLessThanOrEqual(geometry.viewport);
+          expect(geometry.width).toBeLessThanOrEqual(geometry.viewportWidth);
+          expect(geometry.headerTop).toBe(0);
+        }
+        await page.setViewportSize({ width: 1366, height: 768 });
+        // The header can grow with display scaling or a longer operator name.
+        await page.locator("main > header").evaluate(element => { element.style.minHeight = "84px"; });
+        const frame = await page.locator("main").first().evaluate(element => ({ height: element.clientHeight, content: element.scrollHeight }));
+        expect(frame.content).toBeLessThanOrEqual(frame.height);
+        await page.locator("main > header").evaluate(element => { element.style.minHeight = ""; });
+      }
       const readsBefore = activeReads;
       await input.fill("0.333");
       // Dispatch both events in one task: React state alone is not a synchronous lock.

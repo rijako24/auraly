@@ -303,10 +303,12 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     expect(invoiceRequests).toHaveLength(0);
     if (paymentCode === "Transfer") {
       const dialog = page.getByRole("dialog", { name: "Datos de la transferencia", exact: true });
+      await expect(dialog.getByRole("textbox", { name: "Referencia", exact: true })).toBeFocused();
       await dialog.getByRole("textbox", { name: "Referencia", exact: true }).fill("TRANSFER-456");
       await dialog.getByRole("button", { name: "Guardar transferencia", exact: true }).click();
     } else {
       const dialog = page.getByRole("dialog", { name: "Datos de la tarjeta", exact: true });
+      await expect(dialog.getByRole("textbox", { name: "Número de aprobación", exact: true })).toBeFocused();
       await dialog.getByRole("combobox").click();
       await expect(page.getByRole("option", { name: "Visa", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
@@ -319,15 +321,19 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     await expect(page.getByRole("dialog", { name: /Datos de la/ })).toHaveCount(0);
   } else await expect(page.getByRole("dialog", { name: /Datos de la/ })).toHaveCount(0);
   if (paymentCode === "Cash") {
-    for (const viewport of [{ width: 390, height: 844 }, { width: 1366, height: 768 }]) {
+    for (const viewport of [{ width: 390, height: 844 }, { width: 1366, height: 768 }, { width: 1918, height: 866 }]) {
       await page.setViewportSize(viewport);
       await printToggle.scrollIntoViewIfNeeded();
-      await expectNoHorizontalOverflow(printToggle.locator(".."));
+      await expectNoHorizontalOverflow(page.getByRole("toolbar", { name: "Acciones de pedidos", exact: true }));
       const bounds = await printToggle.boundingBox();
       expect(bounds).not.toBeNull();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (viewport.width === 1918) {
+        const documentBox = await page.getByRole("button", { name: "Comprobante de venta", exact: true }).boundingBox();
+        expect(Math.abs(documentBox!.y - bounds!.y)).toBeLessThan(8);
+      }
       await page.screenshot({ path: test.info().outputPath(`orders-print-icon-${viewport.width}.png`), fullPage: true });
     }
     await page.setViewportSize({ width: 1440, height: 1000 });

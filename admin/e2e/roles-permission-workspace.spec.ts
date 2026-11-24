@@ -67,6 +67,10 @@ test("ver un rol carga un solo workspace y se puede cerrar sin bloquear la aplic
   const catalog = [
     { permissionId: "55555555-5555-5555-5555-555555555555", module: "Identity", action: "Read", resource: "roles.read", description: "Ver roles" },
     { permissionId: "66666666-6666-6666-6666-666666666666", module: "Identity", action: "Assign", resource: "roles.assign_permissions", description: "Asignar permisos" },
+    { permissionId: "pos-create", module: "Sales", action: "Create", resource: "sales.create", description: "Crear ventas" },
+    { permissionId: "pos-abono", module: "Sales", action: "Create", resource: "pos.receivables.payments.create", description: "Registrar abonos desde punto de venta" },
+    { permissionId: "pos-payable", module: "Sales", action: "Create", resource: "pos.payables.payments.create", description: "Pagar proveedores desde punto de venta" },
+    { permissionId: "restaurant-attend", module: "Restaurant", action: "Attend", resource: "restaurant.attend", description: "Atender mesas" },
   ];
 
   await page.route("**/api/**", async (route) => {
@@ -112,6 +116,12 @@ test("ver un rol carga un solo workspace y se puede cerrar sin bloquear la aplic
   await page.getByRole("row", { name: /Supervisor/ }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Configurar rol" })).toBeVisible();
+  const pos = dialog.locator("details").filter({ has: page.locator("summary").getByText("Punto de venta", { exact: true }) });
+  await pos.locator("summary").click();
+  await expect(pos.getByText("Crear ventas", { exact: true })).toBeVisible();
+  await expect(pos.getByText("Registrar abonos desde punto de venta", { exact: true })).toBeVisible();
+  await expect(pos.getByText("Pagar proveedores desde punto de venta", { exact: true })).toBeVisible();
+  await expect(dialog.locator("details").filter({ has: page.locator("summary").getByText("/dashboard/restaurant", { exact: true }) })).toHaveCount(1);
   await dialog.getByRole("button", { name: "Cerrar" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByPlaceholder("Buscar rol")).toBeEditable();

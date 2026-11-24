@@ -769,8 +769,8 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="flex flex-col gap-2 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4">
-            <div className="flex flex-wrap items-center gap-2">
+          <div role="toolbar" aria-label="Acciones de pedidos" className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:px-4">
+            <div className="contents">
               <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
                 <Checkbox
                   checked={allMatchingSelected ? true : selected.size > 0 ? "indeterminate" : false}
@@ -823,8 +823,8 @@ export function OrdersWorkspace({
                 </div>
               </div>
             </div>
-            <div className="min-w-0">
-              <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+            <div className="contents">
+              <div className="contents">
                 {onConfigurePrinting && (
                   <Button type="button" variant="outline" size="icon"
                     title="Configurar plantillas e impresoras"

@@ -62,8 +62,9 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied, dire
             onValueChange={amount => onChange(index, outgoing?{debit:0,credit:amount??0}:{debit:amount??0,credit:0})} />
         </div>
         {transfer && <div className="space-y-1"><Label htmlFor={`transfer-${line.value.lineId}`}>Referencia de transferencia</Label>
-          <Input id={`transfer-${line.value.lineId}`} maxLength={100} value={line.value.reference ?? ""}
-            onChange={event => onChange(index, { reference: event.target.value || null })} /></div>}
+          <Input id={`transfer-${line.value.lineId}`} required aria-invalid={!line.value.reference?.trim()} aria-describedby={`transfer-help-${line.value.lineId}`} maxLength={100} value={line.value.reference ?? ""}
+            onChange={event => onChange(index, { reference: event.target.value || null })} />
+          <p id={`transfer-help-${line.value.lineId}`} className="text-xs text-muted-foreground">Registra la referencia del soporte bancario para contabilizar esta transferencia.</p></div>}
         {card && <><div className="space-y-1"><Label htmlFor={`approval-${line.value.lineId}`}>Número de aprobación</Label>
           <Input id={`approval-${line.value.lineId}`} maxLength={100} value={evidence.approvalNumber ?? ""}
             onChange={event => onEvidence(index, { approvalNumber: event.target.value || null })} /></div>
@@ -102,7 +103,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied, dire
         <FormattedNumberInput kind="currency" ariaLabel="Valor de la nueva forma de pago" value={capture.amount}
           onValueChange={amount => setCapture(previous => ({ ...previous, amount: amount ?? 0 }))} /></div>
       {candidate?.methodCode === "Transfer" && <div className="space-y-1"><Label htmlFor="new-payment-reference">Referencia de transferencia</Label>
-        <Input id="new-payment-reference" maxLength={100} value={capture.reference ?? ""}
+        <Input id="new-payment-reference" required maxLength={100} value={capture.reference ?? ""}
           onChange={event => setCapture(previous => ({ ...previous, reference: event.target.value || null }))} /></div>}
       {candidateCard && <><div className="space-y-1"><Label htmlFor="new-payment-approval">Número de aprobación</Label>
         <Input id="new-payment-approval" maxLength={100} value={capture.approvalNumber ?? ""}

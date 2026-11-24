@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Copy, Eye, Save, Search } from "lucide-react";
 import { toast } from "sonner";
 
-import { navigation, type NavEntry } from "@/components/layout/sidebar-nav-config";
+import { authorizedNavigationItems, navigation, type NavEntry } from "@/components/layout/sidebar-nav-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,29 +20,31 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import type { Permission } from "@/types/entities";
 
-type MenuRow = { section: string; name: string; href: string; permission: string };
+type MenuRow = { section: string; name: string; href: string; permissions: readonly string[] };
 
 const permissionScopes: Record<string, string[]> = {
   "/dashboard": ["dashboard."],
   "/dashboard/services": ["services."],
   "/dashboard/service-invoices": ["service-invoices."],
-  "/dashboard/products": ["catalog."],
-  "/dashboard/parties": ["parties.", "customers.", "suppliers.", "sellers.", "carriers.", "employees.", "users."],
+  "/dashboard/products": ["catalog.", "products."],
+  "/dashboard/parties": ["parties.", "customers.", "suppliers.", "sellers.", "carriers.", "employees.", "users.", "security.users."],
   "/dashboard/routes": ["routes.", "route-zones."],
   "/dashboard/products/pricing": ["pricing."],
   "/dashboard/products/price-segments": ["pricing.segments."],
   "/dashboard/promotions": ["promotions."],
-  "/pos": ["sales.create", "sales.change-price", "sales.below-cost", "sales.reprint", "sales.lines.", "sales.drafts.", "sales.void", "pos.", "work-sessions.read", "work-sessions.close", "work-sessions.cash.", "enrolled_devices.", "fiscal.pos."],
+  "/pos": ["sales.create", "sales.change-price", "sales.below-cost", "sales.reprint", "sales.payments.correct", "sales.lines.", "sales.drafts.", "sales.void", "pos.", "work-sessions.read", "work-sessions.close", "work-sessions.cash.", "work-sessions.cash-reasons.", "enrolled_devices.", "fiscal.pos."],
+  "/dashboard/invoices": ["sales.reprint", "sales.payments.correct"],
+  "/dashboard/restaurant": ["restaurant."],
   "/dashboard/inventory": ["inventory."],
-  "/dashboard/purchasing/goods-receipts": ["purchasing.goods-receipts."],
+  "/dashboard/purchasing/goods-receipts": ["purchasing.goods-receipts.", "fiscal.documents.read", "fiscal.retry"],
   "/dashboard/purchasing/purchase-orders": ["purchasing.purchase-orders."],
   "/dashboard/purchasing/purchase-returns": ["purchasing.purchase-returns."],
   "/dashboard/sales-returns": ["sales.returns."],
-  "/dashboard/dispatches": ["dispatches."],
+  "/dashboard/dispatches": ["dispatches.", "sales.payments.correct"],
   "/dashboard/deliveries": ["dispatches.delivery."],
   "/dashboard/reservations": ["reservations."],
   "/dashboard/agents": ["agents."],
-  "/dashboard/channels": ["business_config."],
+  "/dashboard/channels": ["agents.read"],
   "/dashboard/conversations": ["conversations."],
   "/dashboard/leads": ["leads."],
   "/dashboard/campaigns": ["campaigns."],
@@ -50,23 +52,24 @@ const permissionScopes: Record<string, string[]> = {
   "/dashboard/payments": ["payments."],
   "/dashboard/payables": ["payables."],
   "/dashboard/receivables": ["receivables."],
-  "/dashboard/expenses": ["expenses."],
+  "/dashboard/expenses": ["expenses.", "fiscal.documents.read", "fiscal.retry"],
   "/dashboard/payroll": ["payroll."],
   "/dashboard/accounting": ["accounting.", "commerce.taxation."],
-  "/dashboard/financial-traceability": ["accounting."],
+  "/dashboard/financial-traceability": ["accounting.", "fiscal.documents.read", "fiscal.retry", "fiscal.manual-support.send"],
   "/dashboard/sales-debit-notes": ["sales.debit-notes."],
-  "/dashboard/cash-differences": ["work-sessions.differences.", "work-sessions.closures."],
+  "/dashboard/cash-differences": ["work-sessions.differences.", "work-sessions.closures.", "sales.payments.correct"],
   "/dashboard/subscription": ["subscription."],
   "/dashboard/reports/sales": ["sales.reports."],
-  "/dashboard/reports/sellers": ["sales.reports."],
-  "/dashboard/reports/customers": ["sales.reports."],
+  "/dashboard/reports/impact": ["sales.reports."],
+  "/dashboard/reports/products": ["sales.reports."],
   "/dashboard/reports/supplier-impact": ["sales.reports."],
   "/dashboard/tenants": ["tenants."],
+  "/dashboard/company": ["tenant.profile."],
   "/dashboard/businesses": ["businesses."],
-  "/dashboard/roles": ["roles.", "permissions."],
+  "/dashboard/roles": ["roles.", "permissions.", "platform.permissions."],
   "/dashboard/audit-logs": ["audit_logs."],
   "/dashboard/settings/masters": ["masters."],
-  "/dashboard/settings/fiscal": ["fiscal.configuration."],
+  "/dashboard/settings/fiscal": ["fiscal.", "platform.fiscal_certificates."],
   "/dashboard/settings": ["business_config.", "fiscal.configuration."],
 };
 
@@ -74,7 +77,8 @@ function menuRows(): MenuRow[] {
   let section = "General";
   return navigation.flatMap((entry: NavEntry) => {
     if ("type" in entry) { section = entry.label; return []; }
-    return entry.permission ? [{ section, name: entry.name, href: entry.href, permission: entry.permission }] : [];
+    const permissions = entry.permission ? [entry.permission] : entry.anyPermissions ?? [];
+    return permissions.length ? [{ section, name: entry.name, href: entry.href, permissions }] : [];
   });
 }
 
@@ -129,11 +133,14 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
     [catalogQuery.data, sourceId, workspaceQuery.data?.permissions],
   );
   const rows = useMemo(() => menuRows(), []);
+  const visibleViews = useMemo(() => new Set(authorizedNavigationItems(
+    permissions.filter(permission => selected.has(permission.permissionId)).map(permission => permission.resource),
+  ).map(item => item.href)), [permissions, selected]);
   const groupedPermissions = useMemo(() => {
     const byView = new Map<string, Permission[]>();
     const groupedPermissionIds = new Set<string>();
     for (const row of rows) {
-      const scopes = permissionScopes[row.href] ?? [row.permission.replace(/\.read$/, ".")];
+      const scopes = permissionScopes[row.href] ?? row.permissions.map(permission => permission.replace(/\.read$/, "."));
       const matches = permissions.filter((permission) =>
         scopes.some((scope) => permission.resource.startsWith(scope)) &&
         (row.href === "/dashboard/products/price-segments" || !permission.resource.startsWith("pricing.segments.")) &&
@@ -193,8 +200,13 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
     return next;
   });
   const toggleView = (row: MenuRow, checked: boolean) => {
-    const permission = permissions.find((item) => item.resource === row.permission);
-    if (permission) toggle(permission, checked);
+    setSelected(current => {
+      const next = new Set(current);
+      const entries = row.permissions.flatMap(resource => permissions.filter(item => item.resource === resource));
+      if (checked && entries[0]) next.add(entries[0].permissionId);
+      else for (const permission of entries) next.delete(permission.permissionId);
+      return next;
+    });
   };
 
   if (catalogQuery.isLoading || (sourceId && workspaceQuery.isLoading)) return <PageLoading cards={3} />;
@@ -213,14 +225,14 @@ export function RolePermissionWorkspace({ roleId, cloneFromId, embedded = false,
     </header>
     {isSystemRole && <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Este rol es administrado por el sistema y es de solo lectura. El Administrador recibe automáticamente todos los permisos de su empresa, excepto los exclusivos de plataforma.</div>}
     <Card><CardHeader><CardTitle>Identidad del rol</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="role-name">Nombre <span className="text-destructive">*</span></Label><Input id="role-name" aria-invalid={Boolean(nameError)} className={nameError ? "border-destructive ring-1 ring-destructive/20" : ""} value={name} onChange={(event) => { setName(event.target.value); if (event.target.value.trim()) setNameError(undefined); }} disabled={identityLocked} placeholder="Ej. Coordinador de inventario" />{nameError && <p className="text-sm text-destructive">{nameError}</p>}</div><div className="space-y-2"><Label htmlFor="role-description">Descripción</Label><Textarea id="role-description" value={description} onChange={(event) => setDescription(event.target.value)} disabled={identityLocked} rows={2} /></div></CardContent></Card>
-    <div className="grid gap-3 sm:grid-cols-3"><Summary label="Vistas visibles" value={String(rows.filter((row) => permissions.some((permission) => permission.resource === row.permission && selected.has(permission.permissionId))).length)} /><Summary label="Acciones asignadas" value={String(selected.size)} /><Summary label="Permisos disponibles" value={String(permissions.length)} /></div>
+    <div className="grid gap-3 sm:grid-cols-3"><Summary label="Vistas visibles" value={String(rows.filter(row => visibleViews.has(row.href)).length)} /><Summary label="Acciones asignadas" value={String(selected.size)} /><Summary label="Permisos disponibles" value={String(permissions.length)} /></div>
     <Card><CardHeader><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><CardTitle>Menú y acciones por vista</CardTitle><p className="mt-1 text-sm text-muted-foreground">Desmarcar “Ver” oculta la vista. Las acciones controlan lo que puede hacer dentro.</p></div><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="w-full pl-9 md:w-72" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar vista o sección" /></div></div></CardHeader><CardContent className="space-y-3">
       {filteredRows.map((row) => {
-        const viewPermission = permissions.find((permission) => permission.resource === row.permission);
+        const viewPermissions = permissions.filter(permission => row.permissions.includes(permission.resource));
         const actions = groupedPermissions.byView.get(row.href) ?? [];
-        const visible = Boolean(viewPermission && selected.has(viewPermission.permissionId));
+        const visible = visibleViews.has(row.href);
         return <details key={row.href} className="group rounded-xl border bg-card" open={search.trim().length > 0 ? true : undefined}>
-          <summary className="flex cursor-pointer list-none items-center gap-3 p-4"><Checkbox checked={visible} disabled={!viewPermission || permissionsLocked} onCheckedChange={(checked) => toggleView(row, checked === true)} onClick={(event) => event.stopPropagation()} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{row.name}</span><Badge variant="outline">{row.section}</Badge></div><p className="truncate text-xs text-muted-foreground">{row.href}</p></div><span className="text-xs text-muted-foreground">{actions.filter((item) => selected.has(item.permissionId)).length}/{actions.length} acciones</span><ChevronDown className="h-4 w-4 transition group-open:rotate-180" /></summary>
+          <summary className="flex cursor-pointer list-none items-center gap-3 p-4"><Checkbox checked={visible} disabled={!viewPermissions.length || permissionsLocked} onCheckedChange={(checked) => toggleView(row, checked === true)} onClick={(event) => event.stopPropagation()} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{row.name}</span><Badge variant="outline">{row.section}</Badge></div><p className="truncate text-xs text-muted-foreground">{row.href}</p></div><span className="text-xs text-muted-foreground">{actions.filter((item) => selected.has(item.permissionId)).length}/{actions.length} acciones</span><ChevronDown className="h-4 w-4 transition group-open:rotate-180" /></summary>
           <div className="grid gap-2 border-t p-4 sm:grid-cols-2 lg:grid-cols-3">{actions.map((permission) => { const translatedAction=actionLabels[permission.resource.split(".").at(-1)!]; return <label key={permission.permissionId} className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 hover:bg-muted/40"><Checkbox checked={selected.has(permission.permissionId)} disabled={permissionsLocked} onCheckedChange={(checked) => toggle(permission, checked === true)} /><span><span className="block text-sm font-medium">{permission.description ?? translatedAction ?? "Acción disponible"}</span></span></label>; })}</div>
         </details>;
       })}

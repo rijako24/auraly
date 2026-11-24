@@ -24,6 +24,15 @@ for (const supplier of [false, true]) for (const posted of [false, true]) test(`
   await expect(panel.getByRole("group",{name:"Forma de pago 1",exact:true})).toBeVisible();
   await expect.poll(()=>page.getByRole("main").evaluate(main=>main.scrollWidth-main.clientWidth)).toBeLessThanOrEqual(1);
   for(const fieldset of await panel.locator("fieldset").all()) expect(await fieldset.evaluate(e=>e.getBoundingClientRect().width<=e.parentElement!.clientWidth)).toBe(true);
+  const footer=page.locator('footer[aria-label="Totales y acciones del comprobante"]');
+  for(const width of [1398,1366]) {
+    await page.setViewportSize({width,height:782});
+    await footer.scrollIntoViewIfNeeded();
+    expect((await footer.boundingBox())!.height).toBeLessThan(165);
+    expect(await footer.evaluate(e=>e.scrollWidth-e.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({path:info.outputPath(`voucher-footer-${width}.png`)});
+  }
+  await page.setViewportSize({width:390,height:844});
   await panel.getByRole("group",{name:"Forma de pago 2",exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath("voucher-long-payments-mobile.png"),fullPage:true});
 });

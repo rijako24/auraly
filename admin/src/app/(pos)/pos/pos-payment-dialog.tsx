@@ -127,8 +127,6 @@ export function PosPaymentDialog({
   const [printConfiguration, setPrintConfiguration] = useState<Awaited<ReturnType<PosClient["printerConfigurationForSale"]>> | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const printChoiceRef = useRef<PosPrintTemplateFormat | "none" | null>(null);
-  const cardApprovalRef = useRef<HTMLInputElement>(null);
-  const transferReferenceRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const firstAmountRef = useRef<HTMLInputElement>(null);
   const modal = useRef<HTMLFormElement>(null);
@@ -208,12 +206,6 @@ export function PosPaymentDialog({
     });
     return true;
   }, [forms, settlementConfigurationLoaded]);
-
-  const activeTransferPaymentId = transferCapture?.paymentId;
-  useEffect(() => {
-    if (!activeTransferPaymentId) return;
-    window.requestAnimationFrame(() => transferReferenceRef.current?.focus());
-  }, [activeTransferPaymentId]);
 
   function update(id: string, value: Partial<PaymentRow>) {
     setPayments((current) =>
@@ -647,12 +639,12 @@ export function PosPaymentDialog({
         </div>
 
         {cardCapture && <CardPaymentDetailsDialog
-          value={cardCapture} franchises={cardFranchises.data ?? []} inputRef={cardApprovalRef} catalogFailed={cardFranchises.isError}
+          value={cardCapture} franchises={cardFranchises.data ?? []} catalogFailed={cardFranchises.isError}
           onChange={value => setCardCapture(current => current ? { ...current, ...value } : null)}
           onSave={saveCardCapture} onClose={() => setCardCapture(null)}
         />}
         {transferCapture && <TransferPaymentDetailsDialog
-          value={transferCapture} inputRef={transferReferenceRef}
+          value={transferCapture}
           accountLabel={(() => {
             const form = forms.find(form => form.paymentMethodId === payments.find(payment => payment.id === transferCapture.paymentId)?.paymentMethodId);
             return `${form?.accountCode ?? ""} · ${form?.accountName ?? ""}`;

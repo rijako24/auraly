@@ -93,10 +93,10 @@ public sealed record PaymentTenderBreakdown(
                 value.TenderedAmount is { } tendered && tendered != value.Amount))
             throw new ArgumentException("El movimiento administrativo registra el dinero efectivo, sin vueltos. Clasifica la diferencia mediante una partida explícita.", nameof(tenders));
         if (values.Any(value => value.MethodCode == "Transfer" && value.Reference is null))
-            throw new ArgumentException("A bank transfer requires a reference.", nameof(tenders));
+            throw new ArgumentException("La transferencia requiere la referencia del soporte bancario.");
         if (values.Any(value => value.MethodCode is "DebitCard" or "CreditCard" &&
                                 (value.CardFranchiseCode is null || value.ApprovalNumber is null)))
-            throw new ArgumentException("A card payment requires franchise and approval number.", nameof(tenders));
+            throw new ArgumentException("El pago con tarjeta requiere franquicia y número de aprobación.");
         if (values.Any(value => value.MethodCode != "Transfer" && value.BankAccountId is not null))
             throw new ArgumentException("Only a bank transfer can select a bank account.", nameof(tenders));
 

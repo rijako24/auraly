@@ -1552,7 +1552,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
                 null,
                 [
                     new CompletePaymentRequest("Cash", cashAmount, null),
-                    new CompletePaymentRequest("Card", cardAmount, null, "Visa", "APPROVED-1"),
+                    new CompletePaymentRequest("DebitCard", cardAmount, null, "Visa", "APPROVED-1"),
                     new CompletePaymentRequest("Transfer", transferAmount, "TRX-EDGE-1")
                 ],
                 DocumentType: PosSaleDocumentTypes.Receipt));

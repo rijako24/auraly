@@ -3497,8 +3497,8 @@ export default function PosPage() {
   );
 
   return (
-    <main className={`min-h-screen bg-[#eef3f3] text-slate-950 ${isStore ? "" : "xl:h-screen xl:overflow-hidden"}`}>
-      <header className={`flex min-h-14 items-center justify-between bg-auraly-background py-2.5 text-auraly-text shadow-lg ${isStore || isRestaurantOrder ? "flex-wrap gap-2 px-3 md:flex-nowrap md:gap-4 md:px-5" : "gap-4 px-5"}`}>
+    <main className={`min-h-screen bg-[#eef3f3] text-slate-950 ${isStore ? "" : "xl:flex xl:h-dvh xl:min-h-0 xl:flex-col xl:overflow-hidden"}`}>
+      <header className={`flex min-h-14 shrink-0 items-center justify-between bg-auraly-background py-2.5 text-auraly-text shadow-lg ${isStore || isRestaurantOrder ? "flex-wrap gap-2 px-3 md:flex-nowrap md:gap-4 md:px-5" : "gap-4 px-5"}`}>
         <div className="flex items-center gap-2">
           {isRestaurantOrder && <>
             <button type="button" aria-label="Volver a restaurante" title="Volver a restaurante" disabled={busy} onClick={() => router.push("/pos/restaurant")} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-300/20 text-sky-100"><ArrowLeft className="h-4 w-4"/></button>
@@ -3636,7 +3636,7 @@ export default function PosPage() {
         </div>
       )}
 
-      <section className={`grid min-h-[calc(100dvh-3.5rem)] grid-cols-1 gap-3 p-3 ${isStore ? "md:h-[calc(100dvh-3.5rem)] md:min-h-min md:grid-cols-[minmax(330px,0.9fr)_minmax(0,2fr)]" : "xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
+      <section className={`grid min-h-[calc(100dvh-3.5rem)] grid-cols-1 gap-3 p-3 ${isStore ? "md:h-[calc(100dvh-3.5rem)] md:min-h-min md:grid-cols-[minmax(330px,0.9fr)_minmax(0,2fr)]" : "xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
         <div className={isStore ? "flex min-h-min min-w-0 flex-col gap-3" : "contents"}>
         <div className={`flex min-w-0 flex-col gap-3 ${isStore ? "min-h-0 flex-1" : "xl:min-h-0"}`}>
           <form

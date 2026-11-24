@@ -240,17 +240,22 @@ public sealed partial class SqlOnlineSalesDraftStore
             SELECT credit.DocumentId,credit.PaymentId,credit.MethodCode,credit.Amount,credit.FormName
             INTO #HistoryCreditCollections
             FROM accounting.SaleCreditCollectionFacts(@TenantId,@BusinessId,@CreditSalesJson) credit;
+            SELECT payment.DocumentId,payment.PaymentNumber,payment.EffectivePaymentReady,
+              payment.EffectiveMethodCode,payment.EffectiveAmount,payment.EffectiveFormName,
+              payment.Amount,payment.CollectedOutsideDispatch INTO #HistoryPaymentFacts
+            FROM #HistoryPage page
+            CROSS APPLY accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,page.DocumentId) payment;
             SELECT page.DocumentId,payment.PaymentNumber,CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveMethodCode ELSE original.MethodCode END MethodCode,
               CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveAmount ELSE payment.Amount END Amount,
               CASE WHEN payment.EffectivePaymentReady=1 THEN payment.EffectiveFormName ELSE original.PaymentMethodName END FormName
-            FROM #HistoryPage page CROSS APPLY accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,page.DocumentId) payment
+            FROM #HistoryPage page JOIN #HistoryPaymentFacts payment ON payment.DocumentId=page.DocumentId
             JOIN dbo.SalesPayments original ON original.DocumentId=page.DocumentId AND original.PaymentNumber=payment.PaymentNumber
             WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectiveAmount<>0
             UNION ALL
             SELECT page.DocumentId,payment.PaymentNumber,payment.MethodCode,payment.Amount+payment.RoundingAdjustment,payment.PaymentMethodName
             FROM #HistoryPage page JOIN dbo.SalesPayments payment ON payment.DocumentId=page.DocumentId
             WHERE page.CollectionMode=N'Dispatch' AND payment.Amount+payment.RoundingAdjustment<>0
-              AND NOT EXISTS(SELECT 1 FROM accounting.SalePaymentPostingFacts(@TenantId,@BusinessId,page.DocumentId) kept WHERE kept.CollectedOutsideDispatch=1)
+              AND NOT EXISTS(SELECT 1 FROM #HistoryPaymentFacts kept WHERE kept.DocumentId=page.DocumentId AND kept.CollectedOutsideDispatch=1)
               AND NOT EXISTS(SELECT 1 FROM #HistoryContext context JOIN #ConfirmedHistoryDispatch confirmed ON confirmed.DispatchId=context.DispatchId WHERE context.DocumentId=page.DocumentId)
             UNION ALL
             SELECT page.DocumentId,CAST(ROW_NUMBER() OVER(PARTITION BY page.DocumentId ORDER BY payment.PaymentId) AS int),payment.MethodCode,payment.Amount,payment.FormName

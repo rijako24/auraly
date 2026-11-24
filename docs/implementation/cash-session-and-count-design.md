@@ -250,6 +250,14 @@ venta original. La lectura recibe las identidades del lote de cada página y
 procesa sus cierres y despachos en conjunto, sin viajes ni consultas por factura;
 no modifica `SalesPayments`, XML, CUFE ni importes de la venta.
 
+El historial obtiene primero las identidades de su página (20 documentos más el
+indicador de continuación). Materializa en el mismo lote SQL la evidencia de
+`SalePaymentPostingFacts` una sola vez para esa página y la reutiliza al mostrar
+pagos o conservar medios originales de despacho. No recorre facturas externas a
+la página ni añade viajes SQL. Una comparación de las páginas inicial y siguiente
+debe conservar exactamente documentos, medios e importes; la medición de DEV del
+24 de noviembre de 2026 redujo las lecturas repetidas de 1,2–1,9 s a 0,36–0,48 s.
+
 La devolución posterior consulta el recaudo efectivamente aplicado, no vuelve a
 usar el datáfono o soporte original después de una corrección. La proyección
 `accounting.SalePaymentPostingFacts` conserva sus campos originales y expone por

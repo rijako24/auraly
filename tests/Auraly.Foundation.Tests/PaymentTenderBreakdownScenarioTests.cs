@@ -86,9 +86,13 @@ public sealed class PaymentTenderBreakdownScenarioTests
     public void Rejects_missing_payment_evidence_in_the_shared_contract(
         string method, string? reference, string? franchise, string? approval)
     {
-        Assert.Throws<ArgumentException>(() => PaymentTenderBreakdown.Create(
+        var error = Assert.Throws<ArgumentException>(() => PaymentTenderBreakdown.Create(
             [new(method, 100m, Reference: reference, CardFranchiseCode: franchise, ApprovalNumber: approval)],
             100m, 1, ReceivableMethods));
+        Assert.Equal(method == "Transfer"
+            ? "La transferencia requiere la referencia del soporte bancario."
+            : "El pago con tarjeta requiere franquicia y número de aprobación.", error.Message);
+        Assert.Null(error.ParamName);
     }
 
     [Theory]

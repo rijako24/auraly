@@ -45,6 +45,7 @@ export function PagedEntitySelect<T>({
   values,
   selectedOptions = [],
   onValuesChange,
+  onSelectionComplete,
 }: {
   queryKey: readonly unknown[];
   value: string;
@@ -69,9 +70,11 @@ export function PagedEntitySelect<T>({
   values?: string[];
   selectedOptions?: PagedEntityOption[];
   onValuesChange?: (values: string[], options: PagedEntityOption[]) => void;
+  onSelectionComplete?: (trigger: HTMLButtonElement) => boolean;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const selectionMade = useRef(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const waitingForSearch = search.trim() !== debouncedSearch;
@@ -135,7 +138,11 @@ export function PagedEntitySelect<T>({
     </PopoverTrigger>
     {onClear && !disabled && <button type="button" aria-label={`Quitar selección de ${ariaLabel ?? "tercero"}`} className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={()=>{setOpen(false);onClear()}}><X className="h-4 w-4"/></button>}
     </div>
-    <PopoverContent className={cn("w-[var(--radix-popover-trigger-width)] p-0", contentClassName)} align="start" portalContainer={triggerRef.current?.closest<HTMLElement>("[role='dialog']") ?? undefined}>
+    <PopoverContent className={cn("w-[var(--radix-popover-trigger-width)] p-0", contentClassName)} align="start" portalContainer={triggerRef.current?.closest<HTMLElement>("[role='dialog']") ?? undefined}
+      onCloseAutoFocus={event => {
+        if (selectionMade.current && triggerRef.current && onSelectionComplete?.(triggerRef.current)) event.preventDefault();
+        selectionMade.current = false;
+      }}>
       <Command shouldFilter={false}>
         <CommandInput
           value={search}
@@ -150,7 +157,7 @@ export function PagedEntitySelect<T>({
           {!loading && !query.isError && entries.length > 0 && <div className="px-3 py-2 text-xs text-muted-foreground">{Math.min(entries.length, total).toLocaleString("es-CO")} de {total.toLocaleString("es-CO")}</div>}
           {!(openOnTyping && (loading || query.isError)) && entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => {
             if(values && onValuesChange){const next=values.includes(option.value)?values.filter(id=>id!==option.value):[...values,option.value];onValuesChange(next,entries.filter(entry=>next.includes(entry.option.value)).map(entry=>entry.option));return;}
-            if(item||option.value!==value)onChange(option.value, option, item); setOpen(false);
+            if(item||option.value!==value)onChange(option.value, option, item); selectionMade.current = true; setOpen(false);
           }} aria-selected={values?.includes(option.value)} className="items-start">
             <Check className={cn("mr-2 mt-0.5 h-4 w-4 shrink-0", (values ? values.includes(option.value) : value === option.value) ? "opacity-100" : "opacity-0")}/>
             <span className={cn("min-w-0", wrapLabels && "flex-1")}><span className={cn("block", wrapLabels ? "whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{option.label}</span>{option.description && <small className={cn("block text-muted-foreground", wrapLabels ? "whitespace-normal [overflow-wrap:anywhere]" : "truncate")}>{option.description}</small>}</span>

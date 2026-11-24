@@ -15,6 +15,7 @@ for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of 
     const names: Record<string, string> = { Cash: "Efectivo", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia" };
     const forms = [1, 2].map(index => ({ paymentMethodId: `${type}-${index}`, code: `QA-${index}`, name: `${names[type]} entidad ${index} con nombre completo`, methodCode: type, version: index, accountCode: `11100${index}`, accountName: `Cuenta ${index}`, isActive: true, useForSales: true }));
     let validated: Array<Record<string, unknown>> = [], details = 0, formReads = 0;
+    let reconciliation: { lines: Array<{ isConfirmed: boolean }>; paymentCorrections: unknown[] } | null = null;
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url()), path = url.pathname; let body: unknown = [];
       if (path.endsWith("/auth/me")) body = user;
@@ -32,6 +33,7 @@ for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of 
         body = { items, totalCount: items.length, page: 1, pageSize: 10 };
       }
       else if (path.endsWith("/payment-corrections/validate")) { validated = route.request().postDataJSON(); body = {}; }
+      else if (path.endsWith("/reconcile")) { reconciliation = route.request().postDataJSON(); body = {}; }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
     await page.goto("/dashboard/cash-differences");
@@ -54,8 +56,10 @@ for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of 
     await editor.getByRole("combobox", { name: "Forma de pago del recaudo" }).click();
     await page.getByRole("option", { name: new RegExp(forms[1].name) }).click();
     if (type === "Transfer") {
+      await expect(editor.getByLabel("Referencia de transferencia")).toBeFocused();
       await expect(apply).toBeDisabled(); await editor.getByLabel("Referencia de transferencia").fill("TR-123");
     } else if (type === "DebitCard" || type === "CreditCard") {
+      await expect(editor.getByLabel("Número de aprobación", { exact: true })).toBeFocused();
       await expect(apply).toBeDisabled();
       await editor.getByRole("combobox", { name: "Franquicia", exact: true }).click();
       await page.getByRole("option", { name: "Visa", exact: true }).click();
@@ -73,5 +77,13 @@ for (const documentType of ["SalesInvoice", "SalesReceipt"]) for (const type of 
     if (type === "Transfer") expect(validated[0].reference).toBe("TR-123");
     if (type.endsWith("Card")) expect(validated[0]).toMatchObject({ cardFranchiseCode: "Visa", approvalNumber: "AP-123" });
     expect(details).toBe(before); expect(formReads).toBe(type === "Cash" || creditSale ? 1 : 2);
+    const emptyMeans = parent.getByRole("checkbox", { name: "Confirmo que no hay comprobantes de este medio en el cierre.", exact: true });
+    for (let index = 0; index < await emptyMeans.count(); index++) await emptyMeans.nth(index).check();
+    const confirm = parent.getByRole("button", { name: "Confirmar conciliación", exact: true });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect(parent).toHaveCount(0);
+    expect(reconciliation).toMatchObject({ paymentCorrections: validated });
+    expect(reconciliation!.lines.every(line => line.isConfirmed)).toBe(true);
   });
 }

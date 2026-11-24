@@ -40,8 +40,14 @@ for (const scenario of [
     }
     await scopedJson("POST", `${api}/pos/drafts/${active.draftId}/reset`, { expectedVersion: active.version }, { "Idempotency-Key": randomUUID() });
   }
-  const customer = await scopedJson<CustomerAcceptance>("POST", `${api}/customers`,
-    await realPartyRequest(context, `Cliente E2E ${randomUUID().slice(0, 8)}`));
+  const withSellerAndChannel = scenario.method === "Credit" && scenario.count === 2;
+  const channel = withSellerAndChannel ? await scopedJson<{id:string}>("POST", `${api}/pricing/segments`, {
+    name: `Canal pedido E2E ${randomUUID().slice(0,8)}`, channelStrategy: "PercentageOverBasePrice", channelValue: 10,
+  }) : null;
+  const customer = await scopedJson<CustomerAcceptance>("POST", `${api}/customers`, {
+    ...await realPartyRequest(context, `Cliente E2E ${randomUUID().slice(0, 8)}`),
+    ...(channel ? { pricing: { priceChannelId: channel.id } } : {}),
+  });
   if (scenario.method === "Credit") await scopedJson("PUT", `${api}/customers/${customer.customerId}/credit`, {
     businessId, creditLimit: 1_000_000, defaultDueDays: 30, isCreditEnabled: true,
   });
@@ -71,6 +77,10 @@ for (const scenario of [
   expect(product!.manageStock).toBe(true);
   expect(product!.unitPrice).toBeGreaterThan(0);
   expect(product!.documentUnitCost).toBeGreaterThan(0);
+  if (channel) expect(product!.priceSource).toBe("PriceChannel");
+  const seller = withSellerAndChannel ? (await scopedJson<{items:Array<{roleId:string;displayName:string}>}>("GET",
+    `${api}/parties/role-options?role=Seller&page=1&pageSize=10`)).items[0] : null;
+  if (withSellerAndChannel) expect(seller).toBeTruthy();
   const tag = `E2E-PED-${randomUUID()}`;
   const orders: SellerOrderResult[] = [];
   // The first order starts in the actual direct-sale screen; the remaining
@@ -90,6 +100,12 @@ for (const scenario of [
   await customerPicker.getByPlaceholder("Nombre o identificación").fill(party.displayName);
   await customerPicker.locator("button").filter({ hasText: party.displayName }).click();
   await expect(customerPicker).toBeHidden();
+  if (seller) {
+    await page.getByRole("button", { name: "Seleccionar vendedor", exact: true }).click();
+    const picker = page.getByRole("dialog", { name: "Seleccionar vendedor", exact: true });
+    await picker.getByRole("button").filter({ hasText: seller.displayName }).first().click();
+    await expect(page.getByRole("button", { name: "Seleccionar vendedor", exact: true })).toContainText(seller.displayName);
+  }
   const posSaved = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`${api}/seller-orders`));
   await page.getByRole("button", { name: /^Guardar pedido/ }).click();
   const firstSaved = await posSaved;
@@ -99,7 +115,7 @@ for (const scenario of [
   for (let index = 1; index < scenario.count; index++) {
     orders.push(await scopedJson<SellerOrderResult>("POST", `${api}/seller-orders`, {
       businessId, warehouseId: workspace!.warehouseId, customerId: customer.customerId, partySiteId: site!.partySiteId,
-      routeId: null, routeStopId: null, capturedOffline: false, notes: `${tag}-${index}`,
+      routeId: null, routeStopId: null, capturedOffline: false, notes: `${tag}-${index}`, sellerId: seller?.roleId ?? null,
       idempotencyKey: randomUUID(), lines: [{ productId: product!.productId, description: product!.name,
         quantity: 1, unitPrice: product!.unitPrice, discountAmount: 0, priceSource: product!.priceSource,
         documentUnitCost: product!.documentUnitCost }],
@@ -129,11 +145,13 @@ for (const scenario of [
   expect(afterEdit.lines).toHaveLength(1);
   expect(afterEdit.lines[0]).toMatchObject({ productId: product!.productId, quantity: 2, unitPrice: product!.unitPrice });
   expect(afterEdit.total).toBe(product!.unitPrice * 2);
+  expect(afterEdit.sellerId ?? null).toBe(seller?.roleId ?? null);
   await page.getByRole("button", { name: `Recuperar ${orders[0].orderNumber}`, exact: true }).click();
   await expect(page).toHaveURL(/\/pos(?:\?|$)/);
   const posQuantity = page.getByRole("spinbutton", { name: `Cantidad de ${productName}`, exact: true });
   await expect(posQuantity).toHaveValue("2", { timeout: 30_000 });
   await expect(page.locator("#pos-scanner")).toBeEnabled();
+  if (seller) await expect(page.getByRole("button", { name: "Seleccionar vendedor", exact: true })).toContainText(seller.displayName);
   await posQuantity.fill("3");
   await posQuantity.press("Enter");
   await page.getByRole("button", { name: /^Guardar cambios/ }).click();
@@ -191,6 +209,7 @@ for (const scenario of [
     const detail = await scopedJson<CommerceOrderDetail>("GET", `${api}/orders/${result.orderId}`);
     expect(detail.invoiceDocumentId).toBe(result.documentId);
     expect(detail).toMatchObject({ customerId: customer.customerId, partySiteId: site!.partySiteId });
+    expect(detail.sellerId ?? null).toBe(seller?.roleId ?? null);
     const entry = await scopedJson<AccountingEntry>("GET", `${api}/accounting/entries/by-document/${result.documentId}`);
     expect(entry.debitTotal).toBeGreaterThan(0);
     expect(entry.debitTotal).toBe(entry.creditTotal);

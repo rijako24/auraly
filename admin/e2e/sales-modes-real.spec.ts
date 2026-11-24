@@ -100,7 +100,20 @@ for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y
       await search.fill(product.productCode);
       await page.getByRole("button", { name: `Agregar ${productName}`, exact: true }).click();
       const quantity = page.getByRole("spinbutton", { name: `Cantidad de ${productName}`, exact: true });
-      await quantity.fill("2"); await quantity.press("Enter"); await expect(quantity).toHaveValue("2");
+      const commands: Array<{ method: string; path: string; quantity?: number; status?: number }> = [];
+      page.on("request", request => {
+        const path = new URL(request.url()).pathname;
+        if (path.includes("/pos/drafts/") && request.method() !== "GET") commands.push({ method: request.method(), path, quantity: request.postDataJSON()?.quantity });
+      });
+      page.on("response", response => {
+        const command = commands.findLast(value => value.path === new URL(response.url()).pathname && value.status === undefined);
+        if (command) command.status = response.status();
+      });
+      try {
+        await quantity.fill("2"); await quantity.press("Enter"); await expect(quantity).toHaveValue("2");
+      } finally {
+        await test.info().attach("store-quantity-commands", { body: JSON.stringify(commands), contentType: "application/json" });
+      }
       documents.push(await finishCash(page, context, priced!.unitPrice * 2));
     } else {
       await expect(page.getByRole("heading", { name: "¿A qué mesa atendemos?", exact: true })).toBeVisible();
@@ -177,7 +190,9 @@ for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y
     console.info(`${mode}: recuperación, edición y actualización del pedido verificadas`);
     await page.goto("/dashboard/orders");
     await page.getByRole("button", { name: `Recuperar ${order.orderNumber}`, exact: true }).click();
-    await expect(quantity).toHaveValue("2"); await page.reload(); await expect(quantity).toHaveValue("2");
+    await expect(page).toHaveURL(/\/pos(?:\?|$)/, { timeout: 30_000 });
+    await expect(quantity).toHaveValue("2", { timeout: 30_000 });
+    await page.reload(); await expect(quantity).toHaveValue("2", { timeout: 30_000 });
     documents.push(await finishCash(page, context, priced!.unitPrice * 2));
     const invoiced = await context.scopedJson<CommerceOrderDetail>("GET", `${api}/orders/${order.orderId}`);
     expect(invoiced.invoiceDocumentId).toBe(documents[1]);
@@ -191,7 +206,9 @@ for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y
     await page.goto("/dashboard/orders");
     await page.getByRole("checkbox", { name: `Seleccionar ${pending.orderNumber}`, exact: true }).check();
     await page.getByRole("button", { name: "Comprobante de venta", exact: true }).click();
-    await page.getByRole("checkbox", { name: "Imprimir al facturar", exact: true }).uncheck();
+    const printToggle = page.getByRole("button", { name: "Imprimir al facturar", exact: true });
+    if (await printToggle.getAttribute("aria-pressed") === "true") await printToggle.click();
+    await expect(printToggle).toHaveAttribute("aria-pressed", "false");
     await page.getByRole("combobox", { name: "Forma de pago del lote", exact: true }).click(); await page.getByRole("option").first().click();
     const batchResponse = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/orders/invoice"));
     await page.getByRole("button", { name: "Emitir de contado (1)", exact: true }).click();
