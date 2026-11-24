@@ -46,7 +46,7 @@ export function SalePaymentCorrectionDialog({ documentId, documentNumber, busine
   const active = selected ?? single;
   if (active && context.data && !dispatchCatalogError) return <PaymentCorrectionEditor item={active} businessId={businessId}
     methods={dispatchId ? (dispatchMethods.data ?? []).map(option => option.code) : context.data.countableMethods} movementLabel={active.movementType === "CreditSale" ? "Venta a cartera" : "Comprobante"}
-    usageOverride={dispatchId ? "Receipts" : undefined}
+    usageOverride={dispatchId ? "Receipts" : undefined} referenceMaxLength={dispatchId ? 120 : undefined} approvalMaxLength={dispatchId ? 80 : undefined}
     applicationNotice={dispatchId ? "La corrección se guarda en la revisión del despacho y se aplica al confirmar su liquidación." : "Guardar acepta esta corrección directamente, sin conciliar los demás documentos del cierre."}
     submitLabel="Guardar corrección" onClose={() => single ? onClose() : setSelected(null)} onRemove={() => undefined}
     onApply={async correction => {

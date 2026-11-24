@@ -54,9 +54,11 @@ for (const dispatch of [false, true]) for (const method of ["Cash", "DebitCard",
     await expect(editor.getByRole("combobox", { name: "Forma de pago del recaudo" })).toContainText(form.name);
     const save = editor.getByRole("button", { name: "Guardar corrección", exact: true });
     if (method === "Transfer") {
+      await expect(editor.getByLabel("Referencia de transferencia")).toHaveAttribute("maxlength", dispatch ? "120" : "160");
       await expect(editor.getByLabel("Referencia de transferencia")).toBeFocused();
       await expect(save).toBeDisabled(); await editor.getByLabel("Referencia de transferencia").fill("TRF-1");
     } else if (method.endsWith("Card")) {
+      await expect(editor.getByLabel("Número de aprobación", { exact: true })).toHaveAttribute("maxlength", dispatch ? "80" : "100");
       await expect(editor.getByLabel("Número de aprobación", { exact: true })).toBeFocused();
       await expect(save).toBeDisabled();
       await editor.getByRole("combobox", { name: "Franquicia", exact: true }).click();

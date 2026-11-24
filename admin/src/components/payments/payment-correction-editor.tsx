@@ -16,10 +16,10 @@ import type { ClosurePaymentCorrection, ClosurePaymentVerification } from "@/ser
 import { workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
 import { formatCurrency } from "@/lib/utils";
 
-export function PaymentCorrectionEditor({ item, businessId, methods, current, onClose, onRemove, onApply, movementLabel, applicationNotice = "Se aplicará al confirmar la conciliación.", submitLabel = "Aplicar", usageOverride }: {
+export function PaymentCorrectionEditor({ item, businessId, methods, current, onClose, onRemove, onApply, movementLabel, applicationNotice = "Se aplicará al confirmar la conciliación.", submitLabel = "Aplicar", usageOverride, referenceMaxLength = 160, approvalMaxLength = 100 }: {
   item: ClosurePaymentVerification; businessId: string; methods: string[]; current?: ClosurePaymentCorrection;
   movementLabel: string; applicationNotice?: string; submitLabel?: string;
-  usageOverride?: PaymentMethodQuery["usage"];
+  usageOverride?: PaymentMethodQuery["usage"]; referenceMaxLength?: number; approvalMaxLength?: number;
   onClose: () => void; onRemove: () => void; onApply: (value: ClosurePaymentCorrection) => Promise<void>;
 }) {
   const tenant = useTenantContextStore(state => state.selectedTenantId);
@@ -107,10 +107,10 @@ export function PaymentCorrectionEditor({ item, businessId, methods, current, on
           <Select value={franchise} onValueChange={setFranchise} disabled={validating}><SelectTrigger aria-label="Franquicia"><SelectValue placeholder="Selecciona la franquicia" /></SelectTrigger>
             <SelectContent>{(cardFranchises.data ?? []).map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent>
           </Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-approval">Número de aprobación</Label>
-          <Input ref={evidenceInput} data-payment-evidence id="closure-correction-approval" disabled={validating} value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} />
+          <Input ref={evidenceInput} data-payment-evidence id="closure-correction-approval" disabled={validating} value={approval} onChange={event => setApproval(event.target.value)} maxLength={approvalMaxLength} />
         </div></>}
         {tender === "Transfer" && <div className="space-y-1.5"><Label htmlFor="closure-correction-reference">Referencia de transferencia</Label>
-          <Input ref={evidenceInput} data-payment-evidence id="closure-correction-reference" disabled={validating} value={reference} onChange={event => setReference(event.target.value)} maxLength={160} />
+          <Input ref={evidenceInput} data-payment-evidence id="closure-correction-reference" disabled={validating} value={reference} onChange={event => setReference(event.target.value)} maxLength={referenceMaxLength} />
         </div>}
         <div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor del recaudo</Label>
           <Input id="closure-correction-amount" readOnly disabled value={formatCurrency(Math.abs(amount), "COP", 4)} />
