@@ -103,6 +103,7 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
       await page.getByRole("option", {name:"Banco 7",exact:true}).click();
     }
     await expect(cardDialog).toBeVisible();
+    await expect(cardDialog.getByPlaceholder("Aprobación del datáfono")).toBeFocused();
     await cardDialog.getByPlaceholder("Aprobación del datáfono").fill("APROBACION-1");
     await cardDialog.getByRole("button", {name:"Guardar datos · Enter",exact:true}).click();
     await expect(cardDialog).toHaveCount(0);
@@ -139,6 +140,7 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
   }
   if(bankCount===1) {
     await expect(checkout.getByRole("combobox",{name:"Medio de pago"})).toContainText("Banco 1");
+    await expect(page.getByPlaceholder("Número o referencia del comprobante")).toBeFocused();
     await page.getByPlaceholder("Número o referencia del comprobante").fill("REF-1");
     await page.getByRole("button",{name:"Guardar transferencia",exact:true}).click();
     await checkout.getByRole("button",{name:"Sin imprimir",exact:true}).click();
@@ -159,12 +161,14 @@ test(`cartera conserva tipos y permite seleccionar ${bankCount} formas ${methodC
   }
   await checkout.getByRole("combobox",{name:"Medio de pago"}).first().click();
   await page.getByRole("option",{name:"Banco 7",exact:true}).click();
+  await expect(page.getByPlaceholder("Número o referencia del comprobante")).toBeFocused();
   await page.getByPlaceholder("Número o referencia del comprobante").fill("REF-7");
   await page.getByRole("button",{name:"Guardar transferencia",exact:true}).click();
   await checkout.getByRole("textbox",{name:"Valor recibido en Transferencia"}).first().fill("700");
   await page.keyboard.press("F4");
   await checkout.getByRole("combobox",{name:"Medio de pago"}).nth(1).click();
   await page.getByRole("option",{name:"Banco 8",exact:true}).click();
+  await expect(page.getByPlaceholder("Número o referencia del comprobante")).toBeFocused();
   await page.getByPlaceholder("Número o referencia del comprobante").fill("REF-8");
   await page.getByRole("button",{name:"Guardar transferencia",exact:true}).click();
   await checkout.getByRole("button",{name:"Sin imprimir",exact:true}).click();

@@ -1,6 +1,7 @@
 "use client";
 
 import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
+import { focusPaymentEvidence } from "./use-payment-evidence-focus";
 import { paymentMethodsApi, type PaymentMethod, type PaymentMethodQuery } from "@/services/api/payment-methods";
 
 export function PaymentMethodSelect({ tenantId, businessId, usage, value, name, accountLabel,
@@ -25,11 +26,6 @@ export function PaymentMethodSelect({ tenantId, businessId, usage, value, name, 
     }}
     getOption={method => ({ value: method.paymentMethodId, label: method.name,
       description: `${method.code} · ${method.accountCode} · ${method.accountName}` })}
-    onSelectionComplete={trigger => {
-      const evidence = trigger.closest("[role='dialog']")?.querySelector<HTMLInputElement>("input[data-payment-evidence]:not(:disabled)");
-      if (!evidence) return false;
-      evidence.focus({ preventScroll: true });
-      return true;
-    }}
+    onSelectionComplete={trigger => focusPaymentEvidence(trigger.closest("[role='dialog']"))}
     onChange={(_id, _option, method) => { if (method) onChange(method); }} />;
 }

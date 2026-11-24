@@ -2,6 +2,13 @@
 
 import { useEffect, useRef } from "react";
 
+export function focusPaymentEvidence(container: ParentNode | null) {
+  const input = container?.querySelector<HTMLInputElement>("input[data-payment-evidence]:not(:disabled)");
+  if (!input) return false;
+  input.focus({ preventScroll: true });
+  return input === input.ownerDocument.activeElement;
+}
+
 // Focus once when evidence becomes editable, after the selector restores its focus.
 // Editing the value or changing franchise must not move the cursor again.
 export function usePaymentEvidenceFocus(enabled: boolean, formKey?: string) {

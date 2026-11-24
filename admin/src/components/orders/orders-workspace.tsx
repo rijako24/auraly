@@ -67,6 +67,7 @@ import {
 import { getOrderAvailability } from "./order-availability";
 import { OrderReviewEditor, type ReviewOrderLineInput } from "./order-review-editor";
 import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
+import { focusPaymentEvidence } from "@/components/payments/use-payment-evidence-focus";
 import { paymentMethodsApi, type PaymentMethod, type PaymentMethodPage, type PaymentMethodQuery } from "@/services/api/payment-methods";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -645,7 +646,7 @@ export function OrdersWorkspace({
   }
 
   return (
-    <div className={`flex min-h-0 flex-col ${compact ? "gap-2" : "gap-4"}`}>
+    <div data-payment-capture-workspace className={`flex min-h-0 flex-col ${compact ? "gap-2" : "gap-4"}`}>
       {showHeader && <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -853,6 +854,7 @@ export function OrdersWorkspace({
                   value={paymentForm?.paymentMethodId ?? ""}
                   selectedOption={paymentForm ? { value: paymentForm.paymentMethodId, label: paymentForm.name } : null}
                   onChange={(_value, _option, item) => selectPaymentForm(item)}
+                  onSelectionComplete={trigger => focusPaymentEvidence(trigger.closest("[data-payment-capture-workspace]"))}
                   loadPage={async (search, page, pageSize) => {
                     const result = await loadPaymentMethods({ page, pageSize, search, usage: "OrderReceipts",
                       ...(paymentMethodCode === "Credit" ? { methodCode: "Credit" } : { excludeMethodCode: "Credit" }) });

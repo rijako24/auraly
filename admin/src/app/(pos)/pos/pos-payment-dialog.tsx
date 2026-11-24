@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import type { PaymentMethodCatalogSnapshot } from "@/services/api/payment-methods";
 import { CardPaymentDetailsDialog, TransferPaymentDetailsDialog } from "@/components/payments/payment-details-dialogs";
+import { focusPaymentEvidence } from "@/components/payments/use-payment-evidence-focus";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -548,7 +549,9 @@ export function PosPaymentDialog({
                   <SelectTrigger aria-label="Medio de pago" className="mt-1 h-11 rounded-lg border-slate-300 bg-white shadow-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15">
                     <SelectValue aria-label="Medio de pago" placeholder="Seleccionar forma" />
                   </SelectTrigger>
-                  <SelectContent className="rounded-xl border-slate-200 shadow-xl">
+                  <SelectContent className="rounded-xl border-slate-200 shadow-xl" onCloseAutoFocus={event => {
+                    if (focusPaymentEvidence(modal.current)) event.preventDefault();
+                  }}>
                     {forms.filter(form=>form.methodCode===payment.methodCode).map(form=><SelectItem key={form.paymentMethodId} value={form.paymentMethodId} className="py-2.5">{form.name}</SelectItem>)}
                   </SelectContent>
                 </Select>

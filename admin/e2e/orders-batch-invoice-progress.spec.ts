@@ -296,6 +296,8 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
   await page.screenshot({ path: "../work/orders-toolbar-review/payment-options.png", fullPage: true });
   await longPaymentOption.click();
   if (paymentCode === "DebitCard" || paymentCode === "CreditCard" || paymentCode === "Transfer") {
+    await expect(page.getByRole("dialog", { name: paymentCode === "Transfer" ? "Datos de la transferencia" : "Datos de la tarjeta", exact: true })
+      .getByRole("textbox", { name: paymentCode === "Transfer" ? "Referencia" : "Número de aprobación", exact: true })).toBeFocused();
     // Closing without saving must not confirm a payment; the next invoice action
     // requests the same missing evidence before any command leaves the browser.
     await page.getByRole("button", { name: paymentCode === "Transfer" ? "Cerrar datos de transferencia" : "Cerrar datos de tarjeta", exact: true }).click();
