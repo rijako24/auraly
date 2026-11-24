@@ -194,6 +194,15 @@ explícito recupera las fuentes financieras históricas mediante el writer exist
 Las reclasificaciones agregadas sin factura identificada conservan su alcance de caja
 y no inventan una distribución por factura.
 
+La actualización de medios materializa primero las ventas solicitadas dentro del
+mismo comando SQL y sólo después evalúa sus correcciones de caja o despacho.
+Esto impide que el optimizador extienda los predicados correlacionados al
+histórico completo de ventas. Si ninguna de esas ventas tiene una corrección
+confirmada, devuelve deltas cero antes de resolver los hechos financieros. No
+agrega consultas, tablas persistidas ni otro writer. La regresión con 5.000 ventas
+ajenas verifica dos comandos, lecturas puntuales del documento y el presupuesto
+local de dos segundos; los casos de corrección conservan su proyección y replay.
+
 El despliegue debe ejecutar el rebuild canónico de Reporting después de migrar para
 actualizar los medios de correcciones históricas. El rollback de la aplicación no
 revierte asientos ni recaudos: el modelo de lectura se reconstruye con la versión

@@ -41,6 +41,7 @@ for (const scenario of [
     await scopedJson("POST", `${api}/pos/drafts/${active.draftId}/reset`, { expectedVersion: active.version }, { "Idempotency-Key": randomUUID() });
   }
   const withSellerAndChannel = scenario.method === "Credit" && scenario.count === 2;
+  const withSeller=withSellerAndChannel&&process.env.AURALY_E2E_ORDERS_INCLUDE_SELLER!=="0";
   const channel = withSellerAndChannel ? await scopedJson<{id:string}>("POST", `${api}/pricing/segments`, {
     name: `Canal pedido E2E ${randomUUID().slice(0,8)}`, channelStrategy: "PercentageOverBasePrice", channelValue: 10,
   }) : null;
@@ -78,14 +79,20 @@ for (const scenario of [
   expect(product!.unitPrice).toBeGreaterThan(0);
   expect(product!.documentUnitCost).toBeGreaterThan(0);
   if (channel) expect(product!.priceSource).toBe("PriceChannel");
-  const seller = withSellerAndChannel ? (await scopedJson<{items:Array<{roleId:string;displayName:string}>}>("GET",
+  const seller = withSeller ? (await scopedJson<{items:Array<{roleId:string;displayName:string}>}>("GET",
     `${api}/parties/role-options?role=Seller&page=1&pageSize=10`)).items[0] : null;
-  if (withSellerAndChannel) expect(seller).toBeTruthy();
+  if (withSeller) expect(seller).toBeTruthy();
   const tag = `E2E-PED-${randomUUID()}`;
   const orders: SellerOrderResult[] = [];
   // The first order starts in the actual direct-sale screen; the remaining
   // independent orders prepare the bounded batch through the same public writer.
   await page.goto("/pos?workspace=change");
+  await expect(page.getByRole("button",{name:"Continuar a ventas",exact:true})).toBeVisible();
+  const warehousePicker=page.getByRole("combobox").filter({hasText:"Selecciona bodega"});
+  if(await warehousePicker.count()){
+    await warehousePicker.click();
+    await page.getByRole("option").filter({hasText:workspace!.warehouseName}).first().click();
+  }
   await page.getByRole("button", { name: "Comprobante de venta", exact: true }).click();
   const loadedDraft = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/pos/drafts/active") && response.ok());
   await page.getByRole("button", { name: "Continuar a ventas", exact: true }).click();

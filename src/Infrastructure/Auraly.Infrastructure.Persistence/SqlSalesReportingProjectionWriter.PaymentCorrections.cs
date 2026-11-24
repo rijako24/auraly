@@ -73,14 +73,23 @@ public sealed partial class SqlSalesReportingProjectionWriter
                 AND financial.SourceDocumentType=N'DispatchCashDifference' AND financial.TenantId=@Tenant AND financial.BusinessId=@Business
                 AND financial.Status IN(N'Posted',N'CommercialEffectsApplied');
 
-            DECLARE @Candidates TABLE(DocumentId uniqueidentifier PRIMARY KEY,DocumentType nvarchar(32),
+            -- Materialize the bounded input before the correlated correction
+            -- predicates. Otherwise SQL can push those predicates onto a scan
+            -- of every sale, even when only one document is being projected.
+            DECLARE @SelectedSales TABLE(DocumentId uniqueidentifier PRIMARY KEY,DocumentType nvarchar(32),
               BusinessLocalDate date,WorkSessionId uniqueidentifier,CollectionMode nvarchar(16));
-            INSERT @Candidates
+            INSERT @SelectedSales
             SELECT sale.DocumentId,sale.DocumentType,report.BusinessLocalDate,sale.WorkSessionId,sale.CollectionMode
             FROM @Input input JOIN dbo.SalesDocuments sale ON sale.DocumentId=input.DocumentId
               AND sale.BusinessId=@Business AND sale.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
             JOIN reporting.SalesReportDocuments report ON report.DocumentId=sale.DocumentId
-              AND report.DocumentType=sale.DocumentType AND report.TenantId=@Tenant AND report.BusinessId=@Business
+              AND report.DocumentType=sale.DocumentType AND report.TenantId=@Tenant AND report.BusinessId=@Business;
+
+            DECLARE @Candidates TABLE(DocumentId uniqueidentifier PRIMARY KEY,DocumentType nvarchar(32),
+              BusinessLocalDate date,WorkSessionId uniqueidentifier,CollectionMode nvarchar(16));
+            INSERT @Candidates
+            SELECT sale.DocumentId,sale.DocumentType,sale.BusinessLocalDate,sale.WorkSessionId,sale.CollectionMode
+            FROM @SelectedSales sale
             WHERE EXISTS(SELECT 1 FROM @Dispatch captured WHERE captured.DocumentId=sale.DocumentId)
               OR EXISTS(SELECT 1 FROM accounting.SalePaymentCorrections correction
                 WHERE correction.TenantId=@Tenant AND correction.BusinessId=@Business
@@ -95,6 +104,11 @@ public sealed partial class SqlSalesReportingProjectionWriter
                 CROSS APPLY OPENJSON(correction.SnapshotJson,N'$.paymentCorrections') WITH(
                   SourceId uniqueidentifier '$.sourceId',MovementType nvarchar(32) '$.movementType') changed
                 WHERE closure.WorkSessionId=sale.WorkSessionId AND changed.SourceId=sale.DocumentId AND changed.MovementType IN(N'Sale',N'CreditSale')));
+            IF NOT EXISTS(SELECT 1 FROM @Candidates)
+            BEGIN
+              SELECT CONVERT(decimal(19,4),0),CONVERT(decimal(19,4),0);
+              RETURN;
+            END;
             IF EXISTS(SELECT 1 FROM @Candidates sale CROSS APPLY accounting.SalePaymentPostingFacts(@Tenant,@Business,sale.DocumentId) payment
               WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectivePaymentReady=0)
               THROW 51619,N'La corrección no tiene evidencia financiera definitiva.',1;
