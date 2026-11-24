@@ -33,6 +33,7 @@ import {
 } from "./pos-money-input";
 import { usePosReferenceOptions } from "./use-pos-reference-options";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
+import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
 import { isChangeDocumentShortcut, nextPaymentAmountIndex, PAYMENT_PRINT_SHORTCUTS, paymentPrintChoiceForShortcut } from "./pos-payment-keyboard";
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -93,6 +94,7 @@ export function PosPaymentDialog({
   maxPaymentMethods?: number;
   submissionError?: { title: string; message: string } | null;
 }) {
+  useBodyScrollLock(true);
   const paymentMethods = usePosReferenceOptions(client, "payment-method");
   const cardFranchises = usePosReferenceOptions(client, "card-franchise");
   const tenantId = useTenantContextStore(state => state.selectedTenantId);
@@ -451,12 +453,12 @@ export function PosPaymentDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex h-[100dvh] items-end justify-center overflow-hidden bg-slate-950/60 sm:items-center sm:p-4" data-pos-focus-surface="modal">
+    <div className="fixed inset-0 z-50 flex h-[100dvh] items-end justify-center overflow-hidden bg-slate-950/60 p-2 sm:items-center sm:p-4" data-pos-focus-surface="modal">
       <form
         ref={modal}
         tabIndex={-1}
         onSubmit={submit}
-        className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        className="flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)]"
         aria-labelledby="pos-payment-title"
         aria-modal="true"
         role="dialog"

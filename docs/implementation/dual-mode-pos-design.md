@@ -508,3 +508,14 @@ La captura, cargos, guardado e impresión conservan sus propietarios, permisos,
 versiones, idempotencia y fronteras. Las modificaciones de presentación no
 agregan lecturas, polling ni recursos ocultos consultando. La reversión visual
 sigue siendo compatible con los contratos actuales.
+
+### Ventana de pago en móvil (2026-11-24)
+
+Venta, abono a cartera y pago a proveedor conservan `PosPaymentDialog`. La
+ventana mantiene un margen de 8 px en móvil y desplaza únicamente su contenido,
+con encabezado y acciones visibles. Reutiliza `useBodyScrollLock`, propietario
+compartido con Restaurante, para inmovilizar el fondo mientras está abierta y
+restaurarlo al cerrar. Las capturas de aceptación muestran el viewport real;
+una captura de toda la página incluye contenido fuera de la pantalla y no
+demuestra por sí sola la presentación del modal. El ajuste no cambia la captura,
+confirmación, impresión, cuentas ni viajes de red del pago.

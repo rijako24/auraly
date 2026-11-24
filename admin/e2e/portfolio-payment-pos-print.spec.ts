@@ -12,7 +12,9 @@ for (const scenario of [
   { label: "Oficio", button: "Oficio", format: "HalfLegal" },
   { label: "Carta", button: "Carta", format: "Letter" },
 ] as const) {
-  test(`${scenario.dialog} en POS ${installed ? "instalado en línea" : "web"} · ${printOption.label}`, async ({ page, baseURL }) => {
+  test(`${scenario.dialog} en POS ${installed ? "instalado en línea" : "web"} · ${printOption.label}`, async ({ page, baseURL }, info) => {
+    const mobile = printOption.label === "Sin imprimir";
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 });
     const defaultFormat = printOption.label === "Predeterminado" ? "HalfLetter" : "Receipt";
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
@@ -124,6 +126,21 @@ for (const scenario of [
     await page.getByRole("option", { name: /Tercero prueba/ }).click();
     await expect(dialog.getByText("FV-001")).toBeVisible();
     await dialog.getByRole("button", { name: "Ir a pagar" }).click();
+    if (mobile) {
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
+      const bounds = await dialog.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(8);
+      expect(bounds!.y).toBeGreaterThanOrEqual(8);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(382);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(836);
+      expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+      const scroll = await page.evaluate(() => scrollY);
+      await page.mouse.move(1, 1);
+      await page.mouse.wheel(0, 500);
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(await page.evaluate(() => scrollY)).toBe(scroll);
+      await page.screenshot({ path: info.outputPath("payment-mobile-viewport.png") });
+    }
     if (printOption.button) await dialog.getByRole("button", { name: printOption.button, exact: true }).click();
     else await dialog.getByRole("button", { name: "Confirmar pago" }).click();
 
@@ -134,6 +151,7 @@ for (const scenario of [
     expect(confirmCount).toBe(1);
     expect(paymentDetailReads).toBe(0);
     if (!printOption.format) {
+      if (mobile) await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).overflow)).not.toBe("hidden");
       expect(localPrintCount).toBe(0);
       expect(renderBody).toBeNull();
       return;
