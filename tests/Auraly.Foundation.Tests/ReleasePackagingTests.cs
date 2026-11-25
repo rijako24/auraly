@@ -242,7 +242,7 @@ public sealed class ReleasePackagingTests
         var installer = workflow[installerStart..installerEnd];
         Assert.Contains("needs:\n      - release\n      - cloud\n", installer, StringComparison.Ordinal);
         Assert.Contains("if: always() && needs.release.result == 'success'", installer, StringComparison.Ordinal);
-        Assert.Contains("(needs.cloud.result == 'success' || needs.cloud.result == 'skipped')", installer, StringComparison.Ordinal);
+        Assert.Contains("(needs.cloud.result == 'success' || (needs.release.outputs.deploy_cloud != 'true' && needs.cloud.result == 'skipped'))", installer, StringComparison.Ordinal);
         Assert.Contains("contains(needs.release.outputs.components, 'pos-installer')", installer, StringComparison.Ordinal);
         Assert.Contains("inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev", installer, StringComparison.Ordinal);
     }
@@ -416,6 +416,30 @@ public sealed class ReleasePackagingTests
             "Assert-OfflineLeaseSigningConfiguration\r\nPublish-Database",
             deployment,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_cloud_cutover_survives_skipped_dev_build_and_required_cloud_cannot_be_omitted()
+    {
+        var workflow = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), ".github", "workflows", "deploy-auraly-release.yml"))
+            .ReplaceLineEndings("\n");
+        var cloudStart = workflow.IndexOf("\n  cloud:\n", StringComparison.Ordinal);
+        var installerStart = workflow.IndexOf("\n  pos_installer:\n", StringComparison.Ordinal);
+        Assert.True(cloudStart >= 0 && installerStart > cloudStart);
+        var cloud = workflow[cloudStart..installerStart];
+        Assert.Contains("if: always() && !cancelled() && needs.release.result == 'success' && needs.release.outputs.deploy_cloud == 'true'", cloud, StringComparison.Ordinal);
+        var requiredCloudGate = "(needs.cloud.result == 'success' || (needs.release.outputs.deploy_cloud != 'true' && needs.cloud.result == 'skipped'))";
+        foreach (var job in new[] { "pos_installer", "admin", "verify" })
+        {
+            var start = workflow.IndexOf($"\n  {job}:\n", StringComparison.Ordinal);
+            Assert.True(start >= 0);
+            // Only inspect the job-level condition, before runs-on and steps.
+            var condition = workflow[start..].Split('\n')
+                .First(line => line.StartsWith("    if:", StringComparison.Ordinal));
+            Assert.Contains(requiredCloudGate, condition, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("(needs.cloud.result == 'success' || needs.cloud.result == 'skipped')", workflow, StringComparison.Ordinal);
     }
 
     [Fact]

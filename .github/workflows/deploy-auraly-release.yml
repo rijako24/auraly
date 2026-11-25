@@ -326,7 +326,7 @@ jobs:
   cloud:
     name: Deploy selected cloud components
     needs: release
-    if: needs.release.outputs.deploy_cloud == 'true'
+    if: always() && !cancelled() && needs.release.result == 'success' && needs.release.outputs.deploy_cloud == 'true'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -395,7 +395,7 @@ jobs:
     needs:
       - release
       - cloud
-    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && contains(needs.release.outputs.components, 'pos-installer') && (inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev)
+    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || (needs.release.outputs.deploy_cloud != 'true' && needs.cloud.result == 'skipped')) && contains(needs.release.outputs.components, 'pos-installer') && (inputs.environment == 'prod' || inputs.publish_pos_installer_in_dev)
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -430,7 +430,7 @@ jobs:
       - release
       - cloud
       - pos_installer
-    if: always() && needs.release.result == 'success' && needs.release.outputs.deploy_admin == 'true' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && (needs.pos_installer.result == 'success' || needs.pos_installer.result == 'skipped')
+    if: always() && needs.release.result == 'success' && needs.release.outputs.deploy_admin == 'true' && (needs.cloud.result == 'success' || (needs.release.outputs.deploy_cloud != 'true' && needs.cloud.result == 'skipped')) && (needs.pos_installer.result == 'success' || needs.pos_installer.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -487,7 +487,7 @@ jobs:
       - cloud
       - pos_installer
       - admin
-    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || needs.cloud.result == 'skipped') && (needs.pos_installer.result == 'success' || needs.pos_installer.result == 'skipped') && (needs.admin.result == 'success' || needs.admin.result == 'skipped')
+    if: always() && needs.release.result == 'success' && (needs.cloud.result == 'success' || (needs.release.outputs.deploy_cloud != 'true' && needs.cloud.result == 'skipped')) && (needs.pos_installer.result == 'success' || needs.pos_installer.result == 'skipped') && (needs.admin.result == 'success' || needs.admin.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:

@@ -11,6 +11,13 @@ runtime compatibles. DEV es la compuerta obligatoria de producción: el mismo
 `manifest.json` y los mismos hashes se promueven; nunca se recompila para
 producción.
 
+El job `cloud` evalúa explícitamente `always()`, cancelación, éxito de `release`
+y el alcance archivado. En producción `admin_build` se omite porque se promueve
+el paquete de DEV; esa omisión no puede saltar el corte de API, Function y base
+de datos por propagación de dependencias. Instalador, Admin y verificación sólo
+admiten `cloud=skipped` cuando el manifiesto no exige componentes cloud. Si los
+exige y el job se omite, no se publica el resto ni se declara éxito.
+
 El Admin también pertenece a ese manifiesto: `admin_build` prepara una compilación
 Linux, el builder verifica su commit/versión/plataforma/hash y archiva el ZIP con
 API, Function, DACPAC e instaladores. El job Admin sólo valida y extrae ese paquete;
