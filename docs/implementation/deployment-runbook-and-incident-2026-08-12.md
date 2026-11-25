@@ -259,6 +259,23 @@ promoción a DEV. La declaración vigente fue reducida posteriormente a `Free_F1
 tras medir un máximo de 7 conexiones concurrentes y menos de 1 MiB de tráfico
 entre el 14 y el 22 de septiembre de 2026.
 
+### Configuración revisada de crédito de Megafruver (2026-11-25)
+
+`infrastructure/azure/ReviewedMegafruverCredit20261125.sql` conserva la receta
+explícita del corte rc32: completa únicamente la función financiera y el lado
+de saldo vacíos de la cuenta 130505 verificada y activa la forma de crédito
+creada por ese despliegue. No modifica la clasificación, identidad, movimientos
+ni saldos históricos. Sus identificadores son el alcance de esta operación
+administrativa, no una excepción del motor.
+
+Se ejecuta con el parámetro SQL ligado `@Apply bit`: `0` valida y revierte;
+`1` confirma. Se ensayó, confirmó y repitió sin duplicar efectos, comprobando
+`PaymentMethodAccountReadiness` y `PaymentMethodDetails`. La receta rechaza
+identidades o configuraciones distintas; no forma parte de un seed general ni
+se ejecuta automáticamente para otros clientes. Para revertir su disponibilidad
+se desactiva la forma mediante el catálogo canónico; no se revierten partidas ni
+se borran metadatos mientras existan documentos que dependan de ellos.
+
 ### Incidente de conectividad del login BFF
 
 - Sintoma: la pagina y la API respondian 200, pero el login devolvia
