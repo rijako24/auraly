@@ -91,7 +91,7 @@ EXEC sys.sp_executesql N'
       JOIN dbo.InventoryMovements movement
         ON movement.DocumentId=candidate.DocumentId AND movement.BusinessId=candidate.BusinessId
         AND movement.DocumentType=candidate.DocumentType AND movement.LineNumber=candidate.LineNumber
-        AND movement.ProductId=candidate.ProductId AND movement.MovementType=N''Sale''
+        AND movement.MovementType=N''Sale''
       WHERE candidate.Cost IS NULL AND candidate.IsComposed=0
       GROUP BY candidate.DocumentId,candidate.LineNumber
       HAVING COUNT(*)=COUNT(movement.ValueChange)) evidence

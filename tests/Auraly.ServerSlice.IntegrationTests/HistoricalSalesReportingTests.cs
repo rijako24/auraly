@@ -195,6 +195,57 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Invoice_cost_cutover_uses_original_valuation_for_a_linked_presentation_without_current_links()
+    {
+        var child = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        await using (var seed = new SqlCommand("""
+            INSERT dbo.Products(ProductId,TenantId,Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
+            VALUES(@Child,@Tenant,0,CONVERT(nvarchar(36),@Child),N'Presentación histórica',N'COP',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,InventoryFactor,
+              SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@Tenant,@Child,@Parent,2,1,0,0,1,SYSDATETIMEOFFSET());
+            """, connection))
+        {
+            seed.Parameters.AddWithValue("@Child", child); seed.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            seed.Parameters.AddWithValue("@Parent", fixture.ProductId); await seed.ExecuteNonQueryAsync();
+        }
+        var original = fixture.CreateValidRequest(9_650);
+        var sale = original with { Lines = original.Lines.Select(line => line with { ProductId = child }).ToArray() };
+        using (var upload = fixture.CreateUploadMessage(sale))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var protectedEffects = await ReportingMigrationFingerprintAsync(connection);
+        await using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+        {
+            await using var simulate = new SqlCommand("""
+                ALTER TABLE dbo.SalesDocumentLines ALTER COLUMN RecognizedCostAmount decimal(19,4) NULL;
+                UPDATE dbo.ProductLinks SET IsActive=0 WHERE ChildProductId=@Child;
+                UPDATE dbo.SalesDocumentLines SET RecognizedCostAmount=NULL,UnitCostSnapshot=NULL WHERE DocumentId=@Document;
+                """, connection, transaction);
+            simulate.Parameters.AddWithValue("@Child", child); simulate.Parameters.AddWithValue("@Document", sale.DocumentId);
+            await simulate.ExecuteNonQueryAsync();
+            for (var replay=0;replay<2;replay++)
+            {
+                await fixture.ApplyMigrationAsync("20261125_FreezeInvoiceRecognizedCosts.sql",connection,transaction);
+                await using var verify = new SqlCommand("""
+                    SELECT COUNT(*) FROM dbo.SalesDocumentLines line
+                    JOIN dbo.InventoryMovements movement ON movement.DocumentId=line.DocumentId
+                      AND movement.DocumentType=@Type AND movement.BusinessId=@Business
+                      AND movement.LineNumber=line.LineNumber AND movement.MovementType=N'Sale'
+                    WHERE line.DocumentId=@Document AND line.ProductId<>movement.ProductId
+                      AND line.RecognizedCostAmount=-movement.ValueChange AND line.RecognizedCostAmount>0;
+                    """,connection,transaction);
+                verify.Parameters.AddWithValue("@Document",sale.DocumentId); verify.Parameters.AddWithValue("@Business",fixture.BusinessId);
+                verify.Parameters.AddWithValue("@Type",sale.CommercialSnapshot.DocumentType);
+                Assert.Equal(sale.Lines.Count,Convert.ToInt32(await verify.ExecuteScalarAsync()));
+            }
+            await transaction.RollbackAsync();
+        }
+        Assert.Equal(protectedEffects,await ReportingMigrationFingerprintAsync(connection));
+    }
+
+    [Fact]
     public async Task Non_stock_sale_freezes_its_declared_cost_before_projection_and_catalog_changes()
     {
         var sale = fixture.CreateValidRequest(9_586);

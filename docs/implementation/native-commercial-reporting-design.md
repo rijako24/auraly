@@ -238,6 +238,12 @@ en runtime. `20261125_FreezeInvoiceRecognizedCosts.sql` corre antes de calcular
 el plan DACPAC. Completa únicamente costos nulos con evidencia histórica:
 checkout o consumo congelado, valoración del movimiento original, o costo
 unitario ya congelado en la factura simple cuando no se registró valoración.
+Para una presentación vinculada simple, el movimiento original conserva el
+número de línea de factura aunque su producto sea el producto base. Se enlaza
+por documento, tipo, sede y línea; la clave única del kardex garantiza un solo
+movimiento de venta. No se exige que ambos productos sean iguales ni se consulta
+el vínculo vigente. Los consumos de composición tienen su correspondencia
+congelada independiente y no usan ese camino de factura simple.
 No reinterpreta el modo de inventario histórico desde el catálogo vigente.
 No usa el costo actual
 para reconstruir el pasado. Si falta evidencia, falla la migración completa;
