@@ -378,6 +378,9 @@ Decisión del usuario del 2026-11-24: cerrar la continuidad de proveedores reale
 sin inventar un perfil RUT ni una exención. El editor existente ofrece
 «Confirmar revisión» exclusivamente en Gastos, con el mismo permiso de gestión
 tributaria que los ajustes manuales. Se exige motivo y un cálculo vigente.
+El caso de uso de Gastos habilita explícitamente esa capacidad en el servicio
+tributario compartido. Los demás comprobantes mantienen la capacidad deshabilitada
+en servidor, rechazan la acción y conservan su contrato de revisión anterior.
 `WithholdingService.ReviewPurchaseDocument` conserva las retenciones automáticas
 y puntuales; la revisión no es una línea monetaria ni modifica el proveedor.
 Sin perfil, puede confirmar un resultado cero explícitamente revisado. Sin

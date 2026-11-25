@@ -199,17 +199,19 @@ public sealed class WithholdingService(
         WithholdingCalculationPlan plan, Guid supplierId,
         IReadOnlyList<WithholdingPreviewRequest> bases,
         IReadOnlyList<WithholdingAdjustmentRequest>? adjustments,
-        Guid userId, DateTimeOffset occurredAt)
+        Guid userId, DateTimeOffset occurredAt, bool allowDocumentReview = false)
     {
         if (adjustments is { Count: > 20 } || adjustments is { Count: > 0 } && userId == Guid.Empty)
             throw new TaxationValidationException("Las retenciones manuales son inválidas o están duplicadas.");
+        var reviews = adjustments?.Where(item => item.Action == "Review").ToArray() ?? [];
+        if (!allowDocumentReview && reviews.Length > 0)
+            throw new TaxationValidationException("La revisión tributaria explícita solo está habilitada para gastos.");
         var result = CalculateDocument(plan, bases);
         var calculation = ApplyAdjustments(plan, result.Calculation, adjustments?.Where(item => item.Action != "Review").ToArray(),
             userId, occurredAt, bases.Sum(basis => basis.VatAmount));
         plan.Profiles.TryGetValue(supplierId, out var profile);
-        var basisHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            System.Text.Json.JsonSerializer.Serialize(new { plan.BusinessId, supplierId, bases, profile, calculation }))));
-        var reviews = adjustments?.Where(item => item.Action == "Review").ToArray() ?? [];
+        var basisHash = allowDocumentReview ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new { plan.BusinessId, supplierId, bases, profile, calculation })))) : null;
         if (reviews.Length > 1)
             throw new TaxationValidationException("La revisión tributaria del documento está duplicada.");
         if (reviews is [var review])

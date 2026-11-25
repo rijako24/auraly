@@ -159,10 +159,20 @@ public sealed partial class GoodsReceiptProcessingTests
                 Assert.Equal(250m, pending.Withholding.WithholdingTotal);
                 Assert.NotEmpty(pending.Diagnostics);
             }
+            using (var unsupportedReview = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/fiscal-preview", raw with {
+                FiscalCapture = capture with { WithholdingAdjustments = [new(Guid.Empty,"Review",null,null,
+                    "Esta acción pertenece al gasto",ReviewBasisHash:"not-enabled-for-this-document")] } }))
+            {
+                Assert.Equal(HttpStatusCode.BadRequest,unsupportedReview.StatusCode);
+                using var problem=JsonDocument.Parse(await unsupportedReview.Content.ReadAsStringAsync());
+                Assert.Contains("solo está habilitada para gastos",string.Join(" ",problem.RootElement.EnumerateObject()
+                    .Where(field=>field.Value.ValueKind==JsonValueKind.String).Select(field=>field.Value.GetString())));
+            }
             using var previewResponse = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/fiscal-preview", raw);
             Assert.True(previewResponse.IsSuccessStatusCode, await previewResponse.Content.ReadAsStringAsync());
             var preview = (await previewResponse.Content.ReadFromJsonAsync<VoucherFiscalPreview>())!;
             Assert.True(preview.CanConfirm);
+            Assert.Null(preview.Withholding.ReviewBasisHash);
             Assert.Equal(net, preview.Withholding.NetAmount);
             Assert.Equal(before, await ScalarAsync<long>("SELECT COALESCE(SUM(NextConsecutive),0) FROM dbo.FiscalSeriesCursors", documentId));
             Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id", documentId));

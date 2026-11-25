@@ -23,10 +23,15 @@ public sealed class WithholdingEngineTests
         var user = Guid.NewGuid();
         var date = new DateTimeOffset(2026, 11, 24, 12, 0, 0, TimeSpan.Zero);
         WithholdingPreviewRequest[] bases = [new(BusinessId, "Purchase", "Accrual", CounterpartyId, null, null, 100m, 0m, date)];
-        var initial = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date);
+        var initial = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date, allowDocumentReview: true);
         Assert.False(initial.CanConfirm);
+        var otherDocument = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date);
+        Assert.False(otherDocument.CanConfirm);
+        Assert.Null(otherDocument.Calculation.ReviewBasisHash);
+        Assert.Throws<TaxationValidationException>(()=>service.ReviewPurchaseDocument(plan,CounterpartyId,bases,
+            [new(Guid.Empty,"Review",null,null,"No habilitado para este comprobante",ReviewBasisHash:initial.Calculation.ReviewBasisHash)],user,date));
         var review = service.ReviewPurchaseDocument(plan, CounterpartyId, bases,
-            [new(Guid.Empty, "Review", null, null, "Soporte revisado para esta operación", ReviewBasisHash: initial.Calculation.ReviewBasisHash)], user, date);
+            [new(Guid.Empty, "Review", null, null, "Soporte revisado para esta operación", ReviewBasisHash: initial.Calculation.ReviewBasisHash)], user, date, allowDocumentReview: true);
         Assert.True(review.CanConfirm);
         Assert.False(review.HasProfile);
         Assert.Empty(plan.Profiles);
@@ -39,11 +44,11 @@ public sealed class WithholdingEngineTests
         Assert.Contains(review.Diagnostics, text => text.Contains("revisión", StringComparison.OrdinalIgnoreCase));
         Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(plan, CounterpartyId,
             [bases[0] with { TaxExclusiveAmount = 200m }],
-            [new(Guid.Empty, "Review", null, null, "Importe anterior", ReviewBasisHash: initial.Calculation.ReviewBasisHash)], user, date));
+            [new(Guid.Empty, "Review", null, null, "Importe anterior", ReviewBasisHash: initial.Calculation.ReviewBasisHash)], user, date, allowDocumentReview: true));
         Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(plan, CounterpartyId, bases,
-            [new(Guid.Empty, "Review", null, 1m, "No debe cambiar importes")], user, date));
+            [new(Guid.Empty, "Review", null, 1m, "No debe cambiar importes")], user, date, allowDocumentReview: true));
         Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(plan, CounterpartyId, bases,
-            [new(Guid.Empty, "Review", null, null, " ")], user, date));
+            [new(Guid.Empty, "Review", null, null, " ")], user, date, allowDocumentReview: true));
     }
 
     [Fact]
@@ -56,16 +61,16 @@ public sealed class WithholdingEngineTests
             { [CounterpartyId] = new(BusinessId, CounterpartyId, true, [], null, date) }, new HashSet<Guid>());
         var user = Guid.NewGuid();
         WithholdingPreviewRequest[] bases = [new(BusinessId, "Purchase", "Accrual", CounterpartyId, null, null, 100_000m, 19_000m, date)];
-        var initial = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date);
+        var initial = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date, allowDocumentReview: true);
         var adjustment = new WithholdingAdjustmentRequest(Guid.Empty, "Review", null, null, "Retenciones verificadas",
             ReviewBasisHash: initial.Calculation.ReviewBasisHash);
-        var reviewed = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [adjustment], user, date);
+        var reviewed = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [adjustment], user, date, allowDocumentReview: true);
         Assert.Equal(2_500m, reviewed.Calculation.WithholdingTotal);
         Assert.Equal(initial.Calculation.Lines, reviewed.Calculation.Lines);
         Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(
-            plan with { Rules = [rule with { Rate = 3m }] }, CounterpartyId, bases, [adjustment], user, date));
+            plan with { Rules = [rule with { Rate = 3m }] }, CounterpartyId, bases, [adjustment], user, date, allowDocumentReview: true));
         Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(
-            plan, CounterpartyId, bases, [adjustment, adjustment], user, date));
+            plan, CounterpartyId, bases, [adjustment, adjustment], user, date, allowDocumentReview: true));
     }
 
     [Fact]

@@ -212,7 +212,7 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
                 new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
                     WithholdingRecognitionMoments.Accrual, request.SupplierId, line.WithholdingConceptCode,
                     null, line.TaxExclusiveAmount, line.VatAmount, request.IssuedAt)).ToArray(),
-                request.WithholdingAdjustments, user.UserId, request.IssuedAt);
+                request.WithholdingAdjustments, user.UserId, request.IssuedAt, allowDocumentReview: true);
         }
         catch (Auraly.Commerce.Taxation.Domain.WithholdingRuleException error)
         { throw new ExpenseValidationException($"Revisa la configuración de retenciones: {error.Message}"); }
