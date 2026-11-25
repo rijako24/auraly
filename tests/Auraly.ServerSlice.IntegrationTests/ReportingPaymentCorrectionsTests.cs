@@ -18,6 +18,19 @@ public sealed class PaymentReportingCorrectionsCollection : ICollectionFixture<S
 public sealed class ReportingPaymentCorrectionsTests(ServerSliceFixture fixture, Xunit.Abstractions.ITestOutputHelper output)
 {
     [Fact]
+    public async Task Confirmed_correction_reports_its_tender_without_inventing_historical_account_bindings()
+    {
+        var flow=new AccountingVerticalSliceTests(fixture,output);
+        await flow.InitializeAsync();
+        try
+        {
+            await flow.Closure_native_form_correction_preserves_invoice_and_uses_actual_accounts_once(
+                "DebitCard","Cash",false,false,false,false,verifyReporting:true,missingHistoricalBindings:true);
+        }
+        finally{await flow.DisposeAsync();}
+    }
+
+    [Fact]
     public async Task Uncorrected_sale_reporting_reads_only_selected_documents_with_large_history()
     {
         var sale=fixture.CreateUniqueValidRequest();

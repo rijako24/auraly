@@ -110,8 +110,8 @@ public sealed partial class SqlSalesReportingProjectionWriter
               RETURN;
             END;
             IF EXISTS(SELECT 1 FROM @Candidates sale CROSS APPLY accounting.SalePaymentPostingFacts(@Tenant,@Business,sale.DocumentId) payment
-              WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectivePaymentReady=0)
-              THROW 51619,N'La corrección no tiene evidencia financiera definitiva.',1;
+              WHERE payment.CollectedOutsideDispatch=1 AND payment.EffectivePaymentRecorded=0)
+              THROW 51619,N'El medio de pago corregido no tiene un registro confirmado.',1;
 
             DECLARE @CreditCollections TABLE(DocumentId uniqueidentifier,PaymentId uniqueidentifier,
               MethodCode nvarchar(32),Amount decimal(19,4),Reference nvarchar(160),WorkSessionId uniqueidentifier,

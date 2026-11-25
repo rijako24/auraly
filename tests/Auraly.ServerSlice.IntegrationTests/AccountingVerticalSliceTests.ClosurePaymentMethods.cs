@@ -104,7 +104,7 @@ public sealed partial class AccountingVerticalSliceTests
     [InlineData("Cash", "Transfer", false, false, false, false, true)]
     public async Task Closure_native_form_correction_preserves_invoice_and_uses_actual_accounts_once(
         string originalType, string targetType, bool sameAccount, bool remapTarget, bool sameForm, bool actualBlindCount,
-        bool refundBeforeCorrection = false, bool verifyReporting = false)
+        bool refundBeforeCorrection = false, bool verifyReporting = false, bool missingHistoricalBindings = false)
     {
         using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, CatalogPermissionCodes.Update);
@@ -279,6 +279,8 @@ public sealed partial class AccountingVerticalSliceTests
             Assert.True(activate.IsSuccessStatusCode, await activate.Content.ReadAsStringAsync());
             target = (await activate.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
         }
+        if(missingHistoricalBindings)
+            Assert.Equal(0,await ScalarAsync<int>("SELECT CONVERT(int,EffectivePaymentRecorded) FROM accounting.SalePaymentPostingFacts((SELECT TenantId FROM dbo.Businesses WHERE BusinessId=(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id)),(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id),@Id)",sale.DocumentId));
         await processor.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, default);
         await processor.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, default);
         using (var replay = new HttpRequestMessage(HttpMethod.Post, path + "/reconcile") { Content = JsonContent.Create(request) })
@@ -290,24 +292,70 @@ public sealed partial class AccountingVerticalSliceTests
         }
         if (verifyReporting)
         {
-            var reporting = scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>();
-            // The reporting signal can precede the original sale projection.
-            await reporting.ProcessAsync(sale.DocumentId, "SalesInvoice", fixture.BusinessId, 1, default);
-            await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
-            using(var historyClient=fixture.CreateAdminClient("sales.reprint"))
-            using(var history=await historyClient.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
-                new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),sale.DocumentNumber.FullNumber,Take:10,DateRangeVersion:2)))
+            var historicalBindings = missingHistoricalBindings
+                ? await ScalarAsync<string>("SELECT (SELECT JSON_QUERY(ResolvedAccountMappingsJson) ResolvedAccountMappingsJson,JSON_QUERY(AppliedPaymentMethodsJson) AppliedPaymentMethodsJson FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id FOR JSON PATH,WITHOUT_ARRAY_WRAPPER,INCLUDE_NULL_VALUES)", reconciliation.ReconciliationId)
+                : null;
+            try
             {
-                Assert.True(history.IsSuccessStatusCode,await history.Content.ReadAsStringAsync());
-                var row=Assert.Single((await history.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>())!.Items);
-                var tender=Assert.Single(row.Payments!);Assert.Equal(targetType,tender.MethodCode);
-                Assert.Equal(target.Name,tender.FormName);Assert.Equal(11900m,tender.Amount);
-                Assert.Equal(closure.WorkSessionClosureId,row.ClosureId);
+                if (missingHistoricalBindings)
+                {
+                    await using var legacy = new SqlConnection(fixture.ConnectionString); await legacy.OpenAsync();
+                    await using var remove = new SqlCommand("UPDATE dbo.AccountingPostingJobs SET ResolvedAccountMappingsJson=NULL,AppliedPaymentMethodsJson=NULL WHERE SourceDocumentId=@Id", legacy);
+                    remove.Parameters.AddWithValue("@Id", reconciliation.ReconciliationId); await remove.ExecuteNonQueryAsync();
+                    Assert.Equal(0, await ScalarAsync<int>("SELECT CONVERT(int,EffectivePaymentReady) FROM accounting.SalePaymentPostingFacts((SELECT TenantId FROM dbo.Businesses WHERE BusinessId=(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id)),(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id),@Id)", sale.DocumentId));
+                }
+                var reporting = scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>();
+                // The reporting signal can precede the original sale projection.
+                await reporting.ProcessAsync(sale.DocumentId, "SalesInvoice", fixture.BusinessId, 1, default);
+                await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
+                using(var historyClient=fixture.CreateAdminClient("sales.reprint"))
+                using(var history=await historyClient.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+                    new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),sale.DocumentNumber.FullNumber,Take:10,DateRangeVersion:2)))
+                {
+                    Assert.True(history.IsSuccessStatusCode,await history.Content.ReadAsStringAsync());
+                    var row=Assert.Single((await history.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>())!.Items);
+                    var tender=Assert.Single(row.Payments!);Assert.Equal(targetType,tender.MethodCode);
+                    Assert.Equal(target.Name,tender.FormName);Assert.Equal(11900m,tender.Amount);
+                    Assert.Equal(closure.WorkSessionClosureId,row.ClosureId);
+                }
+                Assert.Equal(targetType, await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+                Assert.Equal(11900m, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+                await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
+                Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+                if (missingHistoricalBindings)
+                {
+                    for (var pass=0;pass<2;pass++)
+                    {
+                        await reporting.RebuildAsync(fixture.TenantId,fixture.BusinessId,default);
+                        Assert.Equal(targetType,await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'",sale.DocumentId));
+                        Assert.Equal(11900m,await ScalarAsync<decimal>("SELECT SUM(Amount) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'",sale.DocumentId));
+                    }
+                    Assert.Equal(0,await ScalarAsync<int>("SELECT CONVERT(int,EffectivePaymentReady) FROM accounting.SalePaymentPostingFacts((SELECT TenantId FROM dbo.Businesses WHERE BusinessId=(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id)),(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id),@Id)",sale.DocumentId));
+                    Assert.Empty((await returnsQuery.GetReturnableSaleAsync(returnUser,sale.DocumentId))!.Payments);
+                    Assert.Equal(1,await ScalarAsync<int>("SELECT CONVERT(int,EffectivePaymentRecorded) FROM accounting.SalePaymentPostingFacts((SELECT TenantId FROM dbo.Businesses WHERE BusinessId=(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id)),(SELECT BusinessId FROM dbo.SalesDocuments WHERE DocumentId=@Id),@Id)",sale.DocumentId));
+                    Assert.Equal(1,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND ResolvedAccountMappingsJson IS NULL AND AppliedPaymentMethodsJson IS NULL",reconciliation.ReconciliationId));
+                    await using var ambiguous=new SqlConnection(fixture.ConnectionString);await ambiguous.OpenAsync();
+                    await using var transaction=(SqlTransaction)await ambiguous.BeginTransactionAsync();
+                    try
+                    {
+                        await using(var duplicate=new SqlCommand("UPDATE dbo.WorkSessionClosureReconciliations SET SnapshotJson=JSON_MODIFY(SnapshotJson,'append $.paymentCorrections',JSON_QUERY(SnapshotJson,'$.paymentCorrections[0]')) WHERE ReconciliationId=@Id",ambiguous,transaction))
+                        {duplicate.Parameters.AddWithValue("@Id",reconciliation.ReconciliationId);await duplicate.ExecuteNonQueryAsync();}
+                        var writer=scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProjectionWriter>();
+                        var rejected=await Assert.ThrowsAsync<SqlException>(()=>writer.ProjectPaymentCorrectionAsync(new(ambiguous,transaction),fixture.TenantId,fixture.BusinessId,reconciliation.ReconciliationId,WorkSessionAccountingDocumentTypes.ClosureReconciliation,[sale.DocumentId],default));
+                        Assert.Equal(51619,rejected.Number);
+                    }
+                    finally{await transaction.RollbackAsync();}
+                }
             }
-            Assert.Equal(targetType, await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
-            Assert.Equal(11900m, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
-            await reporting.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default);
-            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'", sale.DocumentId));
+            finally
+            {
+                if(historicalBindings is not null)
+                {
+                    await using var legacy=new SqlConnection(fixture.ConnectionString);await legacy.OpenAsync();
+                    await using var restore=new SqlCommand("UPDATE job SET ResolvedAccountMappingsJson=value.Mappings,AppliedPaymentMethodsJson=value.Methods FROM dbo.AccountingPostingJobs job CROSS APPLY OPENJSON(@Json) WITH(Mappings nvarchar(max) '$.ResolvedAccountMappingsJson' AS JSON,Methods nvarchar(max) '$.AppliedPaymentMethodsJson' AS JSON) value WHERE job.SourceDocumentId=@Id",legacy);
+                    restore.Parameters.AddWithValue("@Id",reconciliation.ReconciliationId);restore.Parameters.AddWithValue("@Json",historicalBindings);await restore.ExecuteNonQueryAsync();
+                }
+            }
         }
         Assert.Equal(sourceSignature, await ScalarAsync<string>("SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',PayloadJson),2) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesInvoice'", sale.DocumentId));
         Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id", sale.DocumentId));

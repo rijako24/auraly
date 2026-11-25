@@ -325,8 +325,11 @@ usar el datáfono o soporte original después de una corrección. La proyección
 `accounting.SalePaymentPostingFacts` conserva sus campos originales y expone por
 separado medio, importe, soporte y auxiliar efectivos. Los obtiene del snapshot
 de la única conciliación y de sus bindings aplicados; no del catálogo actual.
-Una corrección pendiente o una evidencia ambigua impiden reembolsar hasta resolver
-ese procesamiento. La consulta retornable y el processor comparten esa evidencia.
+Su indicador aditivo `EffectivePaymentRecorded` permite mostrar en Facturas y
+Reporting el medio e importe ya confirmados sin inferir un auxiliar histórico.
+`EffectivePaymentReady` conserva su semántica financiera: la ausencia del binding,
+una corrección pendiente o una evidencia ambigua siguen bloqueando el reembolso.
+La consulta retornable y el processor comparten esa evidencia.
 Un trabajo comercial que no requería asiento conserva esa condición: su corrección
 sin forma configurada puede aportar medio y soporte sin inventar un auxiliar
 histórico. El reembolso comercial no exige un asiento anterior ni crea uno.

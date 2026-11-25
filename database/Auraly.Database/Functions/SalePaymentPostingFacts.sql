@@ -32,7 +32,14 @@ AS RETURN
         JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=assigned.DispatchId AND dispatch.BusinessId=@BusinessId AND dispatch.TenantId=@TenantId
         JOIN dbo.DispatchDeliveryPayments kept ON kept.DispatchSourceDocumentId=assigned.DispatchSourceDocumentId
           AND kept.DispatchId=assigned.DispatchId AND kept.ApplicationType=N'KeepCurrent'
-        WHERE assigned.SourceDocumentId=sale.DocumentId AND dispatch.Status<>N'Cancelled') THEN 1 ELSE 0 END) CollectedOutsideDispatch
+        WHERE assigned.SourceDocumentId=sale.DocumentId AND dispatch.Status<>N'Cancelled') THEN 1 ELSE 0 END) CollectedOutsideDispatch,
+      -- Commercial presentation needs a confirmed tender and amount. Reusing
+      -- money financially still requires EffectivePaymentReady above, including
+      -- its historical auxiliary and pending/ambiguity checks.
+      CONVERT(bit,CASE WHEN direct.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN 1
+        WHEN correction.ProofCount=0 THEN 1
+        WHEN correction.ProofCount=1 AND correction.PostingStatus IN(N'Posted',N'CommercialEffectsApplied') THEN 1
+        ELSE 0 END) EffectivePaymentRecorded
     FROM dbo.SalesDocuments sale
     JOIN dbo.Businesses business ON business.BusinessId=sale.BusinessId AND business.TenantId=@TenantId
     JOIN dbo.SalesPayments payment ON payment.DocumentId=sale.DocumentId

@@ -6,6 +6,16 @@ reemplazar, `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md`
 
 ## Regla de propiedad
 
+La lectura canónica `accounting.SalePaymentPostingFacts` distingue
+`EffectivePaymentRecorded` (medio e importe confirmados) de
+`EffectivePaymentReady` (evidencia suficiente para reutilizar ese dinero en una
+operación financiera). Reporting y el historial de Facturas usan el primero:
+una corrección contabilizada puede mostrarse aunque su trabajo antiguo no haya
+conservado el binding del auxiliar. No inventan esa cuenta ni modifican fuentes,
+pagos, asientos o saldos. La lectura financiera y los reembolsos conservan el
+segundo indicador y todos sus bloqueos. Una corrección pendiente no sustituye el
+medio confirmado; una evidencia comercial ambigua sigue rechazándose.
+
 Las pantallas de Resumen comercial, Ventas, Impacto comercial, Productos y
 rentabilidad y Proveedores: compras y ventas
 leen cifras, agrupaciones y detalle analítico exclusivamente de `reporting.*`.
