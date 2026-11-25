@@ -16,6 +16,52 @@ public sealed class SalesReportingSliceCollection : ICollectionFixture<ServerSli
 [Trait("EngineCertification", "Reporting")]
 public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Rotation_refresh_records_zero_for_a_product_without_sales_in_the_current_window(bool existingSnapshot)
+    {
+        var sale = fixture.CreateValidRequest(existingSnapshot ? 9_593 : 9_594);
+        using (var upload = fixture.CreateUploadMessage(sale))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = (Microsoft.Data.SqlClient.SqlTransaction)await connection.BeginTransactionAsync();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        command.Parameters.AddWithValue("@Warehouse", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@Product", fixture.ProductId);
+        if (!existingSnapshot)
+        {
+            command.CommandText = "DELETE reporting.ProductRotationSnapshots WHERE BusinessId=@Business AND WarehouseId=@Warehouse AND ProductId=@Product;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        // A full historical rebuild refreshes products whose last sale is older
+        // than its 90-day window. Their facts remain; demand in this window is zero.
+        command.CommandText = """
+            EXEC reporting.ProductRotationRefresh @Business,NULL,N'SalesInvoice','20261201',5,'20261201';
+            SELECT GrossUnitsSold30Days,ReturnedUnits30Days,NetUnitsSold30Days,
+              GrossUnitsSold90Days,ReturnedUnits90Days,NetUnitsSold90Days,DailyDemand90Days
+            FROM reporting.ProductRotationSnapshots
+            WHERE BusinessId=@Business AND WarehouseId=@Warehouse AND ProductId=@Product;
+            """;
+        for (var pass = 0; pass < 2; pass++)
+        {
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            for (var column = 0; column < 7; column++) Assert.Equal(0m, reader.GetDecimal(column));
+            Assert.False(await reader.ReadAsync());
+        }
+        command.CommandText = "SELECT SUM(Quantity) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Document;";
+        command.Parameters.AddWithValue("@Document", sale.DocumentId);
+        Assert.Equal(sale.Lines.Sum(line => line.Quantity), (decimal)(await command.ExecuteScalarAsync())!);
+        await transaction.RollbackAsync();
+    }
+
     [Fact]
     public async Task Read_all_permission_allows_a_platform_actor_without_a_local_tenant_user()
     {

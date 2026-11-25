@@ -25,7 +25,7 @@ BEGIN
             SUM(CASE WHEN f.BusinessLocalDate>=DATEADD(day,-29,a.WindowEndDate) THEN f.Quantity ELSE 0 END) Net30,
             SUM(CASE WHEN f.Quantity>0 THEN f.Quantity ELSE 0 END) Gross90,
             SUM(CASE WHEN f.Quantity<0 THEN -f.Quantity ELSE 0 END) Returned90,
-            SUM(f.Quantity) Net90
+            COALESCE(SUM(f.Quantity),0) Net90
         FROM affected a
         LEFT JOIN reporting.SalesReportLineFacts f
           ON f.BusinessId=@BusinessId AND f.WarehouseId=a.WarehouseId AND f.ProductId=a.ProductId

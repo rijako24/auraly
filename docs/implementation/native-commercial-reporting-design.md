@@ -110,6 +110,10 @@ existente reemplaza la cabecera en su misma transacción, conservando ese remane
 Al finalizar, el mismo writer agrega por conjunto las contribuciones conservadas
 a sus deltas diarios y dimensiones compartidos y refresca rotación. El checkpoint
 se cierra en ese commit; repetir reconstruye sin duplicar contribuciones.
+La rotación conserva productos con ventas históricas fuera de la ventana de
+90 días: su demanda en esa ventana es cero, tanto al crear como al actualizar
+el snapshot. Este cero representa ausencia de movimientos en la ventana;
+no sustituye cantidades ni importes desconocidos de los hechos históricos.
 
 Un total oficial o redondeo desconocido permanece NULL. El lector propaga ese
 NULL al total oficial agregado, en lugar de omitir la devolución o declarar un
