@@ -77,7 +77,9 @@ public sealed record WithholdingLineSnapshot(
 public sealed record WithholdingAdjustmentRequest(
     Guid RuleId, string Action, decimal? TaxableBase, decimal? Amount, string Reason,
     Guid? ManualLineId = null, string? Kind = null, string? Name = null,
-    decimal? Rate = null, string? JurisdictionCode = null, Guid? AccountId = null);
+    decimal? Rate = null, string? JurisdictionCode = null, Guid? AccountId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ReviewBasisHash = null);
 
 public sealed record WithholdingAdjustmentSnapshot(
     Guid RuleId, int RuleVersion, string Action, decimal? AutomaticTaxableBase,
@@ -90,7 +92,9 @@ public sealed record WithholdingCalculationSnapshot(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<WithholdingAdjustmentSnapshot>? Adjustments = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? ReviewHash = null);
+    string? ReviewHash = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ReviewBasisHash = null);
 
 public sealed record AppliedWithholdingLineView(
     Guid DocumentId, string DocumentType, int LineNumber, DateTimeOffset RecognizedAt,

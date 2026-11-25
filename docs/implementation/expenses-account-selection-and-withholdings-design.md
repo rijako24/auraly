@@ -370,3 +370,33 @@ aprobó con 23 comandos por confirmación (157/90/166 ms) y tres por preview.
 Una ronda anterior registró 25/26 y excedió por 34 ms el presupuesto de dos
 segundos; se conserva como evidencia fallida, sin ampliar el límite. La
 regresión transversal ampliada se documenta en comprobantes, sección 14.12.
+
+
+### Revisión explícita de un gasto sin perfil tributario
+
+Decisión del usuario del 2026-11-24: cerrar la continuidad de proveedores reales
+sin inventar un perfil RUT ni una exención. El editor existente ofrece
+«Confirmar revisión» exclusivamente en Gastos, con el mismo permiso de gestión
+tributaria que los ajustes manuales. Se exige motivo y un cálculo vigente.
+`WithholdingService.ReviewPurchaseDocument` conserva las retenciones automáticas
+y puntuales; la revisión no es una línea monetaria ni modifica el proveedor.
+Sin perfil, puede confirmar un resultado cero explícitamente revisado. Sin
+perfil, retención puntual o revisión autorizada, el documento sigue bloqueado.
+Compras conserva su flujo existente; no recibe una nueva exigencia ni una opción
+que su contrato no tenga habilitada.
+
+La revisión se liga mediante `ReviewBasisHash` a sede, proveedor, bases, fecha,
+perfil y cálculo con sus ajustes monetarios. Cambiar esos datos exige revisarla
+otra vez; el servidor rechaza evidencia anterior aunque se fuerce desde API.
+Motivo, usuario y hash quedan en los snapshots/fuente existentes. No se agrega
+otro motor, job, tabla ni escritura de cartera. El mismo processor contable
+crea una sola CxP y, si corresponde, un asiento balanceado. Replay devuelve el
+resultado persistido sin recalcular ni volver a aplicar el efecto.
+
+El formulario retira la revisión al cambiar proveedor, datos tributarios o
+líneas; editar retenciones también exige nueva revisión. Conserva un solo dueño
+de preview y reutiliza su respuesta. La función no agrega viajes SQL: permanecen
+los tres del preview por conjuntos y el presupuesto vigente de confirmación.
+El rollback conserva los documentos y sus snapshots ya aceptados; una versión
+anterior no debe volver a editar una captura pendiente con la acción nueva sin
+retirar primero esa revisión. Los documentos contabilizados son inmutables.

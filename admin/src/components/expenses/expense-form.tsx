@@ -76,6 +76,8 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
   function invalidate() { calculationVersion.current++; setPreview(null); setError(null); }
   function change(patch: Partial<ConfirmExpense>) {
     const next = { ...form, ...patch };
+    if ("supplierId" in patch || "partySiteId" in patch || "issuedAt" in patch || "dueDate" in patch || "purchaseEvidenceType" in patch)
+      next.withholdingAdjustments = next.withholdingAdjustments?.filter(item => item.action !== "Review");
     setForm(next);
     if ("supplierId" in patch || "partySiteId" in patch || "issuedAt" in patch || "dueDate" in patch || "purchaseEvidenceType" in patch || "withholdingAdjustments" in patch) {
       invalidate();
@@ -90,10 +92,18 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
     event.preventDefault();
     if (!editingLine || !validLine(editingLine) || phase || (!existingLine && lines.length >= 100)) return;
     const nextLines = existingLine ? lines.map(line => line.key === editingLine.key ? editingLine : line) : [...lines, editingLine];
+    const nextForm = { ...form, withholdingAdjustments: form.withholdingAdjustments?.filter(item => item.action !== "Review") };
     invalidate();
+    setForm(nextForm);
     setLines(nextLines);
     setEditingLine(null);
-    if (canPreview(nextLines)) void calculate(nextLines);
+    if (canPreview(nextLines, nextForm)) void calculate(nextLines, nextForm);
+  }
+  function removeLine(key: string) {
+    const remaining = lines.filter(item => item.key !== key);
+    const nextForm = { ...form, withholdingAdjustments: form.withholdingAdjustments?.filter(item => item.action !== "Review") };
+    invalidate(); setLines(remaining); setForm(nextForm);
+    if (canPreview(remaining, nextForm)) void calculate(remaining, nextForm);
   }
   function canPreview(value: EditableLine[], header: ConfirmExpense = form) {
     return !!header.supplierId && !!header.issuedAt && !!header.dueDate && header.dueDate >= header.issuedAt &&
@@ -136,8 +146,8 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
       if ((cause as { statusCode?: number }).statusCode === 409) setPreview(null);
     } finally { setPhase(null); onBusyChange(false); }
   }
-  return <><form onSubmit={confirm} className="space-y-5">
-    <fieldset disabled={!!phase} className="space-y-5 disabled:opacity-75">
+  return <><form onSubmit={confirm} className="min-w-0 space-y-5">
+    <fieldset disabled={!!phase} className="min-w-0 space-y-5 disabled:opacity-75">
       {dispatchReport&&<section className="space-y-3 rounded-xl border bg-muted/30 p-4"><p className="text-sm"><strong>Gasto reportado: {money.format(dispatchReport.amount)}</strong><span className="block text-muted-foreground">Al confirmar se aprueba este reporte y se registra el gasto con su proveedor real.</span></p><Label>Efectivo del que se pagó</Label><PaymentMethodSelect tenantId={tenant} businessId={businessId} usage="SupplierPayments" methodCode="Cash" autoSelectSingle
         value={form.dispatchCashPaymentMethodId??""} name={cashForm?.name} ariaLabel="Efectivo usado en el gasto del despacho" onChange={value=>{if(value.paymentMethodId===form.dispatchCashPaymentMethodId&&value.version===form.dispatchCashPaymentMethodVersion)return;setCashForm(value);change({dispatchCashPaymentMethodId:value.paymentMethodId,dispatchCashPaymentMethodVersion:value.version})}}/></section>}
       <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
@@ -176,7 +186,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
                 <td className="min-w-0 font-medium md:whitespace-nowrap md:p-3 md:text-right"><span className="mb-1 block text-xs font-normal text-muted-foreground md:hidden">Base</span>{money.format(line.taxExclusiveAmount)}</td>
                 <td className="min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">IVA</span>{tax ? `${tax.name} · ${tax.rate}%` : "Sin IVA"}{tax && <small className="block text-muted-foreground">{options.taxTreatments?.find(item => item.code === line.taxTreatment)?.label}</small>}{calculated && <span className="block md:whitespace-nowrap">{money.format(calculated.vatAmount)}</span>}</td>
                 <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Concepto tributario</span>{line.withholdingConceptCode ?? "Sin clasificación específica"}</td>
-                <td className="col-span-2 min-w-0 md:p-3"><div className="flex justify-end gap-1"><Button type="button" size="icon" variant="ghost" aria-label={`Editar gasto ${index + 1}`} onClick={() => setEditingLine({ ...line })}><Pencil className="h-4 w-4"/></Button><Button type="button" size="icon" variant="ghost" aria-label={`Quitar gasto ${index + 1}`} onClick={() => { const remaining = lines.filter(item => item.key !== line.key); invalidate(); setLines(remaining); if (canPreview(remaining)) void calculate(remaining); }}><Trash2 className="h-4 w-4"/></Button></div></td>
+                <td className="col-span-2 min-w-0 md:p-3"><div className="flex justify-end gap-1"><Button type="button" size="icon" variant="ghost" aria-label={`Editar gasto ${index + 1}`} onClick={() => setEditingLine({ ...line })}><Pencil className="h-4 w-4"/></Button><Button type="button" size="icon" variant="ghost" aria-label={`Quitar gasto ${index + 1}`} onClick={() => removeLine(line.key)}><Trash2 className="h-4 w-4"/></Button></div></td>
               </tr>;
             })}</tbody>
           </table>
@@ -188,7 +198,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
     </fieldset>
     {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
     {lines.length > 0 && <section className="space-y-4 rounded-xl border p-4" aria-label="Cálculo del gasto">
-      <WithholdingAdjustmentEditor businessId={businessId} occurredAt={form.issuedAt} calculation={preview?.withholding ?? null}
+      <WithholdingAdjustmentEditor businessId={businessId} occurredAt={form.issuedAt} calculation={preview?.withholding ?? null} allowDocumentReview
         adjustments={form.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
         disabled={!!phase || !canAdjustWithholdings}
         onChange={withholdingAdjustments => change({withholdingAdjustments})}/>

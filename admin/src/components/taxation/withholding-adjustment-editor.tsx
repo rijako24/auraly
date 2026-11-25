@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { useId, useState } from "react";
+import { ClipboardCheck, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -11,11 +11,11 @@ import { ManualWithholdingDialog } from "./manual-withholding-dialog";
 import type { WithholdingAdjustment, WithholdingCalculation, WithholdingKind, WithholdingRule } from "@/services/api/taxation";
 
 type Draft = WithholdingAdjustment;
-type Calculation = Pick<WithholdingCalculation, "grossAmount"> &
+type Calculation = Pick<WithholdingCalculation, "grossAmount" | "reviewBasisHash"> &
   {lines: WithholdingCalculation["lines"]};
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 4 });
 
-export function WithholdingAdjustmentEditor({ businessId, occurredAt, calculation, adjustments, rules, onChange, disabled = false }: {
+export function WithholdingAdjustmentEditor({ businessId, occurredAt, calculation, adjustments, rules, onChange, disabled = false, allowDocumentReview = false }: {
   businessId: string;
   occurredAt: string;
   calculation: Calculation | null;
@@ -23,8 +23,10 @@ export function WithholdingAdjustmentEditor({ businessId, occurredAt, calculatio
   rules: WithholdingRule[];
   onChange: (adjustments: WithholdingAdjustment[]) => void;
   disabled?: boolean;
+  allowDocumentReview?: boolean;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
+  const fieldId = useId();
   const [manualId, setManualId] = useState<string | null>(null);
   const selected = rules.find(rule => rule.ruleId === draft?.ruleId);
 
@@ -35,22 +37,26 @@ export function WithholdingAdjustmentEditor({ businessId, occurredAt, calculatio
       taxableBase:line.taxableBase,amount:line.amount,reason:existing?.reason ?? ""});
   }
   function apply(value: Draft) {
-    onChange([...adjustments.filter(item => item.action === "Manual" || item.ruleId !== value.ruleId), value]);
+    onChange([...adjustments.filter(item => (value.action === "Review" || item.action !== "Review") && (item.action === "Manual" || item.ruleId !== value.ruleId)), value]);
     setDraft(null);
   }
   function restore(ruleId: string) {
-    onChange(adjustments.filter(item => item.action === "Manual" || item.ruleId !== ruleId));
+    onChange(adjustments.filter(item => item.action !== "Review" && (item.action === "Manual" || item.ruleId !== ruleId)));
   }
   function removeManual(id: string) {
-    onChange(adjustments.filter(item => item.action !== "Manual" || item.manualLineId !== id));
+    onChange(adjustments.filter(item => item.action !== "Review" && (item.action !== "Manual" || item.manualLineId !== id)));
   }
   return <div className="space-y-3 rounded-xl border p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><h4 className="font-medium">Retenciones</h4><p className="text-xs text-muted-foreground">El cálculo automático sigue la configuración tributaria. Puedes ajustar una línea o agregar una retención puntual.</p></div>
-      <Button type="button" size="sm" variant="outline" disabled={disabled || !calculation}
+      <div className="flex flex-wrap gap-2">{allowDocumentReview && <Button type="button" size="sm" variant="outline" disabled={disabled || !calculation?.reviewBasisHash}
+        onClick={() => setDraft({ruleId:"00000000-0000-0000-0000-000000000000",action:"Review",taxableBase:null,amount:null,
+          reason:adjustments.find(item => item.action === "Review")?.reason ?? "",reviewBasisHash:calculation?.reviewBasisHash})}>
+        <ClipboardCheck className="mr-1 h-4 w-4"/>Confirmar revisión
+      </Button>}<Button type="button" size="sm" variant="outline" disabled={disabled || !calculation}
         onClick={() => setManualId("new")}>
         <Plus className="mr-1 h-4 w-4"/>Agregar retención
-      </Button>
+      </Button></div>
     </div>
     {calculation?.lines.map(line => {
       const adjustment = adjustments.find(item => line.manualLineId
@@ -70,7 +76,11 @@ export function WithholdingAdjustmentEditor({ businessId, occurredAt, calculatio
       <span>{rules.find(rule => rule.ruleId === item.ruleId)?.name ?? "Retención"} · Excluida: {item.reason}</span>
       <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => restore(item.ruleId)}>Restaurar</Button>
     </div>)}
-    {adjustments.filter(item => item.action !== "Exclude" && !calculation?.lines.some(line =>
+    {adjustments.filter(item => item.action === "Review").map(item => <div key="review" role="status" className="flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-sm">
+      <span className="min-w-0 break-words"><b>Revisión tributaria confirmada</b><span className="block text-muted-foreground">{item.reason}</span></span>
+      <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => restore(item.ruleId)}>Quitar revisión</Button>
+    </div>)}
+    {adjustments.filter(item => item.action !== "Exclude" && item.action !== "Review" && !calculation?.lines.some(line =>
       item.action === "Manual" ? line.manualLineId === item.manualLineId : line.ruleId === item.ruleId)).map(item =>
       <div key={item.manualLineId ?? item.ruleId} className="flex items-center justify-between border-t pt-2 text-sm text-muted-foreground">
         <span>{item.name ?? rules.find(rule => rule.ruleId === item.ruleId)?.name ?? "Retención ajustada"} · Requiere revisar el cálculo</span>
@@ -82,19 +92,19 @@ export function WithholdingAdjustmentEditor({ businessId, occurredAt, calculatio
         ({kind:line.kind as WithholdingKind,taxableBase:line.taxableBase,jurisdictionCode:line.jurisdictionCode}))}
       initial={manualId === "new" ? undefined : adjustments.find(item => item.action === "Manual" && item.manualLineId === manualId)}
       onClose={() => setManualId(null)} onApply={value => onChange([...adjustments.filter(item =>
-        item.action !== "Manual" || item.manualLineId !== value.manualLineId),value])}/>}
+        item.action !== "Review" && (item.action !== "Manual" || item.manualLineId !== value.manualLineId)),value])}/>}
     <Dialog open={!!draft} onOpenChange={open => {if (!open) setDraft(null)}}>
-      <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{draft?.action === "Add" ? "Agregar retención" : draft?.action === "Exclude" ? "Excluir retención" : "Ajustar retención"}</DialogTitle>
-        <DialogDescription>El motivo y el cálculo final quedarán registrados con el documento.</DialogDescription></DialogHeader>
+      <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{draft?.action === "Review" ? "Confirmar revisión tributaria" : draft?.action === "Add" ? "Agregar retención" : draft?.action === "Exclude" ? "Excluir retención" : "Ajustar retención"}</DialogTitle>
+        <DialogDescription>{draft?.action === "Review" ? "Confirma que revisaste las retenciones de este documento, incluso si el resultado es cero. Se conservarán tu usuario y el motivo; esta decisión no modifica el perfil del proveedor ni elimina retenciones calculadas." : "El motivo y el cálculo final quedarán registrados con el documento."}</DialogDescription></DialogHeader>
         {draft && <div className="space-y-4">
           {draft.action === "Add" && <p className="text-sm font-medium">{selected?.name ?? "Regla configurada"}</p>}
-          {draft.action !== "Exclude" && <div className="grid gap-3 sm:grid-cols-2">
+          {draft.action !== "Exclude" && draft.action !== "Review" && <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label>Base de retención</Label><FormattedNumberInput kind="currency" value={draft.taxableBase ?? ""} onValueChange={base => setDraft({...draft,taxableBase:base,amount:base && selected ? Math.round(base * selected.rate * 100) / 10000 : null})}/></div>
             <div className="space-y-1"><Label>Valor retenido</Label><FormattedNumberInput kind="currency" value={draft.amount ?? ""} onValueChange={amount => setDraft({...draft,amount})}/></div>
           </div>}
-          <div className="space-y-1"><Label>Motivo del ajuste</Label><Textarea maxLength={500} value={draft.reason} onChange={event => setDraft({...draft,reason:event.target.value})} placeholder="Explica por qué se cambia el cálculo"/></div>
+          <div className="space-y-1"><Label htmlFor={`${fieldId}-reason`}>Motivo del ajuste</Label><Textarea id={`${fieldId}-reason`} autoFocus={draft.action === "Review"} maxLength={500} value={draft.reason} onChange={event => setDraft({...draft,reason:event.target.value})} placeholder={draft.action === "Review" ? "Indica qué soporte y retenciones revisaste" : "Explica por qué se cambia el cálculo"}/></div>
           <DialogFooter><Button type="button" variant="outline" onClick={() => setDraft(null)}>Cerrar</Button><Button type="button" disabled={!draft.ruleId || !draft.reason.trim() || draft.reason.trim().length > 500 ||
-            (draft.action !== "Exclude" && (!(draft.taxableBase && draft.taxableBase > 0) || !(draft.amount && draft.amount > 0) ||
+            (draft.action !== "Exclude" && draft.action !== "Review" && (!(draft.taxableBase && draft.taxableBase > 0) || !(draft.amount && draft.amount > 0) ||
               !!calculation && (draft.taxableBase > calculation.grossAmount || draft.amount > calculation.grossAmount)))}
             onClick={() => apply({...draft,reason:draft.reason.trim()})}>Aplicar</Button></DialogFooter>
         </div>}

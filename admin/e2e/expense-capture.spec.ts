@@ -1,6 +1,77 @@
 import { expect, test } from "@playwright/test";
 import { openExpenses, businessId, accountId, supplierId, conceptId } from "./support/expense-workspace";
 
+for (const width of [1366, 390]) {
+  test(`revisión tributaria explícita sin perfil conserva el cálculo y cabe en ${width}`, async ({ page, baseURL }, info) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 768 });
+    const { dialog, state } = await openExpenses(page, baseURL!, true,
+      { manageWithholdings: true, rules: [], incompleteTaxProfile: true });
+    const confirm = dialog.getByRole("button", { name: "Confirmar gasto", exact: true });
+    await expect(confirm).toBeDisabled();
+    await dialog.getByRole("button", { name: "Confirmar revisión", exact: true }).click();
+    const review = page.getByRole("dialog", { name: "Confirmar revisión tributaria", exact: true });
+    await expect(review.getByLabel("Motivo del ajuste")).toBeFocused();
+    await expect(review.getByRole("button", { name: "Aplicar", exact: true })).toBeDisabled();
+    await review.getByLabel("Motivo del ajuste").fill("Soporte revisado para esta operación sin retención");
+    await page.screenshot({ path: info.outputPath(`tax-review-dialog-${width}.png`), fullPage: true });
+    expect(await review.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+    await review.getByRole("button", { name: "Aplicar", exact: true }).click();
+    await expect.poll(() => state.preview.length).toBe(2);
+    expect(state.preview.at(-1)!.withholdingAdjustments).toEqual([expect.objectContaining({
+      action: "Review", reviewBasisHash: "preview-basis-from-the-server", amount: null, taxableBase: null,
+    })]);
+    await expect(dialog.getByText("Revisión tributaria confirmada", { exact: true })).toBeVisible();
+    await expect(confirm).toBeEnabled();
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`tax-review-form-${width}.png`), fullPage: true });
+    await confirm.click();
+    await expect.poll(() => state.confirm.length).toBe(1);
+    expect(state.confirm[0].withholdingAdjustments).toEqual(state.preview.at(-1)!.withholdingAdjustments);
+    expect(state.accountReads).toBe(0);
+  });
+}
+
+test("la revisión tributaria se retira al editar una línea", async ({ page, baseURL }) => {
+  const { dialog, state } = await openExpenses(page, baseURL!, true,
+    { manageWithholdings: true, rules: [], incompleteTaxProfile: true });
+  await dialog.getByRole("button", { name: "Confirmar revisión", exact: true }).click();
+  const review = page.getByRole("dialog", { name: "Confirmar revisión tributaria", exact: true });
+  await review.getByLabel("Motivo del ajuste").fill("Revisión de la primera base");
+  await review.getByRole("button", { name: "Aplicar", exact: true }).click();
+  await expect.poll(() => state.preview.length).toBe(2);
+  await dialog.getByRole("button", { name: "Editar gasto 1" }).click();
+  const line = page.getByRole("dialog", { name: "Editar gasto", exact: true });
+  await line.getByLabel("Base antes de IVA").fill("20000");
+  await line.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+  await expect.poll(() => state.preview.length).toBe(3);
+  expect(state.preview.at(-1)!.withholdingAdjustments).toEqual([]);
+  await expect(dialog.getByRole("button", { name: "Confirmar gasto", exact: true })).toBeDisabled();
+});
+
+test("un usuario sin permiso tributario no puede confirmar la revisión", async ({ page, baseURL }) => {
+  const { dialog } = await openExpenses(page, baseURL!, true, { incompleteTaxProfile: true });
+  await expect(dialog.getByRole("button", { name: "Confirmar revisión", exact: true })).toBeDisabled();
+});
+
+test("el gasto guardado conserva visible el motivo de su revisión tributaria", async ({ page, baseURL }) => {
+  await page.setViewportSize({width:390,height:844});
+  const {dialog}=await openExpenses(page,baseURL!);
+  await dialog.getByRole("button",{name:"Close",exact:true}).click();
+  const expenseId="88888888-8888-8888-8888-888888888888";
+  const item={expenseId,documentNumber:"G-REVISADO",supplierDocumentNumber:"FV-REVISADO",supplierId,
+    supplierName:"Proveedor sin perfil",conceptId,conceptName:"Servicio frecuente",issuedAt:"2026-11-24T12:00:00-05:00",
+    dueDate:"2026-12-24T12:00:00-05:00",grossAmount:100,withholdingAmount:0,netPayable:100,outstandingAmount:100,
+    payableStatus:"Open",status:"Processed",currencyCode:"COP",purchaseEvidenceType:"SupplierElectronicInvoice",chargeReturned:false};
+  await page.route(`**/expenses/${expenseId}`,route=>route.fulfill({json:{...item,description:"Soporte revisado",lines:[],
+    withholding:{grossAmount:100,withholdingTotal:0,netAmount:100,lines:[],adjustments:[{ruleId:"00000000-0000-0000-0000-000000000000",
+      action:"Review",reason:"Soporte y retenciones comprobados para este gasto",adjustedByUserId:"33333333-3333-3333-3333-333333333333"}]},payable:null}}));
+  await page.route("**/expenses?**",route=>route.fulfill({json:{items:[item],page:1,pageSize:25,totalCount:1,totalPages:1,grossTotal:100,withholdingTotal:0,netPayableTotal:100}}));
+  await page.getByPlaceholder("Documento, proveedor o concepto").fill("G-REVISADO");
+  await page.getByRole("button",{name:"Ver gasto G-REVISADO",exact:true}).click();
+  await expect(page.getByText("Revisión tributaria confirmada",{exact:true})).toBeVisible();
+  await expect(page.getByText("Soporte y retenciones comprobados para este gasto",{exact:false})).toBeVisible();
+});
+
 test("cerrar gasto durante el cálculo libera la página y permite abrirlo otra vez", async ({ page, baseURL }) => {
   const { dialog, releasePreview } = await openExpenses(page, baseURL!, false, {holdPreview:true});
   try {

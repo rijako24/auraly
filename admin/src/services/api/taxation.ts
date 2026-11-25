@@ -48,19 +48,20 @@ export interface WithholdingPreview {
 
 export interface WithholdingCalculation {
   grossAmount: number; withholdingTotal: number; netAmount: number;
+  reviewBasisHash?: string | null;
   lines: Array<{ ruleId: string; ruleVersion: number; ruleCode: string; name: string;
     kind: WithholdingKind; baseKind: WithholdingBaseKind; taxableBase: number;
     rate: number; amount: number; jurisdictionCode: string | null;
     accountId?: string | null; manualLineId?: string | null; }>;
-  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude"|"Manual";
+  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude"|"Manual"|"Review";
     automaticTaxableBase:number|null;automaticAmount:number|null;taxableBase:number|null;
     amount:number|null;reason:string;adjustedByUserId:string}>|null;
 }
 
-export type WithholdingAdjustment = {ruleId:string;action:"Add"|"Override"|"Exclude"|"Manual";
+export type WithholdingAdjustment = {ruleId:string;action:"Add"|"Override"|"Exclude"|"Manual"|"Review";
   taxableBase:number|null;amount:number|null;reason:string;
   manualLineId?:string|null;kind?:WithholdingKind|null;name?:string|null;rate?:number|null;
-  jurisdictionCode?:string|null;accountId?:string|null};
+  jurisdictionCode?:string|null;accountId?:string|null;reviewBasisHash?:string|null};
 
 export const taxationApi = {
   listApplied: (from: string, to: string, page: number, pageSize = 25) =>

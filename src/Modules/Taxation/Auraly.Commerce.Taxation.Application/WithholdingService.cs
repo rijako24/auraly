@@ -201,16 +201,41 @@ public sealed class WithholdingService(
         IReadOnlyList<WithholdingAdjustmentRequest>? adjustments,
         Guid userId, DateTimeOffset occurredAt)
     {
+        if (adjustments is { Count: > 20 } || adjustments is { Count: > 0 } && userId == Guid.Empty)
+            throw new TaxationValidationException("Las retenciones manuales son inválidas o están duplicadas.");
         var result = CalculateDocument(plan, bases);
-        var calculation = ApplyAdjustments(plan, result.Calculation, adjustments,
+        var calculation = ApplyAdjustments(plan, result.Calculation, adjustments?.Where(item => item.Action != "Review").ToArray(),
             userId, occurredAt, bases.Sum(basis => basis.VatAmount));
+        plan.Profiles.TryGetValue(supplierId, out var profile);
+        var basisHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new { plan.BusinessId, supplierId, bases, profile, calculation }))));
+        var reviews = adjustments?.Where(item => item.Action == "Review").ToArray() ?? [];
+        if (reviews.Length > 1)
+            throw new TaxationValidationException("La revisión tributaria del documento está duplicada.");
+        if (reviews is [var review])
+        {
+            var reason = review.Reason?.Trim();
+            if (review.RuleId != Guid.Empty || review.TaxableBase is not null || review.Amount is not null ||
+                review.ManualLineId is not null || review.AccountId is not null || review.Kind is not null ||
+                review.Name is not null || review.Rate is not null || review.JurisdictionCode is not null ||
+                string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
+                throw new TaxationValidationException("La revisión tributaria requiere solo un motivo; no cambia importes ni cuentas.");
+            if (!string.Equals(review.ReviewBasisHash, basisHash, StringComparison.Ordinal))
+                throw new TaxationValidationException("El documento o sus retenciones cambiaron. Quita la revisión anterior y confirma el cálculo vigente.");
+            calculation = calculation with { Adjustments = [..calculation.Adjustments ?? [],
+                new(Guid.Empty, 0, "Review", null, null, null, null, reason, userId)] };
+        }
+        calculation = calculation with { ReviewBasisHash = basisHash };
         var hasProfile = plan.Profiles.ContainsKey(supplierId);
         var hasManualWithholding = adjustments?.Any(item => item.Action == "Manual") == true;
+        var hasDocumentReview = calculation.Adjustments?.Any(item => item.Action == "Review") == true;
         IReadOnlyList<string> diagnostics = hasProfile ? result.Diagnostics :
-            [hasManualWithholding
+            [hasDocumentReview
+                ? "Revisión tributaria confirmada para este documento. El proveedor sigue sin perfil; se conservan las retenciones indicadas y el motivo de la revisión."
+                : hasManualWithholding
                 ? "El proveedor no tiene perfil tributario; se aplicará únicamente la retención manual indicada."
                 : "Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
-        return new(calculation, diagnostics, hasProfile, hasProfile || hasManualWithholding);
+        return new(calculation, diagnostics, hasProfile, hasProfile || hasManualWithholding || hasDocumentReview);
     }
 
     public WithholdingCalculationSnapshot ApplyAdjustments(
@@ -235,6 +260,8 @@ public sealed class WithholdingService(
             var reason = adjustment.Reason?.Trim();
             if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
                 throw new TaxationValidationException("Indica el motivo del ajuste (máximo 500 caracteres).");
+            if (adjustment.ReviewBasisHash is not null)
+                throw new TaxationValidationException("La evidencia de revisión solo corresponde a una revisión tributaria del documento.");
             if (adjustment.Action == "Manual")
             {
                 if (adjustment.RuleId != Guid.Empty || adjustment.ManualLineId is not { } manualId ||

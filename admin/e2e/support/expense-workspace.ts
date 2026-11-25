@@ -5,7 +5,7 @@ const accountId = "44444444-4444-4444-4444-444444444444", supplierId = "55555555
 const conceptId = "66666666-6666-6666-6666-666666666666";
 async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = true,
   behavior: {timeZone?: string; holdPreview?: boolean; manageWithholdings?: boolean; rules?: object[];
-    supplierSearch?: string; supplierPolicy?: "InternalReceiptVoucher"} = {}) {
+    supplierSearch?: string; supplierPolicy?: "InternalReceiptVoucher"; incompleteTaxProfile?: boolean} = {}) {
   const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "@expense",
     username: "accountant", firstName: "Prueba", lastName: "Gastos", roles: [], permissions: ["expenses.read", "expenses.create", "expenses.configure", "expenses.cancel",
       ...(behavior.manageWithholdings ? ["commerce.taxation.withholdings.manage"] : [])] };
@@ -14,7 +14,7 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
     localStorage.setItem("selected_tenant_id", user.tenantId); localStorage.setItem("selected_business_id", businessId);
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
   }, { user, businessId });
-  const state = { contextReads: 0, preview: [] as Record<string, unknown>[], confirm: [] as Record<string, unknown>[], savedRules: [] as Record<string, unknown>[], supplierSearches: [] as string[], list: 0, accountReads: 0, conflict: false, canConfirm: true };
+  const state = { contextReads: 0, preview: [] as Record<string, unknown>[], confirm: [] as Record<string, unknown>[], savedRules: [] as Record<string, unknown>[], supplierSearches: [] as string[], list: 0, accountReads: 0, conflict: false, canConfirm: !behavior.incompleteTaxProfile };
   let releasePreview = () => {};
   const previewGate = new Promise<void>(resolve => { releasePreview = resolve; });
   await page.route("**/api/**", async route => {
@@ -58,11 +58,15 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
       const base = value.lines.reduce((sum: number, line: { taxExclusiveAmount: number }) => sum + line.taxExclusiveAmount, 0);
       const manual = (value.withholdingAdjustments ?? []).filter((item: {action:string}) => item.action === "Manual");
       const manualTotal = manual.reduce((sum:number,item:{amount:number}) => sum + item.amount, 0);
+      const reviewed = (value.withholdingAdjustments ?? []).some((item: {action:string}) => item.action === "Review");
+      const canConfirm = state.canConfirm || reviewed;
+      const automatic = behavior.incompleteTaxProfile ? 0 : base * .025;
       body = { lines: value.lines.map((line: object, index: number) => ({ ...line, expenseAccountId: accountId, lineNumber: index + 1, accountCode: "519595", accountName: "Servicios", vatAmount: 0, taxRate: 0 })),
-        calculationHash: `review-${state.preview.length}`, canConfirm: state.canConfirm,
-        diagnostics: state.canConfirm ? [] : ["Falta el perfil tributario del proveedor."],
-        withholding: { grossAmount: base, withholdingTotal: base * .025 + manualTotal, netAmount: base * .975 - manualTotal,
-          lines: [{ ruleId: "rule", ruleVersion: 1, ruleCode: "RF", name: "Retefuente servicios", kind:"IncomeTax", baseKind:"TaxExclusiveAmount", taxableBase: base, rate: 2.5, amount: base * .025, jurisdictionCode:null },
+        calculationHash: `review-${state.preview.length}`, canConfirm,
+        diagnostics: canConfirm ? [] : ["Falta el perfil tributario del proveedor."],
+        withholding: { grossAmount: base, withholdingTotal: automatic + manualTotal, netAmount: base - automatic - manualTotal,
+          reviewBasisHash: "preview-basis-from-the-server",
+          lines: [...(behavior.incompleteTaxProfile ? [] : [{ ruleId: "rule", ruleVersion: 1, ruleCode: "RF", name: "Retefuente servicios", kind:"IncomeTax", baseKind:"TaxExclusiveAmount", taxableBase: base, rate: 2.5, amount: base * .025, jurisdictionCode:null }]),
             ...manual.map((item:object) => ({...item,ruleVersion:0,ruleCode:"MANUAL",baseKind:"TaxExclusiveAmount"}))] } };
     } else if (path.endsWith("/expenses/confirm")) {
       state.confirm.push(request.postDataJSON());

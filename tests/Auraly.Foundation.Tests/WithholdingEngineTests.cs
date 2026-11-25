@@ -1,9 +1,73 @@
 using Auraly.Commerce.Taxation.Domain;
+using Auraly.Commerce.Taxation.Application;
+using Auraly.Commerce.Taxation.Contracts;
 
 namespace Auraly.Foundation.Tests;
 
 public sealed class WithholdingEngineTests
 {
+    [Fact]
+    public void Existing_adjustment_serialization_does_not_gain_a_null_review_field()
+    {
+        var adjustment = new WithholdingAdjustmentRequest(Guid.Empty, "Manual", 100m, 1m, "Soporte revisado");
+        Assert.DoesNotContain("ReviewBasisHash", System.Text.Json.JsonSerializer.Serialize(adjustment));
+        var snapshot = new WithholdingCalculationSnapshot(100m, 0m, 100m, []);
+        Assert.DoesNotContain("ReviewBasisHash", System.Text.Json.JsonSerializer.Serialize(snapshot));
+    }
+
+    [Fact]
+    public void Missing_supplier_profile_requires_an_explicit_audited_document_review()
+    {
+        var service = new WithholdingService(null!, new WithholdingEngine(), null!);
+        var plan = new WithholdingCalculationPlan(BusinessId, [], new Dictionary<Guid, CounterpartyTaxProfileView>(), new HashSet<Guid>());
+        var user = Guid.NewGuid();
+        var date = new DateTimeOffset(2026, 11, 24, 12, 0, 0, TimeSpan.Zero);
+        WithholdingPreviewRequest[] bases = [new(BusinessId, "Purchase", "Accrual", CounterpartyId, null, null, 100m, 0m, date)];
+        var initial = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date);
+        Assert.False(initial.CanConfirm);
+        var review = service.ReviewPurchaseDocument(plan, CounterpartyId, bases,
+            [new(Guid.Empty, "Review", null, null, "Soporte revisado para esta operación", ReviewBasisHash: initial.Calculation.ReviewBasisHash)], user, date);
+        Assert.True(review.CanConfirm);
+        Assert.False(review.HasProfile);
+        Assert.Empty(plan.Profiles);
+        Assert.Empty(review.Calculation.Lines);
+        Assert.Equal(100m, review.Calculation.NetAmount);
+        var audit = Assert.Single(review.Calculation.Adjustments!);
+        Assert.Equal("Review", audit.Action);
+        Assert.Equal(user, audit.AdjustedByUserId);
+        Assert.Null(audit.Amount);
+        Assert.Contains(review.Diagnostics, text => text.Contains("revisión", StringComparison.OrdinalIgnoreCase));
+        Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(plan, CounterpartyId,
+            [bases[0] with { TaxExclusiveAmount = 200m }],
+            [new(Guid.Empty, "Review", null, null, "Importe anterior", ReviewBasisHash: initial.Calculation.ReviewBasisHash)], user, date));
+        Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(plan, CounterpartyId, bases,
+            [new(Guid.Empty, "Review", null, 1m, "No debe cambiar importes")], user, date));
+        Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(plan, CounterpartyId, bases,
+            [new(Guid.Empty, "Review", null, null, " ")], user, date));
+    }
+
+    [Fact]
+    public void Document_review_keeps_automatic_withholding_and_rejects_a_changed_rule_or_duplicate_review()
+    {
+        var service = new WithholdingService(null!, new WithholdingEngine(), null!);
+        var date = new DateTimeOffset(2026, 11, 24, 12, 0, 0, TimeSpan.Zero);
+        var rule = Rule(WithholdingKind.IncomeTax, WithholdingBaseKind.TaxExclusiveAmount, 2.5m);
+        var plan = new WithholdingCalculationPlan(BusinessId, [rule], new Dictionary<Guid, CounterpartyTaxProfileView>
+            { [CounterpartyId] = new(BusinessId, CounterpartyId, true, [], null, date) }, new HashSet<Guid>());
+        var user = Guid.NewGuid();
+        WithholdingPreviewRequest[] bases = [new(BusinessId, "Purchase", "Accrual", CounterpartyId, null, null, 100_000m, 19_000m, date)];
+        var initial = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [], user, date);
+        var adjustment = new WithholdingAdjustmentRequest(Guid.Empty, "Review", null, null, "Retenciones verificadas",
+            ReviewBasisHash: initial.Calculation.ReviewBasisHash);
+        var reviewed = service.ReviewPurchaseDocument(plan, CounterpartyId, bases, [adjustment], user, date);
+        Assert.Equal(2_500m, reviewed.Calculation.WithholdingTotal);
+        Assert.Equal(initial.Calculation.Lines, reviewed.Calculation.Lines);
+        Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(
+            plan with { Rules = [rule with { Rate = 3m }] }, CounterpartyId, bases, [adjustment], user, date));
+        Assert.Throws<TaxationValidationException>(() => service.ReviewPurchaseDocument(
+            plan, CounterpartyId, bases, [adjustment, adjustment], user, date));
+    }
+
     [Fact]
     public void Manual_only_rule_is_a_template_and_never_runs_in_automatic_calculation()
     {
