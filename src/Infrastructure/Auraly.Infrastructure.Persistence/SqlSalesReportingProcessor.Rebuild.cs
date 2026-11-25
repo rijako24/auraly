@@ -150,6 +150,19 @@ public sealed partial class SqlSalesReportingProcessor
                         AND NOT EXISTS(SELECT 1 FROM #PreservedSales retained WHERE retained.SourceDocumentId=existing.SourceDocumentId
                           AND retained.SourceDocumentType=existing.SourceDocumentType))
                       THROW 51626,N'La sede conserva histórico de reportes sin fuentes suficientes para reconstruirlo. No se modificó el histórico.',1;
+                    -- Match the processor's UTF-8 SHA-256 check before changing
+                    -- any projection. The migration can restore verified original
+                    -- snapshots; a rebuild never blesses a different hash.
+                    IF EXISTS(SELECT 1 FROM #RebuildSources source
+                      JOIN reporting.SalesReportingJobs report ON report.SourceDocumentId=source.SourceDocumentId
+                        AND report.SourceDocumentType=source.SourceDocumentType AND report.SourceVersion=source.SourceVersion
+                        AND report.BusinessId=@Business
+                      LEFT JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=report.SourceDocumentId
+                        AND payload.DocumentType=report.SourceDocumentType AND payload.BusinessId=report.BusinessId
+                        AND payload.PayloadHash=report.SourcePayloadHash
+                      WHERE COALESCE(report.SourcePayloadJson,payload.PayloadJson) IS NULL OR report.SourcePayloadHash<>
+                        HASHBYTES('SHA2_256',CONVERT(varchar(max),COALESCE(report.SourcePayloadJson,payload.PayloadJson) COLLATE Latin1_General_100_BIN2_UTF8)))
+                      THROW 51629,N'El contenido de una fuente de Reporting no coincide con su huella inmutable. No se modificó el histórico.',1;
                     -- Keep the original headers durable across an interrupted rebuild.
                     -- Remove only the contribution of regenerable return facts currently
                     -- present; replay will add it once. The imported remainder survives.

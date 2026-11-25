@@ -266,6 +266,134 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reporting_source_upgrade_restores_only_the_verified_original_snapshot(bool changedOperationalHash)
+    {
+        var sale=fixture.CreateValidRequest(changedOperationalHash?9_572:9_571);
+        using(var upload=fixture.CreateUploadMessage(sale))
+        using(var accepted=await fixture.CreateClient().SendAsync(upload))
+            Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@Id",sale.DocumentId);
+        command.CommandText="SELECT p.PayloadJson,p.PayloadHash,a.PayloadJson,a.PayloadHash,r.SalesReportingJobId FROM dbo.DocumentProcessingPayloads p JOIN dbo.AccountingSourceDocuments a ON a.SourceDocumentId=p.DocumentId AND a.SourceDocumentType=p.DocumentType JOIN reporting.SalesReportingJobs r ON r.SourceDocumentId=p.DocumentId AND r.SourceDocumentType=p.DocumentType WHERE p.DocumentId=@Id;";
+        string original;byte[] hash;Guid job;
+        await using(var reader=await command.ExecuteReaderAsync())
+        {
+            Assert.True(await reader.ReadAsync());original=reader.GetString(0);hash=(byte[])reader[1];job=reader.GetGuid(4);
+            Assert.Equal(original,reader.GetString(2));Assert.Equal(hash,(byte[])reader[3]);
+            Assert.Equal(hash,SHA256.HashData(Encoding.UTF8.GetBytes(original)));
+        }
+        command.Parameters.AddWithValue("@Original",original);command.Parameters.AddWithValue("@Hash",hash);
+        var changed=original+" ";command.Parameters.AddWithValue("@Changed",changed);
+        command.Parameters.AddWithValue("@ChangedHash",changedOperationalHash?SHA256.HashData(Encoding.UTF8.GetBytes(changed)):hash);
+        command.CommandText="UPDATE dbo.DocumentProcessingPayloads SET PayloadJson=@Changed,PayloadHash=@ChangedHash WHERE DocumentId=@Id;";
+        await command.ExecuteNonQueryAsync();
+        var protectedFacts=await ReportingMigrationFingerprintAsync(connection);
+        try
+        {
+            string? retained=null;
+            for(var pass=0;pass<2;pass++)
+            {
+                await fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection);
+                command.CommandText="SELECT SalesReportingJobId,SourceDocumentProcessingJobId,SourcePayloadJson,SourcePayloadHash,CONVERT(varchar(18),RowVersion,1) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id;";
+                await using var reader=await command.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
+                Assert.Equal(job,reader.GetGuid(0));Assert.True(reader.IsDBNull(1));Assert.Equal(original,reader.GetString(2));Assert.Equal(hash,(byte[])reader[3]);
+                if(retained is null)retained=reader.GetString(4);else Assert.Equal(retained,reader.GetString(4));
+            }
+            Assert.Equal(protectedFacts,await ReportingMigrationFingerprintAsync(connection));
+            using var scope=fixture.CreateScope();var processor=scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
+            for(var replay=0;replay<2;replay++)
+            {
+                await processor.RebuildAsync(fixture.TenantId,fixture.BusinessId,default);
+                Assert.Equal(protectedFacts,await ReportingMigrationFingerprintAsync(connection));
+                command.CommandText="SELECT (SELECT COUNT(*) FROM reporting.SalesReportDocuments WHERE DocumentId=@Id),(SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND Status=N'Projected'),(SELECT PayloadJson FROM dbo.DocumentProcessingPayloads WHERE DocumentId=@Id),(SELECT PayloadJson FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id);";
+                await using var reader=await command.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
+                Assert.Equal(1,reader.GetInt32(0));Assert.Equal(1,reader.GetInt32(1));Assert.Equal(changed,reader.GetString(2));Assert.Equal(original,reader.GetString(3));
+            }
+        }
+        finally
+        {
+            command.CommandText="UPDATE dbo.DocumentProcessingPayloads SET PayloadJson=@Original,PayloadHash=@Hash WHERE DocumentId=@Id;";
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Theory]
+    [InlineData("documentId")]
+    [InlineData("tenantId")]
+    [InlineData("businessId")]
+    [InlineData("documentType")]
+    [InlineData("hash")]
+    public async Task Reporting_source_integrity_rejects_unverified_archives_before_reset(string invalidField)
+    {
+        var sale=fixture.CreateValidRequest(9_580+Array.IndexOf(new[]{"documentId","tenantId","businessId","documentType","hash"},invalidField));
+        using(var upload=fixture.CreateUploadMessage(sale))
+        using(var accepted=await fixture.CreateClient().SendAsync(upload))
+            Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@Id",sale.DocumentId);
+        command.CommandText="SELECT PayloadJson,PayloadHash FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id;";
+        string original;byte[] originalHash;
+        await using(var reader=await command.ExecuteReaderAsync())
+        {Assert.True(await reader.ReadAsync());original=reader.GetString(0);originalHash=(byte[])reader[1];}
+        var node=JsonNode.Parse(original)!.AsObject();
+        if(invalidField=="documentType")node["commercialSnapshot"]!["documentType"]="SalesReceipt";
+        else if(invalidField!="hash")node[invalidField]=Guid.NewGuid();
+        var changed=node.ToJsonString();var changedHash=SHA256.HashData(Encoding.UTF8.GetBytes(changed));
+        if(invalidField=="hash")changedHash[0]^=0xff;
+        command.Parameters.AddWithValue("@Original",original);command.Parameters.AddWithValue("@OriginalHash",originalHash);
+        command.Parameters.AddWithValue("@Changed",changed);command.Parameters.AddWithValue("@ChangedHash",changedHash);
+        command.CommandText="UPDATE dbo.AccountingSourceDocuments SET PayloadJson=@Changed,PayloadHash=@ChangedHash WHERE SourceDocumentId=@Id;UPDATE reporting.SalesReportingJobs SET SourcePayloadHash=@ChangedHash WHERE SourceDocumentId=@Id;";
+        await command.ExecuteNonQueryAsync();
+        var effects=await ReportingMigrationFingerprintAsync(connection);var reports=await ReportingReadModelFingerprintAsync(connection);
+        using var scope=fixture.CreateScope();var processor=scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
+        try
+        {
+            var migration=await Assert.ThrowsAsync<SqlException>(()=>fixture.ApplyMigrationAsync("20261121_BackfillReportingSourceReferences.sql",connection));
+            Assert.Equal(51629,migration.Number);
+            Assert.Equal(reports,await ReportingReadModelFingerprintAsync(connection));
+            var rebuild=await Assert.ThrowsAsync<SqlException>(()=>processor.RebuildAsync(fixture.TenantId,fixture.BusinessId,default));
+            Assert.Equal(51629,rebuild.Number);
+            Assert.Equal(reports,await ReportingReadModelFingerprintAsync(connection));
+            Assert.Equal(effects,await ReportingMigrationFingerprintAsync(connection));
+        }
+        finally
+        {
+            command.CommandText="UPDATE dbo.AccountingSourceDocuments SET PayloadJson=@Original,PayloadHash=@OriginalHash WHERE SourceDocumentId=@Id;UPDATE reporting.SalesReportingJobs SET SourcePayloadHash=@OriginalHash WHERE SourceDocumentId=@Id;";
+            await command.ExecuteNonQueryAsync();
+            await processor.RebuildAsync(fixture.TenantId,fixture.BusinessId,default);
+        }
+    }
+
+    [Fact]
+    public async Task Reporting_integrity_hash_uses_the_same_utf8_bytes_in_sql_and_the_processor()
+    {
+        const string payload="José, Bogotá, ñ, 中文, 🙂";
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var command=new SqlCommand("SELECT HASHBYTES('SHA2_256',CONVERT(varchar(max),@Payload COLLATE Latin1_General_100_BIN2_UTF8));",connection);
+        command.Parameters.Add("@Payload",System.Data.SqlDbType.NVarChar,-1).Value=payload;
+        Assert.Equal(SHA256.HashData(Encoding.UTF8.GetBytes(payload)),Assert.IsType<byte[]>(await command.ExecuteScalarAsync()));
+    }
+
+    private async Task<string> ReportingReadModelFingerprintAsync(SqlConnection connection)
+    {
+        await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        command.CommandText="""
+            SELECT (SELECT
+              (SELECT * FROM reporting.SalesReportDocuments WHERE BusinessId=@Business ORDER BY DocumentId FOR JSON PATH) Documents,
+              (SELECT * FROM reporting.SalesReportLineFacts WHERE BusinessId=@Business ORDER BY FactId FOR JSON PATH) Lines,
+              (SELECT * FROM reporting.SalesReportTaxFacts WHERE BusinessId=@Business ORDER BY SourceDocumentId,SourceDocumentType,TaxCode,TaxRate FOR JSON PATH) Taxes,
+              (SELECT * FROM reporting.SalesReportPaymentFacts WHERE BusinessId=@Business ORDER BY SourceDocumentId,SourceDocumentType,PaymentNumber FOR JSON PATH) Payments,
+              (SELECT * FROM reporting.SalesReportingJobs WHERE BusinessId=@Business ORDER BY SalesReportingJobId FOR JSON PATH) Jobs,
+              (SELECT * FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@Business ORDER BY ProjectionVersion FOR JSON PATH) Checkpoints,
+              (SELECT * FROM reporting.SalesReportDailyTotals WHERE BusinessId=@Business ORDER BY BusinessLocalDate,CurrencyCode FOR JSON PATH) Daily
+              FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
+            """;
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Assert.IsType<string>(await command.ExecuteScalarAsync()))));
+    }
+
     private async Task<string> ReportingMigrationFingerprintAsync(SqlConnection connection)
     {
         await using var command=connection.CreateCommand();command.Parameters.AddWithValue("@Business",fixture.BusinessId);

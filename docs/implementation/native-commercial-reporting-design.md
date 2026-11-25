@@ -114,7 +114,7 @@ El presupuesto interactivo sigue siendo dos comandos SQL, con filtros, orden y
 límite antes de enriquecer. La advertencia viaja en la consulta propietaria, sin
 otro GET, polling ni consultas por documento. El rebuild usa sus páginas de 200
 fuentes y transacciones canónicas existentes; la preservación es un conjunto SQL,
-con límite de 120 segundos por comando de mantenimiento y sin I/O por documento
+con límite de 600 segundos por comando de mantenimiento y sin I/O por documento
 conservado. Un conjunto exclusivamente histórico también puede cerrar su checkpoint, usando una de sus identidades reales, sin inventar
 un trabajo regenerable.
 No hay un motor, writer, tabla persistente ni proceso de recuperación paralelo.
@@ -128,6 +128,21 @@ exige checkpoint cerrado, cabeceras actuales, conciliación de hechos y agregado
 y un segundo pase sin duplicados; el ensayo conserva las huellas de documentos,
 inventario, cartera, pagos, asientos y hechos importados antes y después. El
 aprobado del ensayo en una copia no autoriza ejecutar ese corte en producción.
+La migración propietaria `20261121_BackfillReportingSourceReferences.sql` puede
+restaurar la entrada de Reporting de una venta desde su snapshot ya aceptado en
+`AccountingSourceDocuments`, exclusivamente cuando conserva la misma huella
+original, sus bytes UTF-8 la verifican y coinciden documento, tipo, tenant y sede
+con la venta física y una operación completada. Solo cambia la referencia
+derivada al modo autocontenido ya existente de la misma cola; no cambia huellas,
+documentos operativos, snapshots fiscales ni fuentes contables. Conserva el ID,
+versión y estado del trabajo. Los datos válidos quedan sin escritura y repetir
+la migración no cambia su RowVersion. No sustituye una huella inválida por otra
+calculada ni fabrica un documento a partir del reporte.
+La migración y el rebuild comprueban la integridad de las fuentes antes de
+modificar proyecciones. Una entrada sin evidencia verificable provoca rollback
+y error 51629; el checksum SQL usa los mismos bytes SHA-256/UTF-8 que verifica el
+processor, incluida una prueba de caracteres Unicode. Así se evita borrar un
+histórico para descubrir después una fuente inválida durante el replay.
 El rollback conserva los hechos y la columna aditiva. Se prefiere avanzar con
 un lector corregido. Si se revierte la aplicación, debe suspenderse el acceso a
 reportes hasta restablecer el lector compatible: un lector anterior podría

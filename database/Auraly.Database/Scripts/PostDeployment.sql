@@ -175,6 +175,7 @@ GO
 :r .\Migrations\MigrateEmployeesAndUsersToParties.sql
 :r .\Seeds\EnsureFinalConsumer.sql
 :r .\Migrations\BackfillEngineOwnedSourcesAndReportingJobs.sql
+:r .\Migrations\20261121_BackfillReportingSourceReferences.sql
 :r .\Seeds\SeedAccountingDefaults.sql
 :r .\Migrations\20260928_CorrectDefaultPucMappings.sql
 :r .\Migrations\20261115_RetargetHistoricalPostingMappings.sql
