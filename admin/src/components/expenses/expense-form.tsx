@@ -150,7 +150,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
     <fieldset disabled={!!phase} className="min-w-0 space-y-5 disabled:opacity-75">
       {dispatchReport&&<section className="space-y-3 rounded-xl border bg-muted/30 p-4"><p className="text-sm"><strong>Gasto reportado: {money.format(dispatchReport.amount)}</strong><span className="block text-muted-foreground">Al confirmar se aprueba este reporte y se registra el gasto con su proveedor real.</span></p><Label>Efectivo del que se pagó</Label><PaymentMethodSelect tenantId={tenant} businessId={businessId} usage="SupplierPayments" methodCode="Cash" autoSelectSingle
         value={form.dispatchCashPaymentMethodId??""} name={cashForm?.name} ariaLabel="Efectivo usado en el gasto del despacho" onChange={value=>{if(value.paymentMethodId===form.dispatchCashPaymentMethodId&&value.version===form.dispatchCashPaymentMethodVersion)return;setCashForm(value);change({dispatchCashPaymentMethodId:value.paymentMethodId,dispatchCashPaymentMethodVersion:value.version})}}/></section>}
-      <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
+      <section className="grid min-w-0 grid-cols-1 gap-4 rounded-xl border p-4 sm:grid-cols-2">
         <Field label="Proveedor o beneficiario · sede">{id => <div id={id}><SupplierSiteSelect value={form.partySiteId??""}
           sourceKey="expense-supplier-sites" onChange={(partySiteId, selected) => {
             setParty(selected ?? null);
@@ -221,7 +221,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
                 description: concept.name, costCenterId: concept.defaultCostCenterId, withholdingConceptCode: concept.withholdingConceptCode });
             }}><SelectTrigger id={id} className={editingLine.conceptId ? "pr-16" : undefined}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar concepto</SelectItem>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select>{editingLine.conceptId && <button type="button" aria-label="Quitar selección de concepto" className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => changeLine({ conceptId: null, expenseAccountId: null, description: "", costCenterId: null, withholdingConceptCode: null })}><X className="h-4 w-4"/></button>}</div>}</Field>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2">
             <Field label="Centro de costo">{() => <CostCenterSelect value={editingLine.costCenterId} onChange={value=>changeLine({costCenterId:value})} selected={editingLine.costCenterId?centers.data?.get(editingLine.costCenterId):undefined} ariaLabel="Centro de costo del gasto" emptyLabel="Predeterminado de contabilidad"/>}</Field>
             <Field label="Descripción de la línea">{id => <Input id={id} required maxLength={300} value={editingLine.description} onChange={event => changeLine({ description: event.target.value })}/>}</Field>
             <Field label="Base antes de IVA">{id => <FormattedNumberInput id={id} kind="currency" value={editingLine.taxExclusiveAmount} onValueChange={value => changeLine({ taxExclusiveAmount: value ?? 0 })}/>}</Field>
@@ -238,5 +238,5 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange, dispat
 
 function Field({ label, children }: { label: string; children: (id: string) => React.ReactNode }) {
   const id = useId();
-  return <div className="space-y-2"><Label htmlFor={id}>{label}</Label>{children(id)}</div>;
+  return <div className="min-w-0 space-y-2"><Label htmlFor={id}>{label}</Label>{children(id)}</div>;
 }

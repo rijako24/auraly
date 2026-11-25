@@ -5,7 +5,8 @@ for (const width of [1366, 390]) {
   test(`revisión tributaria explícita sin perfil conserva el cálculo y cabe en ${width}`, async ({ page, baseURL }, info) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 768 });
     const { dialog, state } = await openExpenses(page, baseURL!, true,
-      { manageWithholdings: true, rules: [], incompleteTaxProfile: true });
+      { manageWithholdings: true, rules: [], incompleteTaxProfile: true,
+        supplierName: "Proveedor comercial con nombre extenso para verificar el formulario móvil" });
     const confirm = dialog.getByRole("button", { name: "Confirmar gasto", exact: true });
     await expect(confirm).toBeDisabled();
     await dialog.getByRole("button", { name: "Confirmar revisión", exact: true }).click();

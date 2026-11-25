@@ -706,7 +706,8 @@ mismo límite. El bloqueo de aplicación por sede protege únicamente frente a
 reconstrucciones explícitas; es compatible con las escrituras normales del
 motor de Reporting. Las consultas reutilizan su actividad filtrada ya leída
 para filas y agregados; los movimientos posteriores aparecen al consultar de
-nuevo. No bloquea el motor operacional ni rangos de otros tenants.
+nuevo. El bloqueo lógico de aplicación está acotado a esa sede; la reconstrucción
+completa es una operación explícita de la ventana de mantenimiento.
 El explorador materializa una vez los importes oficiales y el redondeo de los
 movimientos seleccionados; la página y el total reutilizan ese conjunto numérico.
 La carga descriptiva de la página compila las ramas aplicables y sigue después
@@ -727,6 +728,17 @@ una transacción independiente del mismo processor; ventas/recepciones preceden
 a devoluciones. No ejecuta handlers de operación, ledger, contabilidad ni fiscal.
 Si falla, conserva el checkpoint no disponible hasta completar un rebuild
 explícito. No hay rebuild desde startup, cola nueva ni otro motor.
+
+El borrado inicial y la restauración final por conjuntos tienen un límite
+compartido de 600 segundos por comando de mantenimiento. En la copia Azure SQL
+S1 con 42.650 ventas importadas, 384 devoluciones históricas y 5.099 fuentes
+regenerables, el reset completo medido tomó 150 segundos: el gobernador de
+escritura del log superaba el límite anterior de 120. Se conserva una sola
+transacción para validar y reiniciar, con rollback íntegro ante error. Este
+presupuesto no modifica los límites de consulta, la contabilización ni la
+proyección normal por documento. Se mide la ejecución completa del rebuild y
+su repetición durante el ensayo de actualización; un timeout no habilita los
+reportes ni ejecuta automáticamente una recuperación.
 
 ### Conciliación obligatoria de totales
 

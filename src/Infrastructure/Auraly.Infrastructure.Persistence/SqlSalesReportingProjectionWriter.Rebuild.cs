@@ -97,7 +97,7 @@ public sealed partial class SqlSalesReportingProjectionWriter
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        command.CommandTimeout = 120;
+        command.CommandTimeout = RebuildCommandTimeoutSeconds;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

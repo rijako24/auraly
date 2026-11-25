@@ -403,3 +403,8 @@ los tres del preview por conjuntos y el presupuesto vigente de confirmación.
 El rollback conserva los documentos y sus snapshots ya aceptados; una versión
 anterior no debe volver a editar una captura pendiente con la acción nueva sin
 retirar primero esa revisión. Los documentos contabilizados son inmutables.
+
+La captura mantiene columnas explícitas de ancho flexible también en móvil y
+campos que pueden encogerse dentro de ellas. La revisión se prueba con nombres
+largos de proveedor y sede, además de los nombres cortos: seleccionar un tercero
+no puede ensanchar el formulario ni ocultar campos fuera del modal.

@@ -24,6 +24,11 @@ public sealed partial class SqlSalesReportingProjectionWriter(
 {
     public const short ProjectionVersion = 5;
 
+    // Full-business maintenance includes logged deletes and aggregate writes.
+    // Azure SQL S1 needs about 150 seconds for the verified historical reset;
+    // ordinary per-document projection commands keep their existing timeout.
+    internal const int RebuildCommandTimeoutSeconds = 600;
+
     internal async Task ProjectSaleAsync(
         SalesReportingSqlSession session,
         SalesReportingSaleSource value,

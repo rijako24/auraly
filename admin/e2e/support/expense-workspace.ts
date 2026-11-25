@@ -5,7 +5,7 @@ const accountId = "44444444-4444-4444-4444-444444444444", supplierId = "55555555
 const conceptId = "66666666-6666-6666-6666-666666666666";
 async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = true,
   behavior: {timeZone?: string; holdPreview?: boolean; manageWithholdings?: boolean; rules?: object[];
-    supplierSearch?: string; supplierPolicy?: "InternalReceiptVoucher"; incompleteTaxProfile?: boolean} = {}) {
+    supplierSearch?: string; supplierPolicy?: "InternalReceiptVoucher"; incompleteTaxProfile?: boolean; supplierName?: string} = {}) {
   const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "@expense",
     username: "accountant", firstName: "Prueba", lastName: "Gastos", roles: [], permissions: ["expenses.read", "expenses.create", "expenses.configure", "expenses.cancel",
       ...(behavior.manageWithholdings ? ["commerce.taxation.withholdings.manage"] : [])] };
@@ -39,7 +39,7 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
     else if (path.endsWith("/parties/site-options")) {
       state.supplierSearches.push(new URL(request.url()).searchParams.get("search") ?? "");
       body = { items: [
-      { partyId: supplierId, roleId: supplierId, partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Sede principal", displayName: "Proveedor de prueba", identification: "900123456", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 },
+      { partyId: supplierId, roleId: supplierId, partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Sede principal", displayName: behavior.supplierName ?? "Proveedor de prueba", identification: "900123456", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 },
       { partyId: supplierId, roleId: supplierId, partySiteId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", siteName: "Sede norte", displayName: "Proveedor de prueba", identification: "900123456", isPrimary: false, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 },
     ].map(site => ({...site,supplierPurchaseEvidencePolicy:behavior.supplierPolicy??null})), page: 1, pageSize: 20, totalCount: 2, totalPages: 1 };
     }

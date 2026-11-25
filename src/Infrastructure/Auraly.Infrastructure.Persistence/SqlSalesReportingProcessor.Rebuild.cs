@@ -209,7 +209,8 @@ public sealed partial class SqlSalesReportingProcessor
                     """,connection,transaction);
                 reset.Parameters.AddWithValue("@Business",businessId);reset.Parameters.AddWithValue("@Version",SqlSalesReportingProjectionWriter.ProjectionVersion);
                 reset.Parameters.AddWithValue("@Tenant",tenantId);
-                reset.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());reset.CommandTimeout=120;
+                reset.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
+                reset.CommandTimeout=SqlSalesReportingProjectionWriter.RebuildCommandTimeoutSeconds;
                 await reset.ExecuteNonQueryAsync(cancellationToken);await transaction.CommitAsync(cancellationToken);
             }
             long cursor=0;
