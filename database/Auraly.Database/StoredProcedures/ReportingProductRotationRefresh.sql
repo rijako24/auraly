@@ -15,7 +15,7 @@ BEGIN
         FROM reporting.SalesReportLineFacts fact
         LEFT JOIN reporting.ProductRotationSnapshots snapshot
           ON snapshot.BusinessId=fact.BusinessId AND snapshot.WarehouseId=fact.WarehouseId AND snapshot.ProductId=fact.ProductId
-        WHERE fact.BusinessId=@BusinessId AND fact.SourceDocumentId=@SourceDocumentId
+        WHERE fact.BusinessId=@BusinessId AND (@SourceDocumentId IS NULL OR fact.SourceDocumentId=@SourceDocumentId)
           AND fact.SourceDocumentType=@SourceDocumentType
     ), rotation AS
     (
@@ -52,7 +52,7 @@ BEGIN
     (
         SELECT DISTINCT ProductId,WarehouseId,BusinessLocalDate
         FROM reporting.SalesReportLineFacts
-        WHERE BusinessId=@BusinessId AND SourceDocumentId=@SourceDocumentId
+        WHERE BusinessId=@BusinessId AND (@SourceDocumentId IS NULL OR SourceDocumentId=@SourceDocumentId)
           AND SourceDocumentType=@SourceDocumentType
     ), daily AS
     (

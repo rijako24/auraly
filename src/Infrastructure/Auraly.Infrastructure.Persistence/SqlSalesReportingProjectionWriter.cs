@@ -10,7 +10,8 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed record SalesReportingSqlSession(
     SqlConnection Connection,
-    SqlTransaction Transaction);
+    SqlTransaction Transaction,
+    bool IsRebuild = false);
 
 /// <summary>
 /// Maintains the sales read model within the canonical reporting transaction.
@@ -41,7 +42,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         var paymentDelta=await RefreshSalePaymentFactsAsync(session,value.TenantId,value.BusinessId,[value.DocumentId],false,now,cancellationToken);
         await InsertSaleTaxFactsAsync(session, value, localDate.Date, now, cancellationToken,localDate.Hour);
         await ApplyDimensionDeltasAsync(session,value.BusinessId,value.DocumentId,value.CommercialSnapshot.DocumentType,1,now,cancellationToken,
-            value.TenantId,localDate.Date,value.CommercialSnapshot.PayableRoundingAmount);
+            value.TenantId,localDate.Date);
 
         var discount = value.Lines.Sum(line => line.DiscountAmount);
         var gross = value.CommercialSnapshot.UntaxedAmount + discount;
@@ -89,7 +90,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         await InsertReturnPaymentFactAsync(session, value, localDate.Date, now, cancellationToken);
         await InsertReturnTaxFactsAsync(session, value, localDate.Date, now, cancellationToken,localDate.Hour);
         await ApplyDimensionDeltasAsync(session,value.BusinessId,value.ReturnId,SalesReturnDocumentTypes.SalesReturn,0,now,cancellationToken,
-            value.TenantId,localDate.Date,-(value.TotalAmount-value.Lines.Sum(line=>line.LineTotal)-(value.Charges?.Sum(charge=>charge.InvoicedAmount)??0m)));
+            value.TenantId,localDate.Date);
 
         var discount = value.Lines.Sum(line => line.DiscountAmount);
         await ApplyDailyDeltaAsync(
@@ -382,6 +383,15 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         CancellationToken cancellationToken)
     {
         const string sql = """
+            DECLARE @ReturnedUntaxed decimal(19,4)=0,@ReturnedTax decimal(19,4)=0,
+              @ReturnedTotal decimal(19,4)=0,@ReturnedCost decimal(19,4)=0;
+            IF @IsRebuild=1
+            BEGIN
+              SELECT @ReturnedUntaxed=ReturnedUntaxedAmount,@ReturnedTax=ReturnedTaxAmount,
+                @ReturnedTotal=ReturnedTotalAmount,@ReturnedCost=ReturnedCostAmount
+              FROM reporting.SalesReportDocuments WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND TenantId=@TenantId;
+              DELETE reporting.SalesReportDocuments WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND TenantId=@TenantId;
+            END;
             INSERT reporting.SalesReportDocuments
             (
               DocumentId,TenantId,BusinessId,DocumentType,DocumentNumber,FiscalNumber,
@@ -389,7 +399,8 @@ public sealed partial class SqlSalesReportingProjectionWriter(
               CustomerId,PartySiteId,CustomerIdentification,CustomerName,SourceMode,FiscalStatus,
               CurrencyCode,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RoundingAdjustmentAmount,
               CreditAmount,CollectedAmount,RestaurantTipAmount,RecognizedCostAmount,ProjectionVersion,BilledByUserId,BilledByName,AttributionSnapshotVersion,
-              SourcePayloadHash,ProjectedAt,ProductQuantity,MissingCostLineCount,BusinessLocalHour,TableId,TableName
+              SourcePayloadHash,ProjectedAt,ProductQuantity,MissingCostLineCount,BusinessLocalHour,TableId,TableName,
+              ReturnedUntaxedAmount,ReturnedTaxAmount,ReturnedTotalAmount,ReturnedCostAmount
             )
             SELECT d.DocumentId,@TenantId,d.BusinessId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,
                    d.IssuedAt,@LocalDate,@TimeZoneId,d.WarehouseId,COALESCE(d.WarehouseNameSnapshot,w.Name),d.WorkSessionId,@SellerId,@SellerName,
@@ -398,15 +409,18 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                             NULLIF(CONCAT(p.FirstName,N' ',p.LastName),N' '),N'Consumidor final'),
                    d.SourceMode,d.FiscalStatus,@Currency,@Gross,@Discount,d.UntaxedAmount,
                    d.TaxAmount,d.PayableAmount,@Rounding,d.CreditAmount,@Collected,@RestaurantTip,@Cost,@Version,d.SoldByUserId,d.SoldByNameSnapshot,d.AttributionSnapshotVersion,
-                   d.PayloadHash,@ProjectedAt,@ProductQuantity,@MissingCostLines,@LocalHour,d.TableId,d.TableNameSnapshot
+                   d.PayloadHash,@ProjectedAt,@ProductQuantity,@MissingCostLines,@LocalHour,d.TableId,d.TableNameSnapshot,
+                   @ReturnedUntaxed,@ReturnedTax,@ReturnedTotal,@ReturnedCost
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
             LEFT JOIN dbo.Customers c ON c.CustomerId=d.CustomerId
             LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
             WHERE d.DocumentId=@DocumentId AND d.BusinessId=@BusinessId;
+            SELECT @@ROWCOUNT;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", value.DocumentId);
+        command.Parameters.AddWithValue("@IsRebuild", session.IsRebuild);
         command.Parameters.AddWithValue("@TenantId", value.TenantId);
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
         command.Parameters.AddWithValue("@LocalDate", localDate.Date.ToDateTime(TimeOnly.MinValue));
@@ -427,7 +441,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters["@Cost"].Precision=19;command.Parameters["@Cost"].Scale=4;
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@ProjectedAt", now);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) != 1)
             throw new InvalidOperationException("The sale reporting document could not be projected.");
     }
 
@@ -812,25 +826,22 @@ public sealed partial class SqlSalesReportingProjectionWriter(
             value.WorkSessionId, now, cancellationToken);
     }
 
-    private static async Task ApplyDimensionDeltasAsync(
-        SalesReportingSqlSession session, Guid businessId, Guid sourceDocumentId,
-        string sourceDocumentType, long documentCount, DateTimeOffset now,
-        CancellationToken cancellationToken,
-        Guid tenantId,DateOnly localDate,decimal roundingAdjustment = 0)
-    {
-        const string sql = """
-            WITH lineDimensions AS
+    private static string DimensionDeltasSql(string sourceDocumentsSql) => $"""
+            ;WITH sourceDocuments AS({sourceDocumentsSql}), lineDimensions AS
             (
-              SELECT f.BusinessLocalDate,v.DimensionType,v.DimensionKey,MAX(v.DimensionLabel) DimensionLabel,
+              SELECT f.SourceDocumentId,f.BusinessLocalDate,v.DimensionType,v.DimensionKey,MAX(v.DimensionLabel) DimensionLabel,
                      @DocumentCount DocumentCount,SUM(CASE WHEN f.ItemKind=N'Product' THEN f.Quantity ELSE 0 END) Quantity,
                      SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END) GrossSales,
                      SUM(CASE WHEN f.MovementType=N'Sale' THEN f.DiscountAmount ELSE 0 END) Discounts,
                      -SUM(CASE WHEN f.MovementType=N'Return' THEN f.UntaxedAmount ELSE 0 END) Returns,
                      SUM(f.UntaxedAmount) NetUntaxed,SUM(f.TaxAmount) NetTax,
-                     SUM(f.TotalAmount)+CASE WHEN v.DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN @RoundingAdjustment ELSE 0 END NetTotal,
+                     SUM(f.TotalAmount)+CASE WHEN v.DimensionType IN(N'Customer',N'Seller',N'Warehouse') THEN COALESCE(MAX(m.RoundingAdjustmentAmount),0) ELSE 0 END NetTotal,
                      CASE WHEN COUNT_BIG(*)=COUNT_BIG(f.RecognizedCostAmount) THEN SUM(f.RecognizedCostAmount) END NetCost,
                      CASE WHEN COUNT_BIG(*)=COUNT_BIG(f.RecognizedCostAmount) THEN SUM(f.UntaxedAmount-f.RecognizedCostAmount) END GrossProfit
-              FROM reporting.SalesReportActivity(@TenantId,@BusinessId,@LocalDate,@LocalDate,@SourceDocumentId,NULL,0) f
+              FROM reporting.SalesReportActivity(@TenantId,@BusinessId,@LocalDate,@ThroughDate,@SourceDocumentId,NULL,0) f
+              INNER JOIN sourceDocuments selected ON selected.SourceDocumentId=f.SourceDocumentId
+              LEFT JOIN reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@LocalDate,@ThroughDate) m
+                ON m.SourceDocumentId=f.SourceDocumentId AND m.SourceDocumentType=f.SourceDocumentType
               INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
               CROSS APPLY(VALUES
                 (N'Customer',COALESCE(CONVERT(nvarchar(80),d.CustomerId),N'final-consumer'),d.CustomerName),
@@ -840,12 +851,20 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                 (N'Category',COALESCE(CONVERT(nvarchar(80),f.CategoryId),N'no-category'),COALESCE(f.CategoryName,N'Sin categoría')),
                 (N'Warehouse',COALESCE(CONVERT(nvarchar(80),d.WarehouseId),N'no-warehouse'),COALESCE(d.WarehouseName,N'Sin bodega'))
               ) v(DimensionType,DimensionKey,DimensionLabel)
-              WHERE f.BusinessId=@BusinessId AND f.SourceDocumentId=@SourceDocumentId
+              WHERE f.BusinessId=@BusinessId AND (@SourceDocumentId IS NULL OR f.SourceDocumentId=@SourceDocumentId)
                 AND f.SourceDocumentType=@SourceDocumentType
-              GROUP BY f.BusinessLocalDate,v.DimensionType,v.DimensionKey
+              GROUP BY f.SourceDocumentId,f.BusinessLocalDate,v.DimensionType,v.DimensionKey
             )
+            ,dimensionDeltas AS(
+              SELECT BusinessLocalDate,DimensionType,DimensionKey,MAX(DimensionLabel) DimensionLabel,
+                SUM(DocumentCount) DocumentCount,SUM(Quantity) Quantity,SUM(GrossSales) GrossSales,
+                SUM(Discounts) Discounts,SUM(Returns) Returns,SUM(NetUntaxed) NetUntaxed,
+                SUM(NetTax) NetTax,SUM(NetTotal) NetTotal,
+                CASE WHEN COUNT_BIG(*)=COUNT_BIG(NetCost) THEN SUM(NetCost) END NetCost,
+                CASE WHEN COUNT_BIG(*)=COUNT_BIG(GrossProfit) THEN SUM(GrossProfit) END GrossProfit
+              FROM lineDimensions GROUP BY BusinessLocalDate,DimensionType,DimensionKey)
             MERGE reporting.SalesReportDailyDimensionTotals WITH(HOLDLOCK) AS target
-            USING lineDimensions source
+            USING dimensionDeltas source
             ON target.BusinessId=@BusinessId AND target.BusinessLocalDate=source.BusinessLocalDate
               AND target.DimensionType=source.DimensionType AND target.DimensionKey=source.DimensionKey
               AND target.CurrencyCode=N'COP'
@@ -865,7 +884,15 @@ public sealed partial class SqlSalesReportingProjectionWriter(
               source.DimensionLabel,N'COP',source.DocumentCount,source.Quantity,source.GrossSales,
               source.Discounts,source.Returns,source.NetUntaxed,source.NetTax,source.NetTotal,
               source.NetCost,source.GrossProfit,@Version,@Now);
-            """;
+        """;
+
+    private static async Task ApplyDimensionDeltasAsync(
+        SalesReportingSqlSession session, Guid businessId, Guid sourceDocumentId,
+        string sourceDocumentType, long documentCount, DateTimeOffset now,
+        CancellationToken cancellationToken,
+        Guid tenantId,DateOnly localDate)
+    {
+        var sql = DimensionDeltasSql("SELECT @SourceDocumentId SourceDocumentId");
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@SourceDocumentId", sourceDocumentId);
@@ -873,11 +900,49 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@DocumentCount", documentCount);
         command.Parameters.AddWithValue("@TenantId",tenantId);
         command.Parameters.AddWithValue("@LocalDate",localDate.ToDateTime(TimeOnly.MinValue));
-        AddDecimal(command, "@RoundingAdjustment", roundingAdjustment, 19, 4);
+        command.Parameters.AddWithValue("@ThroughDate",localDate.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private const string DailyDeltaMergeSql = """
+            MERGE reporting.SalesReportDailyTotals WITH(HOLDLOCK) AS target
+            USING (SELECT BusinessId,BusinessLocalDate,CurrencyCode,SUM(DocumentCount) DocumentCount,SUM(UnitsSold) UnitsSold,
+              SUM(UnitsReturned) UnitsReturned,SUM(GrossSales) GrossSales,SUM(Discounts) Discounts,SUM(Returns) Returns,
+              SUM(NetUntaxedSales) NetUntaxedSales,SUM(NetTax) NetTax,SUM(NetTotalSales) NetTotalSales,
+              SUM(NetRecognizedCost) NetRecognizedCost,SUM(GrossProfit) GrossProfit,SUM(CreditSales) CreditSales,
+              SUM(Collected) Collected,SUM(Refunded) Refunded,SUM(UnknownCostDocumentCount) UnknownCostDocumentCount
+              FROM #DailyDeltas GROUP BY BusinessId,BusinessLocalDate,CurrencyCode) source
+            ON target.BusinessId=source.BusinessId
+               AND target.BusinessLocalDate=source.BusinessLocalDate
+               AND target.CurrencyCode=source.CurrencyCode
+            WHEN MATCHED THEN UPDATE SET
+              DocumentCount=target.DocumentCount+source.DocumentCount,
+              UnitsSold=target.UnitsSold+source.UnitsSold,
+              UnitsReturned=target.UnitsReturned+source.UnitsReturned,
+              GrossSales=target.GrossSales+source.GrossSales,
+              Discounts=target.Discounts+source.Discounts,
+              Returns=target.Returns+source.Returns,
+              NetUntaxedSales=target.NetUntaxedSales+source.NetUntaxedSales,
+              NetTax=target.NetTax+source.NetTax,
+              NetTotalSales=target.NetTotalSales+source.NetTotalSales,
+              NetRecognizedCost=target.NetRecognizedCost+source.NetRecognizedCost,
+              GrossProfit=target.GrossProfit+source.GrossProfit,
+              UnknownCostDocumentCount=target.UnknownCostDocumentCount+source.UnknownCostDocumentCount,
+              CreditSales=target.CreditSales+source.CreditSales,
+              Collected=target.Collected+source.Collected,
+              Refunded=target.Refunded+source.Refunded,
+              ProjectionVersion=@Version,UpdatedAt=@Now
+            WHEN NOT MATCHED THEN INSERT
+              (BusinessId,BusinessLocalDate,CurrencyCode,DocumentCount,UnitsSold,UnitsReturned,
+               GrossSales,Discounts,Returns,NetUntaxedSales,NetTax,NetTotalSales,
+               NetRecognizedCost,GrossProfit,CreditSales,Collected,Refunded,ProjectionVersion,UpdatedAt,UnknownCostDocumentCount)
+            VALUES
+              (source.BusinessId,source.BusinessLocalDate,source.CurrencyCode,source.DocumentCount,source.UnitsSold,source.UnitsReturned,
+               source.GrossSales,source.Discounts,source.Returns,source.NetUntaxedSales,source.NetTax,source.NetTotalSales,
+               source.NetRecognizedCost,source.GrossProfit,source.CreditSales,source.Collected,source.Refunded,@Version,@Now,source.UnknownCostDocumentCount);
+        """;
 
     private static async Task ApplyDailyDeltaAsync(
         SalesReportingSqlSession session, Guid businessId, DateOnly date,
@@ -887,38 +952,28 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         decimal refunded, DateTimeOffset now, CancellationToken cancellationToken,
         long unknownCostDocumentCount = 0)
     {
-        const string sql = """
-            MERGE reporting.SalesReportDailyTotals WITH(HOLDLOCK) AS target
-            USING (SELECT @BusinessId BusinessId,@Date BusinessLocalDate,@Currency CurrencyCode) source
-            ON target.BusinessId=source.BusinessId
-               AND target.BusinessLocalDate=source.BusinessLocalDate
-               AND target.CurrencyCode=source.CurrencyCode
-            WHEN MATCHED THEN UPDATE SET
-              DocumentCount=target.DocumentCount+@DocumentCount,
-              UnitsSold=target.UnitsSold+@UnitsSold,
-              UnitsReturned=target.UnitsReturned+@UnitsReturned,
-              GrossSales=target.GrossSales+@GrossSales,
-              Discounts=target.Discounts+@Discounts,
-              Returns=target.Returns+@Returns,
-              NetUntaxedSales=target.NetUntaxedSales+@NetUntaxed,
-              NetTax=target.NetTax+@NetTax,
-              NetTotalSales=target.NetTotalSales+@NetTotal,
-              NetRecognizedCost=target.NetRecognizedCost+@NetCost,
-              GrossProfit=target.GrossProfit+@GrossProfit,
-              UnknownCostDocumentCount=target.UnknownCostDocumentCount+@UnknownCost,
-              CreditSales=target.CreditSales+@CreditSales,
-              Collected=target.Collected+@Collected,
-              Refunded=target.Refunded+@Refunded,
-              ProjectionVersion=@Version,UpdatedAt=@Now
-            WHEN NOT MATCHED THEN INSERT
-              (BusinessId,BusinessLocalDate,CurrencyCode,DocumentCount,UnitsSold,UnitsReturned,
-               GrossSales,Discounts,Returns,NetUntaxedSales,NetTax,NetTotalSales,
-               NetRecognizedCost,GrossProfit,CreditSales,Collected,Refunded,ProjectionVersion,UpdatedAt,UnknownCostDocumentCount)
-            VALUES
-              (@BusinessId,@Date,@Currency,@DocumentCount,@UnitsSold,@UnitsReturned,
-               @GrossSales,@Discounts,@Returns,@NetUntaxed,@NetTax,@NetTotal,
-               @NetCost,@GrossProfit,@CreditSales,@Collected,@Refunded,@Version,@Now,@UnknownCost);
-            """;
+        var sql = """
+            SELECT
+              @BusinessId BusinessId,
+              @Date BusinessLocalDate,
+              @Currency CurrencyCode,
+              @DocumentCount DocumentCount,
+              @UnitsSold UnitsSold,
+              @UnitsReturned UnitsReturned,
+              @GrossSales GrossSales,
+              @Discounts Discounts,
+              @Returns Returns,
+              @NetUntaxed NetUntaxedSales,
+              @NetTax NetTax,
+              @NetTotal NetTotalSales,
+              @NetCost NetRecognizedCost,
+              @GrossProfit GrossProfit,
+              @CreditSales CreditSales,
+              @Collected Collected,
+              @Refunded Refunded,
+              @UnknownCost UnknownCostDocumentCount
+            INTO #DailyDeltas;
+            """ + DailyDeltaMergeSql;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@Date", date.ToDateTime(TimeOnly.MinValue));

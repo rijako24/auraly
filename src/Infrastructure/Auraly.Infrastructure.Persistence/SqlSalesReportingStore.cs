@@ -38,7 +38,7 @@ public sealed partial class SqlSalesReportingStore(
         var salesBeforeReturns=totals.NetUntaxedSales+totals.Returns;
         return new(date,totals,summary.Customers,totals.DocumentCount==0?0:decimal.Round(totals.NetTotalSales/totals.DocumentCount,2),
             salesBeforeReturns==0?0:decimal.Round(totals.Returns/salesBeforeReturns*100m,2),summary.Report.ProjectedThrough,
-            HasLineScope(filter),access.HasPendingSources,access.HasFailedSources,access.TimeZoneId);
+            HasLineScope(filter),access.HasPendingSources,access.HasFailedSources,access.TimeZoneId,summary.Report.HistoricalReturnsWithoutOfficialTotal);
     }
 
     public async Task<SalesReportSummary> GetSummaryAsync(

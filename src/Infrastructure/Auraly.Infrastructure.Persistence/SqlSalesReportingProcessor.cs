@@ -77,7 +77,7 @@ public sealed partial class SqlSalesReportingProcessor(
 
             try
             {
-                var session = new SalesReportingSqlSession(connection, transaction);
+                var session = new SalesReportingSqlSession(connection, transaction, rebuilding);
                 if (documentType is "SalesInvoice" or "SalesReceipt")
                 {
                     var value=PosSaleContractSerializer.Deserialize<SalesReportingSaleSource>(source.Payload);

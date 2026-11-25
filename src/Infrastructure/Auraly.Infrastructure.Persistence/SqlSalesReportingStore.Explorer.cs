@@ -17,8 +17,19 @@ public sealed partial class SqlSalesReportingStore
             WHERE CatalogCode IN(N'sales-report-grouping',N'sales-report-comparison',N'sales-report-document-type',N'sales-report-order',N'sales-report-customer-activity',N'payment-method',N'sales-report-product-returns',N'sales-report-product-composition')
               AND IsActive=1 AND (RequiredPointOfSaleMode IS NULL OR RequiredPointOfSaleMode=@Mode)
             ORDER BY CatalogCode,SortOrder,Code;
+            SELECT COUNT_BIG(DISTINCT fact.SourceDocumentId) FROM reporting.SalesReportTaxFacts fact
+            WHERE fact.TenantId=@TenantId AND fact.BusinessId=@BusinessId AND fact.SourceDocumentType=N'SalesReturn'
+              AND fact.OfficialDocumentTotalAmount IS NULL
+              AND (@SellerId IS NULL OR EXISTS(SELECT 1 FROM reporting.SalesReportDocuments original
+                WHERE original.DocumentId=fact.OriginalSaleDocumentId AND original.BusinessId=@BusinessId AND original.SellerId=@SellerId))
+              AND (@SupplierId IS NULL OR EXISTS(SELECT 1 FROM reporting.SalesReportLineFacts line
+                WHERE line.SourceDocumentId=fact.SourceDocumentId AND line.BusinessId=@BusinessId AND line.SupplierId=@SupplierId));
             """,connection);
         command.Parameters.AddWithValue("@Mode",access.PointOfSaleMode);
+        command.Parameters.AddWithValue("@TenantId",user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.AddWithValue("@SellerId",(object?)access.SellerId??DBNull.Value);
+        command.Parameters.AddWithValue("@SupplierId",(object?)access.SupplierId??DBNull.Value);
         var catalogs=new Dictionary<string,List<SalesReportOption>>(StringComparer.Ordinal);
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
@@ -27,13 +38,16 @@ public sealed partial class SqlSalesReportingStore
             if(!catalogs.TryGetValue(catalog,out var items)) catalogs[catalog]=items=[];
             items.Add(new(reader.GetString(1),reader.GetString(2)));
         }
+        await reader.NextResultAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var incompleteReturns=reader.GetInt64(0);
         var businessDate=DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(),
             TimeZoneInfo.FindSystemTimeZoneById(access.TimeZoneId)).Date);
         return new(businessDate,new(businessDate.Year,businessDate.Month,1),access.TimeZoneId,
             access.PointOfSaleMode=="RestaurantBar",catalogs.GetValueOrDefault("sales-report-grouping")??[],
             catalogs.GetValueOrDefault("sales-report-comparison")??[],catalogs.GetValueOrDefault("sales-report-document-type")??[],
             catalogs.GetValueOrDefault("sales-report-order")??[],catalogs.GetValueOrDefault("sales-report-customer-activity")??[],catalogs.GetValueOrDefault("payment-method")??[],
-            access.HasPendingSources,access.HasFailedSources,catalogs.GetValueOrDefault("sales-report-product-returns")??[],catalogs.GetValueOrDefault("sales-report-product-composition")??[]);
+            access.HasPendingSources,access.HasFailedSources,catalogs.GetValueOrDefault("sales-report-product-returns")??[],catalogs.GetValueOrDefault("sales-report-product-composition")??[],incompleteReturns);
     }
 
     private static (string Key,string Label) ExplorerDimension(string dimension,bool rawIdentifiers=false)
@@ -139,7 +153,7 @@ public sealed partial class SqlSalesReportingStore
         metadata.DocumentId,metadata.DocumentType,metadata.DocumentNumber,metadata.FiscalNumber,metadata.IssuedAt,
         metadata.CustomerName,metadata.SellerName,metadata.BilledByName,metadata.WarehouseName,metadata.FiscalStatus,
         metadata.BusinessLocalDate,CASE WHEN @WholeDocuments=1 THEN metadata.TotalAmount END OriginalOfficialTotal,
-        CASE WHEN @WholeDocuments=1 THEN metadata.RoundingAdjustmentAmount END OriginalRounding
+        CASE WHEN @WholeDocuments=1 THEN metadata.RoundingAdjustmentAmount END OriginalRounding,metadata.SourceDocumentAvailable
         """;
 
     private const string FinancialActivityColumns="""
@@ -266,7 +280,9 @@ public sealed partial class SqlSalesReportingStore
                 MAX(a.DocumentNumber) DocumentNumber,MAX(a.DocumentType) DocumentType,MAX(a.OccurredAt) OccurredAt,MAX(a.MovementType) MovementType
               FROM #Activity a GROUP BY a.GroupKey
             ) grouped LEFT JOIN(
-              SELECT m.OriginalSaleDocumentId,SUM(m.RoundingAdjustmentAmount) SortRounding,SUM(m.OfficialTotal) SortOfficial
+              SELECT m.OriginalSaleDocumentId,
+                CASE WHEN COUNT_BIG(*)=COUNT_BIG(m.RoundingAdjustmentAmount) THEN SUM(m.RoundingAdjustmentAmount) END SortRounding,
+                CASE WHEN COUNT_BIG(*)=COUNT_BIG(m.OfficialTotal) THEN SUM(m.OfficialTotal) END SortOfficial
               FROM #DocumentMoney m GROUP BY m.OriginalSaleDocumentId
             ) sortMoney ON sortMoney.OriginalSaleDocumentId=TRY_CONVERT(uniqueidentifier,grouped.GroupKey)
             ORDER BY {order},GroupKey
@@ -284,8 +300,9 @@ public sealed partial class SqlSalesReportingStore
               AND s.TenantId=@TenantId AND s.BusinessId=@BusinessId
             LEFT JOIN reporting.SalesReportDocuments metadata ON @DocumentGroups=1 AND metadata.DocumentId=TRY_CONVERT(uniqueidentifier,g.GroupKey)
               AND metadata.TenantId=@TenantId AND metadata.BusinessId=@BusinessId
-            LEFT JOIN(SELECT m.OriginalSaleDocumentId,SUM(m.RoundingAdjustmentAmount) RoundingAdjustment,
-              SUM(m.OfficialTotal) OfficialTotal,SUM(m.RestaurantTipAmount) RestaurantTip
+            LEFT JOIN(SELECT m.OriginalSaleDocumentId,
+              CASE WHEN COUNT_BIG(*)=COUNT_BIG(m.RoundingAdjustmentAmount) THEN SUM(m.RoundingAdjustmentAmount) END RoundingAdjustment,
+              CASE WHEN COUNT_BIG(*)=COUNT_BIG(m.OfficialTotal) THEN SUM(m.OfficialTotal) END OfficialTotal,SUM(m.RestaurantTipAmount) RestaurantTip
               FROM #DocumentMoney m
               WHERE @DocumentGroups=1
                 AND EXISTS(SELECT 1 FROM #Page selected WHERE selected.GroupKey=CONVERT(nvarchar(36),m.OriginalSaleDocumentId))
@@ -296,9 +313,9 @@ public sealed partial class SqlSalesReportingStore
               MAX(a.ProjectedAt) ProjectedThrough FROM #Activity a;
             {taxSql}
             {paymentSql}
-            SELECT CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.RoundingAdjustmentAmount),0) END,
+            SELECT CASE WHEN @WholeDocuments=1 AND COUNT_BIG(*)=COUNT_BIG(m.RoundingAdjustmentAmount) THEN COALESCE(SUM(m.RoundingAdjustmentAmount),0) END,
               CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.RestaurantTipAmount),0) END,
-              CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.OfficialTotal),0) END
+              CASE WHEN @WholeDocuments=1 AND COUNT_BIG(*)=COUNT_BIG(m.OfficialTotal) THEN COALESCE(SUM(m.OfficialTotal),0) END
             FROM #DocumentMoney m;
             {comparisonSql}
             SELECT {DocumentSnapshotColumns} FROM reporting.SalesReportDocuments metadata
@@ -336,8 +353,8 @@ public sealed partial class SqlSalesReportingStore
         var totals=ReadExplorerMeasures(reader,0);var totalCount=reader.GetInt64(reader.GetOrdinal("TotalGroups"));var through=NullableDate(reader,reader.GetOrdinal("ProjectedThrough"));
         var taxes=new List<SalesReportTaxRow>();
         await reader.NextResultAsync(cancellationToken);
-        while(await reader.ReadAsync(cancellationToken)) taxes.Add(new(reader.IsDBNull(0)?"Sin snapshot":reader.GetString(0),
-            reader.IsDBNull(1)?0:reader.GetDecimal(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4)));
+        while(await reader.ReadAsync(cancellationToken)) taxes.Add(new(reader.IsDBNull(0)?null:reader.GetString(0),
+            NullableDecimal(reader,1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4)));
         var payments=new List<SalesReportPaymentRow>();
         await reader.NextResultAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) payments.Add(new(reader.GetString(0),reader.GetString(1),reader.GetDecimal(2)));
@@ -412,7 +429,7 @@ public sealed partial class SqlSalesReportingStore
     private static SalesReportDocumentSnapshot? ReadDocumentSnapshot(SqlDataReader reader,int offset)=>reader.IsDBNull(offset)?null:new(
         reader.GetGuid(offset),reader.GetString(offset+1),reader.GetString(offset+2),NullableString(reader,offset+3),reader.GetDateTimeOffset(offset+4),
         reader.GetString(offset+5),reader.GetString(offset+6),NullableString(reader,offset+7),NullableString(reader,offset+8),NullableString(reader,offset+9),
-        DateOnly.FromDateTime(reader.GetDateTime(offset+10)),NullableDecimal(reader,offset+11),NullableDecimal(reader,offset+12));
+        DateOnly.FromDateTime(reader.GetDateTime(offset+10)),NullableDecimal(reader,offset+11),NullableDecimal(reader,offset+12),reader.GetBoolean(offset+13));
 
     private static async Task<SqlDataReader> ExecuteExplorerReaderAsync(SqlCommand command,Guid businessId,CancellationToken cancellationToken)
     {

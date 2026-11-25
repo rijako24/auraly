@@ -85,7 +85,7 @@ public sealed partial class SqlSalesReportingProjectionWriter
                 new TaxFact(line.TaxCode,line.TaxRate,line.UntaxedAmount,line.TaxAmount,line.LineTotal)),
             1m,now,cancellationToken,occurredAt:value.CommercialSnapshot.IssuedAt,localHour:local.Hour);
         await ApplyDimensionDeltasAsync(session,value.BusinessId,value.DocumentId,ServiceInvoiceDocumentTypes.ServiceInvoice,1,now,cancellationToken,
-            value.TenantId,local.Date,value.CommercialSnapshot.PayableRoundingAmount);
+            value.TenantId,local.Date);
         await ApplyDailyDeltaAsync(session,value.BusinessId,local.Date,1,0,0,
             value.CommercialSnapshot.UntaxedAmount+discount,discount,0,
             value.CommercialSnapshot.UntaxedAmount,value.CommercialSnapshot.TaxAmount,

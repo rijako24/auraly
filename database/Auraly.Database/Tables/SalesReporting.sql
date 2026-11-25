@@ -11,6 +11,7 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     [BusinessLocalHour] TINYINT NULL,
     [ProductQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ProductQuantity] DEFAULT(0),
     [MissingCostLineCount] BIGINT NOT NULL CONSTRAINT [DF_SalesReportDocuments_MissingCostLineCount] DEFAULT(0),
+    [SourceDocumentAvailable] BIT NOT NULL CONSTRAINT [DF_SalesReportDocuments_SourceDocumentAvailable] DEFAULT(1),
     [TimeZoneId] NVARCHAR(100) NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NULL,
     [WarehouseName] NVARCHAR(200) NULL,

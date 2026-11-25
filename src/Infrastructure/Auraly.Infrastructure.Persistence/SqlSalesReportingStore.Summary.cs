@@ -56,7 +56,7 @@ public sealed partial class SqlSalesReportingStore
         // totals. Reuse that projection, just like the summary without charts;
         // dimension-scoped totals still aggregate their exact filtered activity.
         var source=(activitySummary?activitySql+documentSql:"")+(filteredSummary?$"""
-            SELECT m.BusinessLocalDate,SUM(m.OfficialTotal) OfficialTotal INTO #Money
+            SELECT m.BusinessLocalDate,SUM(m.RoundingAdjustmentAmount) KnownRounding INTO #Money
             FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
             WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #Activity a WHERE a.SourceDocumentId=m.SourceDocumentId AND a.SourceDocumentType=m.SourceDocumentType)
             GROUP BY m.BusinessLocalDate;
@@ -75,7 +75,7 @@ public sealed partial class SqlSalesReportingStore
               SUM(CASE WHEN a.MovementType=N'Sale' THEN a.DiscountAmount ELSE 0 END) Discounts,
               -SUM(CASE WHEN a.MovementType=N'Return' THEN a.UntaxedAmount ELSE 0 END) Returns,
               SUM(a.UntaxedAmount) NetUntaxedSales,SUM(a.TaxAmount) NetTax,
-              CASE WHEN @WholeDocuments=1 THEN MAX(m.OfficialTotal) ELSE SUM(a.TotalAmount) END NetTotalSales,
+              SUM(a.TotalAmount)+CASE WHEN @WholeDocuments=1 THEN COALESCE(MAX(m.KnownRounding),0) ELSE 0 END NetTotalSales,
               CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN SUM(a.RecognizedCostAmount) END NetRecognizedCost,
               MAX(p.CreditSales) CreditSales,MAX(p.Collected) Collected,MAX(p.Refunded) Refunded
             INTO #Summary FROM {summaryActivity} a LEFT JOIN #Money m ON m.BusinessLocalDate=a.BusinessLocalDate
@@ -95,13 +95,18 @@ public sealed partial class SqlSalesReportingStore
             """;
         var projectedSource=activitySummary?"SELECT MAX(ProjectedAt) FROM #Activity;":
             "SELECT MAX(LastProjectedAt) FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId;";
+        var incompleteHistorySql="""
+            SELECT COUNT_BIG(DISTINCT fact.SourceDocumentId) FROM reporting.SalesReportTaxFacts fact
+            WHERE fact.TenantId=@TenantId AND fact.BusinessId=@BusinessId AND fact.SourceDocumentType=N'SalesReturn'
+              AND fact.BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo AND fact.OfficialDocumentTotalAmount IS NULL
+            """+(activitySummary?" AND EXISTS(SELECT 1 FROM #Activity a WHERE a.SourceDocumentId=fact.SourceDocumentId AND a.SourceDocumentType=fact.SourceDocumentType);":";");
         await using var command=new SqlCommand(source+SummaryTotalsSql+
             SummaryTotalsSql.Replace("@CurrentFrom","@ComparisonFrom",StringComparison.Ordinal).Replace("@CurrentTo","@ComparisonTo",StringComparison.Ordinal)
               .Replace("FROM #Summary WHERE","FROM #Summary WHERE @HasComparison=1 AND",StringComparison.Ordinal)+"""
             SELECT BusinessLocalDate,SUM(DocumentCount),SUM(GrossSales),SUM(Returns),SUM(NetTotalSales),
               CASE WHEN COUNT_BIG(*)=COUNT_BIG(NetRecognizedCost) THEN SUM(NetUntaxedSales-NetRecognizedCost) END
             FROM #Summary WHERE BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo GROUP BY BusinessLocalDate ORDER BY BusinessLocalDate;
-            """+projectedSource+customerSource+(includeBreakdowns?SummaryBreakdownsSql(HasLineScope(filter)):""),connection);
+            """+projectedSource+customerSource+(includeBreakdowns?SummaryBreakdownsSql(HasLineScope(filter)):"")+incompleteHistorySql,connection);
         AddExplorerParameters(command,user,new(filter with {From=first,To=last}));
         Date(command,"@CurrentFrom",filter.From);Date(command,"@CurrentTo",filter.To);
         command.Parameters["@ComparisonFrom"].Value=(comparisonFrom??filter.From).ToDateTime(TimeOnly.MinValue);
@@ -131,9 +136,11 @@ public sealed partial class SqlSalesReportingStore
                 await NextBreakdownAsync(),await NextBreakdownAsync());
         }
         var salesBeforeReturns=current.NetUntaxedSales+current.Returns;
+        await reader.NextResultAsync(ct);await reader.ReadAsync(ct);
+        var incompleteReturns=reader.GetInt64(0);
         return (new(current,comparison,comparison is null?null:Growth(current.NetTotalSales,comparison.NetTotalSales),trend,projected,
             customers,current.DocumentCount==0?0:decimal.Round(current.NetTotalSales/current.DocumentCount,2),
-            salesBeforeReturns==0?0:decimal.Round(current.Returns/salesBeforeReturns*100m,2),HasLineScope(filter),current.NetUntaxedSales+current.NetTax,HasLineScope(filter)?null:current.NetTotalSales-current.NetUntaxedSales-current.NetTax,breakdowns),customers);
+            salesBeforeReturns==0?0:decimal.Round(current.Returns/salesBeforeReturns*100m,2),HasLineScope(filter),current.NetUntaxedSales+current.NetTax,HasLineScope(filter)||incompleteReturns>0?null:current.NetTotalSales-current.NetUntaxedSales-current.NetTax,breakdowns,incompleteReturns),customers);
     }
 
     private static string SummaryBreakdownsSql(bool lineScope)

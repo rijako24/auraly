@@ -16,13 +16,40 @@ AS RETURN
       WHERE @WholeDocuments=0 AND TenantId=@TenantId AND BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To
         AND (@SourceDocumentId IS NULL OR SourceDocumentId=@SourceDocumentId)
         AND (@OriginalSaleDocumentId IS NULL OR OriginalSaleDocumentId=@OriginalSaleDocumentId)
+    ), UnclassifiedTaxDocuments AS
+    (
+      SELECT SourceDocumentId,SourceDocumentType FROM ProductLines WHERE TaxCode IS NULL OR TaxRate IS NULL
+      UNION
+      SELECT SourceDocumentId,SourceDocumentType FROM ServiceLines WHERE TaxCode IS NULL OR TaxRate IS NULL
     ), LineTaxes AS
     (
-      SELECT SourceDocumentId,SourceDocumentType,TaxCode,TaxRate,CONVERT(decimal(19,4),SUM(UntaxedAmount)) Base,
+      SELECT l.SourceDocumentId,l.SourceDocumentType,
+        CASE WHEN u.SourceDocumentId IS NULL THEN l.TaxCode END TaxCode,
+        CASE WHEN u.SourceDocumentId IS NULL THEN l.TaxRate END TaxRate,CONVERT(decimal(19,4),SUM(UntaxedAmount)) Base,
         CONVERT(decimal(19,4),SUM(TaxAmount)) Tax,CONVERT(decimal(19,4),SUM(TotalAmount)) Total
       FROM (SELECT SourceDocumentId,SourceDocumentType,TaxCode,TaxRate,UntaxedAmount,TaxAmount,TotalAmount FROM ProductLines
         UNION ALL SELECT SourceDocumentId,SourceDocumentType,TaxCode,TaxRate,UntaxedAmount,TaxAmount,TotalAmount FROM ServiceLines) l
-      GROUP BY SourceDocumentId,SourceDocumentType,TaxCode,TaxRate
+      LEFT JOIN UnclassifiedTaxDocuments u ON u.SourceDocumentId=l.SourceDocumentId AND u.SourceDocumentType=l.SourceDocumentType
+      GROUP BY l.SourceDocumentId,l.SourceDocumentType,
+        CASE WHEN u.SourceDocumentId IS NULL THEN l.TaxCode END,CASE WHEN u.SourceDocumentId IS NULL THEN l.TaxRate END
+    ), ProjectedTaxes AS
+    (
+      -- Without line-level tax classification, reconcile the conserved document
+      -- once. Do not treat every tax group as an additional unassigned charge.
+      SELECT t.SourceDocumentId,t.SourceDocumentType,t.OriginalSaleDocumentId,t.BusinessLocalDate,
+        MAX(t.BusinessLocalHour) BusinessLocalHour,MAX(t.OccurredAt) OccurredAt,MAX(t.ProjectedAt) ProjectedAt,
+        CASE WHEN u.SourceDocumentId IS NULL THEN t.TaxCode END TaxCode,
+        CASE WHEN u.SourceDocumentId IS NULL THEN t.TaxRate END TaxRate,
+        CONVERT(decimal(19,4),SUM(t.TaxableAmount)) TaxableAmount,CONVERT(decimal(19,4),SUM(t.TaxAmount)) TaxAmount,
+        CONVERT(decimal(19,4),SUM(t.TotalAmount)) TotalAmount,
+        @TenantId TenantId,@BusinessId BusinessId
+      FROM reporting.SalesReportTaxFacts t
+      LEFT JOIN UnclassifiedTaxDocuments u ON u.SourceDocumentId=t.SourceDocumentId AND u.SourceDocumentType=t.SourceDocumentType
+      WHERE @WholeDocuments=0 AND t.TenantId=@TenantId AND t.BusinessId=@BusinessId AND t.BusinessLocalDate BETWEEN @From AND @To
+        AND (@SourceDocumentId IS NULL OR t.SourceDocumentId=@SourceDocumentId)
+        AND (@OriginalSaleDocumentId IS NULL OR COALESCE(t.OriginalSaleDocumentId,t.SourceDocumentId)=@OriginalSaleDocumentId)
+      GROUP BY t.SourceDocumentId,t.SourceDocumentType,t.OriginalSaleDocumentId,t.BusinessLocalDate,
+        CASE WHEN u.SourceDocumentId IS NULL THEN t.TaxCode END,CASE WHEN u.SourceDocumentId IS NULL THEN t.TaxRate END
     ), ReturnCosts AS
     (
       SELECT SourceDocumentId,CONVERT(decimal(19,6),SUM(Quantity)) Quantity,CONVERT(decimal(19,4),SUM(Cost)) Cost,SUM(Missing) Missing
@@ -72,12 +99,13 @@ AS RETURN
       NULL,N'',N'Cargos facturados sin atribución a producto',NULL,NULL,NULL,NULL,NULL,NULL,NULL,N'Charge',
       0,t.TaxableAmount-COALESCE(l.Base,0),0,t.TaxableAmount-COALESCE(l.Base,0),t.TaxCode,t.TaxRate,
       t.TaxAmount-COALESCE(l.Tax,0),t.TotalAmount-COALESCE(l.Total,0),0,NULL,NULL,t.ProjectedAt,t.BusinessLocalHour,@TenantId,@BusinessId,CONVERT(bigint,0),NULL
-    FROM reporting.SalesReportTaxFacts t
+    FROM ProjectedTaxes t
     JOIN reporting.SalesReportDocuments d WITH(FORCESEEK(PK_SalesReportDocuments(DocumentId)))
       ON d.DocumentId=COALESCE(t.OriginalSaleDocumentId,t.SourceDocumentId)
       AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
     LEFT JOIN LineTaxes l ON l.SourceDocumentId=t.SourceDocumentId AND l.SourceDocumentType=t.SourceDocumentType
-      AND l.TaxCode=t.TaxCode AND l.TaxRate=t.TaxRate
+      AND (l.TaxCode=t.TaxCode OR l.TaxCode IS NULL AND t.TaxCode IS NULL)
+      AND (l.TaxRate=t.TaxRate OR l.TaxRate IS NULL AND t.TaxRate IS NULL)
     WHERE @WholeDocuments=0 AND t.TenantId=@TenantId AND t.BusinessId=@BusinessId AND t.BusinessLocalDate BETWEEN @From AND @To
       AND (@SourceDocumentId IS NULL OR t.SourceDocumentId=@SourceDocumentId)
       AND (@OriginalSaleDocumentId IS NULL OR COALESCE(t.OriginalSaleDocumentId,t.SourceDocumentId)=@OriginalSaleDocumentId)
@@ -89,7 +117,8 @@ AS RETURN
       d.WarehouseId,d.SellerId,d.CustomerId,NULL,N'',d.DocumentNumber,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
       CASE WHEN d.DocumentType=N'ServiceInvoice' THEN N'Service' ELSE N'Product' END,
       d.ProductQuantity,d.GrossAmount,d.DiscountAmount,d.UntaxedAmount,NULL,NULL,d.TaxAmount,
-      CONVERT(decimal(19,4),d.TotalAmount-d.RoundingAdjustmentAmount),d.RecognizedCostAmount,NULL,NULL,d.ProjectedAt,d.BusinessLocalHour,
+      CONVERT(decimal(19,4),d.TotalAmount-d.RoundingAdjustmentAmount),
+      CASE WHEN d.MissingCostLineCount=0 THEN d.RecognizedCostAmount END,NULL,NULL,d.ProjectedAt,d.BusinessLocalHour,
       @TenantId,@BusinessId,d.MissingCostLineCount,NULL
     FROM reporting.SalesReportDocuments d
     WHERE @WholeDocuments=1 AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId AND d.BusinessLocalDate BETWEEN @From AND @To

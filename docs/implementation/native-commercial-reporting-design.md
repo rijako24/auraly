@@ -70,13 +70,70 @@ limitación anterior; se prefiere avanzar con la versión corregida. No se
 revierte el mayor ni los documentos originales como rollback del reporte.
 
 La reconstrucción explícita de consola comprueba, en la transacción de reset
-existente, que su manifiesto de fuentes cubra cada documento o hecho conservado
-de ventas, servicios y compras. Si falta alguno, rechaza antes de borrar datos,
-modificar checkpoints o poner trabajos pendientes. El histórico importado sin
-fuente regenerable no autoriza una reconstrucción parcial. La comprobación usa
-el mismo comando y un índice temporal de documento/tipo; no agrega viajes SQL,
-un motor, una captura ni un proceso de reparación. Las lecturas interactivas
-no ejecutan esta comprobación ni cambian su presupuesto.
+existente, que su manifiesto cubra cada documento o hecho conservado. Por la
+decisión del usuario del 2026-11-24, conserva además las ventas físicas y
+devoluciones importadas que solo existen en Reporting: exige cabecera de venta, líneas e impuestos conciliables, una única
+venta original de la misma empresa/sede y fecha local consistente. La venta
+original puede regenerarse desde su fuente o pertenecer al mismo conjunto
+histórico validado. Los importes deben conciliar al redondeo independiente de los hechos almacenados: para ventas,
+base/total admiten como máximo 0,00005 por línea y grupo de impuesto; la
+cabecera contra impuestos y las devoluciones admiten una unidad de 0,0001. El
+impuesto debe coincidir exactamente. Los residuos siguen visibles como cargos
+sin atribución, sin cambiar los importes originales. Las ventas retenidas no
+tienen raíz operacional ni payload; las devoluciones tampoco tienen una fuente
+financiera que se esté ignorando. Una referencia contradictoria o un histórico distinto sigue
+rechazándose antes de borrar datos, modificar checkpoints o reiniciar trabajos.
+
+Los hechos conservados no crean `SalesDocuments`, `SalesReturns`, pagos ni jobs
+ficticios. El writer actualiza por conjunto únicamente metadatos derivados de
+lectura de las cabeceras históricas: cantidad, disponibilidad de costo, versión
+de proyección y disponibilidad del documento operativo. Se conserva el costo
+crudo histórico, pero el lector lo presenta como desconocido cuando sus hechos
+no acreditan su disponibilidad. `SourceDocumentAvailable` evita ofrecer una
+trazabilidad operativa inexistente, sin consultas adicionales desde la pantalla.
+Sus cantidades, importes, costos y clasificación originales permanecen intactos;
+solo se completa el vínculo derivado de impuestos con la venta que prueban sus
+líneas. Las cabeceras originales conservan durablemente la contribución de esas
+devoluciones, incluso si se interrumpe la reconstrucción. Se resta únicamente la
+contribución regenerable presente y su replay la repone una vez. El writer
+existente reemplaza la cabecera en su misma transacción, conservando ese remanente.
+Al finalizar, el mismo writer agrega por conjunto las contribuciones conservadas
+a sus deltas diarios y dimensiones compartidos y refresca rotación. El checkpoint
+se cierra en ese commit; repetir reconstruye sin duplicar contribuciones.
+
+Un total oficial o redondeo desconocido permanece NULL. El lector propaga ese
+NULL al total oficial agregado, en lugar de omitir la devolución o declarar un
+redondeo cero. El resumen distingue el subtotal tributario y el total calculado
+con importes disponibles; presenta una advertencia y no lo etiqueta como total
+oficial cuando falta evidencia. El detalle conserva tarifa y clasificación
+tributaria desconocidas como NULL. Cuando las líneas no tienen clasificación de
+impuesto, la conciliación de residuos se hace una sola vez por documento: no se
+vuelve a sumar cada grupo tributario como un cargo adicional.
+
+El presupuesto interactivo sigue siendo dos comandos SQL, con filtros, orden y
+límite antes de enriquecer. La advertencia viaja en la consulta propietaria, sin
+otro GET, polling ni consultas por documento. El rebuild usa sus páginas de 200
+fuentes y transacciones canónicas existentes; la preservación es un conjunto SQL,
+con límite de 120 segundos por comando de mantenimiento y sin I/O por documento
+conservado. Un conjunto exclusivamente histórico también puede cerrar su checkpoint, usando una de sus identidades reales, sin inventar
+un trabajo regenerable.
+No hay un motor, writer, tabla persistente ni proceso de recuperación paralelo.
+El corte de una instalación con este histórico incluye una reconstrucción
+explícita después de aplicar el esquema y antes de dar por disponibles sus
+reportes. Se ejecuta `rebuild-sales-reporting <TenantId> <BusinessId>` del
+proyecto `src/Console/Auraly.Console`, compilado desde el mismo commit integrado
+del release, con `ConnectionStrings__DefaultConnection` apuntando al destino
+autorizado. No se activa desde startup ni se reejecutan ventas. La aceptación
+exige checkpoint cerrado, cabeceras actuales, conciliación de hechos y agregados
+y un segundo pase sin duplicados; el ensayo conserva las huellas de documentos,
+inventario, cartera, pagos, asientos y hechos importados antes y después. El
+aprobado del ensayo en una copia no autoriza ejecutar ese corte en producción.
+El rollback conserva los hechos y la columna aditiva. Se prefiere avanzar con
+un lector corregido. Si se revierte la aplicación, debe suspenderse el acceso a
+reportes hasta restablecer el lector compatible: un lector anterior podría
+omitir importes desconocidos y no es seguro servir ese histórico con él. La
+consola anterior también rechaza su reconstrucción. No se revierten inventario,
+cartera, mayor ni DIAN para recuperar un reporte.
 
 Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 

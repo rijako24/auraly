@@ -69,7 +69,7 @@ public sealed record SalesReportSummary(
     decimal? NetSalesChangePercent, IReadOnlyList<SalesReportTrendPoint> Trend,
     DateTimeOffset? ProjectedThrough, long CustomerCount = 0, decimal AverageTicket = 0,
     decimal ReturnRatePercent = 0, bool HasLineScope = false,decimal ExactNetTotal = 0,decimal? RoundingAdjustment = null,
-    SalesReportSummaryBreakdowns? Breakdowns = null);
+    SalesReportSummaryBreakdowns? Breakdowns = null,long HistoricalReturnsWithoutOfficialTotal=0);
 
 public sealed record SalesReportSummaryBreakdowns(
     IReadOnlyList<SalesReportBreakdownRow> Hourly,IReadOnlyList<SalesReportBreakdownRow> Payments,
@@ -79,7 +79,8 @@ public sealed record SalesReportSummaryBreakdowns(
 public sealed record SalesTodayOverview(
     DateOnly BusinessDate, SalesReportTotals Totals, long CustomerCount,
     decimal AverageTicket, decimal ReturnRatePercent,
-    DateTimeOffset? ProjectedThrough,bool HasLineScope=false,bool HasPendingSources=false,bool HasFailedSources=false,string TimeZoneId="UTC");
+    DateTimeOffset? ProjectedThrough,bool HasLineScope=false,bool HasPendingSources=false,bool HasFailedSources=false,string TimeZoneId="UTC",
+    long HistoricalReturnsWithoutOfficialTotal=0);
 
 public sealed record SupplierImpactRow(
     Guid? SupplierId,string SupplierName,long CoveredCustomers,long ImpactedCustomers,
@@ -130,7 +131,8 @@ public sealed record SalesReportContext(DateOnly BusinessDate,DateOnly MonthStar
     IReadOnlyList<SalesReportOption> DocumentTypes,IReadOnlyList<SalesReportOption> Orders,
     IReadOnlyList<SalesReportOption> CustomerActivities,IReadOnlyList<SalesReportOption> PaymentMethods,
     bool HasPendingSources,bool HasFailedSources,
-    IReadOnlyList<SalesReportOption>? ProductReturnActivities=null,IReadOnlyList<SalesReportOption>? ProductCompositions=null);
+    IReadOnlyList<SalesReportOption>? ProductReturnActivities=null,IReadOnlyList<SalesReportOption>? ProductCompositions=null,
+    long HistoricalReturnsWithoutOfficialTotal=0);
 
 public sealed record SalesReportExplorerRequest(
     SalesReportFilter Filter,string GroupBy="document",int Page=1,int PageSize=25,
@@ -150,7 +152,7 @@ public sealed record SalesReportMeasures(long Documents,long Customers,decimal Q
 
 public sealed record SalesReportDocumentSnapshot(Guid DocumentId,string DocumentType,string DocumentNumber,string? FiscalNumber,
     DateTimeOffset IssuedAt,string CustomerName,string SellerName,string? BilledByName,string? WarehouseName,string? FiscalStatus,
-    DateOnly BusinessLocalDate,decimal? OriginalOfficialTotal,decimal? OriginalRounding);
+    DateOnly BusinessLocalDate,decimal? OriginalOfficialTotal,decimal? OriginalRounding,bool SourceDocumentAvailable=true);
 
 public sealed record SalesReportExplorerRow(string Key,string Label,SalesReportMeasures Measures,
     Guid? DocumentId=null,string? DocumentNumber=null,string? DocumentType=null,
@@ -173,5 +175,5 @@ public sealed record SalesReportExplorerPage(IReadOnlyList<SalesReportExplorerRo
 public sealed record SalesReportComparison(DateOnly From,DateOnly To,SalesReportMeasures Totals);
 public sealed record SalesReportImpactOverview(long KnownCustomers,long Buyers,long WithoutPurchase,decimal CoveragePercent,
     DateOnly? FirstHistoricalDate,long AnonymousDocuments);
-public sealed record SalesReportTaxRow(string TaxCode,decimal TaxRate,decimal Base,decimal Tax,decimal Total);
+public sealed record SalesReportTaxRow(string? TaxCode,decimal? TaxRate,decimal Base,decimal Tax,decimal Total);
 public sealed record SalesReportPaymentRow(string MovementType,string MethodCode,decimal Amount);

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Auraly.Contracts.Sales;
+using Auraly.Application.Sales;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +20,161 @@ public sealed class HistoricalSalesReportingCollection : ICollectionFixture<Serv
 [Trait("EngineCertification", "Reporting")]
 public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Rebuild_preserves_imported_return_facts_and_reports_them_once_without_inventing_sources(bool historicalSale)
+    {
+        var sale = fixture.CreateValidRequest(historicalSale ? 9_566 : 9_565);
+        using (var upload = fixture.CreateUploadMessage(sale))
+        using (var accepted = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        var returned = Guid.NewGuid();
+        var reportingSale = historicalSale ? Guid.NewGuid() : sale.DocumentId;
+        var reportingBusiness = historicalSale ? Guid.NewGuid() : fixture.BusinessId;
+        await using var seed = connection.CreateCommand();
+        seed.Parameters.AddWithValue("@Sale", sale.DocumentId);
+        seed.Parameters.AddWithValue("@Return", returned);
+        seed.Parameters.AddWithValue("@ReportingBusiness", reportingBusiness);
+        seed.Parameters.AddWithValue("@HistoricalSale", reportingSale);
+        seed.CommandText = """
+            INSERT reporting.SalesReportLineFacts(FactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+              SourceLineNumber,OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,
+              WarehouseId,CustomerId,ProductId,ProductCode,ProductName,Quantity,GrossAmount,DiscountAmount,
+              UntaxedAmount,TaxAmount,TotalAmount,RecognizedCostAmount,ReturnReasonCode,ReturnDisposition,
+              ProjectionVersion,ProjectedAt,CostAvailable)
+            SELECT NEWID(),TenantId,BusinessId,@Return,N'SalesReturn',SourceLineNumber,@Sale,SourceLineNumber,
+              N'Return',DATEADD(day,1,OccurredAt),DATEADD(day,1,BusinessLocalDate),WarehouseId,CustomerId,
+              ProductId,ProductCode,ProductName,-Quantity,-GrossAmount,-DiscountAmount,-UntaxedAmount,-TaxAmount,
+              -TotalAmount,-RecognizedCostAmount,N'HISTORICAL',N'NotReturned',2,ProjectedAt,0
+            FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Sale AND MovementType=N'Sale';
+            INSERT reporting.SalesReportTaxFacts(SourceDocumentId,SourceDocumentType,TaxCode,TaxRate,TenantId,
+              BusinessId,BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt)
+            SELECT @Return,N'SalesReturn',v.Code,0,f.TenantId,f.BusinessId,DATEADD(day,1,f.BusinessLocalDate),
+              -f.TaxableAmount/2,-f.TaxAmount/2,-f.TotalAmount/2,f.ProjectedAt,DATEADD(day,1,f.OccurredAt)
+            FROM reporting.SalesReportTaxFacts f CROSS JOIN (VALUES(N'IMPORTED-A'),(N'IMPORTED-B')) v(Code)
+            WHERE f.SourceDocumentId=@Sale;
+            UPDATE reporting.SalesReportDocuments SET ReturnedUntaxedAmount=UntaxedAmount,
+              ReturnedTaxAmount=TaxAmount,ReturnedTotalAmount=TotalAmount WHERE DocumentId=@Sale;
+            """;
+        await seed.ExecuteNonQueryAsync();
+        if (historicalSale)
+        {
+            // Give the retained reporting-only graph its own identities, without
+            // deleting or modifying the genuine sale or its immutable payload.
+            seed.CommandText = """
+                INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
+                SELECT @ReportingBusiness,TenantId,N'Histórico conservado',N'',N'',N'',N'',N'' FROM dbo.Businesses WHERE BusinessId=(SELECT BusinessId FROM reporting.SalesReportDocuments WHERE DocumentId=@Sale);
+                UPDATE reporting.SalesReportDocuments SET DocumentId=@HistoricalSale,BusinessId=@ReportingBusiness,ProjectionVersion=2,ProductQuantity=0,MissingCostLineCount=0 WHERE DocumentId=@Sale;
+                UPDATE reporting.SalesReportLineFacts SET SourceDocumentId=CASE WHEN SourceDocumentId=@Sale THEN @HistoricalSale ELSE SourceDocumentId END,
+                  OriginalSaleDocumentId=@HistoricalSale,BusinessId=@ReportingBusiness,CostAvailable=0,TaxCode=NULL,TaxRate=NULL WHERE SourceDocumentId IN(@Sale,@Return);
+                UPDATE reporting.SalesReportTaxFacts SET SourceDocumentId=CASE WHEN SourceDocumentId=@Sale THEN @HistoricalSale ELSE SourceDocumentId END,
+                  OriginalSaleDocumentId=CASE WHEN OriginalSaleDocumentId=@Sale THEN @HistoricalSale ELSE OriginalSaleDocumentId END,
+                  BusinessId=@ReportingBusiness WHERE SourceDocumentId IN(@Sale,@Return);
+                UPDATE reporting.SalesReportPaymentFacts SET SourceDocumentId=@HistoricalSale,BusinessId=@ReportingBusiness WHERE SourceDocumentId=@Sale;
+                INSERT reporting.SalesReportLineFacts(FactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+                  SourceLineNumber,OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,
+                  WarehouseId,CustomerId,ProductId,ProductCode,ProductName,Quantity,GrossAmount,DiscountAmount,
+                  UntaxedAmount,TaxAmount,TotalAmount,RecognizedCostAmount,ProjectionVersion,ProjectedAt,CostAvailable)
+                SELECT NEWID(),TenantId,BusinessId,SourceDocumentId,SourceDocumentType,n.Number,OriginalSaleDocumentId,
+                  OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,WarehouseId,CustomerId,ProductId,ProductCode,ProductName,
+                  Quantity/10,GrossAmount/10,DiscountAmount/10,UntaxedAmount/10-CASE WHEN n.Number=2 THEN 0.0002 ELSE 0 END,
+                  TaxAmount/10,TotalAmount/10-CASE WHEN n.Number=2 THEN 0.0002 ELSE 0 END,RecognizedCostAmount/10,2,ProjectedAt,0
+                FROM reporting.SalesReportLineFacts CROSS JOIN (VALUES(2),(3),(4),(5),(6),(7),(8),(9),(10),(11)) n(Number)
+                WHERE SourceDocumentId=@HistoricalSale AND SourceLineNumber=1;
+                DELETE reporting.SalesReportLineFacts WHERE SourceDocumentId=@HistoricalSale AND SourceLineNumber=1;
+                """;
+            await seed.ExecuteNonQueryAsync();
+            seed.Parameters["@Sale"].Value=reportingSale;
+        }
+        var protectedFacts = await ReportingMigrationFingerprintAsync(connection);
+        using var scope = fixture.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
+        seed.CommandText="UPDATE reporting.SalesReportTaxFacts SET TaxableAmount=TaxableAmount-1,TotalAmount=TotalAmount-1 WHERE SourceDocumentId=@Return AND TaxCode=N'IMPORTED-A';";
+        await seed.ExecuteNonQueryAsync();
+        var rejected=await Assert.ThrowsAsync<SqlException>(()=>processor.RebuildAsync(fixture.TenantId,reportingBusiness,default));
+        Assert.Equal(51626,rejected.Number);
+        Assert.Equal(protectedFacts,await ReportingMigrationFingerprintAsync(connection));
+        seed.CommandText="UPDATE reporting.SalesReportTaxFacts SET TaxableAmount=TaxableAmount+1,TotalAmount=TotalAmount+1 WHERE SourceDocumentId=@Return AND TaxCode=N'IMPORTED-A';";
+        await seed.ExecuteNonQueryAsync();
+        // Interrupt the final aggregate transaction. Retained evidence must
+        // survive and the ordinary rebuild must finish without a recovery path.
+        var trigger = "TR_TestPreservedHistory_" + Guid.NewGuid().ToString("N");
+        await using var failure = new SqlCommand($"""
+            CREATE TRIGGER reporting.[{trigger}] ON reporting.SalesReportDailyTotals AFTER INSERT,UPDATE AS
+            IF EXISTS(SELECT 1 FROM inserted i JOIN reporting.SalesReportTaxFacts f
+              ON f.BusinessId=i.BusinessId AND f.BusinessLocalDate=i.BusinessLocalDate
+              WHERE f.SourceDocumentId='{returned:D}') THROW 51993,N'Interrupted reporting rehearsal',1;
+            """,connection);
+        await failure.ExecuteNonQueryAsync();
+        try
+        {
+            var interrupted = await Assert.ThrowsAsync<SqlException>(()=>processor.RebuildAsync(fixture.TenantId,reportingBusiness,default));
+            Assert.Equal(51993,interrupted.Number);
+        }
+        finally
+        {
+            failure.CommandText=$"DROP TRIGGER reporting.[{trigger}];";
+            await failure.ExecuteNonQueryAsync();
+        }
+        string? importedSnapshot = null;
+        for (var replay = 0; replay < 2; replay++)
+        {
+            await processor.RebuildAsync(fixture.TenantId, reportingBusiness, default);
+            Assert.Equal(protectedFacts, await ReportingMigrationFingerprintAsync(connection));
+            seed.CommandText = """
+                SELECT (SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Return),
+                  (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Return),
+                  (SELECT COUNT(*) FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Return AND OfficialDocumentTotalAmount IS NULL AND OriginalSaleDocumentId=@Sale),
+                  (SELECT COUNT(*) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Return AND TaxCode IS NULL AND CostAvailable=0),
+                  (SELECT SUM(UntaxedAmount) FROM reporting.SalesReportActivity(@Tenant,@Business,'20260101','20261231',@Return,NULL,0)),
+                  (SELECT -UntaxedAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Sale),
+                  (SELECT SUM(NetTotalSales) FROM reporting.SalesReportDailyTotals WHERE BusinessId=@Business AND BusinessLocalDate=(SELECT MIN(BusinessLocalDate) FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Return)),
+                  (SELECT SUM(TotalAmount) FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Return);
+                """;
+            if (replay == 0) { seed.Parameters.AddWithValue("@Tenant", fixture.TenantId); seed.Parameters.AddWithValue("@Business", reportingBusiness); }
+            await using (var data = await seed.ExecuteReaderAsync())
+            {
+                Assert.True(await data.ReadAsync());
+                Assert.Equal(0, data.GetInt32(0)); Assert.Equal(0, data.GetInt32(1));
+                Assert.Equal(2, data.GetInt32(2)); Assert.True(data.GetInt32(3) > 0);
+                Assert.Equal(data.GetDecimal(5), data.GetDecimal(4));
+                Assert.Equal(data.GetDecimal(7), data.GetDecimal(6));
+            }
+            seed.CommandText = """
+                SELECT (SELECT * FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Return ORDER BY SourceLineNumber FOR JSON PATH) Lines,
+                  (SELECT * FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Return ORDER BY TaxCode FOR JSON PATH) Taxes FOR JSON PATH;
+                """;
+            var actual = Assert.IsType<string>(await seed.ExecuteScalarAsync());
+            if (importedSnapshot is null) importedSnapshot = actual; else Assert.Equal(importedSnapshot, actual);
+            seed.CommandText = """
+                SELECT d.ProductQuantity,d.MissingCostLineCount,d.ProjectionVersion,
+                  (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Sale),
+                  (SELECT RecognizedCostAmount FROM reporting.SalesReportActivity(@Tenant,@Business,'20260101','20261231',@Sale,NULL,1)),d.SourceDocumentAvailable
+                FROM reporting.SalesReportDocuments d WHERE d.DocumentId=@Sale;
+                """;
+            await using var header = await seed.ExecuteReaderAsync();
+            Assert.True(await header.ReadAsync()); Assert.Equal(sale.Lines.Sum(l=>l.Quantity),header.GetDecimal(0));
+            Assert.Equal(historicalSale?10:0,header.GetInt64(1));
+            Assert.Equal(SqlSalesReportingProjectionWriter.ProjectionVersion,header.GetInt16(2));
+            Assert.Equal(historicalSale?0:1,header.GetInt32(3));
+            Assert.Equal(historicalSale,header.IsDBNull(4));
+            Assert.Equal(!historicalSale,header.GetBoolean(5));
+            await header.DisposeAsync();
+            var reports=scope.ServiceProvider.GetRequiredService<ISalesReportingStore>();
+            var actor=new SalesReportingUserIdentity(fixture.UserId,fixture.TenantId,reportingBusiness,
+                new HashSet<string>{SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll});
+            var filter=new SalesReportFilter(new(2026,1,1),new(2026,12,31));
+            var context=await reports.GetContextAsync(actor,default);
+            Assert.True(context.HistoricalReturnsWithoutOfficialTotal>0);
+            var detail=await reports.ExploreAsync(actor,new(filter,DocumentId:reportingSale),default);
+            Assert.Null(detail.OfficialTotal); Assert.Null(detail.RoundingAdjustment);
+            Assert.Equal(!historicalSale,detail.Document!.SourceDocumentAvailable);
+        }
+    }
+
     [Theory]
     [InlineData(0)] // Existing job without its source reference.
     [InlineData(1)] // Historical table before the source columns existed.
