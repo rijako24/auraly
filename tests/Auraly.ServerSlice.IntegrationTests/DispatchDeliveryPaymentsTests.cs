@@ -294,8 +294,8 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
                 CONVERT(nvarchar(36),@Sale),HASHBYTES('SHA2_256',CONVERT(nvarchar(36),@Sale)),SYSUTCDATETIME(),
                 N'222222222222',50000,0,50000,N'Completed',SYSUTCDATETIME(),N'Dispatch');
             INSERT dbo.SalesDocumentLines(DocumentId,LineNumber,ProductId,Description,TaxCode,TaxRate,
-              Quantity,UnitPrice,DiscountAmount,TaxAmount,UntaxedAmount,LineTotal)
-              VALUES(@Sale,1,@Product,N'Producto entregado',N'01',0,1,50000,0,0,50000,50000);
+              Quantity,UnitPrice,DiscountAmount,TaxAmount,UntaxedAmount,LineTotal,RecognizedCostAmount)
+              VALUES(@Sale,1,@Product,N'Producto entregado',N'01',0,1,50000,0,0,50000,50000,0);
             INSERT dbo.Dispatches(DispatchId,TenantId,BusinessId,DispatchNumber,ScheduledDate,DriverUserId,DriverName,
               Status,CreatedBy,CreatedAt,UpdatedAt)
               VALUES(@Dispatch,@Tenant,@Business,CONVERT(nvarchar(36),@Dispatch),'20261117',@User,N'Conductor de prueba',

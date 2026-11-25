@@ -124,7 +124,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   const adjustment = page.getByRole("dialog", { name: "Ajuste de cartera" });
   await expect(adjustment.getByRole("heading", { name: "Ajuste de cartera", level: 2 })).toBeVisible();
   await expect(adjustment.getByLabel("Valor del ajuste")).toBeDisabled();
-  await adjustment.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await adjustment.getByRole("combobox", { name: "Seleccionar proveedor" }).click();
   await page.getByRole("option", { name: /Tercero de prueba/ }).click();
   await adjustment.getByRole("combobox", { name: "Seleccionar factura para ajuste de cartera" }).click();
   await expect(page.getByRole("option", { name: /GTO00-20/ })).toBeVisible();
@@ -133,7 +133,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   await expect(adjustment.getByText("Falta enlazar la cuenta de apertura de esta obligación.", { exact: true })).toBeVisible();
   await expect(adjustment.getByText("$ 5.000").first()).toBeVisible();
   await expect(adjustment.getByLabel("Valor del ajuste")).toBeEnabled();
-  await adjustment.getByRole("button", { name: "Cerrar" }).click();
+  await adjustment.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(adjustment).toHaveCount(0);
   await expect(page).toHaveURL(/dashboard\/payables/);
   await page.getByRole("combobox", { name: "Concepto de gasto" }).click();
@@ -145,16 +145,16 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   await expect(detail).toContainText("Transporte y mensajería");
   await expect(detail).toContainText("Domicilio · Factura VIA00-190");
   await expect(detail).toContainText("Factura de venta: VIA00-190");
-  await detail.getByRole("button", { name: "Cerrar" }).click();
+  await detail.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Limpiar filtros" }).click();
   await expect.poll(() => conceptFilter).toBe("");
   await page.getByRole("row", { name: /GTO00-20/ }).click();
   await page.getByRole("dialog", { name: "GTO00-20" }).getByRole("button", { name: "Ajuste de cartera" }).click();
-  await expect(adjustment.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Tercero de prueba");
+  await expect(adjustment.getByRole("combobox", { name: "Seleccionar proveedor" })).toContainText("Tercero de prueba");
   await expect(adjustment.getByText("Proveedor de prueba · 1001")).toBeVisible();
   await expect(adjustment.getByRole("combobox", { name: "Seleccionar factura para ajuste de cartera" })).toContainText("GTO00-20");
   await expect(adjustment.getByText("$ 5.000").first()).toBeVisible();
-  await adjustment.getByRole("button", { name: "Cerrar" }).click();
+  await adjustment.getByRole("button", { name: "Cerrar", exact: true }).click();
 
   await page.goto("/dashboard/receivables");
   await expect(page.getByLabel("Resumen de cartera")).toBeVisible();

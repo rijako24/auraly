@@ -4,9 +4,7 @@ import test from "node:test";
 import {
   canConfirmWarehouseTransferReceipt,
   defaultInventoryOperationKind,
-  inventoryDocumentLabel,
   inventoryDocumentTypeForKind,
-  inventoryMovementLabel,
   inventoryOperationKinds,
 } from "./inventory-operation-launch";
 
@@ -20,12 +18,6 @@ test("nueva operación abre conteo y conserva todos los procesos disponibles", (
     "damage",
     "production",
   ]);
-});
-
-test("presenta en español los movimientos y documentos internos de traslado", () => {
-  assert.equal(inventoryMovementLabel("TransferDispatchOut"), "Salida por traslado");
-  assert.equal(inventoryMovementLabel("TransferReceiptIn"), "Entrada por traslado");
-  assert.equal(inventoryDocumentLabel("WarehouseTransferReceipt"), "Recepción de traslado");
 });
 
 test("solo permite confirmar entrada cuando el traslado tiene cantidad pendiente", () => {

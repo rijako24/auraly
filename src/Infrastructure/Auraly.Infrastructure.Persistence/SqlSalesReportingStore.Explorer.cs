@@ -47,7 +47,8 @@ public sealed partial class SqlSalesReportingStore
             access.PointOfSaleMode=="RestaurantBar",catalogs.GetValueOrDefault("sales-report-grouping")??[],
             catalogs.GetValueOrDefault("sales-report-comparison")??[],catalogs.GetValueOrDefault("sales-report-document-type")??[],
             catalogs.GetValueOrDefault("sales-report-order")??[],catalogs.GetValueOrDefault("sales-report-customer-activity")??[],catalogs.GetValueOrDefault("payment-method")??[],
-            access.HasPendingSources,access.HasFailedSources,catalogs.GetValueOrDefault("sales-report-product-returns")??[],catalogs.GetValueOrDefault("sales-report-product-composition")??[],incompleteReturns);
+            access.HasPendingSources,access.HasFailedSources,catalogs.GetValueOrDefault("sales-report-product-returns")??[],catalogs.GetValueOrDefault("sales-report-product-composition")??[],incompleteReturns,
+            access.PendingSourceCount,access.FailedSourceCount);
     }
 
     private static (string Key,string Label) ExplorerDimension(string dimension,bool rawIdentifiers=false)

@@ -115,8 +115,8 @@ public sealed class DispatchCaptureTests(ServerSliceFixture fixture, ITestOutput
                 HASHBYTES('SHA2_256',CONVERT(nvarchar(36),Id)),[At],N'222222222222',3,0,3,N'Completed',[At]
               FROM OPENJSON(@Docs) WITH(Id uniqueidentifier,[Index] int,[At] datetimeoffset(7));
             INSERT dbo.SalesDocumentLines(DocumentId,LineNumber,ProductId,Description,TaxCode,TaxRate,
-              Quantity,UnitPrice,DiscountAmount,TaxAmount,UntaxedAmount,LineTotal)
-              SELECT Id,n.Value,@Product,N'Producto del despacho',N'01',0,1,1,0,0,1,1
+              Quantity,UnitPrice,DiscountAmount,TaxAmount,UntaxedAmount,LineTotal,RecognizedCostAmount)
+              SELECT Id,n.Value,@Product,N'Producto del despacho',N'01',0,1,1,0,0,1,1,0
               FROM OPENJSON(@Docs) WITH(Id uniqueidentifier) CROSS JOIN (VALUES(1),(2),(3)) n(Value);
             """, connection);
         seed.Parameters.AddWithValue("@Business", fixture.BusinessId); seed.Parameters.AddWithValue("@Warehouse", fixture.WarehouseId);

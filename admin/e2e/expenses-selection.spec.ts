@@ -116,10 +116,10 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
   await expect(page.getByRole("button", { name: "Filtros" })).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator('input[type="date"]')).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Fecha inicial" })).toBeVisible();
-  await page.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await page.getByRole("combobox", { name: "Seleccionar proveedor" }).click();
   await page.getByRole("option", { name: /ANDERSON ATENCIO/ }).click();
   await expect(page.getByRole("button", { name: "Filtros 1" })).toBeVisible();
-  await page.getByRole("button", { name: "Quitar selección de Seleccionar supplier" }).click();
+  await page.getByRole("button", { name: "Quitar selección de Seleccionar proveedor" }).click();
   await expect(page.getByRole("button", { name: "Filtros" })).toBeVisible();
   await page.getByText("Estado de la cuenta por pagar").locator("..").getByRole("combobox").click();
   await page.getByRole("option", { name: "Pagada", exact: true }).click();

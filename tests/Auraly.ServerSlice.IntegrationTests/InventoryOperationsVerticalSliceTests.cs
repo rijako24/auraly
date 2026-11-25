@@ -1140,11 +1140,16 @@ public sealed partial class InventoryOperationsVerticalSliceTests(ServerSliceFix
         }
         var movements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?productId={product:D}&page=1&pageSize=20");
         Assert.Contains(movements!.Items,x=>x.DocumentId==damageId&&x.MovementType=="InventoryDamage");
+        var damageMovement = Assert.Single(movements.Items, item => item.DocumentId == damageId);
+        Assert.Equal("Salida por avería", damageMovement.MovementTypeLabel);
+        Assert.Equal("Baja de inventario", damageMovement.DocumentTypeLabel);
         var searchedMovements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?search=REF-{product:N}&page=1&pageSize=20");
         Assert.Contains(searchedMovements!.Items, x => x.DocumentId == damageId);
         var movementOptions = await client.GetFromJsonAsync<InventoryMovementFilterOptions>("/api/commerce/v1/inventory/movements/filter-options");
         Assert.Contains("Damage", movementOptions!.DocumentTypes);
         Assert.Contains("InventoryDamage", movementOptions.MovementTypes);
+        Assert.Contains(movementOptions.DocumentTypeOptions!, item => item.Code == "Damage" && item.Label == damageMovement.DocumentTypeLabel && item.IsActive);
+        Assert.Contains(movementOptions.MovementTypeOptions!, item => item.Code == "InventoryDamage" && item.Label == damageMovement.MovementTypeLabel && item.IsActive);
         var filteredMovements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?productId={product:D}&documentType=Damage&movementType=InventoryDamage&page=1&pageSize=1");
         Assert.Equal(1, filteredMovements!.TotalCount);
         Assert.Equal(damageId, Assert.Single(filteredMovements.Items).DocumentId);
@@ -1152,6 +1157,45 @@ public sealed partial class InventoryOperationsVerticalSliceTests(ServerSliceFix
         Assert.Contains(searchedOperations!.Items, x => x.DocumentId == damageId);
         var filteredOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?documentType=Damage&reasonCode=DAMAGE&page=1&pageSize=20");
         Assert.Contains(filteredOperations!.Items, x => x.DocumentId == damageId);
+        var damageOperation = Assert.Single(filteredOperations.Items, item => item.DocumentId == damageId);
+        Assert.Equal(damageMovement.DocumentTypeLabel, damageOperation.DocumentTypeLabel);
+        Assert.Equal("Procesado", damageOperation.StatusLabel);
+        Assert.False(string.IsNullOrWhiteSpace(damageOperation.ReasonName));
+        var detail = await client.GetFromJsonAsync<InventoryOperationDetail>($"/api/commerce/v1/inventory/operations/{damageId:D}");
+        Assert.Equal(damageOperation.DocumentTypeLabel, detail!.DocumentTypeLabel);
+        Assert.Equal(damageOperation.StatusLabel, detail.StatusLabel);
+        await using (var metadata = new SqlConnection(fixture.ConnectionString))
+        {
+            await metadata.OpenAsync();
+            await using var rename = metadata.CreateCommand();
+            rename.CommandText = "UPDATE reference.Options SET Label=@Label WHERE CatalogCode=N'inventory-movement-type' AND Code=N'InventoryDamage';";
+            rename.Parameters.AddWithValue("@Label", "Avería: etiqueta del catálogo");
+            try
+            {
+                await rename.ExecuteNonQueryAsync();
+                using var scope = fixture.CreateScope();
+                var store = scope.ServiceProvider.GetRequiredService<Auraly.Application.Inventory.IInventoryQueryStore>();
+                var identity = new InventoryUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId, new HashSet<string> { InventoryPermissionCodes.Read });
+                using var reads = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+                var watch = Stopwatch.StartNew();
+                var first = await store.GetMovementsAsync(identity, new(fixture.BusinessId, fixture.WarehouseId, product, null, null, null, null, null, 1, 1), false, default);
+                var second = await store.GetMovementsAsync(identity, new(fixture.BusinessId, fixture.WarehouseId, product, null, null, null, null, null, 2, 1), false, default);
+                var options = await store.GetMovementFilterOptionsAsync(identity, default);
+                watch.Stop();
+                Assert.Equal(3, reads.Count);
+                Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), watch.Elapsed.ToString());
+                Assert.Equal(first.TotalCount, second.TotalCount);
+                Assert.NotEqual(Assert.Single(first.Items).InventoryMovementId, Assert.Single(second.Items).InventoryMovementId);
+                Assert.Equal("Avería: etiqueta del catálogo", first.Items[0].MovementTypeLabel);
+                Assert.Contains(options.MovementTypeOptions!, item => item.Code == "InventoryDamage" && item.Label == first.Items[0].MovementTypeLabel);
+                Assert.Null(first.Items[0].ValueChange);
+            }
+            finally
+            {
+                rename.Parameters["@Label"].Value = damageMovement.MovementTypeLabel;
+                await rename.ExecuteNonQueryAsync();
+            }
+        }
         var excludedOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?documentType=Damage&reasonCode=EXPIRED&page=1&pageSize=20");
         Assert.DoesNotContain(excludedOperations!.Items, x => x.DocumentId == damageId);
         using var restricted = fixture.CreateAdminClient(InventoryPermissionCodes.Read);

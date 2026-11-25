@@ -56,7 +56,7 @@ async function createAndEdit(page: Page, role: Role) {
   await dialog.getByRole("button", { name: "Guardar tercero" }).click();
   await expect(page.getByText("Tercero actualizado", { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(dialog.getByText("3017654321", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "Cerrar" }).click();
+  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
 }
 
 test.describe.serial("terceros desde navegador", () => {

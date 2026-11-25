@@ -61,7 +61,7 @@ internal static partial class SqlSalesReportingJobWriter
         command.Parameters.AddWithValue("@Payload", payload);
         command.Parameters.AddWithValue("@Now", createdAt);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new InvalidOperationException("The service reporting source could not be accepted.");
+            throw new InvalidOperationException("No fue posible aceptar la fuente de proyección del servicio.");
     }
 
     public static async Task InsertAsync(

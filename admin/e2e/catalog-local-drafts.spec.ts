@@ -37,7 +37,7 @@ async function mockApi(page: Page) {
     if (path.endsWith(`/commerce/v1/products/${productId}/merchandising`)) return json(route, { productId, productCategoryId: null, productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: 0.75, manageInventory: true, allowsFractionalSale: false, isWeighable: false, scale: null, barcodes: [], link: null, linkedProducts: [], conversionMaximumLossPercent: null });
     if (path.endsWith(`/commerce/v1/products/${productId}/tax-configuration`)) return json(route, { productId, salesTaxProfileId: taxProfileId, purchaseTaxProfileId: taxProfileId, purchaseTaxTreatment: "DeductibleInputVat" });
     if (path.endsWith(`/commerce/v1/products/${productId}/recipe`)) return route.fulfill({ status: 404, json: { detail: "El producto de prueba no tiene receta." } });
-    if (path.endsWith(`/commerce/v1/pricing/products/${productId}/context`)) return json(route, { productId, productName: "Producto base", preparedSalePrice: 12_000, publicSalePrice: 12_000, costBasisAmount: 10_000, costBasisOrigin: "Manual", currentMarginPercent: 20, salesTaxRate: 19, roundingIncrement: 1, roundingMode: "Nearest" });
+    if (path.endsWith(`/commerce/v1/pricing/products/${productId}/context`)) return json(route, { productId, productName: "Producto base", preparedSalePrice: 12_000, publicSalePrice: 12_000, costBasisAmount: 10_000, costBasisOrigin: "Manual", currentMarginPercent: 20, inputMode: "Margin", salesTaxRate: 19, roundingIncrement: 1, roundingMode: "Nearest" });
     if (path.endsWith(`/commerce/v1/products/${productId}`)) return json(route, { productId, businessId, productCode: "PRD-001", reference: "REF-ORIGINAL", name: "Producto base", description: "Producto para prueba", isActive: true, barcodes: [], prices: [{ amount: 12_000, currencyCode: "COP", costBasisAmount: 10_000, targetMarginPercent: 20 }], suppliers: [], salesTaxProfileId: taxProfileId, purchaseTaxProfileId: taxProfileId, purchaseTaxTreatment: "DeductibleInputVat", baseUnitCode: "EA", manageInventory: true, isWeighable: false, unitGrossWeightKg: 0.75 });
     if (path.includes(`/businesses/${businessId}/products/${productId}/images`)) return json(route, []);
     if (path.includes(`/businesses/${businessId}/products/${productId}/aliases`) || path.includes(`/businesses/${businessId}/products/${productId}/search-terms`)) return json(route, []);
@@ -108,7 +108,7 @@ test("producto recupera creación y edición; cancelar elimina el borrador", asy
   const created = await waitForDraft(page, "product-create:");
   expect(JSON.stringify(created.value)).not.toContain("createdAt");
 
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   await expect(dialog).toBeHidden();
   await page.getByRole("button", { name: "Nuevo producto" }).click();
   dialog = page.getByRole("dialog", { name: "Crear producto" });
@@ -135,7 +135,7 @@ test("producto recupera creación y edición; cancelar elimina el borrador", asy
   await dialog.locator('input[type="file"]').setInputFiles(pixel);
   await waitForDraft(page, "product-edit:");
 
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   await page.getByRole("button", { name: "Editar" }).first().click();
   dialog = page.getByRole("dialog");
   await expect(dialog.locator("#product-reference")).toHaveValue("LOCAL-EDIT-01");
@@ -172,14 +172,14 @@ test("la X de Productos conserva el último cambio y permite reabrir sin bloquea
     if (index === 0) {
       const writesBefore = await page.evaluate(() => (window as typeof window & { catalogDraftWrites: number }).catalogDraftWrites);
       await createDialog.getByPlaceholder("Nombre claro para venta y búsqueda").pressSequentially("Producto rápido 0", { delay: 1 });
-      await createDialog.getByRole("button", { name: "Close", exact: true }).click();
+      await createDialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
       await expect(createDialog).toBeHidden();
       const writesAfter = await page.evaluate(() => (window as typeof window & { catalogDraftWrites: number }).catalogDraftWrites);
       expect(writesAfter - writesBefore).toBeLessThanOrEqual(3);
       continue;
     }
     await createDialog.getByPlaceholder("Nombre claro para venta y búsqueda").fill(`Producto rápido ${index}`);
-    await createDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await createDialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
     await expect(createDialog).toBeHidden();
   }
   await page.getByRole("button", { name: "Nuevo producto" }).click();
@@ -190,7 +190,7 @@ test("la X de Productos conserva el último cambio y permite reabrir sin bloquea
     await page.getByRole("button", { name: "Editar" }).first().click();
     const editDialog = page.getByRole("dialog");
     await editDialog.locator("#product-reference").fill(`CAMBIO-RAPIDO-${index}`);
-    await editDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await editDialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
     await expect(editDialog).toBeHidden();
   }
   await page.getByRole("button", { name: "Editar" }).first().click();
@@ -215,7 +215,7 @@ test("tercero recupera creación y edición sin persistir claves", async ({ page
   expect(serialized).not.toContain("ClaveTemporal123!");
   expect(serialized).not.toContain("createdAt");
 
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   await page.getByRole("button", { name: "Nuevo tercero" }).click();
   dialog = page.getByRole("dialog");
   await expect(field(dialog, "Nombre visible").locator("input")).toHaveValue("Usuario recuperable local");
@@ -237,7 +237,7 @@ test("tercero recupera creación y edición sin persistir claves", async ({ page
   await name.fill("Tercero recuperado desde IndexedDB");
   await waitForDraft(page, "party-edit:");
 
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   await page.getByRole("button", { name: "Editar" }).first().click();
   dialog = page.getByRole("dialog");
   await expect(field(dialog, "Nombre visible").locator("input")).toHaveValue("Tercero recuperado desde IndexedDB");
@@ -248,8 +248,49 @@ test("tercero recupera creación y edición sin persistir claves", async ({ page
   await expect(field(dialog, "Nombre visible").locator("input")).toHaveValue("Tercero recuperado desde IndexedDB");
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expectDraftRemoved(page, "party-edit:");
-  await dialog.getByRole("button", { name: "Cerrar" }).click();
+  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Editar" }).first().click();
   await expect(field(page.getByRole("dialog"), "Nombre visible").locator("input")).toHaveValue(originalName);
   await page.getByRole("dialog").getByRole("button", { name: "Cancelar" }).click();
 });
+
+for (const inputMode of ["Margin", "SalePrice"] as const) {
+  test(`guardar un producto conserva el modo ${inputMode} y envía una preparación coherente`, async ({page}) => {
+    await mockApi(page);
+    await authenticate(page);
+    const detail = {productId,businessId,productCode:"PRD-001",reference:"REF-ORIGINAL",name:"Producto base",
+      description:"Producto para prueba",isActive:true,isIngredient:false,isGenericProduct:false,barcodes:[],
+      prices:[{amount:12000,currencyCode:"COP",costBasisAmount:10000,targetMarginPercent:20}],
+      suppliers:[{supplierId:partyId,identification:"900000001",name:"Proveedor de prueba",supplierProductCode:null,
+        baseUnitCost:10000,isPrimary:true,purchasePresentationName:"Unidad",unitsPerPresentation:1}],
+      salesTaxProfileId:taxProfileId,purchaseTaxProfileId:taxProfileId,purchaseTaxTreatment:"DeductibleInputVat",
+      baseUnitCode:"EA",manageInventory:true,isWeighable:false,unitGrossWeightKg:0.75};
+    let writes=0;
+    let saved: {prices:Array<{amount:number;preparedAmount:number;costBasisAmount:number;targetMarginPercent:number;inputMode:string}>}|undefined;
+    await page.route(`**/api/commerce/v1/products/${productId}`,async route=>{
+      if(route.request().method()==="PUT"){
+        writes++;
+        saved=route.request().postDataJSON();
+        return json(route,detail);
+      }
+      return json(route,detail);
+    });
+    await page.route(`**/api/commerce/v1/pricing/products/${productId}/context`,route=>json(route,{
+      productId,productName:"Producto base",preparedSalePrice:12000,publicSalePrice:12000,costBasisAmount:10000,
+      costBasisOrigin:"Manual",currentMarginPercent:20,inputMode,salesTaxRate:19,roundingIncrement:1,roundingMode:"Nearest",isCostLinked:false,
+    }));
+    await page.goto("/dashboard/products");
+    await page.getByRole("button",{name:"Editar",exact:true}).first().click();
+    const dialog=page.getByRole("dialog");
+    await expect.poll(async () => (await dialog.getByRole("textbox",{name:"Costo base *",exact:true}).inputValue()).replace(/\D/g,"" )).toBe("10000");
+    await expect(dialog.getByText("Proveedor de prueba",{exact:true}).first()).toBeVisible();
+    await dialog.locator("#product-name").fill(`Producto con modo ${inputMode}`);
+    await dialog.getByRole("button",{name:"Guardar producto",exact:true}).click();
+    await expect.poll(()=>saved?.prices[0]?.inputMode).toBe(inputMode);
+    expect(saved!.prices[0].costBasisAmount).toBe(10000);
+    expect(saved!.prices[0].amount).toBe(12000);
+    expect(saved!.prices[0].preparedAmount).toBe(inputMode==="Margin"?14875:12000);
+    expect(saved!.prices[0].targetMarginPercent).toBe(inputMode==="Margin"?20:0.8333);
+    expect(writes).toBe(1);
+  });
+}

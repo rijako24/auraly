@@ -155,7 +155,8 @@ public sealed record ProductPricingContext(
     bool IsCostLinked,
     Guid? CostSourceProductId,
     string? CostSourceProductName,
-    decimal? CostFactor);
+    decimal? CostFactor,
+    string InputMode);
 
 public sealed record PublishProductPriceRequest(
     string InputMode,

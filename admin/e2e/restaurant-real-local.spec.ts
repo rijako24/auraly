@@ -26,7 +26,7 @@ test("comandas vuelve al preparador compartido antes de abrir mesas", async ({ p
   const peripherals = page.getByRole("dialog", { name: "Periféricos de restaurante" });
   await expect(peripherals.getByText("Punto de venta web")).toBeVisible();
   await expect(peripherals.getByRole("link", { name: /Instalar Auraly/ })).toHaveCount(0);
-  await peripherals.getByRole("button", { name: "Cerrar" }).click();
+  await peripherals.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Cerrar sesión de venta" }).click();
   const closure = page.getByRole("dialog").filter({
     hasText: /Cerrar sesión operativa|Autorización requerida/,

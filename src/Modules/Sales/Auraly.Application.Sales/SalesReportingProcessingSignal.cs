@@ -30,7 +30,7 @@ public sealed class SalesReportingProcessingCoordinator(
         if (businessId == Guid.Empty || documentId == Guid.Empty ||
             sourceVersion <= 0 || !SalesReportingProcessingPolicy.Supports(documentType))
             throw new ArgumentException(
-                "Business, document and a reportable document type are required.");
+                "Se requieren una sede, un documento y un tipo de documento válido para proyectar.");
 
         return publisher.PublishAsync(
             new SalesReportingProcessingSignal(

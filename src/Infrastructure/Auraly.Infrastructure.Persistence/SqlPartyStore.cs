@@ -32,7 +32,7 @@ public sealed partial class SqlPartyStore(
             if (receipt is not null)
             {
                 if (!receipt.Value.NormalizedIdentification.Equals(normalizedIdentification, StringComparison.Ordinal))
-                    throw new PartyConflictException("The operation ID was already used for another identity.");
+                    throw new PartyConflictException("El identificador de la operación ya se usó para otro tercero.");
                 await transaction.CommitAsync(ct);
                 return await RequiredCustomerAsync(
                     actor.TenantId, actor.BusinessId, receipt.Value.CustomerId, ct);
@@ -77,7 +77,7 @@ public sealed partial class SqlPartyStore(
             var existingCustomerId = await CustomerIdAsync(
                 connection, transaction, resolvedPartyId, actor.BusinessId, ct);
             if (existingCustomerId is not null)
-                throw new PartyConflictException("The Party already has the Customer role in this business.");
+                throw new PartyConflictException("El tercero ya tiene el rol de cliente en esta sede.");
             var resolvedCustomerId = customerId;
             if (existingCustomerId is null)
             {
@@ -138,7 +138,7 @@ public sealed partial class SqlPartyStore(
         {
             await transaction.RollbackAsync(ct);
             throw new PartyConflictException(
-                "The Party already has the Customer role in this business, " +
+                "El tercero ya tiene el rol de cliente en esta sede, " +
                 "or another unique Party value is already in use.");
         }
         catch
@@ -265,7 +265,7 @@ public sealed partial class SqlPartyStore(
             {
                 if (receipt.Value.CustomerId != customerId)
                     throw new PartyConflictException(
-                        "The operation ID was already used for another customer.");
+                        "El identificador de la operación ya se usó para otro cliente.");
                 await transaction.CommitAsync(ct);
                 return (await RequiredCustomerAsync(
                     actor.TenantId, actor.BusinessId, customerId, ct))
@@ -286,10 +286,10 @@ public sealed partial class SqlPartyStore(
             ]);
             var partyValue = await partyCommand.ExecuteScalarAsync(ct);
             if (partyValue is not Guid partyId)
-                throw new PartyForbiddenException("Customer does not belong to the authenticated business.");
+                throw new PartyForbiddenException("El cliente no pertenece a la sede autorizada.");
             await using (var protectedCommand = new SqlCommand("""
                 IF EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND Identification=N'222222222222' AND DisplayName=N'Consumidor final')
-                  THROW 51037,'Consumidor final is a protected system customer and cannot be changed.',1;
+                  THROW 51037,N'Consumidor final es un cliente protegido del sistema y no puede modificarse.',1;
                 """, connection, transaction))
             {
                 protectedCommand.Parameters.AddWithValue("@PartyId", partyId);
@@ -319,7 +319,7 @@ public sealed partial class SqlPartyStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(ct);
-            throw new PartyConflictException("The site code or primary site is already in use.");
+            throw new PartyConflictException("El código de sede o la sede principal ya está en uso.");
         }
         catch (SqlException exception) when (exception.Number == 51037)
         { await transaction.RollbackAsync(ct); throw new PartyValidationException(exception.Message); }
@@ -343,16 +343,16 @@ public sealed partial class SqlPartyStore(
             var rowVersion = Convert.FromBase64String(request.RowVersion);
             await using var command = new SqlCommand("""
                 DECLARE @PartyId uniqueidentifier=(SELECT c.PartyId FROM dbo.Customers c JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId);
-                IF @PartyId IS NULL THROW 51030,'Customer is outside the authenticated business.',1;
+                IF @PartyId IS NULL THROW 51030,N'El cliente no pertenece a la sede autorizada.',1;
                 IF EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND Identification=N'222222222222' AND DisplayName=N'Consumidor final')
-                  THROW 51037,'Consumidor final is a protected system customer and cannot be changed.',1;
+                  THROW 51037,N'Consumidor final es un cliente protegido del sistema y no puede modificarse.',1;
                 IF @Primary=1 UPDATE dbo.PartySites SET IsPrimary=0,UpdatedAt=@Now WHERE PartyId=@PartyId AND PartySiteId<>@SiteId AND IsPrimary=1;
                 UPDATE dbo.PartySites SET Code=@Code,Name=@Name,CountryId=@CountryId,AdministrativeDivisionId=@DivisionId,CityId=@CityId,
                   AddressLine=@Address,Neighborhood=@Neighborhood,PostalCode=@PostalCode,Email=@Email,Phone=@Phone,
                   GoogleMapsUrl=@GoogleMapsUrl,GooglePlaceId=@GooglePlaceId,Latitude=@Latitude,Longitude=@Longitude,
                   IsPrimary=@Primary,UpdatedAt=@Now
                 WHERE PartySiteId=@SiteId AND PartyId=@PartyId AND RowVersion=@RowVersion;
-                IF @@ROWCOUNT=0 THROW 51036,'The site changed or no longer exists.',1;
+                IF @@ROWCOUNT=0 THROW 51036,N'La sede cambió o ya no existe.',1;
                 """, connection, transaction);
             command.Parameters.AddRange([
                 P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),P("@CustomerId",customerId),P("@SiteId",siteId),P("@RowVersion",rowVersion),
@@ -361,8 +361,8 @@ public sealed partial class SqlPartyStore(
             await transaction.CommitAsync(ct);
             return (await RequiredCustomerAsync(actor.TenantId, actor.BusinessId, customerId, ct)).Sites.Single(site=>site.PartySiteId==siteId);
         }
-        catch (FormatException) { await transaction.RollbackAsync(ct); throw new PartyValidationException("The site row version is invalid."); }
-        catch (SqlException exception) when (exception.Number is 2601 or 2627) { await transaction.RollbackAsync(ct); throw new PartyConflictException("The site code is already in use."); }
+        catch (FormatException) { await transaction.RollbackAsync(ct); throw new PartyValidationException("La versión de la sede no es válida."); }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627) { await transaction.RollbackAsync(ct); throw new PartyConflictException("El código de sede ya está en uso."); }
         catch (SqlException exception) when (exception.Number==51036) { await transaction.RollbackAsync(ct); throw new PartyConflictException(exception.Message); }
         catch (SqlException exception) when (exception.Number==51037) { await transaction.RollbackAsync(ct); throw new PartyValidationException(exception.Message); }
         catch { await transaction.RollbackAsync(ct); throw; }
@@ -463,7 +463,7 @@ public sealed partial class SqlPartyStore(
               (AdministrativeDivisionId,CountryId,Code,Name,DivisionType,IsActive,CreatedAt)
             SELECT @Id,CountryId,@Code,@Name,@Type,@Active,@Now
             FROM dbo.Countries WHERE CountryId=@CountryId AND IsActive=1;
-            IF @@ROWCOUNT=0 THROW 51031,'Country not found or inactive.',1;
+            IF @@ROWCOUNT=0 THROW 51031,N'El país no existe o está inactivo.',1;
             """,
             [
                 P("@Id", id), P("@CountryId", request.CountryId),
@@ -485,7 +485,7 @@ public sealed partial class SqlPartyStore(
             SELECT @Id,AdministrativeDivisionId,@Code,@Name,@Active,@Now
             FROM dbo.AdministrativeDivisions
             WHERE AdministrativeDivisionId=@DivisionId AND IsActive=1;
-            IF @@ROWCOUNT=0 THROW 51032,'Administrative division not found or inactive.',1;
+            IF @@ROWCOUNT=0 THROW 51032,N'El departamento no existe o está inactivo.',1;
             """,
             [
                 P("@Id", id), P("@DivisionId", request.AdministrativeDivisionId),
@@ -502,7 +502,7 @@ public sealed partial class SqlPartyStore(
     {
         await ExecuteMasterAsync("""
             UPDATE dbo.Countries SET Code=@Code,Name=@Name,IsActive=@Active,UpdatedAt=@Now WHERE CountryId=@Id;
-            IF @@ROWCOUNT=0 THROW 51033,'Country not found.',1;
+            IF @@ROWCOUNT=0 THROW 51033,N'No se encontró el país.',1;
             """, [P("@Id",id),P("@Code",request.Code.Trim().ToUpperInvariant()),P("@Name",request.Name.Trim()),P("@Active",request.IsActive),P("@Now",now)], ct);
         return new(id,request.Code.Trim().ToUpperInvariant(),request.Name.Trim(),request.IsActive);
     }
@@ -510,9 +510,9 @@ public sealed partial class SqlPartyStore(
     public async Task<AdministrativeDivisionItem> UpdateDivisionAsync(PartyActorIdentity actor, Guid id, SaveAdministrativeDivisionRequest request, DateTimeOffset now, CancellationToken ct)
     {
         await ExecuteMasterAsync("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.Countries WHERE CountryId=@CountryId) THROW 51031,'Country not found.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Countries WHERE CountryId=@CountryId) THROW 51031,N'No se encontró el país.',1;
             UPDATE dbo.AdministrativeDivisions SET CountryId=@CountryId,Code=@Code,Name=@Name,DivisionType=@Type,IsActive=@Active,UpdatedAt=@Now WHERE AdministrativeDivisionId=@Id;
-            IF @@ROWCOUNT=0 THROW 51034,'Administrative division not found.',1;
+            IF @@ROWCOUNT=0 THROW 51034,N'No se encontró el departamento.',1;
             """, [P("@Id",id),P("@CountryId",request.CountryId),P("@Code",request.Code.Trim().ToUpperInvariant()),P("@Name",request.Name.Trim()),P("@Type",request.DivisionType.Trim()),P("@Active",request.IsActive),P("@Now",now)], ct);
         return new(id,request.CountryId,request.Code.Trim().ToUpperInvariant(),request.Name.Trim(),request.DivisionType.Trim(),request.IsActive);
     }
@@ -520,9 +520,9 @@ public sealed partial class SqlPartyStore(
     public async Task<CityItem> UpdateCityAsync(PartyActorIdentity actor, Guid id, SaveCityRequest request, DateTimeOffset now, CancellationToken ct)
     {
         await ExecuteMasterAsync("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.AdministrativeDivisions WHERE AdministrativeDivisionId=@DivisionId) THROW 51032,'Administrative division not found.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.AdministrativeDivisions WHERE AdministrativeDivisionId=@DivisionId) THROW 51032,N'No se encontró el departamento.',1;
             UPDATE dbo.Cities SET AdministrativeDivisionId=@DivisionId,Code=@Code,Name=@Name,IsActive=@Active,UpdatedAt=@Now WHERE CityId=@Id;
-            IF @@ROWCOUNT=0 THROW 51035,'City not found.',1;
+            IF @@ROWCOUNT=0 THROW 51035,N'No se encontró la ciudad.',1;
             """, [P("@Id",id),P("@DivisionId",request.AdministrativeDivisionId),P("@Code",request.Code.Trim().ToUpperInvariant()),P("@Name",request.Name.Trim()),P("@Active",request.IsActive),P("@Now",now)], ct);
         return new(id,request.AdministrativeDivisionId,request.Code.Trim().ToUpperInvariant(),request.Name.Trim(),request.IsActive);
     }
@@ -540,7 +540,7 @@ public sealed partial class SqlPartyStore(
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
-            throw new PartyConflictException("A master record with the same code already exists.");
+            throw new PartyConflictException("Ya existe un registro del catálogo con ese código.");
         }
         catch (SqlException exception) when (exception.Number is 51031 or 51032 or 51033 or 51034 or 51035)
         {
@@ -554,7 +554,7 @@ public sealed partial class SqlPartyStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         return await LoadCustomerAsync(connection, tenantId, businessId, customerId, ct)
-            ?? throw new InvalidOperationException("The customer was not persisted.");
+            ?? throw new InvalidOperationException("No fue posible guardar el cliente.");
     }
 
     private static async Task<CustomerDetail?> LoadCustomerAsync(
@@ -629,14 +629,14 @@ public sealed partial class SqlPartyStore(
             IF NOT EXISTS (
               SELECT 1 FROM dbo.Businesses
               WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
-              THROW 51030,'Business is outside the authenticated tenant.',1;
+              THROW 51030,N'La sede no pertenece a la empresa autorizada.',1;
             IF NOT EXISTS (
               SELECT 1 FROM dbo.Cities ci
               JOIN dbo.AdministrativeDivisions d ON d.AdministrativeDivisionId=ci.AdministrativeDivisionId
               JOIN dbo.Countries co ON co.CountryId=d.CountryId
               WHERE ci.CityId=@CityId AND d.AdministrativeDivisionId=@DivisionId
                 AND co.CountryId=@CountryId AND ci.IsActive=1 AND d.IsActive=1 AND co.IsActive=1)
-              THROW 51033,'The geographic hierarchy is invalid or inactive.',1;
+              THROW 51033,N'La ubicación geográfica no es válida o está inactiva.',1;
             """;
         command.Parameters.AddRange(
         [
@@ -763,7 +763,7 @@ public sealed partial class SqlPartyStore(
             """, connection, transaction);
         command.Parameters.AddWithValue("@PartyId", partyId);
         return (bool)(await command.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException("Could not verify the Party site."));
+            ?? throw new InvalidOperationException("No fue posible verificar la sede del tercero."));
     }
 
 
@@ -804,7 +804,7 @@ public sealed partial class SqlPartyStore(
               SELECT 1 FROM dbo.PriceChannels channelValue
               JOIN dbo.Businesses businessValue ON businessValue.TenantId=channelValue.TenantId
               WHERE channelValue.PriceChannelId=@PriceChannelId AND businessValue.BusinessId=@BusinessId AND channelValue.IsActive=1)
-              THROW 51035,'Price channel is outside the customer tenant.',1;
+              THROW 51035,N'El canal de precios no pertenece a la empresa del cliente.',1;
             INSERT dbo.CustomerPricingSettings
               (CustomerId,PriceChannelId,ValidFrom,ValidUntil,UpdatedBy,UpdatedAt)
             VALUES(@CustomerId,@PriceChannelId,COALESCE(@ValidFrom,@Now),@ValidUntil,@ActorId,@Now);

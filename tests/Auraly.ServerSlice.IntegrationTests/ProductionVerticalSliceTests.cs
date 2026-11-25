@@ -482,8 +482,10 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(HttpStatusCode.NotFound,absent.StatusCode);
     }
 
-    [Fact]
-    public async Task Composition_cost_propagates_through_linked_presentations_without_adding_vat_twice()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Composition_cost_propagates_through_linked_presentations_without_adding_vat_twice(bool editWholeProduct)
     {
         var raw = Guid.NewGuid(); var finished = Guid.NewGuid(); var combo = Guid.NewGuid(); var presentation = Guid.NewGuid();
         await SeedAsync(raw, finished, combo);
@@ -508,7 +510,8 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
         seed.Parameters.AddWithValue("@Tenant", fixture.TenantId); seed.Parameters.AddWithValue("@Finished", finished);
         seed.Parameters.AddWithValue("@Combo", combo); seed.Parameters.AddWithValue("@Presentation", presentation);
         seed.Parameters.AddWithValue("@Code", $"ZERO-{combo:N}"[..32]); await seed.ExecuteNonQueryAsync();
-        using var catalog = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update);
+        using var catalog = fixture.CreateAdminClient(CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ReadCosts, CatalogPermissionCodes.ManageCosts, CatalogPermissionCodes.ManagePrices);
         using var recipe = await catalog.PutAsJsonAsync($"/api/commerce/v1/products/{finished:D}/recipe",
             new PublishProductRecipeRequest(0, [new(raw, 1m)]));
         Assert.True(recipe.IsSuccessStatusCode, await recipe.Content.ReadAsStringAsync());
@@ -516,15 +519,42 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
             new PublishProductRecipeRequest(0, [new(presentation, 1m)], "Combo"));
         Assert.True(comboSaved.IsSuccessStatusCode, await comboSaved.Content.ReadAsStringAsync());
         using var pricing = fixture.CreateAdminClient(PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
-            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices);
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
+            "pricing.segments.read", "pricing.segments.manage");
         var before = await pricing.GetFromJsonAsync<ProductPricingContext>($"/api/commerce/v1/pricing/products/{combo:D}/context");
         Assert.Equal(1190m, before!.CostBasisAmount);
-        using var changed = await pricing.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{raw:D}/prepared-price",
-            new PublishProductPriceRequest(PriceInputModes.Margin, 25m, null, 1m, PricingRoundingModes.Nearest, 2000m));
+        using var channelCreated = await pricing.PostAsJsonAsync("/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest($"Combo y escalas {Guid.NewGuid():N}", "TieredProductPrice", null,
+                [new(combo, 0m, 1m, 50m, true, PriceInputModes.Margin),
+                 new(combo, 7777m, 5m, null, false, PriceInputModes.SalePrice)]));
+        Assert.True(channelCreated.IsSuccessStatusCode, await channelCreated.Content.ReadAsStringAsync());
+        var channel = (await channelCreated.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
+        async Task AssertChannelPrices(decimal synchronizedPrice)
+        {
+            var items = (await pricing.GetFromJsonAsync<Auraly.Api.PriceSegmentItem[]>(
+                $"/api/commerce/v1/pricing/segments/{channel.Id:D}/items"))!;
+            Assert.Equal(new[] { synchronizedPrice, 7777m }, items.Select(item => item.Amount));
+            Assert.Equal(50m, items[0].TargetMarginPercent);
+            Assert.Equal(new[] { true, false }, items.Select(item => item.AutoUpdatePrice));
+        }
+        await AssertChannelPrices(2380m);
+        var rawProduct = (await catalog.GetFromJsonAsync<ProductDetail>($"/api/commerce/v1/products/{raw:D}"))!;
+        using var changed = editWholeProduct
+            ? await catalog.PutAsJsonAsync($"/api/commerce/v1/products/{raw:D}", new SaveProductRequest(
+                fixture.BusinessId, rawProduct.ProductCode, rawProduct.Reference, rawProduct.Name,
+                rawProduct.Description, rawProduct.BaseUnitCode, rawProduct.SalesTaxProfileId,
+                rawProduct.ManageInventory, rawProduct.IsWeighable,
+                rawProduct.Barcodes.Select(value => new ProductBarcodeInput(value)).ToArray(), [],
+                [new(10000m, "COP", 2000m, 25m, 10000m, PriceInputModes.Margin)],
+                [new(fixture.SupplierId, "900999001", "Proveedor E2E", null, 2000m)], null,
+                rawProduct.PurchaseTaxProfileId, rawProduct.PurchaseTaxTreatment, IsIngredient: true))
+            : await pricing.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{raw:D}/prepared-price",
+                new PublishProductPriceRequest(PriceInputModes.Margin, 25m, null, 1m, PricingRoundingModes.Nearest, 2000m));
         Assert.True(changed.IsSuccessStatusCode, await changed.Content.ReadAsStringAsync());
         var after = await pricing.GetFromJsonAsync<ProductPricingContext>($"/api/commerce/v1/pricing/products/{combo:D}/context");
         Assert.Equal(2380m, after!.CostBasisAmount);
         Assert.Equal(10000m, after.PublicSalePrice);
+        await AssertChannelPrices(2380m);
         async Task AssertDependentPreparations()
         {
             await using var prepared = new SqlCommand("""
@@ -554,6 +584,11 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
                    "/api/commerce/v1/pricing/publish", new PublishPricesRequest([raw])))
             Assert.True(publishedComponent.IsSuccessStatusCode, await publishedComponent.Content.ReadAsStringAsync());
         await AssertDependentPreparations();
+        await AssertChannelPrices(2380m);
+        using (var publishedCombo = await pricing.PostAsJsonAsync(
+                   "/api/commerce/v1/pricing/publish", new PublishPricesRequest([combo])))
+            Assert.True(publishedCombo.IsSuccessStatusCode, await publishedCombo.Content.ReadAsStringAsync());
+        await AssertChannelPrices(4760m);
         using var cleared = await catalog.PutAsJsonAsync($"/api/commerce/v1/products/{finished:D}/recipe",
             new PublishProductRecipeRequest(1, []));
         Assert.True(cleared.IsSuccessStatusCode, await cleared.Content.ReadAsStringAsync());

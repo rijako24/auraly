@@ -7,6 +7,15 @@ import {
 } from "./product-pricing-calculator";
 
 describe("product pricing calculator", () => {
+  it("rebuilds a loaded draft from its latest cost and margin instead of retaining an older price", () => {
+    assert.deepEqual(
+      recalculateProductPricing("margin", 25.4608, {
+        cost: 10555.56, margin: 25.4608, salePrice: 16600, salesTaxRate: 0,
+      }),
+      { cost: 10555.56, margin: 25.4608, salePrice: 14161.09, salesTaxRate: 0 },
+    );
+  });
+
   it("keeps margin and recalculates sale price when cost changes", () => {
     assert.deepEqual(
       recalculateProductPricing("cost", 80, { cost: 50, margin: 20, salePrice: 62.5 }),

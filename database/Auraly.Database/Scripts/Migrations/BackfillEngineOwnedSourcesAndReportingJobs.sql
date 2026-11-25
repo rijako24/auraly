@@ -60,7 +60,20 @@ FROM dbo.DocumentProcessingPayloads p
 INNER JOIN dbo.DocumentProcessingJobs j
   ON j.DocumentId=p.DocumentId AND j.DocumentType=p.DocumentType
  AND j.BusinessId=p.BusinessId AND j.Status=N'Completed'
+INNER JOIN dbo.Businesses owner ON owner.BusinessId=p.BusinessId
 WHERE p.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesReturn')
+  AND NOT EXISTS(SELECT 1 FROM OPENJSON(p.PayloadJson) property
+    WHERE p.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+      AND p.PayloadHash=HASHBYTES('SHA2_256',CONVERT(varchar(max),p.PayloadJson COLLATE Latin1_General_100_BIN2_UTF8))
+      AND TRY_CONVERT(uniqueidentifier,COALESCE(JSON_VALUE(p.PayloadJson,'$.documentId'),JSON_VALUE(p.PayloadJson,'$.DocumentId')))=p.DocumentId
+      AND TRY_CONVERT(uniqueidentifier,COALESCE(JSON_VALUE(p.PayloadJson,'$.businessId'),JSON_VALUE(p.PayloadJson,'$.BusinessId')))=p.BusinessId
+      AND TRY_CONVERT(uniqueidentifier,COALESCE(JSON_VALUE(p.PayloadJson,'$.tenantId'),JSON_VALUE(p.PayloadJson,'$.TenantId')))=owner.TenantId
+      AND NOT EXISTS(SELECT 1 FROM dbo.SalesDocumentLines line WHERE line.DocumentId=p.DocumentId)
+      AND NOT EXISTS(SELECT 1 FROM dbo.InventoryMovements movement WHERE movement.DocumentId=p.DocumentId AND movement.BusinessId=p.BusinessId)
+      AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries entry WHERE entry.SourceDocumentId=p.DocumentId AND entry.BusinessId=p.BusinessId)
+      AND NOT EXISTS(SELECT 1 FROM dbo.Receivables debt WHERE debt.SourceDocumentId=p.DocumentId AND debt.BusinessId=p.BusinessId)
+      AND property.[key] COLLATE Latin1_General_100_BIN2 IN(N'fiscalHabilitationOnly',N'FiscalHabilitationOnly')
+      AND property.[type]=3 AND property.value=N'true')
   AND NOT EXISTS
   (
     SELECT 1 FROM reporting.SalesReportingJobs r

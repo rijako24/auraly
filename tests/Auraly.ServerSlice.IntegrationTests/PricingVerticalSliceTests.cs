@@ -1,17 +1,168 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Pricing;
+using Auraly.Application.Pricing;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Purchasing;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task VAT_changed_between_calculation_and_save_rolls_back_the_preparation(bool review)
+    {
+        var product = Guid.NewGuid();
+        await SeedProductAsync(product, $"SAVE-RACE-{product:N}", 9000m);
+        using var client = fixture.CreateAdminClient(PricingPermissionCodes.PreparePrices, PricingPermissionCodes.ReadCostBasis);
+        using var prepared = await client.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{product}/prepared-price",
+            new PublishProductPriceRequest(PriceInputModes.Margin, 20m, null, 1m, PricingRoundingModes.Nearest, 8000m));
+        Assert.True(prepared.IsSuccessStatusCode, await prepared.Content.ReadAsStringAsync());
+        var original = (await prepared.Content.ReadFromJsonAsync<PreparedProductPrice>())!;
+        using var scope = fixture.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IPricingStore>();
+        var user = new PricingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId, new HashSet<string>());
+        var source = (await store.GetProposalAsync(user, original.ProductPriceId, default))!;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var change = new SqlCommand("UPDATE tax SET Rate=19 FROM dbo.TaxProfiles tax JOIN dbo.Products p ON p.TaxProfileId=tax.TaxProfileId WHERE p.ProductId=@Product;", connection);
+            change.Parameters.AddWithValue("@Product", product); await change.ExecuteNonQueryAsync();
+        }
+        if (review)
+            await Assert.ThrowsAsync<PricingConflictException>(() => store.ReviewAsync(user, source.ProposalId,
+                new(8000m, "Margin", 20m, 10000m, 10000m, 20m, 1m, "Nearest"),
+                source.SalesTaxRate, source.RowVersion, default));
+        else
+            await Assert.ThrowsAsync<PricingConflictException>(() => store.SavePreparedProductAsync(user,
+                new(product, 8000m, "Manual", "Margin", 20m, 10000m, 20m, 1m, "Nearest", source.SalesTaxRate),
+                DateTimeOffset.UtcNow, default));
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Product", product));
+        Assert.Equal(9000m, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", product));
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", product));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Invalid_preparation_or_changed_VAT_rejects_the_entire_publication_batch(bool taxChanged)
+    {
+        var products = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        using var client = fixture.CreateAdminClient(PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices, PricingPermissionCodes.BulkPublish);
+        foreach (var product in products)
+        {
+            await SeedProductAsync(product, $"BATCH-MATH-{product:N}", 9000m);
+            using var preparation = await client.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{product}/prepared-price",
+                new PublishProductPriceRequest(PriceInputModes.Margin, 20m, null, 1m, PricingRoundingModes.Nearest, 8000m));
+            Assert.True(preparation.IsSuccessStatusCode, await preparation.Content.ReadAsStringAsync());
+        }
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var stale = connection.CreateCommand();
+            stale.CommandText = taxChanged
+                ? "UPDATE tax SET Rate=19 FROM dbo.TaxProfiles tax JOIN dbo.Products product ON product.TaxProfileId=tax.TaxProfileId WHERE product.ProductId=@Product;"
+                : "UPDATE dbo.ProductPricePreparations SET PreparedAmount=9999 WHERE ProductId=@Product AND Status=N'Pending';";
+            stale.Parameters.AddWithValue("@Product", products[1]); await stale.ExecuteNonQueryAsync();
+        }
+        using var publication = await client.PostAsJsonAsync("/api/commerce/v1/pricing/publish", new PublishPricesRequest(products));
+        Assert.Equal(HttpStatusCode.Conflict, publication.StatusCode);
+        foreach (var product in products)
+        {
+            Assert.Equal(9000m, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", product));
+            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", product));
+            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.CatalogChanges WHERE ProductId=@Product", product));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending'", product));
+        }
+    }
+
+    [Fact]
+    public async Task Publisher_rejects_a_preparation_whose_cost_and_margin_no_longer_match_its_price()
+    {
+        var product = Guid.NewGuid();
+        await SeedProductAsync(product, $"INVALID-MATH-{product:N}", 16600m);
+        using var client = fixture.CreateAdminClient(PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices);
+        using var prepared = await client.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{product:D}/prepared-price",
+            new PublishProductPriceRequest(PriceInputModes.Margin, 25.4608m, null, 1m, PricingRoundingModes.Nearest, 10555.56m));
+        prepared.EnsureSuccessStatusCode();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var legacy = connection.CreateCommand();
+            // Reproduce the historical inconsistent combination in the durable
+            // preparation. The public API itself calculated it correctly.
+            legacy.CommandText = "UPDATE dbo.ProductPricePreparations SET PreparedAmount=16600,EffectiveMarginPercent=25.4608 WHERE ProductId=@Product AND Status=N'Pending';";
+            legacy.Parameters.AddWithValue("@Product", product);
+            await legacy.ExecuteNonQueryAsync();
+        }
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/pricing/publish", new PublishPricesRequest([product]));
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var rejection = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Vuelve a preparar el precio", rejection);
+        Assert.Equal(16600m, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", product));
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", product));
+    }
+
+    [Theory]
+    [InlineData("10555.56", "25.4608", "16600", "14161", false, "25.460349")]
+    [InlineData("12222.22", "29.8246", "19000", "17417", false, "29.825917")]
+    [InlineData("8990", "30.2013", "14900", "12880", false, "30.201863")]
+    [InlineData("38477.5", "35.004223", "59200", "59200", true, "22.655025")]
+    public async Task Historical_cost_margin_inconsistency_is_corrected_only_by_preparing_and_publishing(
+        string costText, string marginText, string oldPriceText, string expectedPriceText, bool byPrice, string expectedMarginText)
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var cost = decimal.Parse(costText, culture); var margin = decimal.Parse(marginText, culture);
+        var oldPrice = decimal.Parse(oldPriceText, culture); var expectedPrice = decimal.Parse(expectedPriceText, culture);
+        var expectedMargin = decimal.Parse(expectedMarginText, culture);
+        var product = Guid.NewGuid();
+        await SeedProductAsync(product, $"REPRICE-{product:N}", oldPrice, margin);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var legacy = connection.CreateCommand();
+            legacy.CommandText = """
+                UPDATE dbo.ProductPrices SET CostBasisAmount=@Cost,CostBasisType=N'Manual',
+                  TargetMarginPercent=@Margin,EffectiveMarginPercent=@Margin,InputMode=@Mode,
+                  RoundingIncrement=1,RoundingMode=N'Nearest' WHERE ProductId=@Product AND IsActive=1;
+                UPDATE tax SET Rate=@Tax FROM dbo.TaxProfiles tax JOIN dbo.Products p ON p.TaxProfileId=tax.TaxProfileId WHERE p.ProductId=@Product;
+                """;
+            legacy.Parameters.AddWithValue("@Product", product); legacy.Parameters.AddWithValue("@Cost", cost);
+            legacy.Parameters.AddWithValue("@Margin", margin); legacy.Parameters.AddWithValue("@Mode", byPrice ? "SalePrice" : "Margin");
+            legacy.Parameters.AddWithValue("@Tax", byPrice ? 19m : 0m);
+            await legacy.ExecuteNonQueryAsync();
+        }
+        using var client = fixture.CreateAdminClient(PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices);
+        using var preparedResponse = await client.PutAsJsonAsync($"/api/commerce/v1/pricing/products/{product:D}/prepared-price",
+            new PublishProductPriceRequest(byPrice ? PriceInputModes.SalePrice : PriceInputModes.Margin,
+                margin, byPrice ? oldPrice : null, 1m, PricingRoundingModes.Nearest, cost));
+        Assert.True(preparedResponse.IsSuccessStatusCode, await preparedResponse.Content.ReadAsStringAsync());
+        var prepared = (await preparedResponse.Content.ReadFromJsonAsync<PreparedProductPrice>())!;
+        Assert.Equal(expectedPrice, prepared.PreparedAmount);
+        Assert.Equal(expectedMargin, prepared.EffectiveMarginPercent);
+        Assert.Equal(oldPrice, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", product));
+        for (var replay = 0; replay < 2; replay++)
+        {
+            using var published = await client.PostAsJsonAsync("/api/commerce/v1/pricing/publish", new PublishPricesRequest([product]));
+            // Publishing a selection already consumed is rejected as stale;
+            // it must leave its authoritative price and audit unchanged.
+            Assert.Equal(replay == 0 ? HttpStatusCode.OK : HttpStatusCode.Conflict, published.StatusCode);
+            Assert.Equal(expectedPrice, await ScalarAsync<decimal>("SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", product));
+            Assert.Equal(expectedMargin, await ScalarAsync<decimal>("SELECT EffectiveMarginPercent FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", product));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", product));
+        }
+    }
+
     [Theory]
     [InlineData("2000000", "10000", "-19900")]
     [InlineData("20000000", "0.0001", "-19999999999900")]
@@ -168,6 +319,11 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Approved");
         var reviewed = Assert.Single(approved!.Items.Where(x => x.ProductId == productId));
         Assert.Equal(10_650m, reviewed.SuggestedSalePrice);
+        Assert.Equal(1, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.ProductPricePreparations
+            WHERE ProductId=@Product AND Status=N'Pending'
+              AND RoundingIncrement=50 AND RoundingMode=N'Up' AND PreparedAmount=10650;
+            """, productId));
 
         var publishRequest = new PublishPricesRequest([reviewed.ProductId]);
         using var publishedResponse = await pricing.PostAsJsonAsync(

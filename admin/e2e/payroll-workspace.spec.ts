@@ -139,7 +139,7 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
 }
 
 async function choose(page: Page, label: string, option: string) {
-  await (label === "Empleado" ? page.getByRole("combobox", { name: "Seleccionar employee" }) : label === "Trabajador" ? page.locator("label").filter({ has: page.locator("span", { hasText: /^Trabajador$/ }) }).getByRole("combobox") : page.getByLabel(label, { exact: true })).click();
+  await (label === "Empleado" ? page.getByRole("combobox", { name: "Seleccionar empleado" }) : label === "Trabajador" ? page.locator("label").filter({ has: page.locator("span", { hasText: /^Trabajador$/ }) }).getByRole("combobox") : page.getByLabel(label, { exact: true })).click();
   await page.getByRole("option", { name: option, exact: label !== "Empleado" && label !== "Trabajador" }).click();
 }
 

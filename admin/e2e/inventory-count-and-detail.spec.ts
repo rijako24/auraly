@@ -116,7 +116,7 @@ test.describe("conteo y detalle de inventario", () => {
     const count=operation.getByRole("textbox",{name:"Contar Arroz",exact:true});
     await expect(count).toBeFocused();
     await count.fill("8");
-    await operation.getByRole("button",{name:"Close",exact:true}).click();
+    await operation.getByRole("button",{name:"Cerrar ventana",exact:true}).click();
     await expect(operation).toBeHidden();
     await page.getByRole("button", { name: "Nueva operación" }).click();
     const restoredCount=operation.getByRole("textbox",{name:"Contar Arroz",exact:true});
@@ -336,7 +336,7 @@ test.describe("conteo y detalle de inventario", () => {
     await expect(detail.getByRole("row").filter({ hasText: "Aceite vegetal 1000 ml" }).getByRole("cell", { name: "+4", exact: true })).toBeVisible();
     const unknown = detail.getByRole("row").filter({ hasText: "Producto sin base histórica" });
     await expect(unknown.getByRole("cell", { name: "—", exact: true })).toHaveCount(2);
-    await detail.getByRole("button", { name: "Cerrar" }).click();
+    await detail.getByRole("button", { name: "Cerrar", exact: true }).click();
     await expect(detail).toBeHidden();
   });
 });

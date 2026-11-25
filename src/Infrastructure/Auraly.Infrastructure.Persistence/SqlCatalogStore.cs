@@ -3,6 +3,7 @@ using System.Text.Json;
 using Auraly.Application.Catalog;
 using Auraly.Contracts.Catalog;
 using Auraly.Domain.Inventory;
+using Auraly.Domain.Pricing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Microsoft.Data.SqlClient;
 
@@ -39,29 +40,29 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 request = request with { ProductCode = await NextProductCodeAsync(connection, transaction, user.TenantId, ct) };
             if (!create && !wasGenericProduct && !request.IsGenericProduct)
                 await EnsurePriceUnchangedAsync(connection, transaction, user.BusinessId, productId, request.Prices.Single().Amount, ct);
-            await ExecuteAsync(connection, transaction, """
+            await using var validation = new SqlCommand("""
                 IF NOT EXISTS (
                   SELECT 1 FROM dbo.TaxProfiles t
                   WHERE t.TaxProfileId=@TaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1)
-                  THROW 51021, 'The sales VAT profile is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, N'El perfil de IVA de venta no pertenece a la empresa autorizada o está inactivo.', 1;
                 IF @IsGenericProduct=0 AND NOT EXISTS (
                   SELECT 1 FROM dbo.TaxProfiles t
                   WHERE t.TaxProfileId=@PurchaseTaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1)
-                  THROW 51021, 'The purchase VAT profile is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, N'El perfil de IVA de compra no pertenece a la empresa autorizada o está inactivo.', 1;
                 IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND TenantId=@TenantId AND Rate=0) AND @PurchaseTaxTreatment<>N'NotApplicable'
-                  THROW 51024, 'A zero-rated purchase VAT profile must use NotApplicable treatment.', 1;
+                  THROW 51024, N'Un perfil de IVA de compra con tarifa cero debe usar el tratamiento No aplica.', 1;
                 IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND TenantId=@TenantId AND Rate>0) AND @PurchaseTaxTreatment=N'NotApplicable'
-                  THROW 51024, 'A positive purchase VAT profile must use DeductibleInputVat or CapitalizedCost treatment.', 1;
+                  THROW 51024, N'Un perfil de IVA de compra con tarifa positiva debe usar IVA descontable o Mayor valor del costo.', 1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.ProductUnits WHERE TenantId=@TenantId AND Code=@BaseUnitCode AND IsActive=1)
-                  THROW 51021, 'The product unit is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, N'La unidad del producto no pertenece a la empresa autorizada o está inactiva.', 1;
                 IF @ProductCategoryId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.ProductCategories WHERE TenantId=@TenantId AND ProductCategoryId=@ProductCategoryId AND IsActive=1)
-                  THROW 51021, 'The product category is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, N'La categoría del producto no pertenece a la empresa autorizada o está inactiva.', 1;
                 IF @ProductBrandId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.ProductBrands WHERE TenantId=@TenantId AND ProductBrandId=@ProductBrandId AND IsActive=1)
-                  THROW 51021, 'The product brand is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, N'La marca del producto no pertenece a la empresa autorizada o está inactiva.', 1;
                 IF @ParentProductId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.Products WHERE TenantId=@TenantId AND ProductId=@ParentProductId AND IsActive=1)
-                  THROW 51021, 'The linked parent product is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, N'El producto principal vinculado no pertenece a la empresa autorizada o está inactivo.', 1;
                 IF @ParentProductId=@ProductId
-                  THROW 51022, 'A product cannot be linked to itself.', 1;
+                  THROW 51022, N'Un producto no puede vincularse consigo mismo.', 1;
                 IF @IsIngredient=1 AND @IsGenericProduct=1
                   THROW 51024, 'Un ingrediente no puede ser un producto genérico.', 1;
                 IF @IsIngredient=1 AND EXISTS(SELECT 1 FROM dbo.Products
@@ -88,7 +89,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     THROW 51024, 'Este producto ya participa en ventas, cuentas o comandas. Crea un producto distinto para el ingrediente.', 1;
                 END;
                 IF @ParentProductId IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId AND ChildProductId=@ParentProductId AND IsActive=1)
-                  THROW 51022, 'Linked product chains are not allowed.', 1;
+                  THROW 51022, N'No se puede vincular un producto a otro que ya tiene un vínculo.', 1;
                 IF @ParentProductId IS NOT NULL AND @SharesInventory=1 AND EXISTS (
                   SELECT 1 FROM dbo.InventoryBalances balance JOIN dbo.Businesses businessValue ON businessValue.BusinessId=balance.BusinessId
                   WHERE businessValue.TenantId=@TenantId AND balance.ProductId=@ProductId AND balance.QuantityOnHand<>0)
@@ -96,12 +97,39 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 IF @ManageInventory=0 AND EXISTS (
                   SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId AND ParentProductId=@ProductId
                     AND IsActive=1 AND AllowsConversion=1)
-                  THROW 51024, 'A conversion family root must manage inventory.', 1;
+                  THROW 51024, N'El producto principal de una familia de conversión debe manejar inventario.', 1;
                 IF @AllowsConversion=1 AND NOT EXISTS (
                   SELECT 1 FROM dbo.Products WHERE TenantId=@TenantId AND ProductId=@ParentProductId
                     AND IsActive=1 AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
-                  THROW 51024, 'The linked parent must manage inventory and define a maximum conversion loss.', 1;
-                """, ProductParameters(user, productId, request, now), ct);
+                  THROW 51024, N'El producto principal vinculado debe manejar inventario y definir la merma máxima de conversión.', 1;
+                SELECT Rate FROM dbo.TaxProfiles WITH(HOLDLOCK)
+                WHERE TaxProfileId=@TaxProfileId AND TenantId=@TenantId;
+                """, connection, transaction);
+            validation.Parameters.AddRange(ProductParameters(user, productId, request, now));
+            var salesTaxRate = Convert.ToDecimal(await validation.ExecuteScalarAsync(ct));
+            decimal? effectiveMargin = 0m;
+            if (!request.IsGenericProduct)
+            {
+                // The form provides the selected input, not an authoritative
+                // cost/margin/price tuple. A cost edit must prepare a new price.
+                var price = request.Prices.Single();
+                var cost = price.CostBasisAmount!.Value;
+                var raw = price.InputMode == "Margin"
+                    ? PriceMargin.CalculateGrossSalePrice(cost, price.TargetMarginPercent!.Value, salesTaxRate)
+                    : price.PreparedAmount ?? price.Amount;
+                var targetMargin = price.InputMode == "Margin" ? price.TargetMarginPercent
+                    : PriceMargin.CalculateMarginPercentFromGross(cost, raw, salesTaxRate);
+                if (targetMargin is < 0)
+                    throw new CatalogValidationException(
+                        "El precio de venta sin IVA es menor que el costo. Revisa el precio para configurar un margen no negativo.");
+                var preparedAmount = PriceMargin.RoundPrice(raw, price.RoundingIncrement, price.RoundingMode);
+                effectiveMargin = PriceMargin.CalculateMarginPercentFromGross(cost, preparedAmount, salesTaxRate);
+                request = request with { Prices = [price with {
+                    Amount = create || wasGenericProduct ? preparedAmount : price.Amount,
+                    PreparedAmount = preparedAmount,
+                    TargetMarginPercent = targetMargin
+                }] };
+            }
             await ExecuteAsync(connection, transaction, create
                 ? """
                   INSERT dbo.Products
@@ -116,7 +144,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     Description=@Description,ProductCategoryId=@ProductCategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),ProductBrandId=@ProductBrandId,BaseUnitCode=@BaseUnitCode,TaxProfileId=@TaxProfileId,
                     PurchaseTaxProfileId=@PurchaseTaxProfileId,PurchaseTaxTreatment=@PurchaseTaxTreatment,ManageStock=@ManageInventory,IsGenericProduct=@IsGenericProduct,IsIngredient=COALESCE(@IsIngredient,IsIngredient),UnitGrossWeightKg=@UnitGrossWeightKg,ConversionMaximumLossPercent=@ConversionMaximumLossPercent,AllowsFractionalSale=@AllowsFractionalSale,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
                   WHERE ProductId=@ProductId AND TenantId=@TenantId;
-                  IF @@ROWCOUNT=0 THROW 51010, 'Product was not found in the authenticated scope.', 1;
+                  IF @@ROWCOUNT=0 THROW 51010, N'No se encontró el producto en la empresa autorizada.', 1;
                   IF @IsGenericProduct=1
                   BEGIN
                     UPDATE dbo.SupplierProducts SET IsPrimary=0,IsActive=0
@@ -188,7 +216,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                        CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,
                        RoundingMode,PublishedAt,ValidFrom,IsActive,CreatedAt)
                     SELECT NEWID(),business.BusinessId,@ProductId,IIF(@IsComposition=1,0,@Amount),@Amount,@Currency,N'Manual',@CostBasis,
-                       @TargetMargin,@TargetMargin,N'Margin',1,N'Nearest',IIF(@IsComposition=1,NULL,@Now),@Now,1,@Now
+                       @TargetMargin,@EffectiveMargin,@InputMode,@RoundingIncrement,@RoundingMode,IIF(@IsComposition=1,NULL,@Now),@Now,1,@Now
                     FROM dbo.Businesses business WHERE business.TenantId=@TenantId AND business.IsActive=1
                       AND (@IsComposition=0 OR business.BusinessId=@BusinessId OR EXISTS(
                         SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,business.BusinessId,@CompositionInput,@Now) cost
@@ -196,6 +224,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     """, [P("@TenantId", user.TenantId), P("@BusinessId",user.BusinessId), P("@ProductId", productId),
                     P("@CompositionInput",JsonSerializer.Serialize(request.RecipeIngredients ?? [])),
                     P("@IsComposition",request.RecipeIngredients?.Count > 0), P("@Amount", price.PreparedAmount ?? price.Amount), P("@CostBasis", price.CostBasisAmount), P("@TargetMargin", price.TargetMarginPercent),
+                    P("@EffectiveMargin",effectiveMargin),P("@InputMode",price.InputMode),
+                    P("@RoundingIncrement",price.RoundingIncrement),P("@RoundingMode",price.RoundingMode),
                     P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
             }
             }
@@ -226,7 +256,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     await ExecuteAsync(connection, transaction, """
                         UPDATE price SET Amount=@Amount,PreparedAmount=@Amount,
                           CostBasisType=N'Manual',CostBasisAmount=@CostBasis,
-                          TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@TargetMargin,
+                          TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@EffectiveMargin,
                           InputMode=@InputMode,RoundingIncrement=@RoundingIncrement,
                           RoundingMode=@RoundingMode,PublishedAt=@Now
                         FROM dbo.ProductPrices price
@@ -243,7 +273,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                         WHERE ProductId=@ProductId AND Status IN(N'PendingReview',N'Approved');
                         """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId),
                         P("@Amount", price.Amount), P("@CostBasis", price.CostBasisAmount),
-                        P("@TargetMargin", price.TargetMarginPercent), P("@InputMode", price.InputMode),
+                        P("@TargetMargin", price.TargetMarginPercent), P("@EffectiveMargin",effectiveMargin), P("@InputMode", price.InputMode),
                         P("@RoundingIncrement", price.RoundingIncrement), P("@RoundingMode", price.RoundingMode),
                         P("@Now", now)], ct);
                 else
@@ -261,7 +291,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                             AND targetBusiness.TenantId=currentBusiness.TenantId
                             AND targetBusiness.SharesProductPrices=1 AND targetBusiness.IsActive=1)
                         OR (currentBusiness.SharesProductPrices=0 AND price.BusinessId=@BusinessId));
-                    IF @@ROWCOUNT=0 THROW 51024,'The product has no active base price.',1;
+                    IF @@ROWCOUNT=0 THROW 51024,N'El producto no tiene un precio base activo.',1;
 
                     DECLARE @CurrentPreparedAmount DECIMAL(19,4),
                             @CurrentCostBasis DECIMAL(19,6),
@@ -324,14 +354,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                              @PreparedAmount,CASE WHEN (@CurrentCostBasisType=N'Composition' AND @CurrentCostBasis=@CostBasis)
                                OR (EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND (HasIngredients=1 OR IsCombo=1))
                                  AND NOT(@CompositionChanged=1 AND NOT EXISTS(SELECT 1 FROM OPENJSON(@CompositionInput))))
-                               THEN N'Composition' ELSE N'Manual' END,@CostBasis,@TargetMargin,@TargetMargin,
+                               THEN N'Composition' ELSE N'Manual' END,@CostBasis,@TargetMargin,@EffectiveMargin,
                              @InputMode,@RoundingIncrement,@RoundingMode,N'Pending',@UserId,@Now
                       FROM @Targets target;
                     END;
                     """, [P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
                     P("@CompositionChanged",request.RecipeIngredients is not null), P("@CompositionInput",JsonSerializer.Serialize(request.RecipeIngredients ?? [])),
                     P("@PreparedAmount", price.PreparedAmount ?? price.Amount), P("@CostBasis", price.CostBasisAmount),
-                    P("@TargetMargin", price.TargetMarginPercent), P("@InputMode", price.InputMode),
+                    P("@TargetMargin", price.TargetMarginPercent), P("@EffectiveMargin",effectiveMargin), P("@InputMode", price.InputMode),
                     P("@RoundingIncrement", price.RoundingIncrement), P("@RoundingMode", price.RoundingMode),
                     P("@UserId", user.UserId), P("@Now", now)], ct);
             }
@@ -502,7 +532,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(ct);
-            throw new CatalogConflictException("Product code, barcode, identifier, active price or supplier association is duplicated.");
+            throw new CatalogConflictException("Ya existe el código del producto, código de barras, identificador, precio activo o asociación con el proveedor.");
         }
 
         return (await GetAsync(user.TenantId, user.BusinessId, productId, true, ct))!;
@@ -601,7 +631,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               THROW 51024,'Hay producción aceptada pendiente para este producto.',1;
             UPDATE dbo.Products SET IsActive=@IsActive,UpdatedAt=@Now,UpdatedByUserId=@UserId
               WHERE ProductId=@ProductId AND TenantId=@TenantId;
-            IF @@ROWCOUNT=0 BEGIN ROLLBACK; THROW 51010,'Product not found.',1; END;
+            IF @@ROWCOUNT=0 BEGIN ROLLBACK; THROW 51010,N'No se encontró el producto.',1; END;
             INSERT dbo.CatalogChanges (BusinessId,ProductId,ChangeKind,OccurredAt)
               OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change
               SELECT business.BusinessId,@ProductId,CASE WHEN @IsActive=1 THEN N'Upsert' ELSE N'Tombstone' END,@Now
@@ -638,7 +668,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1
                 AND w.BusinessId=b.BusinessId AND w.IsActive=1
               WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1)
-              THROW 51020,'The device operational scope is invalid.',1;
+              THROW 51020,N'El contexto operativo del dispositivo no es válido.',1;
             DECLARE @High BIGINT=ISNULL((SELECT MAX(CatalogChangeId) FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId),0);
             INSERT dbo.CatalogSyncSessions
               (CatalogSyncSessionId,DeviceId,BusinessId,WarehouseId,HighWaterMark,CreatedAt,ExpiresAt)
@@ -686,7 +716,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 """;
             cursorCommand.Parameters.AddRange([P("@TenantId", tenantId), P("@BusinessId", businessId)]);
             var maximum = Convert.ToInt64(await cursorCommand.ExecuteScalarAsync(ct));
-            if (cursor > maximum) throw new CatalogValidationException("The catalog cursor is ahead of the server stream.");
+            if (cursor > maximum) throw new CatalogValidationException("El punto de sincronización del catálogo es posterior al disponible en el servidor.");
         }
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -849,7 +879,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             available.TryAdd(target,reader.GetDecimal(6));
         }
         if (found.Count!=request.Items.Count)
-            throw new CatalogForbiddenException("The warehouse or one of the products is not available to this device.");
+            throw new CatalogForbiddenException("La bodega o uno de los productos no está disponible para este dispositivo.");
         var allocations = InventoryDemandResolver.AllocateWholeLines(lines,available)
             .GroupBy(allocation => allocation.Line.LineId).ToDictionary(group => group.Key,group => group.ToArray());
         return request.Items.Select(item =>
@@ -887,14 +917,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 WHERE device.DeviceId=@DeviceId
                   AND device.TenantId=@TenantId
                   AND device.IsActive=1)
-              THROW 51011,'The device is not enrolled for the requested business.',1;
+              THROW 51011,N'El dispositivo no está registrado en la sede solicitada.',1;
 
             IF NOT EXISTS(
                 SELECT 1
                 FROM dbo.Products product
                 WHERE product.TenantId=@TenantId AND product.ProductId=@ProductId
                   AND product.IsActive=1)
-              THROW 51012,'The product is not available in the current business.',1;
+              THROW 51012,N'El producto no está disponible en la sede actual.',1;
 
             ;WITH originProduct AS(
                 SELECT product.ProductId,
@@ -1124,7 +1154,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         command.CommandText = "SELECT HighWaterMark FROM dbo.CatalogSyncSessions WHERE CatalogSyncSessionId=@SessionId AND DeviceId=@DeviceId AND ExpiresAt>SYSUTCDATETIME();";
         command.Parameters.AddRange([P("@SessionId", sessionId), P("@DeviceId", deviceId)]);
         await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) throw new CatalogForbiddenException("The catalog sync session is invalid or expired.");
+        if (!await reader.ReadAsync(ct)) throw new CatalogForbiddenException("La sesión de sincronización del catálogo no es válida o venció.");
         return reader.GetInt64(0);
     }
 
@@ -1142,10 +1172,10 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             P("@BusinessId", businessId), P("@ProductId", productId)]);
         var current = await command.ExecuteScalarAsync(ct);
         if (current is null || current is DBNull)
-            throw new CatalogValidationException("The product has no active base price.");
+            throw new CatalogValidationException("El producto no tiene un precio base activo.");
         if (Convert.ToDecimal(current) != requestedPrice)
             throw new CatalogValidationException(
-                "Sale prices must be changed from Products > Prices and profitability.");
+                "Los precios de venta deben cambiarse desde Productos o Precios y rentabilidad.");
     }
 
     private static async Task<bool> ReadIsGenericProductAsync(
@@ -1158,7 +1188,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         command.Parameters.AddRange([P("@TenantId", tenantId), P("@ProductId", productId)]);
         var value = await command.ExecuteScalarAsync(ct);
         if (value is null || value is DBNull)
-            throw new CatalogValidationException("The product was not found in the authenticated scope.");
+            throw new CatalogValidationException("No se encontró el producto en la empresa autorizada.");
         return Convert.ToBoolean(value);
     }
 
@@ -1234,7 +1264,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             IF EXISTS (SELECT 1 FROM @Input input
                        JOIN dbo.Suppliers existing ON existing.SupplierId=input.SupplierId
                        WHERE existing.TenantId<>@TenantId)
-              THROW 51023,'The supplier is outside the authenticated scope.',1;
+              THROW 51023,N'El proveedor no pertenece a la empresa autorizada.',1;
 
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)

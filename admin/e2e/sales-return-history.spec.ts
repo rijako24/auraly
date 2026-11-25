@@ -63,7 +63,7 @@ for (const { format, mode } of [
     await page.getByRole("tab", { name: "Devoluciones realizadas" }).click();
     await expect(page.getByText("DVT-30", { exact: true })).toBeVisible();
     const previousSaleReads = saleReads;
-    await page.getByRole("combobox", { name: "Seleccionar customer" }).click();
+    await page.getByRole("combobox", { name: "Seleccionar cliente" }).click();
     await page.getByPlaceholder("Buscar por nombre o identificación…").fill("Cliente");
     await page.getByRole("option", { name: /Cliente remoto/ }).click();
     await expect.poll(() => historyQueries.at(-1)?.searchParams.get("customerId")).toBe(customerId);

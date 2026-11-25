@@ -57,7 +57,7 @@ test("un usuario sin permiso tributario no puede confirmar la revisión", async 
 test("el gasto guardado conserva visible el motivo de su revisión tributaria", async ({ page, baseURL }) => {
   await page.setViewportSize({width:390,height:844});
   const {dialog}=await openExpenses(page,baseURL!);
-  await dialog.getByRole("button",{name:"Close",exact:true}).click();
+  await dialog.getByRole("button",{name:"Cerrar ventana",exact:true}).click();
   const expenseId="88888888-8888-8888-8888-888888888888";
   const item={expenseId,documentNumber:"G-REVISADO",supplierDocumentNumber:"FV-REVISADO",supplierId,
     supplierName:"Proveedor sin perfil",conceptId,conceptName:"Servicio frecuente",issuedAt:"2026-11-24T12:00:00-05:00",
@@ -77,7 +77,7 @@ test("cerrar gasto durante el cálculo libera la página y permite abrirlo otra 
   const { dialog, releasePreview } = await openExpenses(page, baseURL!, false, {holdPreview:true});
   try {
     await expect(dialog.getByText("Calculando retenciones…")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole("button", { name: "Nuevo gasto", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Registrar gasto" })).toBeVisible();
@@ -101,7 +101,7 @@ test("captura de gasto se puede leer y editar en móvil", async ({ page, baseURL
 test("historial de gastos presenta cada documento sin desplazamiento horizontal en móvil", async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { dialog } = await openExpenses(page, baseURL!, false);
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   await page.route("**/api/commerce/v1/expenses*", async route => {
     if (!new URL(route.request().url()).pathname.endsWith("/expenses")) return route.fallback();
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
@@ -354,7 +354,7 @@ test("valida moneda y fechas, bloquea el envío y conserva la captura ante un er
 
 test("una anulación refresca una vez el detalle y la página filtrada con el estado real", async ({ page, baseURL }) => {
   const { dialog } = await openExpenses(page, baseURL!);
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   let cancelled = false, reads = 0, details = 0;
   const expenseId = "88888888-8888-8888-8888-888888888888";
   const item = { expenseId, documentNumber: "G-100", supplierDocumentNumber: "FV-100", supplierId,

@@ -151,13 +151,13 @@ test("recepción conserva la última edición al cerrar por la X sin enviar un b
   await notes.fill("Primera versión");
   await notes.fill("Última versión antes de cerrar");
   const started = Date.now();
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana" }).click();
   await expect(dialog).toBeHidden();
   expect(Date.now() - started).toBeLessThan(1_000);
   await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(dialog.getByPlaceholder("Observaciones de recepción"))
     .toHaveValue("Última versión antes de cerrar");
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana" }).click();
   await page.reload();
   await page.getByRole("button", { name: "Nueva compra" }).click();
   await expect(dialog.getByPlaceholder("Observaciones de recepción"))
@@ -172,13 +172,13 @@ test("inventario conserva su captura al cerrar por la X y reabrir inmediatamente
   const dialog = page.getByRole("dialog", { name: "Nueva operación" });
   await dialog.getByRole("textbox", { name: "Observaciones" }).fill("Conteo interrumpido");
   const started = Date.now();
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana" }).click();
   await expect(dialog).toBeHidden();
   expect(Date.now() - started).toBeLessThan(1_000);
   await page.getByRole("button", { name: "Nueva operación" }).click();
   await expect(dialog.getByRole("textbox", { name: "Observaciones" }))
     .toHaveValue("Conteo interrumpido");
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana" }).click();
   await page.reload();
   await page.getByRole("button", { name: "Nueva operación" }).click();
   await expect(dialog.getByRole("textbox", { name: "Observaciones" }))
@@ -199,12 +199,12 @@ test("orden de compra conserva la última edición local al cerrar por la X", as
   await notes.fill("Primera versión");
   await notes.fill("Última versión de la orden");
   const started = Date.now();
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana" }).click();
   await expect(dialog).toBeHidden();
   expect(Date.now() - started).toBeLessThan(1_000);
   await page.getByRole("button", { name: "Nueva orden" }).click();
   await expect(dialog.getByPlaceholder("Observaciones")).toHaveValue("Última versión de la orden");
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana" }).click();
   await page.reload();
   await page.getByRole("button", { name: "Nueva orden" }).click();
   await expect(dialog.getByPlaceholder("Observaciones")).toHaveValue("Última versión de la orden");

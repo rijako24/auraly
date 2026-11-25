@@ -49,7 +49,7 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
     await expect(dialog.getByRole("img",{name:"Soporte de CVI-0",exact:true})).toHaveAttribute("src","https://media.auraly.test/private/proof.png?read=temporary");
     await dialog.getByRole("button",{name:/Ampliar soporte/}).first().click();
     await expect(page.getByRole("img",{name:"Soporte ampliado del pago",exact:true})).toHaveAttribute("src","https://media.auraly.test/private/proof.png?read=temporary");
-    await page.getByRole("dialog",{name:"Soporte del pago",exact:true}).getByRole("button",{name:"Close",exact:true}).click();
+    await page.getByRole("dialog",{name:"Soporte del pago",exact:true}).getByRole("button",{name:"Cerrar ventana",exact:true}).click();
   }
   const input = dialog.getByRole("textbox", { name: "Efectivo físico recibido", exact: true });
   await expect(input).toHaveValue("100.000");

@@ -114,7 +114,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             (
                 DocumentId, LineNumber, ProductId, AddedByUserId, AddedAt,
                 Description, TaxCode, TaxRate,
-                Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, PromotionDiscountAmount, TaxAmount,
+                Quantity, UnitPrice, UnitCostSnapshot, RecognizedCostAmount, ProductRecipeVersionId, DiscountAmount, PromotionDiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal,ProductCodeSnapshot,ProductNameSnapshot,
                 CategoryIdSnapshot,CategoryNameSnapshot,SupplierIdSnapshot,SupplierNameSnapshot,
                 AttributionSnapshotVersion,IsGenericProductSnapshot,CompositionKindSnapshot,CategoryHierarchySnapshotJson
@@ -123,7 +123,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 @DocumentId,input.LineNumber,input.ProductId,input.AddedByUserId,input.AddedAt,
                 input.Description,input.TaxCode,input.TaxRate,
                 input.Quantity,input.UnitPrice,
-                COALESCE(CONVERT(decimal(19,6),-valuation.ValueChange/NULLIF(input.Quantity,0)),input.DocumentUnitCost),
+                cost.UnitCost,cost.Cost,cost.ProductRecipeVersionId,
                 input.DiscountAmount,input.PromotionDiscountAmount,input.TaxAmount,
                 input.UntaxedAmount,input.LineTotal,
                 COALESCE(NULLIF(input.ProductCodeSnapshot,N''),p.ProductCode,p.Sku,p.Reference,N''),input.Description,
@@ -145,12 +145,11 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               LineTotal decimal(19,4) '$.LineTotal',
               IsGenericProductSnapshot bit '$.IsGenericProductSnapshot',
               ProductCodeSnapshot nvarchar(80) '$.ProductCodeSnapshot') input
+            JOIN OPENJSON(@LineCosts) WITH(LineNumber int,Cost decimal(19,4),UnitCost decimal(19,6),ProductRecipeVersionId uniqueidentifier) cost
+              ON cost.LineNumber=input.LineNumber
             INNER JOIN dbo.Products p ON p.ProductId=input.ProductId
             CROSS APPLY catalog.ProductCategoryHierarchySnapshot(p.TenantId,p.ProductCategoryId) hierarchy
-            LEFT JOIN sales.RestaurantCheckoutLines checkout ON checkout.DocumentId=@DocumentId AND checkout.LineNumber=input.LineNumber
-            LEFT JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=checkout.ProductRecipeVersionId
-            LEFT JOIN dbo.InventoryMovements valuation ON valuation.BusinessId=@BusinessId AND valuation.DocumentId=@DocumentId
-              AND valuation.DocumentType=@DocumentType AND valuation.LineNumber=input.LineNumber AND valuation.MovementType=N'Sale'
+            LEFT JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=cost.ProductRecipeVersionId
             LEFT JOIN dbo.AppUsers addedBy
               ON addedBy.UserId=input.AddedByUserId AND addedBy.TenantId=p.TenantId
             LEFT JOIN dbo.ProductCategories category

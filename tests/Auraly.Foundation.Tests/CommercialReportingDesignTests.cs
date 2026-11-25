@@ -74,8 +74,8 @@ public sealed class CommercialReportingDesignTests
         Assert.Contains("dbo.AppUsers",source,StringComparison.Ordinal);
         Assert.Contains("dbo.CommerceSellers",source,StringComparison.Ordinal);
         Assert.Contains("dbo.Suppliers",source,StringComparison.Ordinal);
-        Assert.Contains("cannot widen the report scope",source,StringComparison.Ordinal);
-        Assert.Contains("maps ambiguously to both seller and supplier",source,StringComparison.Ordinal);
+        Assert.Contains("no puede ampliar el alcance autorizado del reporte",source,StringComparison.Ordinal);
+        Assert.Contains("asociación ambigua como vendedor y proveedor",source,StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

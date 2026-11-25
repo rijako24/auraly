@@ -99,6 +99,7 @@ export interface ProductPricingContext {
   costSourceProductId: string | null;
   costSourceProductName: string | null;
   costFactor: number | null;
+  inputMode: PriceInputMode;
 }
 
 export interface PublishProductPriceRequest {

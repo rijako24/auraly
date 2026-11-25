@@ -38,7 +38,7 @@ for(const width of [1366,390]) {
   const measures={documents:1,customers:1,quantity:2,grossSales:110,discounts:10,salesBeforeReturns:100,returns:0,netUntaxed:100,tax:19,netTotal:119,recognizedCost:60,profit:40,marginPercent:40,missingCostLines:0,returnsWithTax:0,returnedTax:0,salesWithTax:119,salesTax:19};
   await page.route("**/sales-reports/**",async route=>{
     const path=new URL(route.request().url()).pathname;
-    if(path.endsWith("/context")){contextReads++;await route.fulfill({json:{businessDate:"2026-11-20",monthStart:"2026-11-01",timeZoneId:"America/Bogota",isRestaurant:false,hasPendingSources:false,hasFailedSources:false,
+    if(path.endsWith("/context")){contextReads++;await route.fulfill({json:{businessDate:"2026-11-20",monthStart:"2026-11-01",timeZoneId:"America/Bogota",isRestaurant:false,hasPendingSources:true,hasFailedSources:true,pendingSourceCount:2,failedSourceCount:1,
       groupings:[{code:"document",label:"Comprobante"},{code:"product",label:"Producto"},{code:"customer",label:"Cliente"},{code:"supplier",label:"Proveedor"}],comparisons:[{code:"none",label:"Sin comparación"}],documentTypes:[],orders:[],customerActivities:[],paymentMethods:[],productReturnActivities:[],productCompositions:[]}});return;}
     if(path.endsWith("/explore")){const request=route.request().postDataJSON();requests.push(request);await route.fulfill({json:{items:[{key:"one",label:"CVI00-00000001",measures,occurredAt:"2026-11-20T12:00:00Z",boughtInPeriod:null,document:null,supplier:null}],page:request.page,pageSize:25,totalCount:30,totals:measures,projectedThrough:"2026-11-20T12:00:00Z",hasLineScope:false,officialTotal:null,roundingAdjustment:null,restaurantTip:null,taxes:[],payments:[],comparison:null,products:null,supplier:null,impact:null,document:null}});return;}
     await route.fallback();
@@ -46,6 +46,8 @@ for(const width of [1366,390]) {
   for(const reportKind of ["sales","impact","products","supplier-impact"]){
     await page.goto(`/dashboard/reports/${reportKind}?page=2`);
     const grid=page.getByRole("table");await expect(grid).toBeVisible();
+    await expect(page.getByRole("status").filter({hasText:"Documentos pendientes de proyectar: 2."})).toBeVisible();
+    await expect(page.getByRole("alert").filter({hasText:"Documentos con error de proyección: 1."})).toBeVisible();
     const initialContexts=contextReads,initialRequests=requests.length;
     const heading=grid.getByRole("columnheader",{name:/^Bruto sin impuestos/});
     await heading.getByRole("button").click();

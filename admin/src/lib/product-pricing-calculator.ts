@@ -63,19 +63,19 @@ export function marginFromCostAndGrossSale(cost: number, grossSalePrice: number,
 
 function requireNonNegative(value: number, field: ProductPricingField): number {
   if (!Number.isFinite(value) || value < 0)
-    throw new RangeError(`${field} must be a non-negative number.`);
+    throw new RangeError(field === "cost" ? "El costo debe ser un número mayor o igual que cero." : field === "margin" ? "El margen debe ser un número mayor o igual que cero." : "El precio de venta debe ser un número mayor o igual que cero.");
   return value;
 }
 
 function requireMargin(value: number): number {
   if (!Number.isFinite(value) || value < 0 || value > MAX_MARGIN)
-    throw new RangeError("margin must be between 0 and 99.9999.");
+    throw new RangeError("El margen debe estar entre 0 y 99,9999 %.");
   return value;
 }
 
 function requireTaxRate(value: number): number {
   if (!Number.isFinite(value) || value < 0 || value > 100)
-    throw new RangeError("salesTaxRate must be between 0 and 100.");
+    throw new RangeError("La tarifa de IVA debe estar entre 0 y 100 %.");
   return value;
 }
 

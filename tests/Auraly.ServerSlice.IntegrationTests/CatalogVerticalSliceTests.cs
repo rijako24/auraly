@@ -13,6 +13,81 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Product_price_below_its_untaxed_cost_explains_the_invalid_margin_without_partial_creation()
+    {
+        var (tax, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(tax, [new(8500m, "COP", 8000m, 20m, 8500m, "SalePrice")], []) with
+        { Reference = $"INVALID-MARGIN-{Guid.NewGuid():N}" };
+        using var client = fixture.CreateAdminClient(CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ManageCosts);
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/products", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("menor que el costo", await response.Content.ReadAsStringAsync());
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.Products WHERE TenantId=@Tenant AND Reference=@Reference;",
+            new SqlParameter("@Tenant", fixture.TenantId), new SqlParameter("@Reference", request.Reference)));
+    }
+
+    [Theory]
+    [InlineData("10555.56", "25.4608", "16600", "14161", false, "25.460349")]
+    [InlineData("12222.22", "29.8246", "19000", "17417", false, "29.825917")]
+    [InlineData("8990", "30.2013", "14900", "12880", false, "30.201863")]
+    [InlineData("38477.5", "35.004223", "59200", "59200", true, "22.655025")]
+    public async Task Product_cost_edit_recalculates_preparation_even_when_the_form_sends_the_previous_price(
+        string costText, string marginText, string oldPriceText, string expectedPriceText, bool byPrice, string effectiveText)
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var cost = decimal.Parse(costText, culture); var margin = decimal.Parse(marginText, culture);
+        var oldPrice = decimal.Parse(oldPriceText, culture); var expected = decimal.Parse(expectedPriceText, culture);
+        var effective = decimal.Parse(effectiveText, culture);
+        var (tax, _, _) = await ConfigureCatalogAsync();
+        await ExecuteAsync("UPDATE dbo.TaxProfiles SET Rate=@Rate WHERE TaxProfileId=@Tax;",
+            new SqlParameter("@Tax", tax), new SqlParameter("@Rate", byPrice ? 19m : 0m));
+        using var client = fixture.CreateAdminClient(CatalogPermissionCodes.Create, CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update, CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ManageCosts,
+            PricingPermissionCodes.PublishPrices, PricingPermissionCodes.ReadCostBasis, PricingPermissionCodes.Read);
+        var request = ProductRequest(tax, [new(oldPrice, "COP", 8000m, 20m, oldPrice, "SalePrice")], []) with
+        { PurchaseTaxTreatment = byPrice ? "DeductibleInputVat" : "NotApplicable" };
+        using var created = await client.PostAsJsonAsync("/api/commerce/v1/products", request);
+        Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
+        var product = (await created.Content.ReadFromJsonAsync<ProductDetail>())!;
+        using var preparationWrites = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandText.Contains("INSERT dbo.ProductPricePreparations", StringComparison.Ordinal)
+                && command.CommandText.Contains("@CompositionChanged", StringComparison.Ordinal));
+        using var validationReads = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandText.Contains("SELECT Rate FROM dbo.TaxProfiles WITH(HOLDLOCK)", StringComparison.Ordinal));
+        var saveTime = System.Diagnostics.Stopwatch.StartNew();
+        using var edited = await client.PutAsJsonAsync($"/api/commerce/v1/products/{product.ProductId}", request with
+        {
+            ProductCode = product.ProductCode,
+            Prices = [new(oldPrice, "COP", cost, margin, oldPrice, byPrice ? "SalePrice" : "Margin")]
+        });
+        saveTime.Stop();
+        Assert.True(edited.IsSuccessStatusCode, await edited.Content.ReadAsStringAsync());
+        Assert.Equal(1, preparationWrites.Count);
+        Assert.Equal(1, validationReads.Count);
+        Assert.True(saveTime.Elapsed < TimeSpan.FromSeconds(2), $"El guardado tardó {saveTime.ElapsedMilliseconds} ms.");
+        Assert.Equal(expected, await ScalarAsync<decimal>(
+            "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending' AND BusinessId=@Business;",
+            new SqlParameter("@Product", product.ProductId), new SqlParameter("@Business", fixture.BusinessId)));
+        Assert.Equal(effective, await ScalarAsync<decimal>(
+            "SELECT EffectiveMarginPercent FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending' AND BusinessId=@Business;",
+            new SqlParameter("@Product", product.ProductId), new SqlParameter("@Business", fixture.BusinessId)));
+        Assert.Equal(oldPrice, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business AND IsActive=1;",
+            new SqlParameter("@Product", product.ProductId), new SqlParameter("@Business", fixture.BusinessId)));
+        var context = (await client.GetFromJsonAsync<ProductPricingContext>($"/api/commerce/v1/pricing/products/{product.ProductId}/context"))!;
+        Assert.Equal(byPrice ? "SalePrice" : "Margin", context.InputMode);
+        using var published = await client.PostAsJsonAsync("/api/commerce/v1/pricing/publish", new PublishPricesRequest([product.ProductId]));
+        Assert.True(published.IsSuccessStatusCode, await published.Content.ReadAsStringAsync());
+        Assert.Equal(context.InputMode, (await client.GetFromJsonAsync<ProductPricingContext>($"/api/commerce/v1/pricing/products/{product.ProductId}/context"))!.InputMode);
+        Assert.Equal(expected, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business AND IsActive=1;",
+            new SqlParameter("@Product", product.ProductId), new SqlParameter("@Business", fixture.BusinessId)));
+    }
+
+    [Fact]
     public async Task Manual_voucher_creator_can_read_only_active_tax_profiles_without_product_or_configuration_access()
     {
         using var creator = fixture.CreateAdminClient("accounting.manual.create");
@@ -289,7 +364,7 @@ public sealed partial class CatalogVerticalSliceTests(ServerSliceFixture fixture
 
         using var childCreation = await admin.PostAsJsonAsync(
             "/api/commerce/v1/products",
-            ProductRequest(taxProfileId, [new ProductPriceInput(8_500m)], []) with
+            ProductRequest(taxProfileId, [new ProductPriceInput(8_500m, CostBasisAmount: 5_000m)], []) with
             {
                 Name = $"Integrante familia {Guid.NewGuid():N}"
             });
@@ -1601,7 +1676,9 @@ public sealed partial class CatalogVerticalSliceTests(ServerSliceFixture fixture
             false,
             barcodes,
             [new ProductIdentifierInput("Alternate", $"ALT-{Guid.NewGuid():N}")],
-            prices.Select(price => price with { CostBasisAmount = price.CostBasisAmount ?? 8_000m, TargetMarginPercent = price.TargetMarginPercent ?? 20m }).ToArray(),
+            prices.Select(price => price with { CostBasisAmount = price.CostBasisAmount ?? 8_000m,
+                TargetMarginPercent = price.TargetMarginPercent ?? 20m,
+                InputMode = price.TargetMarginPercent is null ? "SalePrice" : price.InputMode }).ToArray(),
             [new SupplierCostInput(fixture.SupplierId, "900999001", "Proveedor E2E", null, 8_000m)],
             null,
             taxProfileId);

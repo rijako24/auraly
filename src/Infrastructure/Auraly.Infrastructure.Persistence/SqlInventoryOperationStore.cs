@@ -75,7 +75,7 @@ public sealed class SqlInventoryOperationStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
-            throw new InventoryConflictException("The stock count DocumentId is already in use.");
+            throw new InventoryConflictException("El identificador del conteo de inventario ya está en uso.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
@@ -99,7 +99,7 @@ public sealed class SqlInventoryOperationStore(
             var draft = await LoadCountDraftAsync(connection, transaction, user, documentId, cancellationToken);
             var counted = request.Lines.ToDictionary(line => line.ProductId);
             if (counted.Count != draft.Lines.Count || draft.Lines.Any(line => !counted.ContainsKey(line.ProductId)))
-                throw new InventoryValidationException("The confirmed count must contain exactly the products captured at start.");
+                throw new InventoryValidationException("El conteo confirmado debe contener exactamente los productos registrados al iniciar.");
             var lines = draft.Lines.Select(line => line with { Quantity = counted[line.ProductId].CountedQuantity }).ToArray();
             var acceptance = await AcceptDraftAsync(connection, transaction, user, documentId, InventoryDocumentTypes.StockCount,
                 draft.WarehouseId, null, draft.OccurredAt, draft.ReasonCode, null, null, draft.BaseSequence, draft.Notes,
@@ -109,7 +109,7 @@ public sealed class SqlInventoryOperationStore(
                 FROM dbo.InventoryOperationLines line
                 JOIN OPENJSON(@Lines) WITH(ProductId uniqueidentifier,Quantity decimal(19,6)) input
                   ON input.ProductId=line.ProductId WHERE line.InventoryOperationId=@Id;
-                IF @@ROWCOUNT<>@Count THROW 51606,'The stock count lines changed during confirmation.',1;
+                IF @@ROWCOUNT<>@Count THROW 51606,N'Las partidas del conteo cambiaron durante la confirmación.',1;
                 """, connection, transaction))
             {
                 command.Parameters.AddWithValue("@Id", documentId);
@@ -213,7 +213,7 @@ public sealed class SqlInventoryOperationStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
-            throw new InventoryConflictException("The transfer document or idempotency key is already in use.");
+            throw new InventoryConflictException("El documento de traslado o su clave de operación ya está en uso.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
@@ -252,12 +252,12 @@ public sealed class SqlInventoryOperationStore(
             var requested = request.Lines.ToDictionary(line => line.LineNumber);
             if (requested.Count != transfer.Lines.Count || transfer.Lines.Any(line =>
                     !requested.TryGetValue(line.LineNumber, out var received) || received.ProductId != line.ProductId))
-                throw new InventoryValidationException("The receipt must contain exactly the products and lines dispatched by the source warehouse.");
+                throw new InventoryValidationException("La recepción debe contener exactamente los productos y partidas despachados desde la bodega de origen.");
             if (transfer.Lines.Any(line => requested[line.LineNumber].ReceivedQuantity > line.PendingQuantity))
-                throw new InventoryValidationException("A receipt cannot exceed the quantity still in transit.");
+                throw new InventoryValidationException("La recepción no puede superar la cantidad pendiente en tránsito.");
             var resolvesDifference = !string.IsNullOrWhiteSpace(request.DifferenceReasonCode);
             if (resolvesDifference && !user.Permissions.Contains(InventoryPermissionCodes.ResolveTransferDifference))
-                throw new InventoryForbiddenException($"Permission '{InventoryPermissionCodes.ResolveTransferDifference}' is required to confirm a transfer difference.");
+                throw new InventoryForbiddenException("Necesitas permiso para conciliar diferencias de traslado antes de confirmar esta diferencia.");
             AccountingReasonSnapshot? accountingReason = null;
             if (resolvesDifference)
                 accountingReason = await LoadAccountingReasonAsync(
@@ -306,7 +306,7 @@ public sealed class SqlInventoryOperationStore(
                     SELECT @ReceiptId,LineNumber,ProductId,Quantity,TransferLossQuantity
                     FROM OPENJSON(@Lines) WITH(LineNumber int,ProductId uniqueidentifier,
                       Quantity decimal(19,6),TransferLossQuantity decimal(19,6));
-                    IF @@ROWCOUNT<>@Count THROW 51606,'The transfer receipt lines were not persisted completely.',1;
+                    IF @@ROWCOUNT<>@Count THROW 51606,N'No fue posible guardar todas las partidas de recepción del traslado.',1;
                     """, connection, transaction);
                 command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
                 command.Parameters.AddWithValue("@Count", payloadLines.Count);
@@ -321,7 +321,7 @@ public sealed class SqlInventoryOperationStore(
                 command.Parameters.AddWithValue("@Id", transferId);
                 command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
                 if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-                    throw new DBConcurrencyException("The transfer changed while its receipt was being confirmed.");
+                    throw new DBConcurrencyException("El traslado cambió mientras se confirmaba su recepción.");
             }
             await transaction.CommitAsync(cancellationToken);
             return acceptance;
@@ -337,7 +337,7 @@ public sealed class SqlInventoryOperationStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
-            throw new InventoryConflictException("The receipt or idempotency key is already in use.");
+            throw new InventoryConflictException("La recepción o su clave de operación ya está en uso.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
@@ -643,7 +643,7 @@ public sealed class SqlInventoryOperationStore(
         {
             if (ownedTransaction is not null)
                 await transaction.RollbackAsync(CancellationToken.None);
-            throw new InventoryConflictException("The document or idempotency key is already in use.");
+            throw new InventoryConflictException("El documento o su clave de operación ya está en uso.");
         }
         catch
         {
@@ -716,7 +716,7 @@ public sealed class SqlInventoryOperationStore(
                 IdempotencyKey=@IdempotencyKey,PayloadHash=@RequestHash,Status=N'Accepted',
                 ConfirmedByUserId=@UserId,AcceptedAt=@Now
             WHERE InventoryOperationId=@DocumentId AND BusinessId=@BusinessId AND Status=N'Draft';
-            IF @@ROWCOUNT<>1 THROW 51210,'The inventory operation is not an editable draft.',1;
+            IF @@ROWCOUNT<>1 THROW 51210,N'La operación de inventario no es un borrador editable.',1;
             INSERT dbo.DocumentProcessingJobs
               (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
             VALUES(@JobId,@BusinessId,@Sequence,@DocumentId,@DocumentType,N'Pending',@Now,@Now);
@@ -766,7 +766,7 @@ public sealed class SqlInventoryOperationStore(
               DocumentConsecutive=@Consecutive,IdempotencyKey=@Key,PayloadHash=@RequestHash,Status=N'DispatchPending',
               ConfirmedByUserId=@UserId,AcceptedAt=@Now
             WHERE InventoryOperationId=@DocumentId AND BusinessId=@BusinessId AND Status=N'Draft';
-            IF @@ROWCOUNT<>1 THROW 51210,'The warehouse transfer is not an editable draft.',1;
+            IF @@ROWCOUNT<>1 THROW 51210,N'El traslado entre bodegas no es un borrador editable.',1;
             INSERT dbo.DocumentProcessingJobs
               (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
             VALUES(@JobId,@BusinessId,@Sequence,@DocumentId,N'WarehouseTransferDispatch',N'Pending',@Now,@Now);
@@ -853,7 +853,7 @@ public sealed class SqlInventoryOperationStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
-            throw new InventoryConflictException("The idempotency key or DocumentId was reused with another payload.");
+            throw new InventoryConflictException("La clave de operación o el identificador del documento ya se usó con otros datos.");
         return new InventoryOperationAcceptance(reader.GetGuid(0), reader.GetGuid(5), stageType, reader.GetString(1),
             reader.GetString(2), reader.GetInt64(4), true);
     }
@@ -876,7 +876,7 @@ public sealed class SqlInventoryOperationStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
-            throw new InventoryConflictException("The receipt idempotency key or ReceiptId was reused with another payload.");
+            throw new InventoryConflictException("La clave de operación o el identificador de recepción ya se usó con otros datos.");
         return new InventoryOperationAcceptance(reader.GetGuid(0), reader.GetGuid(5), InventoryDocumentTypes.TransferReceipt,
             reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true);
     }
@@ -888,7 +888,7 @@ public sealed class SqlInventoryOperationStore(
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is Guid value ? value : throw new InventoryValidationException("The inventory transit warehouse is not provisioned for this business.");
+        return result is Guid value ? value : throw new InventoryValidationException("La bodega de mercancía en tránsito no está configurada para esta sede.");
     }
 
     private static async Task<ReceivableTransfer> LoadReceivableTransferAsync(
@@ -912,9 +912,9 @@ public sealed class SqlInventoryOperationStore(
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                throw new InventoryValidationException("The transfer is not available for receipt.");
+                throw new InventoryValidationException("El traslado no está disponible para recibir mercancía.");
             if (!reader.GetFieldValue<byte[]>(8).AsSpan().SequenceEqual(rowVersion))
-                throw new InventoryConflictException("The transfer changed after it was loaded. Reload it before confirming receipt.");
+                throw new InventoryConflictException("El traslado cambió después de cargarlo. Actualízalo antes de confirmar la recepción.");
             destination = reader.GetGuid(0); transit = reader.GetGuid(1); number = reader.GetString(2);
             series = reader.GetGuid(3); prefix = reader.GetString(4); seriesCode = reader.GetString(5);
             consecutive = reader.GetInt64(6); reason = reader.GetString(7);
@@ -958,7 +958,7 @@ public sealed class SqlInventoryOperationStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         if (!reader.GetFieldValue<byte[]>(4).AsSpan().SequenceEqual(requestHash))
-            throw new InventoryConflictException("The idempotency key or DocumentId was reused with another payload.");
+            throw new InventoryConflictException("La clave de operación o el identificador del documento ya se usó con otros datos.");
         return new InventoryOperationAcceptance(reader.GetGuid(0), reader.GetGuid(6), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(5), true);
     }
 
@@ -969,7 +969,7 @@ public sealed class SqlInventoryOperationStore(
     {
         const string sql = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
-              THROW 51200,'The business is outside the authenticated tenant.',1;
+              THROW 51200,N'La sede no pertenece a la empresa autorizada.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
               AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1))
               THROW 51201,'Selecciona una bodega de inventario activa.',1;
@@ -987,7 +987,7 @@ public sealed class SqlInventoryOperationStore(
                AND inventoryProduct.TenantId=@TenantId AND inventoryProduct.IsActive=1
                AND inventoryProduct.ManageStock=1
               WHERE p.ProductId IS NULL OR inventoryProduct.ProductId IS NULL)
-              THROW 51203,'Every product must resolve to an active inventory product in the authenticated business.',1;
+              THROW 51203,N'Cada producto debe corresponder a un producto activo de inventario en la sede autorizada.',1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1025,7 +1025,7 @@ public sealed class SqlInventoryOperationStore(
         command.Parameters.AddWithValue("@OperationType", operationType);
         command.Parameters.AddWithValue("@Code", reasonCode);
         var value = await command.ExecuteScalarAsync(cancellationToken);
-        return value as string ?? throw new InventoryValidationException("Select an active reason compatible with the inventory operation.");
+        return value as string ?? throw new InventoryValidationException("Selecciona un motivo activo compatible con la operación de inventario.");
     }
 
     private static async Task<AccountingReasonSnapshot?> LoadAccountingReasonAsync(
@@ -1065,20 +1065,20 @@ public sealed class SqlInventoryOperationStore(
         command.Parameters.AddWithValue("@RequestedCostCenterId", (object?)requestedCostCenterId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            throw new InventoryValidationException("Select an active reason compatible with the inventory operation.");
+            throw new InventoryValidationException("Selecciona un motivo activo compatible con la operación de inventario.");
         var counterpart = reader.IsDBNull(0) ? null : reader.GetString(0);
         Guid? costCenterId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
         var requiresReference = reader.GetBoolean(2);
         var validCostCenter = reader.GetBoolean(3);
         if (string.IsNullOrWhiteSpace(counterpart))
             throw new InventoryValidationException(
-                "The inventory reason does not have an accounting counterpart category configured.");
+                "El motivo de inventario no tiene una categoría contable de contrapartida configurada.");
         if (!validCostCenter)
             throw new InventoryValidationException(
-                "The accounting cost center must be active and belong to the business.");
+                "El centro de costo debe estar activo y pertenecer a la empresa.");
         if (requiresReference && string.IsNullOrWhiteSpace(reference))
             throw new InventoryValidationException(
-                "A reference or supporting note is required for the selected inventory reason.");
+                "El motivo de inventario seleccionado requiere una referencia o nota de soporte.");
         return new AccountingReasonSnapshot(counterpart.Trim(), costCenterId);
     }
 
@@ -1159,14 +1159,14 @@ public sealed class SqlInventoryOperationStore(
                 var productId = reader.GetGuid(0);
                 var rowRootProductId = reader.GetGuid(1);
                 if (rootProductId is not null && rootProductId != rowRootProductId)
-                    throw new InventoryValidationException("All conversion products must belong to the same linked family.");
+                    throw new InventoryValidationException("Todos los productos de la conversión deben pertenecer a la misma familia vinculada.");
                 rootProductId = rowRootProductId;
                 factors[productId] = reader.GetDecimal(2);
                 maximumLossPercent = reader.GetDecimal(3);
             }
         }
         if (factors.Count != lines.Select(line => line.ProductId).Distinct().Count() || rootProductId is null || maximumLossPercent is null)
-            throw new InventoryValidationException("Every conversion product must be enabled in the same linked product family.");
+            throw new InventoryValidationException("Cada producto de la conversión debe estar habilitado en la misma familia vinculada.");
 
         try
         {
@@ -1207,7 +1207,7 @@ public sealed class SqlInventoryOperationStore(
                SystemQuantityAtBase decimal(19,6),ExplicitUnitCost decimal(19,6),AllocationWeight decimal(9,6),
                ConversionFactor decimal(19,6),ConversionEquivalentQuantity decimal(19,6),DispatchedQuantity decimal(19,6),
                ReceivedQuantity decimal(19,6),TransferLossQuantity decimal(19,6),DispatchUnitCost decimal(19,6));
-            IF @@ROWCOUNT<>@Count THROW 51606,'The inventory operation lines were not persisted completely.',1;
+            IF @@ROWCOUNT<>@Count THROW 51606,N'No fue posible guardar todas las partidas de la operación de inventario.',1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Id", documentId);
@@ -1231,7 +1231,7 @@ public sealed class SqlInventoryOperationStore(
         {
             command.Parameters.AddWithValue("@Id", documentId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId); command.Parameters.AddWithValue("@TenantId", user.TenantId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken)) throw new InventoryValidationException("The stock count draft was not found.");
+            if (!await reader.ReadAsync(cancellationToken)) throw new InventoryValidationException("No se encontró el borrador del conteo de inventario.");
             warehouseId=reader.GetGuid(0); occurred=reader.GetDateTimeOffset(1); reason=reader.GetString(2); sequence=reader.GetInt64(3); notes=reader.IsDBNull(4)?null:reader.GetString(4);
         }
         const string detail = "SELECT LineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,PreCountQuantity,SystemQuantityAtBase FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id ORDER BY LineNumber;";

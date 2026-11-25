@@ -104,12 +104,13 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
         await using var mutation=new SqlCommand("""
             DELETE reporting.SalesReportingJobs WHERE SourceDocumentId=@Id;
-            UPDATE reporting.SalesReportDocuments SET ProjectionVersion=4 WHERE DocumentId=@Id;
+            UPDATE reporting.SalesReportDocuments SET ProjectionVersion=@PreviousProjectionVersion WHERE DocumentId=@Id;
             SELECT (SELECT COUNT_BIG(*) FROM dbo.InventoryMovements WHERE BusinessId=@Business),
               (SELECT COUNT_BIG(*) FROM dbo.AccountingPostingJobs WHERE BusinessId=@Business),
               (SELECT COUNT_BIG(*) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business);
             """,connection);
         mutation.Parameters.AddWithValue("@Id",invoice.DocumentId);mutation.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        mutation.Parameters.AddWithValue("@PreviousProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion-1);
         long inventory,accounting,operations;
         await using(var data=await mutation.ExecuteReaderAsync())
         {await data.ReadAsync();inventory=data.GetInt64(0);accounting=data.GetInt64(1);operations=data.GetInt64(2);}
@@ -123,8 +124,9 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
               (SELECT COUNT_BIG(*) FROM dbo.AccountingPostingJobs WHERE BusinessId=@Business),
               (SELECT COUNT_BIG(*) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business)
             FROM reporting.SalesReportDocuments d JOIN reporting.SalesReportingJobs r ON r.SourceDocumentId=d.DocumentId
-              AND r.SourceDocumentType=d.DocumentType WHERE d.DocumentId=@Id AND d.ProjectionVersion=5 AND r.Status=N'Projected';
+              AND r.SourceDocumentType=d.DocumentType WHERE d.DocumentId=@Id AND d.ProjectionVersion=@ProjectionVersion AND r.Status=N'Projected';
             """;
+        mutation.Parameters.AddWithValue("@ProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);
         DateOnly date;
         await using(var data=await mutation.ExecuteReaderAsync())
         {

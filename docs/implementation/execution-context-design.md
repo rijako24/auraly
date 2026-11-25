@@ -45,6 +45,22 @@ recibo de 100,25. No se cambió el cálculo para mantener el test anterior.
 El servidor local y login respondieron 200. Las pruebas externas fiscales no
 forman parte de esta evidencia local.
 
+## Historial de facturas desde administración
+
+La consulta de comprobantes, sus selectores de cliente/producto, el snapshot de
+reimpresión y su registro de auditoría reutilizan `OnlineSalesHistoryService` y
+su store. Esos cinco endpoints existentes declaran `SalesHistoryExecutionContext`:
+el middleware valida el tenant/sede seleccionado y sus membresías antes de
+construir la identidad de lectura con los claims operativos autorizados.
+`sales.reprint` sigue siendo obligatorio. Una selección no autorizada devuelve
+403; no basta enviar los encabezados desde el navegador.
+
+Esta clasificación no cambia el tenant propietario de la autenticación, las
+operaciones de dinero, la captura/confirmación POS ni el enrolamiento. No crea
+otra consulta, endpoint de historial, sesión de caja ni writer. El rollback de
+API restablece la limitación anterior del historial entre empresas, sin migrar
+datos ni alterar comprobantes o auditorías existentes.
+
 ## Aplicación instalada
 
 El tenant proviene del paquete firmado de enrolamiento y queda fijado al dispositivo. El usuario no ve un selector de tenant. El negocio continúa siendo seleccionable únicamente entre los permitidos para ese tenant y usuario.

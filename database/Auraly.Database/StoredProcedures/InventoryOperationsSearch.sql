@@ -69,15 +69,32 @@ BEGIN
     SELECT * INTO #Page FROM #Filtered
     ORDER BY OccurredAt DESC,DocumentId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
 
-    SELECT DocumentId,DocumentType,DocumentNumber,WarehouseId,WarehouseName,
-        DestinationWarehouseId,DestinationWarehouseName,ReasonCode,Status,OccurredAt,
-        CASE WHEN DocumentType=N'GoodsReceipt'
-            THEN (SELECT COUNT(*) FROM dbo.GoodsReceiptLines line WHERE line.GoodsReceiptId=history.DocumentId)
-            ELSE (SELECT COUNT(*) FROM dbo.InventoryOperationLines line WHERE line.InventoryOperationId=history.DocumentId) END,
-        CASE WHEN @IncludeCosts=1 THEN CASE WHEN DocumentType=N'GoodsReceipt'
-            THEN COALESCE((SELECT SUM(m.ValueChange) FROM dbo.InventoryMovements m WHERE m.DocumentId=history.DocumentId),0)
-            ELSE TotalValueChange END END,
-        ConversionInputEquivalent,ConversionOutputEquivalent,ConversionLossQuantity,
-        ConversionLossPercent,ConversionMaximumLossPercent
-    FROM #Page history ORDER BY OccurredAt DESC,DocumentId;
+    -- Aggregate details only for the materialized page, never once per row.
+    SELECT line.InventoryOperationId DocumentId,COUNT(*) LineCount INTO #OperationCounts
+    FROM dbo.InventoryOperationLines line JOIN #Page page ON page.DocumentId=line.InventoryOperationId
+    WHERE page.DocumentType<>N'GoodsReceipt' GROUP BY line.InventoryOperationId;
+    SELECT line.GoodsReceiptId DocumentId,COUNT(*) LineCount INTO #ReceiptCounts
+    FROM dbo.GoodsReceiptLines line JOIN #Page page ON page.DocumentId=line.GoodsReceiptId
+    WHERE page.DocumentType=N'GoodsReceipt' GROUP BY line.GoodsReceiptId;
+    SELECT movement.DocumentId,SUM(movement.ValueChange) TotalValue INTO #ReceiptValues
+    FROM dbo.InventoryMovements movement JOIN #Page page ON page.DocumentId=movement.DocumentId
+    WHERE @IncludeCosts=1 AND page.DocumentType=N'GoodsReceipt' AND movement.BusinessId=@BusinessId
+    GROUP BY movement.DocumentId;
+
+    SELECT history.DocumentId,history.DocumentType,history.DocumentNumber,history.WarehouseId,history.WarehouseName,
+        history.DestinationWarehouseId,history.DestinationWarehouseName,history.ReasonCode,history.Status,history.OccurredAt,
+        CASE WHEN history.DocumentType=N'GoodsReceipt' THEN COALESCE(receipt.LineCount,0) ELSE COALESCE(operation.LineCount,0) END,
+        CASE WHEN @IncludeCosts=1 THEN CASE WHEN history.DocumentType=N'GoodsReceipt'
+            THEN COALESCE(valuation.TotalValue,0) ELSE history.TotalValueChange END END,
+        history.ConversionInputEquivalent,history.ConversionOutputEquivalent,history.ConversionLossQuantity,
+        history.ConversionLossPercent,history.ConversionMaximumLossPercent,document.Label,status.Label,
+        CASE WHEN history.DocumentType=N'GoodsReceipt' THEN document.Label ELSE reason.Name END ReasonName
+    FROM #Page history
+    LEFT JOIN #OperationCounts operation ON operation.DocumentId=history.DocumentId
+    LEFT JOIN #ReceiptCounts receipt ON receipt.DocumentId=history.DocumentId
+    LEFT JOIN #ReceiptValues valuation ON valuation.DocumentId=history.DocumentId
+    LEFT JOIN reference.Options document ON document.CatalogCode=N'accounting-document-type' AND document.Code=history.DocumentType
+    LEFT JOIN reference.Options status ON status.CatalogCode=N'inventory-operation-status' AND status.Code=history.Status
+    LEFT JOIN dbo.BusinessReasons reason ON reason.BusinessId=@BusinessId AND reason.ReasonType=history.DocumentType AND reason.Code=history.ReasonCode
+    ORDER BY history.OccurredAt DESC,history.DocumentId;
 END;

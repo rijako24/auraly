@@ -261,7 +261,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         var id=warehouseId??ids.NewId(); var code=$"BOD-{id.ToString("N")[^12..].ToUpperInvariant()}";
         const string sql="""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
-              THROW 51201,'The business is outside the authenticated tenant.',1;
+              THROW 51201,N'La sede no pertenece a la empresa autorizada.',1;
             IF @IsNew=1
               INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
               VALUES(@WarehouseId,@BusinessId,@Code,@Name,@AllowNegative,@CostBasis,0,@UseForSales,@IsActive,@IsActive,@IsActive,SYSUTCDATETIME());
@@ -270,7 +270,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               UPDATE dbo.Warehouses SET Name=@Name,AllowNegativeStockSales=@AllowNegative,PriceFormationCostBasis=@CostBasis,
                 UseForSales=@UseForSales,UseForGoodsReceipts=@IsActive,IsInventoryVisible=@IsActive,IsActive=@IsActive
               WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsSystem=0;
-              IF @@ROWCOUNT=0 THROW 51201,'Warehouse was not found in the authenticated business.',1;
+              IF @@ROWCOUNT=0 THROW 51201,N'La bodega no existe en la sede autorizada.',1;
             END;
             ;WITH KnownCosts AS (
               SELECT balance.ProductId,MAX(balance.AverageUnitCost) AverageUnitCost
@@ -335,20 +335,20 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         var id=inventoryReasonId??ids.NewId(); var code=$"MOT-{id.ToString("N")[^12..].ToUpperInvariant()}";
         const string sql="""
             IF NOT EXISTS(SELECT 1 FROM dbo.ReasonTemplates WHERE ReasonType=@OperationType AND IsActive=1)
-              THROW 51220,'Reason type is not configured in the active catalog.',1;
+              THROW 51220,N'El tipo de motivo no está configurado en el catálogo activo.',1;
             IF @CounterpartCategory IS NOT NULL AND NOT EXISTS
             (
               SELECT 1 FROM dbo.AccountingConfigurationProfileAccounts accountCategory
               INNER JOIN dbo.AccountingConfigurationProfiles profile ON profile.ProfileCode=accountCategory.ProfileCode
               WHERE accountCategory.Category=@CounterpartCategory AND profile.IsDefault=1 AND profile.IsActive=1
             )
-              THROW 51220,'Accounting counterpart category is not configured in the active profile.',1;
+              THROW 51220,N'La categoría contable de contrapartida no está configurada en el perfil activo.',1;
             IF @DefaultCostCenterId IS NOT NULL AND NOT EXISTS
             (
               SELECT 1 FROM dbo.AccountingCostCenters
               WHERE CostCenterId=@DefaultCostCenterId AND TenantId=@TenantId AND IsActive=1
             )
-              THROW 51220,'Accounting cost center is not active in the authenticated legal entity.',1;
+              THROW 51220,N'El centro de costo no está activo en la empresa autorizada.',1;
             IF @IsNew=1
               INSERT dbo.BusinessReasons(ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
               VALUES(@Id,@BusinessId,@OperationType,@Code,@Name,NULL,@CounterpartCategory,@DefaultCostCenterId,@RequiresReference,0,@IsActive,@DisplayOrder,SYSUTCDATETIME(),SYSUTCDATETIME());
@@ -358,7 +358,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                 CounterpartAccountingCategory=@CounterpartCategory,DefaultCostCenterId=@DefaultCostCenterId,
                 RequiresReference=@RequiresReference,IsActive=@IsActive,DisplayOrder=@DisplayOrder,UpdatedAt=SYSUTCDATETIME()
               WHERE ReasonId=@Id AND BusinessId=@BusinessId;
-              IF @@ROWCOUNT=0 THROW 51220,'Inventory reason was not found in the authenticated business.',1;
+              IF @@ROWCOUNT=0 THROW 51220,N'El motivo de inventario no existe en la sede autorizada.',1;
             END;
             SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder,
                    CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference
@@ -369,7 +369,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
         try { await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); return new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4),reader.GetBoolean(5),reader.GetInt32(6),reader.IsDBNull(7)?null:reader.GetString(7),reader.IsDBNull(8)?null:reader.GetGuid(8),reader.GetBoolean(9)); }
         catch(SqlException exception) when(exception.Number==51220) { throw new InventoryValidationException(exception.Message); }
-        catch(SqlException exception) when(exception.Number is 2601 or 2627) { throw new InventoryConflictException("An inventory reason with the same name already exists for this operation."); }
+        catch(SqlException exception) when(exception.Number is 2601 or 2627) { throw new InventoryConflictException("Ya existe un motivo de inventario con ese nombre para esta operación."); }
     }
 
     public async Task<InventoryBalancePage> GetBalancesAsync(InventoryUserIdentity user, InventoryBalanceQuery query, bool includeCosts, CancellationToken token)
@@ -384,39 +384,53 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     public async Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, bool includeCosts, CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand("dbo.InventoryMovementsSearch",connection){CommandType=CommandType.StoredProcedure}; AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@ProductId",(object?)query.ProductId??DBNull.Value); command.Parameters.AddWithValue("@DocumentType",(object?)query.DocumentType??DBNull.Value); command.Parameters.AddWithValue("@MovementType",(object?)query.MovementType??DBNull.Value); command.Parameters.AddWithValue("@From",(object?)query.From??DBNull.Value); command.Parameters.AddWithValue("@To",(object?)query.To??DBNull.Value); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
-        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryMovementItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),reader.GetGuid(6),reader.GetString(7),reader.IsDBNull(8)?null:reader.GetString(8),reader.GetString(9),reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.IsDBNull(13)?null:reader.GetDecimal(13),reader.IsDBNull(14)?null:reader.GetDecimal(14),reader.GetFieldValue<DateTimeOffset>(15),reader.IsDBNull(16)?null:reader.GetFieldValue<DateTimeOffset>(16)));
+        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryMovementItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),reader.GetGuid(6),reader.GetString(7),reader.IsDBNull(8)?null:reader.GetString(8),reader.GetString(9),reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.IsDBNull(13)?null:reader.GetDecimal(13),reader.IsDBNull(14)?null:reader.GetDecimal(14),reader.GetFieldValue<DateTimeOffset>(15),reader.IsDBNull(16)?null:reader.GetFieldValue<DateTimeOffset>(16),ReadInventoryLabel(reader,17),ReadInventoryLabel(reader,18)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 
     public async Task<InventoryMovementFilterOptions> GetMovementFilterOptionsAsync(InventoryUserIdentity user, CancellationToken token)
     {
         const string sql = """
-            SELECT DISTINCT movement.DocumentType,movement.MovementType
-            FROM dbo.InventoryMovements movement
-            INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=movement.WarehouseId
-              AND warehouse.BusinessId=movement.BusinessId AND warehouse.IsSystem=0
-            WHERE movement.BusinessId=@BusinessId;
+            WITH used AS (
+                SELECT DISTINCT movement.DocumentType,movement.MovementType
+                FROM dbo.InventoryMovements movement
+                INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=movement.WarehouseId
+                  AND warehouse.BusinessId=movement.BusinessId AND warehouse.IsSystem=0
+                WHERE movement.BusinessId=@BusinessId
+            )
+            SELECT used.DocumentType,used.MovementType,document.Label,document.IsActive,document.SortOrder,
+              movement.Label,movement.IsActive,movement.SortOrder
+            FROM used
+            LEFT JOIN reference.Options document ON document.CatalogCode=N'accounting-document-type' AND document.Code=used.DocumentType
+            LEFT JOIN reference.Options movement ON movement.CatalogCode=N'inventory-movement-type' AND movement.Code=used.MovementType;
             """;
         await using var connection=connections.Create();
         await connection.OpenAsync(token);
         await using var command=new SqlCommand(sql,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         await using var reader=await command.ExecuteReaderAsync(token);
-        var documentTypes=new HashSet<string>(StringComparer.Ordinal);
-        var movementTypes=new HashSet<string>(StringComparer.Ordinal);
+        var documents=new Dictionary<string,InventoryCatalogOption>(StringComparer.Ordinal);
+        var movements=new Dictionary<string,InventoryCatalogOption>(StringComparer.Ordinal);
         while(await reader.ReadAsync(token))
         {
-            documentTypes.Add(reader.GetString(0));
-            movementTypes.Add(reader.GetString(1));
+            var document=reader.GetString(0); var movement=reader.GetString(1);
+            documents[document]=new(document,ReadInventoryLabel(reader,2),reader.GetBoolean(3),reader.GetInt32(4));
+            movements[movement]=new(movement,ReadInventoryLabel(reader,5),reader.GetBoolean(6),reader.GetInt32(7));
         }
-        return new(documentTypes.Order(StringComparer.Ordinal).ToArray(),movementTypes.Order(StringComparer.Ordinal).ToArray());
+        return new(documents.Keys.Order(StringComparer.Ordinal).ToArray(),movements.Keys.Order(StringComparer.Ordinal).ToArray(),
+            documents.Values.OrderBy(item=>item.SortOrder).ThenBy(item=>item.Code,StringComparer.Ordinal).ToArray(),
+            movements.Values.OrderBy(item=>item.SortOrder).ThenBy(item=>item.Code,StringComparer.Ordinal).ToArray());
     }
+
+    private static string ReadInventoryLabel(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal)
+        ? throw new InvalidOperationException("Falta configurar una etiqueta del catálogo de inventario en español.")
+        : reader.GetString(ordinal);
 
     public async Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, IReadOnlyList<string> allowedDocumentTypes, bool includeCosts, CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand("dbo.InventoryOperationsSearch",connection){CommandType=CommandType.StoredProcedure}; AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@DocumentType",(object?)query.DocumentType??DBNull.Value); command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value); command.Parameters.AddWithValue("@From",(object?)query.From??DBNull.Value); command.Parameters.AddWithValue("@To",(object?)query.To??DBNull.Value); command.Parameters.AddWithValue("@ReasonCode",(object?)query.ReasonCode??DBNull.Value); command.Parameters.AddWithValue("@DestinationWarehouseId",(object?)query.DestinationWarehouseId??DBNull.Value); command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value); command.Parameters.AddWithValue("@PurchaseEvidenceType",(object?)query.PurchaseEvidenceType??DBNull.Value); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
         command.Parameters.Add("@AllowedDocumentTypesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(allowedDocumentTypes);
-        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryOperationItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.IsDBNull(5)?null:reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetString(6),reader.GetString(7),reader.GetString(8),reader.GetFieldValue<DateTimeOffset>(9),reader.GetInt32(10),reader.IsDBNull(11)?null:reader.GetDecimal(11),reader.IsDBNull(12)?null:reader.GetDecimal(12),reader.IsDBNull(13)?null:reader.GetDecimal(13),reader.IsDBNull(14)?null:reader.GetDecimal(14),reader.IsDBNull(15)?null:reader.GetDecimal(15),reader.IsDBNull(16)?null:reader.GetDecimal(16)));
+        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryOperationItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.IsDBNull(5)?null:reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetString(6),reader.GetString(7),reader.GetString(8),reader.GetFieldValue<DateTimeOffset>(9),reader.GetInt32(10),reader.IsDBNull(11)?null:reader.GetDecimal(11),reader.IsDBNull(12)?null:reader.GetDecimal(12),reader.IsDBNull(13)?null:reader.GetDecimal(13),reader.IsDBNull(14)?null:reader.GetDecimal(14),reader.IsDBNull(15)?null:reader.GetDecimal(15),reader.IsDBNull(16)?null:reader.GetDecimal(16),ReadInventoryLabel(reader,17),ReadInventoryLabel(reader,18),reader.IsDBNull(19)?null:reader.GetString(19)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 
@@ -520,7 +534,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    CASE WHEN @IncludeCosts=1 THEN d.TotalValueChange END,
                    d.ConversionFamilyRootProductId,d.ConversionInputEquivalent,
                    d.ConversionOutputEquivalent,d.ConversionLossQuantity,
-                   d.ConversionLossPercent,d.ConversionMaximumLossPercent,d.RecipeVersionId,d.RecipeVersion
+                   d.ConversionLossPercent,d.ConversionMaximumLossPercent,d.RecipeVersionId,d.RecipeVersion,
+                   document.Label DocumentTypeLabel,status.Label StatusLabel
             FROM (
               SELECT o.InventoryOperationId DocumentId,o.DocumentType,o.DocumentNumber,
                      o.WarehouseId,w.Name WarehouseName,o.DestinationWarehouseId,
@@ -549,6 +564,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               WHERE g.BusinessId=@BusinessId AND g.GoodsReceiptId=@DocumentId
                 AND N'GoodsReceipt' IN (SELECT [value] FROM OPENJSON(@AllowedDocumentTypesJson))
             ) d
+            LEFT JOIN reference.Options document ON document.CatalogCode=N'accounting-document-type' AND document.Code=d.DocumentType
+            LEFT JOIN reference.Options status ON status.CatalogCode=N'inventory-operation-status' AND status.Code=d.Status
             WHERE d.DocumentId=@DocumentId;
 
             SELECT l.LineNumber,l.Direction,l.ProductId,l.ProductCode,l.ProductName,
@@ -611,7 +628,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             reader.IsDBNull(21) ? null : reader.GetDecimal(21),
             reader.IsDBNull(22) ? null : reader.GetDecimal(22),
             reader.IsDBNull(23) ? null : reader.GetGuid(23),
-            reader.IsDBNull(24) ? null : reader.GetInt32(24));
+            reader.IsDBNull(24) ? null : reader.GetInt32(24),ReadInventoryLabel(reader,25),ReadInventoryLabel(reader,26));
 
         await reader.NextResultAsync(token);
         var lines = new List<InventoryOperationDetailLine>();

@@ -122,7 +122,7 @@ test("ver un rol carga un solo workspace y se puede cerrar sin bloquear la aplic
   await expect(pos.getByText("Registrar abonos desde punto de venta", { exact: true })).toBeVisible();
   await expect(pos.getByText("Pagar proveedores desde punto de venta", { exact: true })).toBeVisible();
   await expect(dialog.locator("details").filter({ has: page.locator("summary").getByText("/dashboard/restaurant", { exact: true }) })).toHaveCount(1);
-  await dialog.getByRole("button", { name: "Cerrar" }).click();
+  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByPlaceholder("Buscar rol")).toBeEditable();
 

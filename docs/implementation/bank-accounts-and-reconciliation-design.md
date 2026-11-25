@@ -386,6 +386,31 @@ La organización por forma de pago y cuenta contable coincide con
 Este contraste orienta la usabilidad; la fuente de verdad de Auraly sigue siendo
 su módulo contable y las reglas fiscales aplicables a cada soporte.
 
+## Decisión de captura 2026-11-25: banco y auxiliar elegidos en la forma de pago
+
+El usuario aprobó conservar el maestro de cuentas bancarias para identificar
+el banco, número, tipo de cuenta y estado, sin pedir un auxiliar en ese formulario.
+Una forma de pago de tipo Transferencia debe seleccionar directamente tanto la
+cuenta bancaria de ese maestro como su auxiliar del PUC. El pago reutiliza ambas
+selecciones y solicita solamente su evidencia; no vuelve a elegir el banco.
+
+Esta decisión sustituye para esa configuración nueva la asociación editable
+banco–auxiliar desde el PUC descrita abajo. La identidad bancaria se comparte
+entre formas que usan la misma cuenta real y se conserva para extractos y
+conciliación. No se duplican bancos por forma de pago ni se deduce el banco a
+partir del nombre, número contable o auxiliar. El catálogo de formas y los
+motores de aceptación, contabilización y conciliación existentes conservan sus
+responsabilidades; no se crea otro escritor financiero.
+
+El corte de esquema, contratos, UI y consumidores aún debe implementarse y
+verificarse coordinadamente. La migración debe copiar los vínculos existentes
+verificados sin cambiar saldos, asientos, referencias bancarias aplicadas ni
+documentos terminados. La conciliación histórica conserva la atribución probada
+en el asiento/trabajo original; nunca la reconstruye desde una forma editable
+actual. No se retira el vínculo anterior mientras un consumidor activo dependa
+de él. Este apartado documenta el diseño aprobado, no afirma que el cutover ya
+esté aplicado ni autoriza un despliegue a producción.
+
 ## Ampliación 2026-10-20: banco con varios auxiliares y medio
 
 Este diseño sustituye para operaciones futuras la cardinalidad banco → un

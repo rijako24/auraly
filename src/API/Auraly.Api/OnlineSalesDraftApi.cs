@@ -56,7 +56,8 @@ public static class OnlineSalesDraftApi
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await Handle(() => service.SearchCustomersAsync(
-                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+                context.User.ToSalesHistoryUserIdentity(), request, ct)))
+            .WithMetadata(new SalesHistoryExecutionContext());
 
         group.MapPost("/history/products/search", async (
             HttpContext context,
@@ -64,7 +65,8 @@ public static class OnlineSalesDraftApi
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await Handle(() => service.SearchProductsAsync(
-                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+                context.User.ToSalesHistoryUserIdentity(), request, ct)))
+            .WithMetadata(new SalesHistoryExecutionContext());
 
         group.MapPost("/customers/get", async (
             HttpContext context,
@@ -80,7 +82,8 @@ public static class OnlineSalesDraftApi
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await Handle(() => service.SearchAsync(
-                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+                context.User.ToSalesHistoryUserIdentity(), request, ct)))
+            .WithMetadata(new SalesHistoryExecutionContext());
 
         group.MapPost("/sales/{documentId:guid}/receipt", async (
             HttpContext context,
@@ -89,10 +92,11 @@ public static class OnlineSalesDraftApi
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await HandleNullable(() => service.GetReceiptAsync(
-                context.User.ToOnlineSalesUserIdentity(),
+                context.User.ToSalesHistoryUserIdentity(),
                 request,
                 documentId,
-                ct)));
+                ct)))
+            .WithMetadata(new SalesHistoryExecutionContext());
 
         group.MapPost("/sales/{documentId:guid}/reprint-audit", async (
             HttpContext context,
@@ -101,7 +105,8 @@ public static class OnlineSalesDraftApi
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
             await HandleFound(() => service.RecordReprintAsync(
-                context.User.ToOnlineSalesUserIdentity(), request, documentId, ct)));
+                context.User.ToSalesHistoryUserIdentity(), request, documentId, ct)))
+            .WithMetadata(new SalesHistoryExecutionContext());
 
         var deviceHistory = endpoints.MapGroup("/api/pos/v1/history")
             .RequireAuthorization("pos.enrolled");
@@ -765,6 +770,12 @@ public sealed record PortfolioPaymentRenderRequest(
 
 public static class OnlineSalesDraftClaimsPrincipalExtensions
 {
+    public static OnlineSalesUserIdentity ToSalesHistoryUserIdentity(this ClaimsPrincipal principal) =>
+        principal.ToOnlineSalesUserIdentity() with
+        {
+            TenantId = RequiredGuid(principal, Auraly.Contracts.Authentication.AuthenticationDefaults.TenantIdClaim)
+        };
+
     public static OnlineSalesUserIdentity ToOnlineSalesUserIdentity(
         this ClaimsPrincipal principal) =>
         new(

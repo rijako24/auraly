@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useId, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, CircleDollarSign, Send } from "lucide-react";
 import { toast } from "sonner";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -63,12 +63,27 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
             context.data.preparedSalePrice,
             context.data.salesTaxRate,
           ));
+    let loadedSalePrice = context.data.preparedSalePrice;
+    let coherentMargin = loadedMargin;
+    setValidationAttempted(false);
+    if (loadedCost !== null) {
+      try {
+        const field = context.data.inputMode === "SalePrice" ? "salePrice" : "margin";
+        const calculation = recalculateProductPricing(field, field === "salePrice" ? loadedSalePrice : loadedMargin,
+          { cost: loadedCost, margin: loadedMargin, salePrice: loadedSalePrice, salesTaxRate: context.data.salesTaxRate });
+        loadedSalePrice = calculation.salePrice;
+        coherentMargin = calculation.margin;
+      } catch {
+        // Keep invalid historical values visible with the existing field errors.
+        setValidationAttempted(true);
+      }
+    }
     setCost(loadedCost === null ? "" : editableNumber(loadedCost));
-    setSalePrice(editableNumber(context.data.preparedSalePrice));
-    setMargin(editableNumber(loadedMargin));
+    setSalePrice(editableNumber(loadedSalePrice));
+    setMargin(editableNumber(coherentMargin));
     setIncrement(editableNumber(context.data.roundingIncrement));
     setRoundingMode(context.data.roundingMode);
-    setLastEdited(loadedCost === null ? "salePrice" : "margin");
+    setLastEdited(loadedCost === null || context.data.inputMode === "SalePrice" ? "salePrice" : "margin");
     previousSalesTaxRate.current = context.data.salesTaxRate;
     setDirty(false);
   }, [context.data, initialDraft]);
@@ -192,11 +207,18 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
         throw new Error("La configuración de precio todavía no ha terminado de cargar.");
       if (!valid || resolvedSale === null || resolvedCost === null || resolvedMargin === null || resolvedIncrement === null)
         throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
+      // Loading or restoring an editor does not fire input change events. Build
+      // one coherent draft here as well; the server applies authoritative rounding.
+      const calculation = recalculateProductPricing(
+        savesBySalePrice ? "salePrice" : "margin",
+        savesBySalePrice ? resolvedSale : resolvedMargin,
+        { cost: resolvedCost, margin: resolvedMargin, salePrice: resolvedSale, salesTaxRate },
+      );
       return {
         publicAmount: publicSalePrice,
-        amount: resolvedSale,
-        costBasisAmount: resolvedCost,
-        targetMarginPercent: resolvedMargin,
+        amount: calculation.salePrice,
+        costBasisAmount: calculation.cost,
+        targetMarginPercent: calculation.margin,
         inputMode: savesBySalePrice ? "SalePrice" : "Margin",
         roundingIncrement: resolvedIncrement,
         roundingMode,
@@ -213,7 +235,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       if (!valid) throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
       if (dirty) await save();
     },
-  }), [dirty, publicSalePrice, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, save, savesBySalePrice, valid]);
+  }), [dirty, publicSalePrice, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, salesTaxRate, save, savesBySalePrice, valid]);
   const costOrigin = costLocked && context.data?.costBasisOrigin === "Composition"
     ? "Costo automático de los componentes, IVA incluido"
     : context.data?.costBasisOrigin === "Composition" ? "Último costo compuesto, IVA incluido"
@@ -285,7 +307,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       </div>
 
       {!valid && (dirty || validationAttempted) && <p className="text-sm text-destructive">El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.</p>}
-      {resolvedMargin !== null && resolvedMargin < 0 && savesBySalePrice && <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">Este precio produce una pérdida de {editableNumber(Math.abs(resolvedMargin))} %. Puedes guardarlo como precio explícito.</p>}
+      {resolvedMargin !== null && resolvedMargin < 0 && savesBySalePrice && <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">Este precio produce una pérdida de {editableNumber(Math.abs(resolvedMargin))} %. Revisa el costo y el precio antes de guardar.</p>}
       <p className="flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-emerald-600" />Guardar prepara el precio. Solo la vista Rentabilidad y precios lo publica en POS, pedidos y bot.</p>
     </div>
   </section>;
@@ -301,6 +323,7 @@ function PricingFormula({ cost, marginPercent, marginAmount, netSalePrice, sales
   salePrice: string;
   onSalePriceChange: (value: string) => void;
 }) {
+  const priceInputId = useId();
   return <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-emerald-950">
     <div className="mb-3"><h4 className="font-semibold">Así se forma el precio de venta</h4><p className="text-xs text-emerald-900/75">El margen se calcula sobre el precio antes de IVA; después se agrega el IVA de venta.</p></div>
     <div className="grid items-stretch gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]">
@@ -310,7 +333,7 @@ function PricingFormula({ cost, marginPercent, marginAmount, netSalePrice, sales
       <FormulaOperator value="+" />
       <FormulaStep label={`IVA de venta (${editableNumber(salesTaxRate)}%)`} value={formatCurrency(taxAmount)} />
       <FormulaOperator value="=" />
-      <div className="rounded-xl bg-emerald-600 p-3 text-white"><div className="mb-2 flex items-center justify-between gap-2"><Label className="text-xs text-white">Precio de venta preparado *</Label><span className="text-xs text-white/75">IVA incluido · editable</span></div><FormattedNumberInput className="h-11 border-white/30 bg-white text-lg font-bold text-emerald-950" kind="currency" value={salePrice} onValueChange={(next) => onSalePriceChange(next === null ? "" : next.toString())} /><p className="mt-2 text-xs text-white/75">Al cambiarlo se conserva el costo y se recalcula el margen.</p></div>
+      <div className="rounded-xl bg-emerald-600 p-3 text-white"><div className="mb-2 flex items-center justify-between gap-2"><Label htmlFor={priceInputId} className="text-xs text-white">Precio de venta preparado *</Label><span className="text-xs text-white/75">IVA incluido · editable</span></div><FormattedNumberInput id={priceInputId} className="h-11 border-white/30 bg-white text-lg font-bold text-emerald-950" kind="currency" value={salePrice} onValueChange={(next) => onSalePriceChange(next === null ? "" : next.toString())} /><p className="mt-2 text-xs text-white/75">Al cambiarlo se conserva el costo y se recalcula el margen.</p></div>
     </div>
     <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs">Fórmula completa: precio antes de IVA = costo ÷ (1 − margen %). Precio de venta = precio antes de IVA + IVA.</p>
   </section>;
@@ -325,7 +348,8 @@ function FormulaOperator({ value }: { value: string }) {
 }
 
 function PriceInput({ label, helper, kind, value, onChange, emphasized = false, disabled = false }: { label: string; helper: string; kind: "currency" | "percent"; value: string; onChange: (value: string) => void; emphasized?: boolean; disabled?: boolean }) {
-  return <div className={`rounded-xl border p-4 ${emphasized ? "border-primary/40 bg-background" : "bg-background"}`}><div className="mb-3 flex items-start justify-between gap-2"><Label>{label}</Label><span className="text-xs text-muted-foreground">{helper}</span></div><FormattedNumberInput className="h-12 text-lg font-semibold" kind={kind} value={value} disabled={disabled} onValueChange={(next) => onChange(next === null ? "" : next.toString())} /></div>;
+  const inputId = useId();
+  return <div className={`rounded-xl border p-4 ${emphasized ? "border-primary/40 bg-background" : "bg-background"}`}><div className="mb-3 flex items-start justify-between gap-2"><Label htmlFor={inputId}>{label}</Label><span className="text-xs text-muted-foreground">{helper}</span></div><FormattedNumberInput id={inputId} className="h-12 text-lg font-semibold" kind={kind} value={value} disabled={disabled} onValueChange={(next) => onChange(next === null ? "" : next.toString())} /></div>;
 }
 
 function PricingState({ label, error = false }: { label: string; error?: boolean }) {

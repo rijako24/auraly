@@ -45,7 +45,7 @@ public sealed partial class SqlSalesReportingProcessor(
                 sourceVersion,cancellationToken,rebuilding);
             if (source is null)
                 throw new InvalidOperationException(
-                    "The completed document has no immutable reporting source.");
+                    "El documento no tiene una fuente inmutable disponible para proyectar.");
             if (source.Status == "Projected")
             {
                 await transaction.CommitAsync(cancellationToken);
@@ -71,7 +71,7 @@ public sealed partial class SqlSalesReportingProcessor(
                 start.Parameters.AddWithValue("@StartedAt", startedAt);
                 if (await start.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException(
-                        "The sales reporting job could not be acquired.");
+                        "No fue posible tomar el trabajo de proyección de ventas.");
             }
             transaction.Save("BeforeProjection");
 
@@ -148,7 +148,7 @@ public sealed partial class SqlSalesReportingProcessor(
                 complete.Parameters.AddWithValue("@CompletedAt", completedAt);
                 if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException(
-                        "The sales reporting job could not be completed.");
+                        "No fue posible completar el trabajo de proyección de ventas.");
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
@@ -229,7 +229,7 @@ public sealed partial class SqlSalesReportingProcessor(
         var payload=reader.GetString(0);var expected=(byte[])reader[2];
         var actual=SHA256.HashData(Encoding.UTF8.GetBytes(payload));
         if (!CryptographicOperations.FixedTimeEquals(expected,actual))
-            throw new InvalidOperationException("The immutable reporting source hash is invalid.");
+            throw new InvalidOperationException("La firma de integridad de la fuente de proyección no es válida.");
         return new ReportingSource(payload,reader.GetString(1),reader.GetGuid(3));
     }
 
@@ -243,8 +243,8 @@ public sealed partial class SqlSalesReportingProcessor(
 }
 
 // Read only fields consumed by the projection. The uploaded unit-cost estimate
-// is deliberately absent: historical sources may contain null, and recognized
-// cost is owned by the ledger or the frozen generic-product line.
+// is deliberately absent: historical sources may contain null. Recognized
+// cost is frozen on the native invoice line before projection.
 internal sealed record SalesReportingSaleSource(
     Guid TenantId, Guid BusinessId, Guid WarehouseId, Guid WorkSessionId,
     Guid SoldByUserId, Guid DocumentId,

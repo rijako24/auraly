@@ -68,7 +68,8 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
       items: settings.transferWorkflow && transferId ? [{
         documentId: transferId, documentType: "WarehouseTransfer", documentNumber: "TRB00-00000001",
         warehouseId: primaryWarehouseId, warehouseName: "Principal", destinationWarehouseId: auxiliaryWarehouseId,
-        destinationWarehouseName: "Auxiliar", reasonCode: "TEST_REASON", status: transferStatus,
+        destinationWarehouseName: "Auxiliar", reasonCode: "TEST_REASON", reasonName: "Motivo de prueba", status: transferStatus,
+        documentTypeLabel:"Traslado entre bodegas",statusLabel:transferStatus === "Received" ? "Recibido" : "Pendiente de entrada",
         occurredAt: new Date().toISOString(), lineCount: 1, totalValueChange: 0,
         conversionInputEquivalent: null, conversionOutputEquivalent: null, conversionLossQuantity: null,
         conversionLossPercent: null, conversionMaximumLossPercent: null,
@@ -147,6 +148,11 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
     if (path.endsWith("/goods-receipts/withholding-preview") || path.endsWith("/goods-receipts/cost-withholding-preview")) return json(route, {
       grossAmount: 14_000, withholdingTotal: 0, netAmount: 14_000, lines: [],
     });
+    if (path.endsWith("/reference-options/inventory-operation-type")) return json(route, [
+      ["StockCount","Inventarios"],["InventoryAdjustment","Movimientos de mercancía"],["GoodsReceipt","Recepciones"],
+      ["WarehouseTransfer","Traslados"],["ProductConversion","Conversiones"],["Production","Producción"],["Damage","Averías"],
+    ].map(([code,label],sortOrder)=>({id:code,code,label,description:null,sortOrder})));
+    if (path.endsWith("/reference-options/inventory-operation-status")) return json(route, [{id:"processed",code:"Processed",label:"Procesado",description:null,sortOrder:10}]);
     if (path.endsWith("/reference-options/accounting-withholding-kind")) return json(route, [
       { id: "kind-income", code: "IncomeTax", label: "Retefuente", isActive: true, sortOrder: 10 },
     ]);
@@ -401,7 +407,7 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await page.getByRole("option", { name: /Arroz premium/ }).click();
   await dialog.getByRole("spinbutton", { name: "Cantidad en Caja" }).fill("7");
   await dialog.getByPlaceholder("Observaciones de recepción").fill("recepción persistente");
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cerrar ventana", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {

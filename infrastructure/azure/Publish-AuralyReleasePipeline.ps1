@@ -410,7 +410,8 @@ function Publish-Database {
             '20261113_ShareAccountingCostCenters.sql',
             '20261113_RetireAcceptedAccountConfiguration.sql',
             '20261116_RetireTenantPaymentContractSwitch.sql',
-            '20261118_UnifyDispatchWorkSessionClosures.sql')
+            '20261118_UnifyDispatchWorkSessionClosures.sql',
+            '20261125_FreezeInvoiceRecognizedCosts.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `

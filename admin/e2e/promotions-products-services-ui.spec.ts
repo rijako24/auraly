@@ -152,13 +152,13 @@ test("pedidos agrupa filtros y consulta cliente y vendedor por identificador", a
   await expect(page.getByText("Desde", { exact: true })).toBeVisible();
   await expect(page.getByText("Hasta", { exact: true })).toBeVisible();
 
-  await page.getByRole("combobox", { name: "Seleccionar customer" }).click();
+  await page.getByRole("combobox", { name: "Seleccionar cliente" }).click();
   await page.getByRole("option", { name: /Cliente Ejemplo/ }).click();
-  await page.getByRole("combobox", { name: "Seleccionar seller" }).click();
+  await page.getByRole("combobox", { name: "Seleccionar vendedor" }).click();
   await page.getByRole("option", { name: /Ana Vendedora/ }).click();
-  const sellerClear = page.getByRole("button", { name: "Quitar selección de Seleccionar seller" });
+  const sellerClear = page.getByRole("button", { name: "Quitar selección de Seleccionar vendedor" });
   const sellerClearBox = await sellerClear.boundingBox();
-  const sellerChevronBox = await page.getByRole("combobox", { name: "Seleccionar seller" }).locator("svg").boundingBox();
+  const sellerChevronBox = await page.getByRole("combobox", { name: "Seleccionar vendedor" }).locator("svg").boundingBox();
   expect(sellerClearBox).not.toBeNull();
   expect(sellerChevronBox).not.toBeNull();
   expect(sellerChevronBox!.x - sellerClearBox!.x - sellerClearBox!.width).toBeGreaterThanOrEqual(4);

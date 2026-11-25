@@ -459,7 +459,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   expect(before).toMatchObject({ receivableId, originalAmount: 1000.5001, outstandingAmount: 1000.5001, status: "Open" });
   await page.getByRole("button", { name: "Abono a cartera", exact: true }).click();
   const wizard = page.getByRole("dialog", { name: "Abono a cartera", exact: true });
-  await wizard.getByRole("combobox", { name: "Seleccionar customer", exact: true }).click();
+  await wizard.getByRole("combobox", { name: "Seleccionar cliente", exact: true }).click();
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(name);
   await page.getByRole("option").filter({ hasText: name }).click();
   await expect(wizard.getByText("Pendiente", { exact: true }).locator("..")).toContainText("1.000,5001");
@@ -508,7 +508,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   await expect(detail).toContainText("100,25");
   await detail.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Abono a cartera", exact: true }).click();
-  await wizard.getByRole("combobox", { name: "Seleccionar customer", exact: true }).click();
+  await wizard.getByRole("combobox", { name: "Seleccionar cliente", exact: true }).click();
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(name);
   await page.getByRole("option").filter({ hasText: name }).click();
   await expect(wizard.getByText(documentNumber, { exact: true })).toBeVisible();

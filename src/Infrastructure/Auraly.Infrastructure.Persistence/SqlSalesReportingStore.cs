@@ -203,7 +203,7 @@ public sealed partial class SqlSalesReportingStore(
     {
         if(required is null)return requested;
         if(requested is not null&&requested!=required)
-            throw new SalesReportingForbiddenException($"The authenticated {dimension} cannot widen the report scope.");
+            throw new SalesReportingForbiddenException("El usuario no puede ampliar el alcance autorizado del reporte.");
         return required;
     }
     private static async Task<ReportingAccess> ResolveAccessAsync(SqlConnection connection,
@@ -218,12 +218,23 @@ public sealed partial class SqlSalesReportingStore(
               OR EXISTS(SELECT 1 FROM reporting.SalesReportDocuments d WHERE d.BusinessId=b.BusinessId AND d.ProjectionVersion<@ProjectionVersion)
               OR EXISTS(SELECT 1 FROM reporting.PurchaseReportDocuments purchaseValue WHERE purchaseValue.BusinessId=b.BusinessId AND purchaseValue.ProjectionVersion<@ProjectionVersion)
               THEN 1 ELSE 0 END) RebuildRequired,
-            CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM reporting.SalesReportingJobs pending WHERE pending.BusinessId=b.BusinessId AND pending.Status IN(N'Pending',N'Processing')) THEN 1 ELSE 0 END),
-            CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM reporting.SalesReportingJobs failed WHERE failed.BusinessId=b.BusinessId AND failed.Status=N'Failed') THEN 1 ELSE 0 END)
+            COALESCE(progress.Pending,0),COALESCE(progress.Failed,0)
           FROM dbo.Businesses b
           LEFT JOIN dbo.AppUsers app ON app.UserId=@UserId AND app.TenantId=b.TenantId AND app.IsActive=1 AND @ReadAll=0
           LEFT JOIN dbo.CommerceSellers seller ON seller.PartyId=app.PartyId AND seller.TenantId=@TenantId AND seller.IsActive=1
           LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=app.PartyId AND supplier.TenantId=@TenantId AND supplier.IsActive=1
+          OUTER APPLY(
+            SELECT COUNT_BIG(CASE WHEN report.Status IN(N'Pending',N'Processing') THEN 1 END) Pending,
+              COUNT_BIG(CASE WHEN report.Status=N'Failed' THEN 1 END) Failed
+            FROM reporting.SalesReportingJobs report
+            WHERE report.BusinessId=b.BusinessId AND report.Status IN(N'Pending',N'Processing',N'Failed')
+              AND (report.SourceDocumentType NOT IN(N'WorkSessionClosureReconciliation',N'DispatchCashDifference')
+                OR EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs financial
+                  WHERE financial.SourceDocumentId=report.SourceDocumentId
+                    AND financial.SourceDocumentType=report.SourceDocumentType
+                    AND financial.BusinessId=report.BusinessId AND financial.TenantId=b.TenantId
+                    AND financial.Status IN(N'Posted',N'CommercialEffectsApplied')))
+          ) progress
           WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId AND (@ReadAll=1 OR app.UserId IS NOT NULL);
           """,connection);
         command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
@@ -231,16 +242,20 @@ public sealed partial class SqlSalesReportingStore(
         command.Parameters.AddWithValue("@ReadAll",user.Permissions.Contains(SalesReportingPermissionCodes.ReadAll));
         command.Parameters.AddWithValue("@ProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);
         await using var reader=await command.ExecuteReaderAsync(token);
-        if(!await reader.ReadAsync(token))throw new SalesReportingForbiddenException("The reporting identity is not active in this tenant.");
+        if(!await reader.ReadAsync(token))throw new SalesReportingForbiddenException("El usuario no está activo en esta empresa para consultar reportes.");
         Guid? seller=reader.IsDBNull(0)?null:reader.GetGuid(0);Guid? supplier=reader.IsDBNull(1)?null:reader.GetGuid(1);
-        var access=new ReportingAccess(seller,supplier,reader.GetString(2),reader.GetString(3),reader.GetBoolean(5),reader.GetBoolean(6));
+        var access=new ReportingAccess(seller,supplier,reader.GetString(2),reader.GetString(3),reader.GetInt64(5),reader.GetInt64(6));
         var rebuildRequired=reader.GetBoolean(4);
         if((seller is not null&&supplier is not null)||await reader.ReadAsync(token))
-            throw new SalesReportingForbiddenException("The reporting identity maps ambiguously to both seller and supplier.");
+            throw new SalesReportingForbiddenException("El usuario tiene una asociación ambigua como vendedor y proveedor.");
         if(rebuildRequired)throw new SalesReportingUnavailableException("La proyección requiere completar su reconstrucción antes de consultar cifras.");
         return access;
     }
-    private sealed record ReportingAccess(Guid? SellerId,Guid? SupplierId,string TimeZoneId,string PointOfSaleMode,bool HasPendingSources,bool HasFailedSources);
+    private sealed record ReportingAccess(Guid? SellerId,Guid? SupplierId,string TimeZoneId,string PointOfSaleMode,long PendingSourceCount,long FailedSourceCount)
+    {
+        public bool HasPendingSources => PendingSourceCount > 0;
+        public bool HasFailedSources => FailedSourceCount > 0;
+    }
     private static decimal Percent(long numerator,long denominator)=>denominator==0?0:decimal.Round(numerator*100m/denominator,2);
     private static decimal? Growth(decimal current,decimal previous)=>previous==0?(current==0?0:null):
         decimal.Round((current-previous)*100m/decimal.Abs(previous),2);

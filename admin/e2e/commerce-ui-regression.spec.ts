@@ -77,7 +77,7 @@ async function createAndEditParty(page: Page, role: "Cliente" | "Proveedor" | "V
   await field(dialog, "Teléfono").locator("input").fill("3017654321");
   await dialog.getByRole("button", { name: "Guardar tercero" }).click();
   await expect(dialog.getByText("3017654321", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await dialog.getByRole("button", { name: "Cerrar" }).click();
+  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   return name;
 }
 

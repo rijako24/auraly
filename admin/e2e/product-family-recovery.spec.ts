@@ -22,7 +22,7 @@ for (const [storedLink, currentLink, sharedInventory, unavailable] of [
       unitGrossWeightKg: null, scale: null, barcodes: [], link: currentLink ? link : null, linkedProducts: [], conversionMaximumLossPercent: null };
     const pricing: ProductPricingContext = { productId: id, productName: product.name, preparedSalePrice: 10000,
       publicSalePrice: 10000, costBasisAmount: 8000, costBasisOrigin: currentLink || storedLink ? "LinkedProduct" : "Manual",
-      currentMarginPercent: 20, salesTaxRate: 0, roundingIncrement: 1, roundingMode: "Nearest", isCostLinked: currentLink,
+      currentMarginPercent: 20, inputMode: "Margin", salesTaxRate: 0, roundingIncrement: 1, roundingMode: "Nearest", isCostLinked: currentLink,
       costSourceProductId: currentLink ? link.parentProductId : null, costSourceProductName: currentLink ? link.parentProductName : null,
       costFactor: currentLink ? 2 : null };
     let merchandisingReads = 0, pricingReads = 0, writes = 0;

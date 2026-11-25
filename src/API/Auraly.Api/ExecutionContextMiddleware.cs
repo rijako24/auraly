@@ -65,7 +65,8 @@ internal sealed class ExecutionContextMiddleware(
         }
 
         Guid tenantId;
-        if (UsesIdentityTenant(context.Request))
+        if (UsesIdentityTenant(context.Request) &&
+            context.GetEndpoint()?.Metadata.GetMetadata<SalesHistoryExecutionContext>() is null)
         {
             // POS resources always belong to the immutable tenant of the
             // authenticated identity. Administrative work-session views use
@@ -172,3 +173,7 @@ internal sealed class ExecutionContextMiddleware(
         });
     }
 }
+
+// History shares the existing POS application services, but is also exposed in
+// administration. Only these marked endpoints use the authorized selected tenant.
+internal sealed class SalesHistoryExecutionContext { }

@@ -30,7 +30,7 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [AddedByUserId] UNIQUEIDENTIFIER NULL,
     [AddedAt] DATETIMEOFFSET(7) NULL,
     [ProductRecipeVersionId] UNIQUEIDENTIFIER NULL,
-    [RecognizedCostAmount] DECIMAL(19,4) NULL,
+    [RecognizedCostAmount] DECIMAL(19,4) NOT NULL,
     CONSTRAINT [PK_SalesDocumentLines] PRIMARY KEY CLUSTERED ([DocumentId], [LineNumber]),
     CONSTRAINT [FK_SalesDocumentLines_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesDocumentLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
@@ -40,7 +40,7 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     CONSTRAINT [CK_SalesDocumentLines_Values] CHECK
         ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND
          ([UnitCostSnapshot] IS NULL OR [UnitCostSnapshot] >= 0) AND
-         ([RecognizedCostAmount] IS NULL OR [RecognizedCostAmount] >= 0) AND [DiscountAmount] >= 0 AND
+         [RecognizedCostAmount] >= 0 AND [DiscountAmount] >= 0 AND
          [PromotionDiscountAmount] >= 0 AND [PromotionDiscountAmount] <= [DiscountAmount] AND
          [TaxAmount] >= 0 AND [TaxRate] >= 0 AND [AttributionSnapshotVersion] >= 0)
 );

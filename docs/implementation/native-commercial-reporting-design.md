@@ -25,6 +25,34 @@ de reporte en tiempo de consulta. Operación, pedidos, rutas, inventario y
 facturación no calculan indicadores para la interfaz. El motor de reporting es
 el único propietario de agregados, costo, utilidad e impacto.
 
+La venta se proyecta al completar su operación, sin esperar el cierre ni su
+conciliación. Una corrección posterior de medios solo sustituye los hechos de
+pago después de que el motor financiero la haya confirmado. Por ello el aviso
+de proyección pendiente/fallida cuenta las fuentes financieras de corrección
+únicamente cuando su trabajo está `Posted` o `CommercialEffectsApplied`, igual
+que la elegibilidad que aplica el processor. Una revisión histórica que todavía
+no produjo un cambio financiero no representa ventas sin proyectar. Su estado
+financiero conserva visibilidad en trazabilidad y no se modifica para retirar
+el aviso. La consulta propietaria calcula ambos indicadores en un solo conjunto
+acotado por sede y estado; no agrega llamadas ni espera la conciliación para
+consultar las ventas. El rollback del lector solo restablece el aviso anterior;
+no cambia fuentes, jobs financieros ni proyecciones monetarias.
+
+El contexto expone además `PendingSourceCount` y `FailedSourceCount`, calculados
+en ese mismo agregado y con idéntica elegibilidad; los indicadores booleanos se
+derivan de esos conteos. La pantalla muestra únicamente las cantidades, conserva
+las cifras ya proyectadas y no realiza otra consulta ni agrega polling.
+
+Cambiar efectivo por transferencia no crea otra venta ni toca costo, impuestos,
+utilidad, cantidades o fecha de la venta. El writer existente sustituye el
+desglose anterior por el confirmado dentro de una transacción: equivale a restar
+el importe del medio anterior y sumarlo al nuevo. Los totales diarios reciben
+solo la diferencia de recaudo y crédito; un cambio entre dos medios de contado
+conserva esos totales. Si la corrección llega antes de la proyección original,
+la venta recupera el medio confirmado al proyectarse. Repetir cualquiera de las
+señales no vuelve a aplicar deltas. Cerrar o revisar sin cambios de pago no
+modifica la proyección comercial.
+
 No se crea una tabla por informe. Las vistas reutilizan documentos, hechos de
 línea, pagos y totales diarios existentes. Para documentos físicos, el motor
 documental de operaciones crea el trabajo durable y, al completar, solicita la
@@ -169,7 +197,7 @@ Al confirmar cada línea de factura, `SalesDocumentLines` fija una vez:
 - código y nombre del producto;
 - categoría;
 - proveedor atribuido, usando primero la relación principal activa;
-- costo unitario reconocido por el kardex.
+- costo reconocido de la línea y costo unitario congelados en la factura.
 
 Código, nombre y valores comerciales provienen del snapshot de la línea vendida
 (incluido el pedido recuperado); el catálogo vigente no los reinterpreta.
@@ -186,11 +214,12 @@ una línea de versión 1 no se reinterpreta desde el catálogo vigente.
 
 Decisión confirmada por el usuario el 2026-11-04: la utilidad realizada por línea
 es `UntaxedAmount - RecognizedCostAmount`; el margen es esa utilidad dividida por
-`UntaxedAmount`, después de descuentos y devoluciones. El costo procede de la valoración realmente aplicada por el ledger (incluido el
-costo de componentes cuando corresponda), nunca del precio de catálogo ni de una
-estimación enviada por el dispositivo. El genérico conserva su costo manual
-congelado en la línea, sin generar inventario. Un costo sin prueba queda no
-disponible, no se convierte en cero. La definición anterior sobre `TotalAmount` queda sustituida:
+`UntaxedAmount`, después de descuentos y devoluciones. Al confirmar la venta,
+el motor operativo congela en la factura la valoración aplicada por Inventory,
+incluidos los componentes. Para genéricos y productos simples sin movimiento
+de inventario congela el costo declarado en el documento. Reporting lee
+exclusivamente `SalesDocumentLines.RecognizedCostAmount`; no busca costos en el
+kardex, recetas o catálogo. La definición anterior sobre `TotalAmount` queda sustituida:
 incluir impuestos trasladados sobrestimaba la utilidad. Esta decisión coincide
 con la sección 6 de la decisión de cuatro motores. Cambiar esta documentación
 no corrige por sí solo el runtime ni las proyecciones históricas: véase el corte
@@ -199,29 +228,43 @@ de implementación y sus pruebas más abajo.
 El lector canónico de fuentes de Reporting deserializa únicamente los campos
 que consume la proyección, con la política JSON del serializador de ventas
 existente. No exige la estimación `documentUnitCost` del dispositivo: hay fuentes
-históricas aceptadas que la guardaron como `null`. Esa estimación no participa
-en el costo reconocido ni se sustituye por un cero; el writer conserva la
-valoración del kardex o el costo manual congelado del genérico. Este último solo
-constituye prueba de costo cuando `UnitCostSnapshot` no es nulo. La recepción
+históricas aceptadas que la guardaron como `null`. La proyección utiliza el
+costo reconocido persistido en la factura, sin sustituirlo por un cero. La recepción
 operativa de ventas nuevas conserva su contrato estricto y sigue rechazando
 un costo de documento explícitamente nulo.
 
-Esta compatibilidad se aplica en el mismo processor y writer, sin modificar
-fuentes inmutables, hashes ni inventario. El corte de datos reconstruye por el
-comando canónico todas las sedes con fuentes de Reporting, incluidas las que
-ya tenían versión 5, para corregir la cobertura de costo de sus genéricos
-históricos; no requiere otro esquema ni un segundo proceso de proyección.
-La regresión local reconstruye dos veces ventas con la estimación nula: conserva
-el costo del kardex de la mercancía y deja no disponible el costo del genérico
-sin snapshot manual. Comprueba importes documentales, payload y hash intactos,
-y que el inventario mantenga respectivamente uno y cero movimientos. Pasaron
-los siete casos de esta validación, incluida la conciliación del explorador;
-el build de backend terminó sin advertencias ni errores. La auditoría conserva
-los propietarios de JSON, proyección y costo, sin nuevas consultas, motores,
-escrituras operativas, contratos HTTP ni cargas frontend.
-Las pruebas de costo histórico usan una fixture propia, separada del escenario
-que comprueba los totales de una única venta; no dependen del orden de ejecución.
-Los siete casos volvieron a pasar con ese aislamiento.
+Decisión del usuario del 2026-11-25: retirar las lecturas alternativas de costo
+en runtime. `20261125_FreezeInvoiceRecognizedCosts.sql` corre antes de calcular
+el plan DACPAC. Completa únicamente costos nulos con evidencia histórica:
+checkout o consumo congelado, valoración del movimiento original, o costo
+unitario ya congelado en la factura simple cuando no se registró valoración.
+No reinterpreta el modo de inventario histórico desde el catálogo vigente.
+No usa el costo actual
+para reconstruir el pasado. Si falta evidencia, falla la migración completa;
+no inventa ceros ni cambia fuentes inmutables, hashes, movimientos o saldos.
+El esquema exige costo reconocido no nulo y el writer lo inserta dentro de
+la transacción operativa. Una línea ausente impide proyectar la factura.
+Después del corte se reconstruye por el comando canónico de Reporting.
+El contrato de esta valoración es la versión 6. El lector existente rechaza
+checkpoints o hechos de versiones anteriores hasta completar ese rebuild;
+no presenta cifras de una valoración antigua junto a las nuevas. El corte
+debe ejecutar `rebuild-sales-reporting` por cada sede afectada con el binario
+nuevo, después de migrar y antes de dar por verificados sus reportes. No se
+reprocesan ventas, contabilidad ni inventario para reconstruir la proyección.
+El ensayo encontró tres raíces históricas de habilitación con la marca booleana
+original `fiscalHabilitationOnly=true`. El handler ya las considera no comerciales,
+pero el backfill antiguo las había incluido en Reporting. La migración retira
+únicamente esos trabajos de Reporting después de verificar hash, identidad y
+ausencia de líneas, inventario, asientos y cartera. El backfill respeta la misma
+marca y no los reinserta. El rebuild canónico elimina sus proyecciones obsoletas;
+no borra ni reenvía documentos fiscales y no fabrica ventas ni costos para ellos.
+Una marca que contradiga efectos comerciales reales bloquea el corte.
+El publicador existente detiene API y Worker y verifica ambos estados antes de
+migrar el esquema; la exigencia de costo no nulo requiere ese corte coordinado.
+No se reinician binarios antiguos si falla la actualización.
+La reversión conserva los costos migrados; volver a un writer antiguo exige
+coordinar su esquema nullable, sin borrar evidencia. Las pruebas históricas
+usan una fixture independiente y verifican replay y efectos protegidos.
 
 El corte de datos de DEV del 2026-11-05 reconstruyó 633 fuentes en cinco sedes,
 mediante el mismo comando canónico. Quedaron 349 documentos de venta y 225 de
@@ -716,7 +759,7 @@ de catálogo sin contexto. Son trabajo de implementación, no checks aprobados.
 El cierre funcional no equivale a ejecución de regresiones, benchmark ni DEV.
 
 El código local implementa las cinco vistas, los filtros contextuales y la
-versión 5 del único writer/processor. Ventas incluye bruto, descuentos, venta
+versión 6 del único writer/processor. Ventas incluye bruto, descuentos, venta
 antes de devolución, devolución y neto, impuestos, costo histórico, utilidad y
 margen; compras permanece exclusivamente en Proveedores: compras y ventas.
 `SalesReportActivity` reúne hechos físicos, servicios y cargos residuales de los
@@ -747,7 +790,7 @@ identidad nullable. Los importes no atribuibles y márgenes no calculables son
 null, no ceros aparentes. CSV exporta explícitamente la página visible, su rango,
 filtros y corte, con las mismas cifras y protección de fórmulas.
 
-Una sede con proyecciones anteriores a versión 5 o reconstrucción incompleta
+Una sede con proyecciones anteriores a versión 6 o reconstrucción incompleta
 responde indisponible, en vez de mezclar cifras. La operación explícita es:
 `Auraly.Console rebuild-sales-reporting <TenantId> <BusinessId>`, usando su
 conexión configurada explícitamente. Toma el bloqueo exclusivo de Reporting de
@@ -922,7 +965,7 @@ separada del detalle analítico proyectado.
 
 La migración de clasificación es idempotente y conserva versiones. Los contratos
 anteriores delegan el lector nativo con límites explícitos. El corte requiere
-reconstruir las proyecciones anteriores a versión 5 antes de habilitar lectura;
+reconstruir las proyecciones anteriores a versión 6 antes de habilitar lectura;
 no se hace desde startup. Un rollback de la aplicación no debe volver a mezclar
 versiones: mantener el reporte indisponible y reconstruir con el writer elegido.
 Esta evidencia corresponde al entorno local. La aplicación local usa datos ficticios y

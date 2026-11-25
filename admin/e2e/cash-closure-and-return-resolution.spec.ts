@@ -558,7 +558,7 @@ test("configurar un cargo conserva concepto y proveedor y reutiliza el resultado
     await dialog.getByLabel(label, { exact: true }).click();
     await page.getByRole("option", { name: "IVA 0", exact: true }).click();
   }
-  await dialog.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await dialog.getByRole("combobox", { name: "Seleccionar proveedor" }).click();
   await page.getByRole("option", { name: /Domiciliario prueba/ }).click();
   await dialog.getByRole("button", { name: "Guardar cargo" }).click();
   await expect(dialog).not.toBeVisible();

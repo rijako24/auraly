@@ -74,7 +74,7 @@ test("crea, programa y edita una ruta con vendedor y establecimiento desde UI", 
   await candidateDialog.getByRole("button", { name: "Agregar y ordenar" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(1, { timeout: 20_000 });
   await expect(dialog.getByText(new RegExp(customerName)).first()).toBeVisible({ timeout: 20_000 });
-  await dialog.getByRole("button", { name: "Cerrar" }).click();
+  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
 
   await page.getByPlaceholder(/Ruta, c.digo/).fill(routeCode);
   const row = page.getByRole("row").filter({ hasText: routeCode });
@@ -86,5 +86,5 @@ test("crea, programa y edita una ruta con vendedor y establecimiento desde UI", 
   await expect(page.getByText("Ruta actualizada", { exact: true })).toBeVisible({ timeout: 20_000 });
   await dialog.getByRole("button", { name: "Desactivar" }).click();
   await expect(page.getByText("Ruta desactivada", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await dialog.getByRole("button", { name: "Cerrar" }).click();
+  await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
 });

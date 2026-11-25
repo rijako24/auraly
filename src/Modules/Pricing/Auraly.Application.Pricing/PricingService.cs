@@ -13,12 +13,12 @@ public sealed record PreparedPricePublication(
     Guid ProposalId, Guid ProductId, decimal? CostBasisAmount,
     string? CostBasisType, string InputMode, decimal? TargetMarginPercent, decimal SalePrice,
     decimal? EffectiveMarginPercent, decimal RoundingIncrement,
-    string RoundingMode, byte[] ExpectedRowVersion, bool IsManual);
+    string RoundingMode, byte[] ExpectedRowVersion, bool IsManual, decimal SalesTaxRate);
 
 public sealed record PreparedDirectProductPricePublication(
     Guid ProductId, decimal? CostBasisAmount, string? CostBasisType, string InputMode,
     decimal? TargetMarginPercent, decimal SalePrice, decimal? EffectiveMarginPercent,
-    decimal RoundingIncrement, string RoundingMode);
+    decimal RoundingIncrement, string RoundingMode, decimal SalesTaxRate);
 
 public sealed record PendingPricePublicationSelection(
     IReadOnlyCollection<Guid>? ProductIds,
@@ -50,7 +50,7 @@ public interface IPricingStore
     Task<PriceProposalSource?> GetProposalAsync(PricingUserIdentity user, Guid proposalId, CancellationToken ct);
     Task<IReadOnlyList<PreparedPricePublication>> GetPendingPublicationsAsync(
         PricingUserIdentity user, PendingPricePublicationSelection selection, CancellationToken ct);
-    Task<ReviewedPricePreparation> ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
+    Task<ReviewedPricePreparation> ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, decimal expectedSalesTaxRate, byte[] expectedRowVersion, CancellationToken ct);
     Task RejectAsync(PricingUserIdentity user, Guid proposalId, byte[] expectedRowVersion, string? reason, CancellationToken ct);
     Task<PricePublicationStoreResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
     Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, DateTimeOffset asOf, CancellationToken ct);
@@ -95,7 +95,7 @@ public sealed class PricingService(
             request.TargetMarginPercent, request.SalePrice,
             request.RoundingIncrement, request.RoundingMode);
         return await store.ReviewAsync(
-            user, proposalId, calculation, DecodeToken(request.ConcurrencyToken), ct);
+            user, proposalId, calculation, source.SalesTaxRate, DecodeToken(request.ConcurrencyToken), ct);
     }
 
     public async Task RejectAsync(PricingUserIdentity user, Guid proposalId, RejectPriceProposalRequest request, CancellationToken ct)
@@ -140,6 +140,18 @@ public sealed class PricingService(
         IReadOnlyList<PreparedPricePublication> prepared,
         CancellationToken ct)
     {
+        // Validate the durable preparation before any publication effects. Reuse
+        // the preparation calculator; never silently change an approved price.
+        foreach (var value in prepared)
+        {
+            var calculation = CalculateForOptionalCost(value.CostBasisAmount,
+                value.SalesTaxRate, value.InputMode, value.TargetMarginPercent,
+                value.SalePrice, value.RoundingIncrement, value.RoundingMode);
+            if (calculation.RoundedSalePrice != value.SalePrice ||
+                calculation.EffectiveMarginPercent != value.EffectiveMarginPercent)
+                throw new PricingConflictException(
+                    "La publicación fue rechazada porque el costo, el IVA, el margen y el precio preparado no coinciden. Vuelve a preparar el precio e intenta publicarlo de nuevo.");
+        }
         var outcome = await store.PublishAsync(user, prepared, timeProvider.GetUtcNow(), ct);
         foreach (var businessId in outcome.TargetBusinessIds)
             await synchronization.DispatchPendingAsync(user.TenantId, businessId, CancellationToken.None);
@@ -193,7 +205,7 @@ public sealed class PricingService(
             calculation.RoundedSalePrice,
             costBasis is null ? null : calculation.EffectiveMarginPercent,
             calculation.RoundingIncrement,
-            calculation.RoundingMode), timeProvider.GetUtcNow(), ct);
+            calculation.RoundingMode, context.SalesTaxRate), timeProvider.GetUtcNow(), ct);
         return prepared;
     }
     public Task<ProductPriceHistoryPage> HistoryAsync(PricingUserIdentity user, Guid productId, int page, int pageSize, string? activityType, CancellationToken ct)

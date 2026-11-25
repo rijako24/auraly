@@ -54,6 +54,60 @@ a la unificación exige restauración coordinada de su esquema y aplicación.
 
 ## 2. Los cuatro conceptos canónicos
 
+### Preparación desde Producto: corrección del 2026-11-25
+
+La auditoría de Megafruver encontró preparaciones de origen `Product` ya
+inconsistentes antes de publicarse. Por ejemplo, PRD-000145 conservó el
+2026-11-10 costo 10.555,56, objetivo 25,4608 % y precio preparado 16.600;
+se publicó esa misma combinación minutos después. PRD-000386 y PRD-000885
+presentaban el mismo patrón. La ficha guardaba el precio preparado recibido
+del formulario sin recalcularlo y copiaba el objetivo al margen efectivo.
+La publicación copiaba esa preparación sin comprobar su aritmética. El caso
+PRD-000537 conservaba además un margen calculado sin descontar el IVA de venta.
+
+Al guardar Producto, el servidor calcula la preparación con `PriceMargin`,
+el costo solicitado y la tarifa del perfil tributario autenticado, bloqueado
+en la misma transacción. En modo Margen recalcula el precio; en modo Precio
+conserva el precio digitado y recalcula el margen. Aplica el redondeo y guarda
+separadamente objetivo y margen efectivo. Cambiar costo no publica el precio.
+La validación existente del perfil devuelve su tarifa en el mismo comando:
+no se añade una consulta por producto ni otra ruta de publicación.
+El contexto de edición devuelve también el `InputMode` de la preparación
+pendiente o del precio publicado. La interfaz conserva esa autoridad al cargar
+y guardar: un precio fijo no pasa a modo Margen al abrir la ficha. El editor
+reconstruye la vista con el calculador de presentación existente y el servidor
+mantiene el cálculo y el redondeo autoritativos dentro de su transacción.
+Restaurar un borrador no depende de que se dispare un evento de teclado para
+guardar una combinación coherente. No se agrega una llamada para obtener el
+modo: viene en la consulta de contexto existente.
+La edición independiente conserva una única lectura de contexto después de
+guardar una preparación: su respuesta breve no incluye el origen/vínculo del
+costo ni el perfil tributario vigente. Esa lectura acotada actualiza esos datos
+antes de continuar editando; no existe una consulta por escala ni un segundo
+propietario del mismo contexto. El guardado de la ficha completa usa el resultado
+del comando de Producto y no añade esa lectura independiente.
+La regresión mide el guardado de una ficha contra SQL local con presupuesto
+de dos segundos, una validación de tarifa y una escritura de preparación,
+sin medir alta de catálogos ni publicación como parte de esa etapa.
+
+Antes de publicar se vuelve a comprobar el conjunto durable con el calculador
+canónico y se rechaza una combinación inconsistente sin efectos parciales.
+El writer valida en lote que la tarifa no cambió entre lectura y commit.
+No corrige silenciosamente un precio ya aprobado. Los históricos se corrigen
+mediante preparación y publicación explícitas, conservando versiones y auditoría.
+El margen objetivo puede diferir del efectivo por el redondeo del precio;
+ese efecto documentado no equivale a una combinación incoherente.
+
+La revisión de una propuesta guarda también el incremento y modo de redondeo
+que produjeron el cálculo; no reutiliza la configuración de su versión anterior.
+Preparar directamente y revisar validan la tarifa de cálculo bajo los locks de
+su transacción antes de escribir. Un cambio concurrente de IVA revierte todo el
+intento y exige preparar de nuevo. No existe una corrección posterior al commit.
+La configuración de Producto conserva su requisito de margen objetivo no
+negativo: un precio digitado cuya base sin IVA esté por debajo del costo se
+explica como validación antes de escribir, en lugar de fallar por un constraint.
+Esto no bloquea compras válidas con margen actual negativo ni altera su costo.
+
 | Concepto | Propietario | Uso |
 |---|---|---|
 | Precio costo | Pricing/Purchasing | Costo vigente con el que el negocio prepara el precio. Puede originarse en edición autorizada, en una entrada procesada o, para un producto con costo vinculado, del costo de su principal multiplicado por el factor configurado. |

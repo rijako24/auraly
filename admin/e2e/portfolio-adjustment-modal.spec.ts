@@ -181,8 +181,8 @@ for (const direction of ["payables", "receivables"] as const) {
     expect(new URLSearchParams(positionReads[0]).has("subledgerId")).toBe(false);
     expect(nativeDetailReads).toBe(0);
     await expect(modal.getByLabel("Valor del ajuste")).toBeEnabled();
-    await expect(modal.getByRole("button", { name: "Close" })).toBeVisible();
-    await modal.getByRole("button", { name: "Cerrar" }).click();
+    await expect(modal.getByRole("button", { name: "Cerrar ventana" })).toBeVisible();
+    await modal.getByRole("button", { name: "Cerrar", exact: true }).click();
     await expect(modal).toHaveCount(0);
     await expect(page).toHaveURL(new RegExp(`/dashboard/${direction}$`));
 
@@ -214,7 +214,7 @@ for (const direction of ["payables", "receivables"] as const) {
     await expect(modal.getByRole("combobox", { name: "Seleccionar factura para ajuste de cartera" })).toContainText(documentNumber);
     await expect(modal.getByText(`${partyName} · 1001`)).toBeVisible();
     await expect(modal.getByText("$ 3.500").first()).toBeVisible();
-    await modal.getByRole("button", { name: "Close" }).click();
+    await modal.getByRole("button", { name: "Cerrar ventana" }).click();
     await expect(modal).toHaveCount(0);
     await page.getByRole("row", { name: new RegExp(documentNumber) }).click();
     await nativeDetail.getByRole("button", { name: "Desaplicar", exact: true }).click();

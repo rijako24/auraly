@@ -100,7 +100,7 @@ public sealed class SalesReportingService(ISalesReportingStore store)
             throw new SalesReportingValidationException("La página y la cantidad de registros no son válidas.");
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
         if (search?.Length > 160)
-            throw new SalesReportingValidationException("Search is limited to 160 characters.");
+            throw new SalesReportingValidationException("La búsqueda admite hasta 160 caracteres.");
         return store.ListDocumentsAsync(user, filter, page, pageSize, search, cancellationToken);
     }
 

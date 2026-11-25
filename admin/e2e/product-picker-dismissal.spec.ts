@@ -75,7 +75,7 @@ test.describe("cierre transversal del buscador de productos", () => {
 
     await search.click();
     await expect(results).toBeVisible({ timeout: 20_000 });
-    await dialog.getByRole("button", { name: "Cerrar" }).focus();
+    await dialog.getByRole("button", { name: "Cerrar", exact: true }).focus();
     await expect(results).toBeHidden();
   });
 });

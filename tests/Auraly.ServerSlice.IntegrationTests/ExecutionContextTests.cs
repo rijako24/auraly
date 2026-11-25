@@ -4,6 +4,7 @@ using System.Text.Json;
 using Auraly.Api;
 using Microsoft.Extensions.DependencyInjection;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Payables;
@@ -15,6 +16,83 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ExecutionContextTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Invoice_history_reads_the_authorized_selected_tenant_without_changing_POS_money_scope()
+    {
+        var tenantId = Guid.NewGuid(); var businessId = Guid.NewGuid(); var roleId = Guid.NewGuid();
+        await SeedAdditionalMembership(tenantId, businessId, roleId);
+        try
+        {
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var setup = new SqlCommand("""
+                    INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+                    SELECT NEWID(),@Role,PermissionId,SYSUTCDATETIME()
+                    FROM dbo.Permissions WHERE Resource=N'sales.reprint';
+                    """, connection);
+                setup.Parameters.AddWithValue("@Role", roleId);
+                await setup.ExecuteNonQueryAsync();
+            }
+            using var client = fixture.CreateAdminClientWithBusinessHeader(businessId, "sales.reprint");
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString("D"));
+            using var history = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+                new { context = new { businessId }, search = "", skip = 0, take = 20, dateRangeVersion = 2 });
+            Assert.True(history.IsSuccessStatusCode, await history.Content.ReadAsStringAsync());
+            using var historyJson = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
+            Assert.Equal(0, historyJson.RootElement.GetProperty("items").GetArrayLength());
+            foreach (var option in new[] { "customers", "products" })
+            {
+                using var options = await client.PostAsJsonAsync($"/api/commerce/v1/pos/drafts/history/{option}/search",
+                    new { context = new { businessId }, search = "", skip = 0, take = 20 });
+                Assert.True(options.IsSuccessStatusCode, await options.Content.ReadAsStringAsync());
+            }
+            foreach (var action in new[] { "receipt", "reprint-audit" })
+            {
+                using var absent = await client.PostAsJsonAsync($"/api/commerce/v1/pos/drafts/sales/{Guid.NewGuid():D}/{action}",
+                    new { businessId });
+                Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
+            }
+            // Exercise a real document as well: the identity can originate in
+            // another tenant while the authorized administrative scope owns it.
+            var sale=fixture.CreateUniqueValidRequest();
+            using(var upload=fixture.CreateUploadMessage(sale))
+            using(var accepted=await fixture.CreateClient().SendAsync(upload))
+                Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
+            using(var selected=fixture.CreateAdminClient(tenantId,"sales.reprint"))
+            {
+                selected.DefaultRequestHeaders.Add("X-Tenant-Id",fixture.TenantId.ToString("D"));
+                using var receipt=await selected.PostAsJsonAsync($"/api/commerce/v1/pos/drafts/sales/{sale.DocumentId:D}/receipt",
+                    new {businessId=fixture.BusinessId});
+                Assert.True(receipt.IsSuccessStatusCode,await receipt.Content.ReadAsStringAsync());
+                var rendered=(await receipt.Content.ReadFromJsonAsync<OnlineSalesReceipt>())!;
+                Assert.Equal(sale.DocumentId,rendered.DocumentId);
+                Assert.Equal(sale.CommercialSnapshot.PayableAmount,rendered.PayableAmount);
+                using var audit=await selected.PostAsJsonAsync($"/api/commerce/v1/pos/drafts/sales/{sale.DocumentId:D}/reprint-audit",
+                    new {businessId=fixture.BusinessId});
+                Assert.True(audit.IsSuccessStatusCode,await audit.Content.ReadAsStringAsync());
+                await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+                await using var recorded=new SqlCommand("""
+                    SELECT COUNT(*) FROM dbo.AuditLogs WHERE Action=N'Sales.Reprinted' AND TenantId=@Tenant
+                      AND BusinessId=@Business AND EntityId=CONVERT(nvarchar(100),@Document) AND UserId=@User;
+                    """,connection);
+                recorded.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+                recorded.Parameters.AddWithValue("@Business",fixture.BusinessId);
+                recorded.Parameters.AddWithValue("@Document",sale.DocumentId);
+                recorded.Parameters.AddWithValue("@User",fixture.UserId);
+                Assert.Equal(1,Convert.ToInt32(await recorded.ExecuteScalarAsync()));
+            }
+            using var money = await client.GetAsync("/api/commerce/v1/pos/settlement-configuration");
+            Assert.Equal(HttpStatusCode.Forbidden, money.StatusCode);
+            client.DefaultRequestHeaders.Remove("X-Tenant-Id");
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", Guid.NewGuid().ToString("D"));
+            using var unrelated = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",
+                new { context = new { businessId }, search = "", skip = 0, take = 20, dateRangeVersion = 2 });
+            Assert.Equal(HttpStatusCode.Forbidden, unrelated.StatusCode);
+        }
+        finally { await DeleteAdditionalMembership(tenantId, businessId, roleId); }
+    }
+
     [Theory]
     [InlineData(ReceivablesPermissionCodes.RegisterPayment, true)]
     [InlineData(PayablesPermissionCodes.RegisterPayment, true)]

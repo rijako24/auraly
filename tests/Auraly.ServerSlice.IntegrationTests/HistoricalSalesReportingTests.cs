@@ -21,6 +21,215 @@ public sealed class HistoricalSalesReportingCollection : ICollectionFixture<Serv
 public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
 {
     [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task Cost_cutover_retires_only_verified_fiscal_only_sources_without_commercial_effects(bool fiscalOnly, bool commercialEffects)
+    {
+        var sale = fixture.CreateValidRequest(9_620 + (fiscalOnly ? 1 : 0) + (commercialEffects ? 2 : 0));
+        using (var upload = fixture.CreateUploadMessage(sale))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        var protectedEffects = await ReportingMigrationFingerprintAsync(connection);
+        await using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+        {
+            var legacy = commercialEffects ? sale.DocumentId : Guid.NewGuid();
+            await using var seed = new SqlCommand("""
+                DECLARE @Json nvarchar(max),@Hash binary(32),@Job uniqueidentifier=NEWID();
+                SELECT @Json=JSON_MODIFY(JSON_MODIFY(PayloadJson,'$.documentId',CONVERT(nvarchar(36),@Legacy)),
+                    '$.fiscalHabilitationOnly',CONVERT(bit,@FiscalOnly))
+                FROM dbo.DocumentProcessingPayloads WHERE DocumentId=@Original;
+                SET @Hash=HASHBYTES('SHA2_256',CONVERT(varchar(max),@Json COLLATE Latin1_General_100_BIN2_UTF8));
+                IF @Effects=1
+                BEGIN
+                  UPDATE dbo.DocumentProcessingPayloads SET PayloadJson=@Json,PayloadHash=@Hash WHERE DocumentId=@Original;
+                  UPDATE dbo.SalesDocuments SET PayloadHash=@Hash WHERE DocumentId=@Original;
+                END
+                ELSE
+                BEGIN
+                  INSERT dbo.DocumentProcessingJobs(JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,
+                    Status,AvailableAt,CreatedAt,StartedAt,CompletedAt)
+                  SELECT @Job,BusinessId,(SELECT MAX(ProcessingSequence)+1 FROM dbo.DocumentProcessingJobs WHERE BusinessId=original.BusinessId),
+                    @Legacy,DocumentType,N'Completed',CreatedAt,CreatedAt,StartedAt,CompletedAt
+                  FROM dbo.DocumentProcessingJobs original WHERE DocumentId=@Original;
+                  INSERT dbo.DocumentProcessingPayloads(DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
+                  SELECT @Legacy,DocumentType,BusinessId,1,@Json,@Hash,AcceptedAt FROM dbo.DocumentProcessingPayloads WHERE DocumentId=@Original;
+                  INSERT dbo.SalesDocuments(DocumentId,BusinessId,WarehouseId,DeviceId,SourceMode,DocumentSeriesId,
+                    DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,DocumentType,IdempotencyKey,PayloadHash,
+                    IssuedAt,CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,ProcessingStatus,ReceivedAt,
+                    FiscalSeriesId,FiscalAuthorizationId,FiscalNumber,FiscalPrefix,FiscalConsecutive,CufeReceived,FiscalStatus)
+                  SELECT @Legacy,BusinessId,WarehouseId,DeviceId,SourceMode,DocumentSeriesId,
+                    CONCAT(N'HAB-',CONVERT(nvarchar(36),@Legacy)),N'HAB',N'QA',1,DocumentType,CONVERT(nvarchar(36),@Legacy),@Hash,
+                    IssuedAt,CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,N'Completed',ReceivedAt,
+                    FiscalSeriesId,FiscalAuthorizationId,CONCAT(N'HAB-',CONVERT(nvarchar(36),@Legacy)),N'HAB',1,CufeReceived,FiscalStatus
+                  FROM dbo.SalesDocuments WHERE DocumentId=@Original;
+                  INSERT reporting.SalesReportDocuments(DocumentId,TenantId,BusinessId,DocumentType,DocumentNumber,IssuedAt,
+                    BusinessLocalDate,TimeZoneId,SellerName,CustomerIdentification,CustomerName,SourceMode,GrossAmount,
+                    DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,CreditAmount,CollectedAmount,RecognizedCostAmount,
+                    ProjectionVersion,SourcePayloadHash,ProjectedAt)
+                  SELECT @Legacy,TenantId,BusinessId,DocumentType,CONCAT(N'HAB-',CONVERT(nvarchar(36),@Legacy)),IssuedAt,
+                    BusinessLocalDate,TimeZoneId,SellerName,CustomerIdentification,CustomerName,SourceMode,GrossAmount,
+                    DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,CreditAmount,CollectedAmount,RecognizedCostAmount,
+                    ProjectionVersion,@Hash,ProjectedAt FROM reporting.SalesReportDocuments WHERE DocumentId=@Original;
+                  SELECT * INTO #FiscalFacts FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Original;
+                  UPDATE #FiscalFacts SET FactId=NEWID(),SourceDocumentId=@Legacy,OriginalSaleDocumentId=@Legacy;
+                  INSERT reporting.SalesReportLineFacts SELECT * FROM #FiscalFacts;
+                  INSERT reporting.SalesReportingJobs(SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,
+                    SourcePayloadHash,SourceDocumentProcessingJobId,Status,AttemptCount,CreatedAt)
+                  SELECT NEWID(),BusinessId,@Legacy,DocumentType,@Hash,@Job,N'Projected',1,AcceptedAt
+                  FROM dbo.DocumentProcessingPayloads WHERE DocumentId=@Legacy;
+                END;
+                """, connection, transaction);
+            seed.Parameters.AddWithValue("@Original",sale.DocumentId); seed.Parameters.AddWithValue("@Legacy",legacy);
+            seed.Parameters.AddWithValue("@FiscalOnly",fiscalOnly); seed.Parameters.AddWithValue("@Effects",commercialEffects);
+            await seed.ExecuteNonQueryAsync();
+            if (!fiscalOnly || commercialEffects)
+            {
+                seed.CommandText="DELETE reporting.SalesReportingJobs WHERE SourceDocumentId=@Legacy;";
+                await seed.ExecuteNonQueryAsync();
+                await fixture.ApplyMigrationAsync("BackfillEngineOwnedSourcesAndReportingJobs.sql",connection,transaction);
+                await using var queued=new SqlCommand("SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Legacy;",connection,transaction);
+                queued.Parameters.AddWithValue("@Legacy",legacy);
+                Assert.Equal(1,Convert.ToInt32(await queued.ExecuteScalarAsync()));
+                var error = await Assert.ThrowsAsync<SqlException>(() => fixture.ApplyMigrationAsync(
+                    "20261125_FreezeInvoiceRecognizedCosts.sql", connection, transaction));
+                Assert.Equal(51624,error.Number);
+            }
+            else
+            {
+                for (var replay=0;replay<2;replay++)
+                {
+                    await fixture.ApplyMigrationAsync("20261125_FreezeInvoiceRecognizedCosts.sql",connection,transaction);
+                    await fixture.ApplyMigrationAsync("BackfillEngineOwnedSourcesAndReportingJobs.sql",connection,transaction);
+                    await using var verify=new SqlCommand("SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Legacy;",connection,transaction);
+                    verify.Parameters.AddWithValue("@Legacy",legacy);
+                    Assert.Equal(0,Convert.ToInt32(await verify.ExecuteScalarAsync()));
+                }
+                // A true flag with another tenant is not proof of fiscal-only
+                // ownership. Keep the source visible for canonical validation.
+                seed.CommandText="""
+                    UPDATE dbo.DocumentProcessingPayloads SET PayloadJson=JSON_MODIFY(PayloadJson,'$.tenantId',CONVERT(nvarchar(36),NEWID()))
+                      WHERE DocumentId=@Legacy;
+                    UPDATE dbo.DocumentProcessingPayloads SET PayloadHash=HASHBYTES('SHA2_256',CONVERT(varchar(max),PayloadJson COLLATE Latin1_General_100_BIN2_UTF8))
+                      WHERE DocumentId=@Legacy;
+                    UPDATE sale SET PayloadHash=payload.PayloadHash FROM dbo.SalesDocuments sale
+                      JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=sale.DocumentId WHERE sale.DocumentId=@Legacy;
+                    """;
+                await seed.ExecuteNonQueryAsync();
+                await fixture.ApplyMigrationAsync("BackfillEngineOwnedSourcesAndReportingJobs.sql",connection,transaction);
+                await using var unproven=new SqlCommand("SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Legacy;",connection,transaction);
+                unproven.Parameters.AddWithValue("@Legacy",legacy);
+                Assert.Equal(1,Convert.ToInt32(await unproven.ExecuteScalarAsync()));
+            }
+            await transaction.RollbackAsync();
+        }
+        Assert.Equal(protectedEffects,await ReportingMigrationFingerprintAsync(connection));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    public async Task Invoice_cost_cutover_copies_historical_evidence_once_and_rejects_missing_evidence(
+        bool generic, bool missingCost, bool missingLines)
+    {
+        var sale = fixture.CreateValidRequest(9_610 + (generic ? 1 : 0) + (missingCost ? 2 : 0) + (missingLines ? 4 : 0));
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        if (generic)
+        {
+            await using var configure = new SqlCommand("UPDATE dbo.Products SET IsGenericProduct=1,ManageStock=0 WHERE ProductId=@Product;", connection);
+            configure.Parameters.AddWithValue("@Product", fixture.ProductId);
+            await configure.ExecuteNonQueryAsync();
+            sale = sale with { Lines = sale.Lines.Select(line => line with { IsGenericProductSnapshot = true, DocumentUnitCost = 6000m }).ToArray() };
+        }
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(sale);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            if (generic)
+            {
+                await using var restore = new SqlCommand("UPDATE dbo.Products SET IsGenericProduct=0,ManageStock=1 WHERE ProductId=@Product;", connection);
+                restore.Parameters.AddWithValue("@Product", fixture.ProductId); await restore.ExecuteNonQueryAsync();
+            }
+        }
+        var originalEffects = await ReportingMigrationFingerprintAsync(connection);
+        await using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+        {
+            await using var simulate = new SqlCommand("""
+                ALTER TABLE dbo.SalesDocumentLines ALTER COLUMN RecognizedCostAmount decimal(19,4) NULL;
+                SELECT RecognizedCostAmount FROM dbo.SalesDocumentLines WHERE DocumentId=@Document;
+                UPDATE dbo.SalesDocumentLines SET RecognizedCostAmount=NULL,
+                  UnitCostSnapshot=CASE WHEN @MissingCost=1 THEN NULL ELSE UnitCostSnapshot END WHERE DocumentId=@Document;
+                IF @MissingLines=1 DELETE dbo.SalesDocumentLines WHERE DocumentId=@Document;
+                """, connection, transaction);
+            simulate.Parameters.AddWithValue("@Document", sale.DocumentId);
+            simulate.Parameters.AddWithValue("@MissingCost", missingCost);
+            simulate.Parameters.AddWithValue("@MissingLines", missingLines);
+            var expected = Assert.IsType<decimal>(await simulate.ExecuteScalarAsync());
+            if (missingCost || missingLines)
+            {
+                var error = await Assert.ThrowsAsync<SqlException>(() => fixture.ApplyMigrationAsync(
+                    "20261125_FreezeInvoiceRecognizedCosts.sql", connection, transaction));
+                Assert.Equal(51624, error.Number);
+            }
+            else
+            {
+                for (var replay = 0; replay < 2; replay++)
+                {
+                    await fixture.ApplyMigrationAsync("20261125_FreezeInvoiceRecognizedCosts.sql", connection, transaction);
+                    await using var verify = new SqlCommand("SELECT RecognizedCostAmount FROM dbo.SalesDocumentLines WHERE DocumentId=@Document;", connection, transaction);
+                    verify.Parameters.AddWithValue("@Document", sale.DocumentId);
+                    Assert.Equal(expected, Assert.IsType<decimal>(await verify.ExecuteScalarAsync()));
+                }
+            }
+            await transaction.RollbackAsync();
+        }
+        Assert.Equal(originalEffects, await ReportingMigrationFingerprintAsync(connection));
+    }
+
+    [Fact]
+    public async Task Non_stock_sale_freezes_its_declared_cost_before_projection_and_catalog_changes()
+    {
+        var sale = fixture.CreateValidRequest(9_586);
+        sale = sale with { Lines = sale.Lines.Select(line => line with { DocumentUnitCost = 3694.476454m }).ToArray() };
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        await using var configure = new SqlCommand("UPDATE dbo.Products SET ManageStock=0 WHERE ProductId=@Product;", connection);
+        configure.Parameters.AddWithValue("@Product", fixture.ProductId); await configure.ExecuteNonQueryAsync();
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(sale);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            configure.CommandText = "UPDATE dbo.Products SET ManageStock=1 WHERE ProductId=@Product;";
+            await configure.ExecuteNonQueryAsync();
+        }
+        using var scope = fixture.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>().RebuildAsync(fixture.TenantId, fixture.BusinessId, default);
+        await using var query = new SqlCommand("""
+            SELECT line.RecognizedCostAmount,fact.RecognizedCostAmount,fact.CostAvailable,
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Document)
+            FROM dbo.SalesDocumentLines line JOIN reporting.SalesReportLineFacts fact
+              ON fact.SourceDocumentId=line.DocumentId AND fact.SourceLineNumber=line.LineNumber
+            WHERE line.DocumentId=@Document;
+            """, connection);
+        query.Parameters.AddWithValue("@Document", sale.DocumentId);
+        await using var result = await query.ExecuteReaderAsync(); Assert.True(await result.ReadAsync());
+        var expected = decimal.Round(sale.Lines[0].DocumentUnitCost * sale.Lines[0].Quantity, 4, MidpointRounding.AwayFromZero);
+        Assert.Equal(expected,result.GetDecimal(0)); Assert.Equal(expected,result.GetDecimal(1));
+        Assert.True(result.GetBoolean(2)); Assert.Equal(0,result.GetInt32(3));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Rebuild_preserves_imported_return_facts_and_reports_them_once_without_inventing_sources(bool historicalSale)
@@ -413,15 +622,13 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public async Task Historical_null_uploaded_cost_preserves_ledger_cost_or_explicitly_unknown_generic_cost(bool generic, bool missingOperationalLines)
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Historical_null_uploaded_estimate_uses_the_cost_already_frozen_on_the_invoice(bool generic)
     {
         await using var connection = new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
-        var sale = fixture.CreateValidRequest((generic ? 9_599 : 9_598) - (missingOperationalLines ? 10 : 0));
+        var sale = fixture.CreateValidRequest(generic ? 9_599 : 9_598);
         bool wasGeneric = false, managedStock = true;
         if (generic)
         {
@@ -476,14 +683,8 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
             WHERE report.SourceDocumentId=@Document;
             UPDATE reporting.SalesReportingJobs SET SourcePayloadHash=@Hash WHERE SourceDocumentId=@Document;
             UPDATE dbo.SalesDocuments SET PayloadHash=@Hash WHERE DocumentId=@Document;
-            -- Historical lines predate the recognized-cost column as well.
-            UPDATE dbo.SalesDocumentLines SET RecognizedCostAmount=NULL WHERE DocumentId=@Document;
-            IF @Generic=1 UPDATE dbo.SalesDocumentLines SET UnitCostSnapshot=NULL WHERE DocumentId=@Document;
-            IF @MissingLines=1 DELETE dbo.SalesDocumentLines WHERE DocumentId=@Document;
             """;
         source.Parameters.AddWithValue("@Payload", payload); source.Parameters.AddWithValue("@Hash", hash);
-        source.Parameters.AddWithValue("@Generic", generic);
-        source.Parameters.AddWithValue("@MissingLines", missingOperationalLines);
         await source.ExecuteNonQueryAsync();
         var originalEffects = await ReportingMigrationFingerprintAsync(connection);
         using var scope = fixture.CreateScope();
@@ -509,10 +710,10 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
                 """;
             verify.Parameters.AddWithValue("@Document", sale.DocumentId);
             await using var result = await verify.ExecuteReaderAsync();
-            Assert.True(await result.ReadAsync()); Assert.Equal(!generic, result.GetBoolean(0));
-            if (generic) Assert.True(result.IsDBNull(1));
+            Assert.True(await result.ReadAsync()); Assert.True(result.GetBoolean(0));
+            if (generic) Assert.Equal(6_000m * sale.Lines[0].Quantity, result.GetDecimal(1));
             else Assert.Equal(result.GetDecimal(4), result.GetDecimal(1));
-            Assert.Equal(generic ? 1L : 0L, result.GetInt64(2));
+            Assert.Equal(0L, result.GetInt64(2));
             Assert.Equal(generic ? 0 : 1, result.GetInt32(3));
             Assert.Equal(payload, result.GetString(5)); Assert.Equal(hash, (byte[])result.GetValue(6));
             Assert.True(result.GetBoolean(7)); Assert.False(await result.ReadAsync());
@@ -521,7 +722,7 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
             await using var untouched = connection.CreateCommand();
             untouched.CommandText = "SELECT COUNT(*) FROM dbo.SalesDocumentLines WHERE DocumentId=@Document;";
             untouched.Parameters.AddWithValue("@Document", sale.DocumentId);
-            Assert.Equal(missingOperationalLines ? 0 : sale.Lines.Count, Convert.ToInt32(await untouched.ExecuteScalarAsync()));
+            Assert.Equal(sale.Lines.Count, Convert.ToInt32(await untouched.ExecuteScalarAsync()));
         }
     }
 

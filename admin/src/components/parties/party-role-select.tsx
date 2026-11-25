@@ -42,6 +42,14 @@ type PartyRoleSelectProps = {
   onValuesChange?: (values:string[],options:PagedEntityOption[])=>void;
 };
 
+// Accessible action captions, not role choices or party labels. The choices
+// and their names continue to come from the paged Parties API.
+const selectionAction: Record<PartyRole, string> = {
+  Customer: "Seleccionar cliente", Supplier: "Seleccionar proveedor",
+  Seller: "Seleccionar vendedor", Carrier: "Seleccionar transportador",
+  Employee: "Seleccionar empleado", User: "Seleccionar usuario", Waiter: "Seleccionar mesero",
+};
+
 export function PartyRoleSelect({ role, partyType, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, ariaLabel, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey,values,selectedOptions,onValuesChange }: PartyRoleSelectProps) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [picked, setPicked] = useState<PagedEntityOption | null>(null);
@@ -88,7 +96,7 @@ export function PartyRoleSelect({ role, partyType, value, onChange, onResolved, 
     leadingOptions={leadingOptions}
     placeholder={placeholder}
     emptyMessage={emptyMessage}
-    ariaLabel={ariaLabel ?? (role ? `Seleccionar ${role.toLocaleLowerCase("es-CO")}` : "Seleccionar tercero")}
+    ariaLabel={ariaLabel ?? (role ? selectionAction[role] : "Seleccionar tercero")}
     disabled={disabled || (!businessId&&!loadPage)}
     preload={preload}
   />;

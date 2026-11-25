@@ -22,7 +22,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
 {
-    public const short ProjectionVersion = 5;
+    public const short ProjectionVersion = 6;
 
     // Full-business maintenance includes logged deletes and aggregate writes.
     // Azure SQL S1 needs about 150 seconds for the verified historical reset;
@@ -245,7 +245,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
             LEFT JOIN reporting.PurchaseReportLineFacts originalLine ON @Original IS NOT NULL AND originalLine.SourceDocumentId=@Original
               AND originalLine.SourceDocumentType=N'GoodsReceipt' AND originalLine.SourceLineNumber=line.OriginalLineNumber
               AND originalLine.TenantId=@Tenant AND originalLine.BusinessId=@Business;
-            IF @@ROWCOUNT<>@LineCount THROW 51606,'The complete purchase reporting batch was not persisted.',1;
+            IF @@ROWCOUNT<>@LineCount THROW 51606,N'No fue posible guardar todas las partidas de la proyección de compras.',1;
             """, session.Connection, session.Transaction))
         {
             items.Parameters.AddWithValue("@Tenant", tenantId);
@@ -296,7 +296,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         if (!await reader.ReadAsync(cancellationToken) &&
             (supplierName is null || warehouseName is null))
             throw new InvalidOperationException(
-                "The purchase reporting dimensions could not be resolved.");
+                "No fue posible resolver los datos de la compra para proyectarla.");
         return (supplierName ?? reader.GetString(0), warehouseName ?? reader.GetString(1));
     }
 
@@ -322,7 +322,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         var timeZoneId = (string?)await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("The reporting business does not exist.");
+            ?? throw new InvalidOperationException("La sede de la proyección no existe.");
         TimeZoneInfo timeZone;
         try
         {
@@ -447,7 +447,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@ProjectedAt", now);
         if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) != 1)
-            throw new InvalidOperationException("The sale reporting document could not be projected.");
+            throw new InvalidOperationException("No fue posible proyectar la venta.");
     }
 
     private async Task<DocumentCostProjection> InsertSaleLineFactsAsync(
@@ -488,8 +488,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                    CASE WHEN sourceLine.AttributionSnapshotVersion>0
                         THEN sourceLine.SupplierNameSnapshot ELSE supplier.Name END,
                    batch.Quantity,batch.Gross,batch.Discount,batch.Untaxed,batch.Tax,
-                   batch.Total,COALESCE(sourceLine.RecognizedCostAmount,restaurant.RecognizedCostAmount,-valuation.ValueChange,
-                     CASE WHEN sourceLine.IsGenericProductSnapshot=1 THEN CONVERT(decimal(19,4),ROUND(sourceLine.UnitCostSnapshot*batch.Quantity,4)) END,0),
+                   batch.Total,sourceLine.RecognizedCostAmount,
                    @Version,@ProjectedAt,restaurant.WaiterPartyIdSnapshot,restaurant.WaiterNameSnapshot,
                    batch.UnitCode,batch.TaxCode,batch.TaxRate,COALESCE(sourceLine.CompositionKindSnapshot,frozenComposition.CompositionKind),
                    (SELECT consumption.IngredientProductId ProductId,component.ProductCodeSnapshot ProductCode,
@@ -500,22 +499,22 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                        ON component.ProductRecipeVersionId=COALESCE(sourceLine.ProductRecipeVersionId,restaurant.ProductRecipeVersionId)
                        AND component.IngredientProductId=consumption.IngredientProductId
                      WHERE consumption.DocumentId=@DocumentId AND consumption.SaleLineNumber=batch.LineNumber FOR JSON PATH,INCLUDE_NULL_VALUES),
-                   CONVERT(BIT,CASE WHEN sourceLine.RecognizedCostAmount IS NOT NULL OR restaurant.RecognizedCostAmount IS NOT NULL OR valuation.ValueChange IS NOT NULL OR (sourceLine.IsGenericProductSnapshot=1 AND sourceLine.UnitCostSnapshot IS NOT NULL) THEN 1 ELSE 0 END),
+                   CONVERT(BIT,1),
                    sourceLine.CategoryHierarchySnapshotJson
             FROM OPENJSON(@Lines) WITH
               (FactId uniqueidentifier,LineNumber int,ProductId uniqueidentifier,
                Quantity decimal(19,6),Gross decimal(19,4),Discount decimal(19,4),
                Untaxed decimal(19,4),Tax decimal(19,4),Total decimal(19,4),UnitCode nvarchar(24),
                TaxCode nvarchar(16),TaxRate decimal(9,6)) batch
-            LEFT JOIN dbo.SalesDocumentLines sourceLine
+            JOIN dbo.SalesDocumentLines sourceLine
               ON sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=batch.LineNumber
+                AND sourceLine.ProductId=batch.ProductId
+                AND sourceLine.RecognizedCostAmount IS NOT NULL
             LEFT JOIN sales.RestaurantCheckoutLines restaurant
               ON restaurant.DocumentId=@DocumentId
              AND restaurant.LineNumber=batch.LineNumber
             LEFT JOIN catalog.ProductCompositionVersions frozenComposition
               ON frozenComposition.ProductRecipeVersionId=COALESCE(sourceLine.ProductRecipeVersionId,restaurant.ProductRecipeVersionId) AND frozenComposition.TenantId=@TenantId
-            LEFT JOIN dbo.InventoryMovements valuation ON valuation.BusinessId=@BusinessId AND valuation.DocumentId=@DocumentId
-              AND valuation.DocumentType=@DocumentType AND valuation.LineNumber=batch.LineNumber AND valuation.MovementType=N'Sale'
             INNER JOIN dbo.Products p ON p.ProductId=batch.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
@@ -552,7 +551,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@ProjectedAt", now);
         await using var inserted = await command.ExecuteReaderAsync(cancellationToken);
         if (!await inserted.ReadAsync(cancellationToken) || inserted.GetInt32(0) != lines.Length)
-            throw new InvalidOperationException("The sale lines could not be projected completely.");
+            throw new InvalidOperationException("La factura no conserva el costo histórico de todas sus líneas.");
         return new(inserted.GetDecimal(1),inserted.GetInt32(2)==1,inserted.GetInt64(3));
     }
 
@@ -593,7 +592,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@ProjectedAt", now);
         command.Parameters.Add("@Payments", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(payments);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != payments.Count)
-            throw new InvalidOperationException("The sale payments could not be projected completely.");
+            throw new InvalidOperationException("No fue posible proyectar todos los pagos de la venta.");
     }
 
     private static async Task InsertPaymentFactAsync(
@@ -681,7 +680,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.Add("@Taxes", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(taxes);
         command.Parameters.AddWithValue("@ProjectedAt", now);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != taxes.Length)
-            throw new InvalidOperationException("The document taxes could not be projected completely.");
+            throw new InvalidOperationException("No fue posible proyectar todos los impuestos del documento.");
     }
 
     private static async Task<OriginalSaleDimensions> ReadOriginalSaleDimensionsAsync(
@@ -698,7 +697,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@DocumentId", documentId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            throw new InvalidOperationException("The original sale could not be projected.");
+            throw new InvalidOperationException("No fue posible proyectar la venta original.");
         return new OriginalSaleDimensions(reader.GetGuid(0),
             reader.IsDBNull(1) ? null : reader.GetGuid(1),
             reader.IsDBNull(2) ? null : reader.GetGuid(2),
@@ -779,7 +778,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@ProjectedAt", now);
         await using var inserted=await command.ExecuteReaderAsync(cancellationToken);
         if(!await inserted.ReadAsync(cancellationToken)||inserted.GetInt32(0)!=lines.Length)
-            throw new InvalidOperationException("The return lines could not be projected completely.");
+            throw new InvalidOperationException("No fue posible proyectar todas las partidas de la devolución.");
         return new(inserted.GetDecimal(1),inserted.GetInt32(2)==1,inserted.GetInt64(3));
     }
 
@@ -805,7 +804,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
         AddDecimal(command, "@Cost", returnedCost, 19, 4);
         command.Parameters.AddWithValue("@ProjectedAt", now);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new InvalidOperationException("The original sale is missing from the sales projection.");
+            throw new InvalidOperationException("La venta original aún no está en la proyección de ventas.");
     }
 
     private static Task InsertReturnPaymentFactAsync(

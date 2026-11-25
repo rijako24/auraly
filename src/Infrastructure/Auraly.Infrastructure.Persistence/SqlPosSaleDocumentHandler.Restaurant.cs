@@ -108,8 +108,13 @@ public sealed partial class SqlPosSaleDocumentHandler
         var ownerByMovement = plan.Components.ToDictionary(
             component => component.MovementLineNumber,
             component => component.SaleLineNumber);
+        var valuedLines = postings.Select(posting => ownerByMovement.GetValueOrDefault(
+            posting.LineNumber, posting.LineNumber)).ToHashSet();
+        var declaredCostLines = request.Lines.Where(line => line.IsGenericProductSnapshot ||
+            (plan.CompositionVersions[line.LineNumber] is null && !valuedLines.Contains(line.LineNumber)))
+            .Select(line => line.LineNumber).ToHashSet();
         var costByLine = request.Lines.ToDictionary(line => line.LineNumber,
-            line => line.IsGenericProductSnapshot
+            line => declaredCostLines.Contains(line.LineNumber)
                 ? decimal.Round(line.DocumentUnitCost * line.Quantity,4,MidpointRounding.AwayFromZero) : 0m);
         var componentCosts = new List<object>(plan.Components.Count);
         for (var i = 0; i < postings.Count; i++)
@@ -132,15 +137,12 @@ public sealed partial class SqlPosSaleDocumentHandler
                     Cost = cost
                 });
         }
-        var movementLines = postings.Select(posting => posting.LineNumber).ToHashSet();
         var lineCosts = request.Lines.Select(line => new {
             line.LineNumber,
             ProductRecipeVersionId = plan.CompositionVersions[line.LineNumber],
-            UpdateUnitCost = plan.CompositionVersions[line.LineNumber] is not null ||
-                movementLines.Contains(line.LineNumber) || line.IsGenericProductSnapshot || request.TableId is not null,
             Cost = costByLine[line.LineNumber],
-            UnitCost = decimal.Round(costByLine[line.LineNumber] /
-                line.Quantity, 6, MidpointRounding.AwayFromZero)
+            UnitCost = declaredCostLines.Contains(line.LineNumber) ? line.DocumentUnitCost
+                : decimal.Round(costByLine[line.LineNumber] / line.Quantity, 6, MidpointRounding.AwayFromZero)
         }).ToArray();
         await using var command = CreateInsertLinesCommand(session, request);
         command.CommandText += """
@@ -152,18 +154,6 @@ public sealed partial class SqlPosSaleDocumentHandler
               (LineNumber int,Cost decimal(19,4),UnitCost decimal(19,6)) cost
               ON cost.LineNumber=mapping.LineNumber
             WHERE mapping.DocumentId=@DocumentId;
-
-            UPDATE line
-            SET UnitCostSnapshot=CASE WHEN cost.UpdateUnitCost=1 THEN cost.UnitCost ELSE line.UnitCostSnapshot END,
-                RecognizedCostAmount=CASE WHEN cost.UpdateUnitCost=1 THEN cost.Cost ELSE line.RecognizedCostAmount END,
-                ProductRecipeVersionId=cost.ProductRecipeVersionId,
-                CompositionKindSnapshot=COALESCE(recipe.CompositionKind,N'None')
-            FROM dbo.SalesDocumentLines line
-            JOIN OPENJSON(@LineCosts) WITH
-              (LineNumber int,Cost decimal(19,4),UnitCost decimal(19,6),ProductRecipeVersionId uniqueidentifier,UpdateUnitCost bit) cost
-              ON cost.LineNumber=line.LineNumber
-            LEFT JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=cost.ProductRecipeVersionId
-            WHERE line.DocumentId=@DocumentId;
 
             INSERT sales.RestaurantRecipeConsumptionLines
               (DocumentId,SaleLineNumber,MovementLineNumber,

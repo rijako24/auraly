@@ -331,9 +331,11 @@ public sealed record InventoryBalanceItem(Guid WarehouseId, string WarehouseCode
 public sealed record InventoryBalancePage(IReadOnlyList<InventoryBalanceItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
 public sealed record InventoryMovementQuery(Guid BusinessId, Guid? WarehouseId, Guid? ProductId, string? Search, string? DocumentType, string? MovementType, DateTimeOffset? From, DateTimeOffset? To, int Page = 1, int PageSize = 50);
-public sealed record InventoryMovementItem(Guid InventoryMovementId, Guid WarehouseId, string WarehouseName, Guid ProductId, string ProductCode, string ProductName, Guid DocumentId, string DocumentType, string? DocumentNumber, string MovementType, decimal QuantityChange, decimal QuantityBefore, decimal QuantityAfter, decimal? RecognizedUnitCost, decimal? ValueChange, DateTimeOffset OccurredAt, DateTimeOffset? PostedAt);
+public sealed record InventoryMovementItem(Guid InventoryMovementId, Guid WarehouseId, string WarehouseName, Guid ProductId, string ProductCode, string ProductName, Guid DocumentId, string DocumentType, string? DocumentNumber, string MovementType, decimal QuantityChange, decimal QuantityBefore, decimal QuantityAfter, decimal? RecognizedUnitCost, decimal? ValueChange, DateTimeOffset OccurredAt, DateTimeOffset? PostedAt, string? DocumentTypeLabel = null, string? MovementTypeLabel = null);
 public sealed record InventoryMovementPage(IReadOnlyList<InventoryMovementItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
-public sealed record InventoryMovementFilterOptions(IReadOnlyList<string> DocumentTypes, IReadOnlyList<string> MovementTypes);
+public sealed record InventoryCatalogOption(string Code, string Label, bool IsActive, int SortOrder);
+public sealed record InventoryMovementFilterOptions(IReadOnlyList<string> DocumentTypes, IReadOnlyList<string> MovementTypes,
+    IReadOnlyList<InventoryCatalogOption>? DocumentTypeOptions = null, IReadOnlyList<InventoryCatalogOption>? MovementTypeOptions = null);
 
 public sealed record InventoryOperationQuery(
     Guid BusinessId, Guid? WarehouseId, string? Search, string? DocumentType,
@@ -346,7 +348,8 @@ public sealed record InventoryOperationItem(
     string ReasonCode, string Status, DateTimeOffset OccurredAt, int LineCount,
     decimal? TotalValueChange, decimal? ConversionInputEquivalent = null,
     decimal? ConversionOutputEquivalent = null, decimal? ConversionLossQuantity = null,
-    decimal? ConversionLossPercent = null, decimal? ConversionMaximumLossPercent = null);
+    decimal? ConversionLossPercent = null, decimal? ConversionMaximumLossPercent = null,
+    string? DocumentTypeLabel = null, string? StatusLabel = null, string? ReasonName = null);
 public sealed record InventoryOperationDetailLine(
     int LineNumber, string Direction, Guid ProductId, string ProductCode,
     string ProductName, decimal? Quantity, decimal? PreCountQuantity, decimal? SystemQuantityAtBase,
@@ -372,7 +375,7 @@ public sealed record InventoryOperationDetail(
     decimal? ConversionLossPercent = null,
     decimal? ConversionMaximumLossPercent = null,
     Guid? RecipeVersionId = null,
-    int? RecipeVersion = null);
+    int? RecipeVersion = null, string? DocumentTypeLabel = null, string? StatusLabel = null);
 
 public sealed record InventoryOperationPage(IReadOnlyList<InventoryOperationItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 

@@ -132,7 +132,7 @@ public sealed record SalesReportContext(DateOnly BusinessDate,DateOnly MonthStar
     IReadOnlyList<SalesReportOption> CustomerActivities,IReadOnlyList<SalesReportOption> PaymentMethods,
     bool HasPendingSources,bool HasFailedSources,
     IReadOnlyList<SalesReportOption>? ProductReturnActivities=null,IReadOnlyList<SalesReportOption>? ProductCompositions=null,
-    long HistoricalReturnsWithoutOfficialTotal=0);
+    long HistoricalReturnsWithoutOfficialTotal=0,long PendingSourceCount=0,long FailedSourceCount=0);
 
 public sealed record SalesReportExplorerRequest(
     SalesReportFilter Filter,string GroupBy="document",int Page=1,int PageSize=25,

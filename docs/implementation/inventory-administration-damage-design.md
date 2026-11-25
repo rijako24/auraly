@@ -55,6 +55,26 @@ Todas las consultas usan el Business autenticado y paginación del servidor. El 
 
 ## Interfaz
 
+Los tipos de documento del kárdex y del historial usan `reference.Options`
+(`accounting-document-type`); los movimientos y estados usan los catálogos
+`inventory-movement-type` e `inventory-operation-status` de esa misma tabla.
+La API devuelve código, etiqueta española, vigencia y orden de las opciones
+utilizadas en las bodegas visibles. Los códigos persistidos no cambian.
+Los tipos de operación siguen el catálogo `inventory-operation-type` existente.
+No quedan diccionarios locales para nombres de documentos, movimientos,
+motivos ni estados, ni separación automática de sus códigos en inglés. Una etiqueta ausente produce un error explícito.
+
+El lector de movimientos aplica filtros, orden estable y paginación antes de
+enriquecer la página con sus etiquetas. El historial agrega cantidades y valores
+de las líneas únicamente para los documentos de la página y por conjunto,
+sin subconsultas por documento. Cada lectura conserva un comando SQL, incluido
+el conteo; las opciones del kárdex conservan otro recurso propietario. Los dos
+catálogos pequeños de Operaciones se cargan solo al abrir esa pestaña mediante
+el hook compartido, con caché de cinco minutos y sin polling. El presupuesto
+local para dos páginas de kárdex y sus opciones es de dos segundos y tres
+comandos SQL; la regresión también cambia una etiqueta y comprueba que filtros
+y filas muestran la misma fuente, conservando los permisos de costos.
+
 `/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre la creación y confirmación de salida de cada documento sin convertir cada formulario en una pestaña principal. La entrada de un traslado ya despachado se recupera desde la fila del traslado en `Operaciones > Traslados`; los estados `Dispatched` y `PartiallyReceived` muestran `Confirmar entrada` únicamente con `inventory.transfers.receive`. Esa acción invoca el mismo caso de uso canónico de recepción y no crea otro motor, writer ni documento propietario. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
 
 ## Coordinación de inventario físico

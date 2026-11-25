@@ -22,10 +22,15 @@ async function workspace(page: Page, extraPermissions: string[] = []) {
     else if (url.pathname.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Prueba inventario" }];
     else if (url.pathname.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede prueba", timeZone: "America/Bogota" }];
     else if (url.pathname.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: user.roles, permissions };
+    else if (url.pathname.endsWith("/reference-options/inventory-operation-type")) body = [
+      ["StockCount","Inventarios"],["InventoryAdjustment","Movimientos de mercancía"],["GoodsReceipt","Recepciones"],
+      ["WarehouseTransfer","Traslados"],["ProductConversion","Conversiones"],["Production","Producción"],["Damage","Averías"],
+    ].map(([code,label],sortOrder)=>({id:code,code,label,description:null,sortOrder}));
+    else if (url.pathname.endsWith("/reference-options/inventory-operation-status")) body = [{id:"processed",code:"Processed",label:"Procesado",description:null,sortOrder:10}];
     else if (url.pathname.endsWith("/inventory/warehouses")) body = [{ warehouseId: "44444444-4444-4444-4444-444444444444", code: "PPL", name: "Principal" }];
     else if (url.pathname.endsWith("/inventory/reasons")) body = [{ inventoryReasonId: "55555555-5555-5555-5555-555555555555", code: "PRESENTATION_CHANGE", name: "Cambio de presentación", operationType: "ProductConversion", isActive: true }];
     else if (/\/inventory\/(balances|movements|operations|conversion-products)$/.test(url.pathname)) body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
-    else if (url.pathname.endsWith("/inventory/movements/filter-options")) body = { documentTypes: [], movementTypes: [] };
+    else if (url.pathname.endsWith("/inventory/movements/filter-options")) body = { documentTypes: [], movementTypes: [], documentTypeOptions: [], movementTypeOptions: [] };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.goto("/dashboard/inventory");
@@ -59,3 +64,48 @@ test("solo conversiones habilita su pestaña y formulario, sin montar conteos ni
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(editor.getByRole("heading", { name: "Conversión", exact: true })).toBeVisible();
 });
+
+for (const viewport of [{ width: 1366, height: 768 }, { width: 390, height: 844 }]) {
+  test(`kárdex muestra etiquetas del servidor sin consultas por fila (${viewport.width}px)`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(()=>localStorage.setItem("auraly:pwa-install-dismissed","1"));
+    const requests = await workspace(page);
+    const kardexRequests: string[] = [];
+    page.on("request",request=>kardexRequests.push(new URL(request.url()).pathname));
+    const options = [
+      {code:"PurchaseReturn",label:"Devolución a proveedor",isActive:true,sortOrder:10},
+      {code:"GoodsReceiptCostRevision",label:"Ajuste de costo de compra",isActive:true,sortOrder:20},
+    ];
+    await page.route("**/api/commerce/v1/inventory/movements/filter-options", route => route.fulfill({json:{
+      documentTypes:options.map(item=>item.code),movementTypes:options.map(item=>item.code),documentTypeOptions:options,movementTypeOptions:options,
+    }}));
+    await page.route(/\/api\/commerce\/v1\/inventory\/movements(?:\?.*)?$/, route => route.fulfill({json:{
+      items:options.map((item,index)=>({inventoryMovementId:`movement-${index}`,warehouseName:"Principal",productCode:`PRD-${index+1}`,
+        productName:"Producto de prueba",documentId:`document-${index}`,documentType:item.code,documentNumber:null,movementType:item.code,
+        quantityChange:1,quantityBefore:2,quantityAfter:3,occurredAt:"2026-11-25T15:00:00-05:00",postedAt:null,
+        recognizedUnitCost:null,valueChange:null,documentTypeLabel:item.label,movementTypeLabel:item.label})),
+      page:1,pageSize:20,totalCount:2,totalPages:1,
+    }}));
+    await page.getByRole("tab", {name:"Kárdex",exact:true}).click();
+    await expect(page.getByText("Ajuste de costo de compra",{exact:true}).first()).toBeVisible();
+    await page.locator("label").filter({has:page.getByText("Documento",{exact:true})}).getByRole("combobox").click();
+    await expect(page.getByRole("option",{name:"Devolución a proveedor",exact:true})).toBeVisible();
+    await expect(page.getByRole("option",{name:"Ajuste de costo de compra",exact:true})).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.locator("label").filter({has:page.getByText("Movimiento",{exact:true})}).getByRole("combobox").click();
+    await expect(page.getByRole("option",{name:"Ajuste de costo de compra",exact:true})).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("PurchaseReturn",{exact:true})).toHaveCount(0);
+    await expect(page.getByText("GoodsReceiptCostRevision",{exact:true})).toHaveCount(0);
+    expect(requests.some(path=>path.includes("/reference-options/inventory-operation-"))).toBe(false);
+    expect(kardexRequests.filter(path=>path.endsWith("/inventory/movements"))).toHaveLength(1);
+    expect(kardexRequests.filter(path=>path.endsWith("/inventory/movements/filter-options"))).toHaveLength(1);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    const dateCell=page.getByRole("table").locator("tbody tr").first().getByRole("cell").first();
+    expect((await dateCell.boundingBox())!.height).toBeLessThan(90);
+    await page.getByRole("main").evaluate(element=>element.scrollTo(0,0));
+    await page.screenshot({path:test.info().outputPath(`kardex-${viewport.width}.png`),fullPage:true});
+    await page.getByRole("table").scrollIntoViewIfNeeded();
+    await page.screenshot({path:test.info().outputPath(`kardex-grid-${viewport.width}.png`),fullPage:true});
+  });
+}
