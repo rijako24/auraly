@@ -470,7 +470,8 @@ public sealed record PayrollWorkedDaysChange(Guid EmploymentId, decimal WorkedDa
 public sealed record PayrollConceptWorkedDaysView(Guid ConceptId, decimal BaseDays, decimal WorkedDays);
 
 public sealed record PayrollRunEmploymentFilter(
-    string? ContractNumber = null, string SortBy = "employeeName", string SortDirection = "asc");
+    string? ContractNumber = null, string SortBy = "employeeName", string SortDirection = "asc",
+    Guid? CostCenterId = null, string? WorkSite = null);
 
 public sealed record CalculatePayrollRunRequest(
     byte[]? RowVersion = null,

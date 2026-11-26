@@ -402,11 +402,12 @@ public sealed class PayrollService(
             throw new PayrollValidationException("La página debe tener entre 1 y 50 trabajadores.");
         if (search?.Length > 160) throw new PayrollValidationException("La búsqueda admite hasta 160 caracteres.");
         filter ??= new();
-        if (filter.ContractNumber?.Length > 64 || filter.SortBy is not ("employeeName" or "identification" or "contractNumber" or "startDate" or "endDate")
+        if (filter.ContractNumber?.Length > 64 || filter.WorkSite?.Length > 200 || filter.CostCenterId == Guid.Empty
+            || filter.SortBy is not ("employeeName" or "identification" or "contractNumber" or "startDate" or "endDate")
             || filter.SortDirection is not ("asc" or "desc"))
             throw new PayrollValidationException("El filtro u orden de trabajadores no es válido.");
         return store.PageRunEmploymentsAsync(user, runId, page, pageSize, search?.Trim(), ct,
-            filter with { ContractNumber = filter.ContractNumber?.Trim() });
+            filter with { ContractNumber = filter.ContractNumber?.Trim(), WorkSite = filter.WorkSite?.Trim() });
     }
 
     public Task<PayrollRunView> CalculateRunAsync(PayrollUserIdentity user,

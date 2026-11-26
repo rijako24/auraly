@@ -1706,6 +1706,15 @@ La ficha de perfil devuelve su detalle, no los conteos/orden de la lista: se
 admite una sola lectura de la página visible después de guardar para conservar
 los filtros y la ordenación del servidor, sin recargar el workspace ni selectores.
 Los presupuestos de cálculo y las barreras contables/fiscales de 13.7 permanecen.
+La selección también filtra por el centro explícito del contrato y su sitio de
+trabajo, combinados con búsqueda, contrato y orden antes de contar y paginar.
+Los conteos de elegibles/seleccionados y Todos/Ninguno conservan su alcance de
+liquidación completa; no cambian al acotar lo visible. El centro consume el
+selector canónico al abrirlo; el sitio es el texto contractual, con caracteres
+de búsqueda escapados. El lector mantiene un comando por página con 501
+elegibles y el presupuesto p95 menor a un segundo, sin hidratar otros contratos.
+El catálogo de centros admite consultar con permiso de calcular nómina; eso no
+concede crear, editar centros ni consultar otros recursos de contabilidad.
 La aceptación exige regresiones de cálculo, historial, tenant/permisos,
 concurrencia/idempotencia y captura real a 1366×768, escritorio y 390×844.
 

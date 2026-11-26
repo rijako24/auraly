@@ -3,7 +3,7 @@ import { financialVoucherScenario, installFinancialVoucherContext } from "./supp
 
 const id = (value:number) => `bcbcbcbc-1111-4222-8333-${String(value).padStart(12,"0")}`;
 
-for(const viewport of [{width:1440,height:1000},{width:390,height:844}])
+for(const viewport of [{width:1440,height:1000},{width:1366,height:768},{width:390,height:844}])
 test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch (${viewport.width}px)`, async ({page,baseURL},testInfo) => {
     await page.setViewportSize(viewport);
     const scenario = financialVoucherScenario();
@@ -13,15 +13,19 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
         status:"Calculated",calculationVersion:1,employeeCount:0,totalEarnings:0,totalDeductions:0,totalEmployerContributions:0,totalProvisions:0,netPayable:0,
         employees:[] as Array<Record<string,unknown>>,payableEmployees:[],rowVersion:"AAAAAAAAAAE="};
     const workers = Array.from({length:51},(_,index)=>({employmentId:id(index+100),employeeName:`Trabajador ${String(index).padStart(2,"0")}`,
-        identification:String(index),contractNumber:`C-${index}`,startDate:"2026-01-01",endDate:null,payFrequencyName:"Mensual",isSelected:true}));
+        identification:String(index),contractNumber:`C-${index}`,startDate:"2026-01-01",endDate:null,payFrequencyName:"Mensual",isSelected:true,
+        costCenterId:index<2?id(950):null,workSite:index===0?"Zona_%[A]~ Norte":"Zona otra Norte"}));
     let optionsReads=0,runsReads=0,detailReads=0,selectionReads=0,calculations=0,failPage=true,failCalculation=true;
+    let centerReads=0;
+    await page.route("**/api/commerce/v1/accounting/cost-centers?**",async route=>{centerReads++;await route.fulfill({json:{
+        items:[{costCenterId:id(950),code:"CC",name:"Centro de selección",isActive:true,isDefault:false}],page:1,pageSize:20,totalCount:1,totalPages:1}});});
     let release:()=>void=()=>{};
     const released = new Promise<void>(resolve=>{release=resolve;});
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         const url=new URL(route.request().url()),path=url.pathname;
         if(path.endsWith("/options")){optionsReads++;await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,
             electronicConfiguration:null,fiscalIssuers:[],deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
-        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[run]});return;}
+        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:{items:[run],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
         if(path.endsWith(`/runs/${id(1)}`)){detailReads++;await route.fulfill({json:run});return;}
         if(path.endsWith("/employments")){
             expect(run.status).not.toBe("Approved");
@@ -29,7 +33,9 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
             if(failPage){await route.fulfill({status:503,json:{detail:"No disponible"}});return;}
             const number=Number(url.searchParams.get("page")),search=url.searchParams.get("search");
             const contract=url.searchParams.get("contractNumber");
-            const filtered=workers.filter(worker=>(!search||worker.employeeName.includes(search))&&(!contract||worker.contractNumber.includes(contract)));
+            const center=url.searchParams.get("costCenterId"),site=url.searchParams.get("workSite");
+            const filtered=workers.filter(worker=>(!search||worker.employeeName.includes(search))&&(!contract||worker.contractNumber.includes(contract))
+                &&(!center||worker.costCenterId===center)&&(!site||worker.workSite.includes(site)));
             if(url.searchParams.get("sortDirection")==="desc")filtered.reverse();
             await route.fulfill({json:{items:filtered.slice((number-1)*50,number*50),page:number,pageSize:50,totalCount:filtered.length,
                 eligibleCount:51,selectedCount:workers.filter(worker=>worker.isSelected).length,rowVersion:run.rowVersion}});return;
@@ -116,6 +122,24 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await expect(selection.getByText("2 seleccionados de 51 elegibles",{exact:true})).toBeVisible();
     await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("");
     await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await selection.getByRole("textbox",{name:"Filtrar contrato",exact:true}).fill("");
+    await selection.getByRole("button",{name:"Filtrar contrato",exact:true}).click();
+    await expect(selection.getByRole("checkbox")).toHaveCount(50);
+    expect(centerReads).toBe(0);
+    const beforeCenter=selectionReads;
+    await selection.getByRole("combobox",{name:"Filtrar trabajadores por centro de costo",exact:true}).click();
+    await page.getByRole("option",{name:/CC · Centro de selección/}).click();
+    await expect(selection.getByRole("checkbox")).toHaveCount(2);
+    expect(centerReads).toBe(1);expect(selectionReads).toBe(beforeCenter+1);
+    const beforeSite=selectionReads;
+    await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("_%[A]~");
+    expect(selectionReads).toBe(beforeSite);
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await expect(selection.getByRole("checkbox")).toHaveCount(1);await expect(first).toBeChecked();
+    expect(selectionReads).toBe(beforeSite+1);
+    expect(centerReads).toBe(1);
+    await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:testInfo.outputPath(`seleccion-filtros-${viewport.width}.png`)});
     await first.uncheck();
     run={...run,rowVersion:"AAAAAAAAAAM="};
     await page.getByRole("button",{name:"Actualizar nómina",exact:true}).click();
@@ -139,7 +163,7 @@ test("sólo lectura no carga el selector de trabajadores",async({page,baseURL})=
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         const path=new URL(route.request().url()).pathname;
         if(path.endsWith("/options")){await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
-        if(path.endsWith("/runs")){await route.fulfill({json:[run]});return;}
+        if(path.endsWith("/runs")){await route.fulfill({json:{items:[run],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
         if(path.endsWith(`/runs/${id(1)}`)){
             if(detailUnavailable){await route.fulfill({status:503,json:{detail:"Liquidación no disponible"}});return;}
             await route.fulfill({json:run});return;
@@ -163,7 +187,7 @@ test("sin contratos elegibles explica periodicidad y vigencia antes de liquidar"
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         expect(route.request().method()).toBe("GET");const path=new URL(route.request().url()).pathname;
         if(path.endsWith("/options")){await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
-        if(path.endsWith("/runs")){await route.fulfill({json:[run]});return;}
+        if(path.endsWith("/runs")){await route.fulfill({json:{items:[run],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
         if(path.endsWith(`/runs/${id(1)}`)){await route.fulfill({json:run});return;}
         if(path.endsWith("/employments")){candidateReads++;await route.fulfill({json:{items:[],page:1,pageSize:50,totalCount:0,eligibleCount:0,selectedCount:0,rowVersion:run.rowVersion}});return;}
         throw new Error(`Unexpected request ${path}`);

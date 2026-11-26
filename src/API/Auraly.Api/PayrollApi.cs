@@ -136,9 +136,9 @@ public static class PayrollApi
 
         group.MapGet("/runs/{id:guid}/employments", (HttpContext context, Guid id,
             int? page, int? pageSize, string? search, string? contractNumber, string? sortBy,
-            string? sortDirection, PayrollService service, CancellationToken ct) =>
+            string? sortDirection, Guid? costCenterId, string? workSite, PayrollService service, CancellationToken ct) =>
             Execute(() => service.PageRunEmploymentsAsync(context.User.Identity(), id,
-                page ?? 1, pageSize ?? 50, search, ct, new(contractNumber, sortBy ?? "employeeName", sortDirection ?? "asc"))));
+                page ?? 1, pageSize ?? 50, search, ct, new(contractNumber, sortBy ?? "employeeName", sortDirection ?? "asc",costCenterId,workSite))));
 
         group.MapPost("/runs/{id:guid}/approve", (HttpContext context, Guid id,
             PayrollVersionRequest request, PayrollService service, CancellationToken ct) =>

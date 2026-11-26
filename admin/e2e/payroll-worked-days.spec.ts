@@ -12,24 +12,33 @@ function worker(number:number,name:string,days:number){return{payrollRunEmployee
 function run(businessId:string){return{payrollRunId:id(1),businessId,ruleSetId:id(2),runKind:"Regular",periodStart:"2026-03-01",periodEnd:"2026-03-31",paymentDate:"2026-03-31",
     status:"Calculated",calculationVersion:1,employeeCount:2,totalEarnings:2900000,totalDeductions:232000,totalEmployerContributions:0,totalProvisions:0,netPayable:2668000,
     rowVersion:"AAAAAAAAAAE=",employees:[worker(10,"Ana días",28),worker(11,"Bruno completo",30)],payableEmployees:[]};}
+function calculatedPage(...runs:ReturnType<typeof run>[]){
+    const items=runs.filter(value=>value.status!=="Draft").flatMap(value=>value.employees.map(employee=>({...employee,
+        payrollRunId:value.payrollRunId,periodStart:value.periodStart,periodEnd:value.periodEnd,status:value.status,rowVersion:value.rowVersion})));
+    return{items,page:1,pageSize:20,totalCount:items.length,totalPages:items.length?1:0};
+}
+function scopedDetail(value:ReturnType<typeof run>,requestUrl:string){
+    const employment=new URL(requestUrl).searchParams.get("employmentId");
+    return{...value,isPartialCalculation:Boolean(employment),employees:employment?value.employees.filter(employee=>employee.employmentId===employment):value.employees};
+}
 async function openWorker(page:Page){
     await page.goto("/dashboard/payroll?section=novelties");
-    await page.getByRole("combobox",{name:"Liquidación",exact:true}).click();
-    await page.getByRole("option",{name:"2026-03-01 — 2026-03-31",exact:true}).click();
-    await page.getByRole("button",{name:"Ana días",exact:true}).click();
+    await page.getByRole("article").filter({hasText:"2026-03-01 — 2026-03-31"}).getByRole("button",{name:"Ana días",exact:true}).click();
 }
 
 test("novedades: recálculo individual conserva compañeros, evita refetch y bloquea contabilización en curso",async({page,baseURL},testInfo)=>{
     const scenario=financialVoucherScenario();scenario.user.permissions.push("payroll.read","payroll.calculate","payroll.approve");
     await installFinancialVoucherContext(page,baseURL!,scenario);
     let current=run(scenario.businessId);
-    let optionsReads=0,runsReads=0,detailReads=0,candidateReads=0,calculations=0,fail=true;
+    let optionsReads=0,runsReads=0,detailReads=0,candidateReads=0,calculatedReads=0,calculations=0,fail=true;
     let release:()=>void=()=>{};const released=new Promise<void>(resolve=>{release=resolve;});
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/deduction-agreements")){await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
         if(path.endsWith("/options")){optionsReads++;await route.fulfill({json:options});return;}
-        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[current]});return;}
-        if(path.endsWith(`/runs/${id(1)}`)){detailReads++;await route.fulfill({json:current});return;}
+        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:{items:[current],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
+        if(path.endsWith("/calculated-employees")){calculatedReads++;await route.fulfill({json:calculatedPage(current)});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){detailReads++;await route.fulfill({json:scopedDetail(current,route.request().url())});return;}
         if(path.endsWith("/employments")){
             candidateReads++;await route.fulfill({json:{page:1,pageSize:50,totalCount:2,eligibleCount:2,selectedCount:2,rowVersion:current.rowVersion,
                 items:current.employees.map(employee=>({...employee,startDate:"2026-03-01",endDate:null,payFrequencyName:"Mensual",isSelected:true}))}});return;
@@ -82,7 +91,7 @@ test("novedades: recálculo individual conserva compañeros, evita refetch y blo
     await expect(editor.getByText(/Ausencias registradas: 2/)).toBeVisible();
     await editor.getByRole("heading",{name:"Ana días",exact:true}).scrollIntoViewIfNeeded();
     await page.screenshot({path:testInfo.outputPath("novedades-dias.png")});
-    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);expect(calculations).toBe(2);
+    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(3);expect(calculatedReads).toBe(1);expect(calculations).toBe(2);
     expect(candidateReads).toBe(readsDuringSave);
 });
 
@@ -96,9 +105,11 @@ test("días por concepto: transporte conserva salario y deducciones sin lecturas
     let reads=0,calculations=0;
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/deduction-agreements")){await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
         if(path.endsWith("/options")){reads++;await route.fulfill({json:options});return;}
-        if(path.endsWith("/runs")){reads++;await route.fulfill({json:[current]});return;}
-        if(path.endsWith(`/runs/${id(1)}`)){reads++;await route.fulfill({json:current});return;}
+        if(path.endsWith("/runs")){reads++;await route.fulfill({json:{items:[current],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
+        if(path.endsWith("/calculated-employees")){reads++;await route.fulfill({json:calculatedPage(current)});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){reads++;await route.fulfill({json:scopedDetail(current,route.request().url())});return;}
         if(path.endsWith("/calculate")){
             calculations++;
             expect(route.request().postDataJSON()).toEqual({rowVersion:current.rowVersion,
@@ -131,9 +142,11 @@ test("novedades: lectura histórica no inventa entradas editables",async({page,b
     const current=run(scenario.businessId);current.status="Approved";
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         expect(route.request().method()).toBe("GET");const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/deduction-agreements")){await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
         if(path.endsWith("/options")){await route.fulfill({json:options});return;}
-        if(path.endsWith("/runs")){await route.fulfill({json:[current]});return;}
-        if(path.endsWith(`/runs/${id(1)}`)){await route.fulfill({json:{...current,employees:current.employees.map(employee=>({...employee,baseWorkedDays:null,maximumContractDays:null,periodDays:null}))}});return;}
+        if(path.endsWith("/runs")){await route.fulfill({json:{items:[current],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
+        if(path.endsWith("/calculated-employees")){await route.fulfill({json:calculatedPage(current)});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){const detail=scopedDetail(current,route.request().url());await route.fulfill({json:{...detail,employees:detail.employees.map(employee=>({...employee,baseWorkedDays:null,maximumContractDays:null,periodDays:null}))}});return;}
         throw new Error(`Unexpected request ${path}`);
     });
     await openWorker(page);
@@ -149,30 +162,30 @@ test("novedades lista todos los trabajadores y excluye borradores sin consultar 
     const current=run(scenario.businessId);
     current.employees.push(worker(12,"Clara completa",30));current.employeeCount=3;
     const draft={...current,payrollRunId:id(3),status:"Draft",periodStart:"2026-12-01",periodEnd:"2026-12-15",employees:[],employeeCount:0};
-    let optionsReads=0,runsReads=0,detailReads=0;
+    let optionsReads=0,runsReads=0,detailReads=0,calculatedReads=0;
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         expect(route.request().method()).toBe("GET");
         const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/deduction-agreements")){await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
         if(path.endsWith("/options")){optionsReads++;await route.fulfill({json:options});return;}
-        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[draft,current]});return;}
-        if(path.endsWith(`/runs/${id(1)}`)){detailReads++;await route.fulfill({json:current});return;}
+        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:{items:[draft,current],page:1,pageSize:20,totalCount:2,totalPages:1}});return;}
+        if(path.endsWith("/calculated-employees")){calculatedReads++;await route.fulfill({json:calculatedPage(draft,current)});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){detailReads++;await route.fulfill({json:scopedDetail(current,route.request().url())});return;}
         throw new Error(`Unexpected request ${path}`);
     });
     await page.goto("/dashboard/payroll?section=novelties");
-    await page.getByRole("combobox",{name:"Liquidación",exact:true}).click();
-    await expect(page.getByRole("option")).toHaveCount(1);
-    await expect(page.getByRole("option",{name:/2026-12-01/})).toHaveCount(0);
-    await page.getByRole("option",{name:"2026-03-01 — 2026-03-31",exact:true}).click();
     const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
-    await expect(list.getByRole("row")).toHaveCount(4);
-    await expect(list.getByText("N-12",{exact:true})).toBeVisible();
+    await expect(list.getByRole("article")).toHaveCount(3);
+    await expect(list.getByText(/2026-12-01/)).toHaveCount(0);
+    await expect(list.getByText(/Contrato N-12/)).toBeVisible();
+    expect(detailReads).toBe(0);expect(runsReads).toBe(0);
     await page.screenshot({path:testInfo.outputPath("novedades-trabajadores.png")});
     await list.getByRole("button",{name:"Clara completa",exact:true}).click();
     await expect(list).toHaveCount(0);
     await expect(page.getByRole("region",{name:"Liquidación de Clara completa",exact:true})).toBeVisible();
     await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
-    await expect(list.getByRole("row")).toHaveCount(4);
-    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);
+    await expect(list.getByRole("article")).toHaveCount(3);
+    expect(optionsReads).toBe(1);expect(runsReads).toBe(0);expect(detailReads).toBe(1);expect(calculatedReads).toBe(1);
 });
 
 test("cambiar liquidación desde Liquidaciones cierra la captura del período anterior",async({page,baseURL})=>{
@@ -181,10 +194,12 @@ test("cambiar liquidación desde Liquidaciones cierra la captura del período an
     const first=run(scenario.businessId),second={...first,payrollRunId:id(4),periodStart:"2026-06-01",periodEnd:"2026-06-30"};
     await page.route("**/api/commerce/v1/payroll/**",async route=>{
         expect(route.request().method()).toBe("GET");const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/deduction-agreements")){await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
         if(path.endsWith("/options")){await route.fulfill({json:options});return;}
-        if(path.endsWith("/runs")){await route.fulfill({json:[first,second]});return;}
-        if(path.endsWith(`/runs/${id(1)}`)){await route.fulfill({json:first});return;}
-        if(path.endsWith(`/runs/${id(4)}`)){await route.fulfill({json:second});return;}
+        if(path.endsWith("/runs")){await route.fulfill({json:{items:[first,second],page:1,pageSize:20,totalCount:2,totalPages:1}});return;}
+        if(path.endsWith("/calculated-employees")){await route.fulfill({json:calculatedPage(first,second)});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){await route.fulfill({json:scopedDetail(first,route.request().url())});return;}
+        if(path.endsWith(`/runs/${id(4)}`)){await route.fulfill({json:scopedDetail(second,route.request().url())});return;}
         if(path.endsWith("/employments")){await route.fulfill({json:{items:[],page:1,pageSize:50,totalCount:0,eligibleCount:0,selectedCount:0,rowVersion:first.rowVersion}});return;}
         throw new Error(`Unexpected request ${path}`);
     });
@@ -194,7 +209,7 @@ test("cambiar liquidación desde Liquidaciones cierra la captura del período an
     await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();
     await page.getByRole("button",{name:/2026-06-01 — 2026-06-30/}).click();
     await page.getByRole("tab",{name:"Novedades",exact:true}).click();
-    await page.getByRole("button",{name:"Ana días",exact:true}).click();
+    await page.getByRole("article").filter({hasText:"2026-06-01 — 2026-06-30"}).getByRole("button",{name:"Ana días",exact:true}).click();
     const editor=page.getByRole("region",{name:"Edición de novedad",exact:true});
     await expect(editor).toHaveCount(0);
     await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();

@@ -528,6 +528,7 @@ public sealed partial class AccountingService(
     {
         if (!user.Permissions.Contains(AccountingPermissionCodes.Read) &&
             !user.Permissions.Contains(Auraly.Commerce.Payroll.Contracts.PayrollPermissionCodes.Manage) &&
+            !user.Permissions.Contains(Auraly.Commerce.Payroll.Contracts.PayrollPermissionCodes.Calculate) &&
             !user.Permissions.Contains(Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCreate) &&
             !user.Permissions.Contains(AccountingPermissionCodes.ManualCreate) &&
             !user.Permissions.Contains(ExpensePermissionCodes.Create) &&

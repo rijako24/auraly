@@ -38,8 +38,11 @@ for(const {completeBank,emptyForms,catalogError} of [{completeBank:true,emptyFor
         electronicConfiguration:null,fiscalIssuers:[],deductionAgreements:[],novelties:[],paymentBatches:history.map(item=>({...item,isPaid:ledgerPosted,accountingStatus:ledgerPosted?"Posted":"Pending"})),electronicPeriods:[]}});return;
     }
     if(path.endsWith(`/runs/${runId}`)){detailReads++;await route.fulfill({json:{...run,payableEmployees:pending}});return;}
-    if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[run]});return;}
+    if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:{items:[run],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
     if(path.endsWith("/payments")){
+      if(route.request().method()==="GET"){
+        await route.fulfill({json:{items:history.map(item=>({...item,isPaid:ledgerPosted,accountingStatus:ledgerPosted?"Posted":"Pending"})),page:1,pageSize:20,totalCount:history.length,totalPages:history.length?1:0}});return;
+      }
       const body=route.request().postDataJSON() as Record<string,unknown>;confirmations.push(body);
       if(confirmations.length===1)await released;
       const paid=pending.filter(employee=>employee.paymentMethodOptionId===body.paymentMethodOptionId);
@@ -118,7 +121,7 @@ for(const {completeBank,emptyForms,catalogError} of [{completeBank:true,emptyFor
   expect(detailReads).toBe(1);expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(formReads).toBe(2);
   ledgerPosted=true;await page.getByRole("button",{name:"Actualizar nómina",exact:true}).click();
   await expect(paidRow).toContainText("Pagado");await expect(paidRow).toContainText("Contabilizado");
-  expect(optionsReads).toBe(2);expect(runsReads).toBe(2);expect(detailReads).toBe(1);
+  expect(optionsReads).toBe(2);expect(runsReads).toBe(1);expect(detailReads).toBe(1);
   // Explicit refresh marks the hidden detail stale without loading it. Its sole
   // owner reads once when the user opens that detail again.
   await page.getByRole("button",{name:"Confirmar pago",exact:true}).click();await selectRun();

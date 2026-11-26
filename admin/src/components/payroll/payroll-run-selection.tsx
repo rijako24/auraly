@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { CostCenterSelect } from "@/components/accounting/cost-center-select";
 import { payrollApi, type PayrollRun, type CalculatePayrollRun } from "@/services/api/payroll";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
@@ -22,6 +23,8 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
     const businessId = useBusinessContextStore(state => state.selectedBusinessId);
     const [page, setPage] = useState(1), [search, setSearch] = useState(""), [draftSearch, setDraftSearch] = useState("");
     const [contractNumber, setContractNumber] = useState(""), [draftContract, setDraftContract] = useState("");
+    const [costCenterId,setCostCenterId]=useState<string|null>(null),[costCenterName,setCostCenterName]=useState<string|null>(null);
+    const [workSite,setWorkSite]=useState(""),[draftWorkSite,setDraftWorkSite]=useState("");
     const [sorting, setSorting] = useState<{ by: string; direction: "asc" | "desc" }>({ by: "employeeName", direction: "asc" });
     const [selectAll, setSelectAll] = useState<boolean | null>(null);
     const [selectionVersion, setSelectionVersion] = useState<string | null>(null);
@@ -29,9 +32,10 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
     const busy = calculating;
     const queryKey = ["payroll-run-employments", tenantId, businessId, run.payrollRunId];
     const query = useQuery({
-        queryKey: [...queryKey, page, search, contractNumber, sorting],
+        queryKey: [...queryKey, page, search, contractNumber, sorting,costCenterId,workSite],
         queryFn: () => payrollApi.runEmployments(run.payrollRunId, { page, pageSize: 50, search: search || undefined,
-            contractNumber: contractNumber || undefined, sortBy: sorting.by, sortDirection: sorting.direction }),
+            contractNumber: contractNumber || undefined, sortBy: sorting.by, sortDirection: sorting.direction,
+            costCenterId:costCenterId??undefined,workSite:workSite||undefined }),
         staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false,
     });
     const data = query.data;
@@ -72,10 +76,15 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
     const sortAria = (by: string) => sorting.by === by ? sorting.direction === "asc" ? "ascending" as const : "descending" as const : undefined;
     return <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-3 rounded-2xl border p-4" aria-busy={busy}>
         <h3 className="font-semibold">Seleccionar trabajadores</h3>
-        <form className="flex gap-2" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim()); }}>
+        <form className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim());setWorkSite(draftWorkSite.trim()); }}>
             <Input aria-label="Buscar trabajador de la liquidación" placeholder="Nombre, identificación o contrato" value={draftSearch}
                 className="min-w-0 flex-1"
                 maxLength={160} disabled={locked} onChange={event => setDraftSearch(event.target.value)}/>
+            <CostCenterSelect value={costCenterId} selectedName={costCenterName} ariaLabel="Filtrar trabajadores por centro de costo"
+                emptyLabel="Todos los centros de costo" includeInactive disabled={locked} className="min-w-0 w-full"
+                onChange={(id,row)=>{setPage(1);setCostCenterId(id);setCostCenterName(row?.name??null);}}/>
+            <Input aria-label="Filtrar sitio de trabajo" placeholder="Sitio de trabajo" value={draftWorkSite} maxLength={200}
+                className="min-w-0 w-full" disabled={locked} onChange={event=>setDraftWorkSite(event.target.value)}/>
             <Button type="submit" variant="outline" disabled={locked || query.isFetching}>Buscar</Button>
         </form>
         {query.isPending ? <p role="status">Cargando trabajadores…</p> : query.isError ? <div role="alert" className="space-y-2">

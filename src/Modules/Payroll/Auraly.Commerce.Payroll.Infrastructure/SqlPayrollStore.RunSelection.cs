@@ -21,7 +21,9 @@ public sealed partial class SqlPayrollStore
               COALESCE(SUM(CASE WHEN (@Search IS NULL OR p.Identification LIKE @Search ESCAPE N'~'
                 OR e.ContractNumber LIKE @Search ESCAPE N'~'
                 OR COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)) LIKE @Search ESCAPE N'~'
-                ) AND (@Contract IS NULL OR e.ContractNumber LIKE @Contract ESCAPE N'~') THEN 1 ELSE 0 END),0)
+                ) AND (@Contract IS NULL OR e.ContractNumber LIKE @Contract ESCAPE N'~')
+                AND (@CostCenter IS NULL OR e.CostCenterId=@CostCenter)
+                AND (@WorkSite IS NULL OR e.WorkSite LIKE @WorkSite ESCAPE N'~') THEN 1 ELSE 0 END),0)
             FROM payroll.EligibleRunEmployments(@TenantId,@BusinessId,@RunId) e
             JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=@TenantId;
             WITH Page AS
@@ -48,6 +50,8 @@ public sealed partial class SqlPayrollStore
                   OR e.ContractNumber LIKE @Search ESCAPE N'~'
                   OR COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)) LIKE @Search ESCAPE N'~'
                 ) AND (@Contract IS NULL OR e.ContractNumber LIKE @Contract ESCAPE N'~')
+                  AND (@CostCenter IS NULL OR e.CostCenterId=@CostCenter)
+                  AND (@WorkSite IS NULL OR e.WorkSite LIKE @WorkSite ESCAPE N'~')
                 ORDER BY SortOrdinal OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
             )
             SELECT e.EmploymentId,e.EmployeeName,e.Identification,e.ContractNumber,e.StartDate,e.EndDate,
@@ -63,6 +67,8 @@ public sealed partial class SqlPayrollStore
         filter ??= new();
         command.Parameters.Add("@Search", SqlDbType.NVarChar, 324).Value = (object?)RunSelectionPattern(search) ?? DBNull.Value;
         command.Parameters.Add("@Contract", SqlDbType.NVarChar, 132).Value = (object?)RunSelectionPattern(filter.ContractNumber) ?? DBNull.Value;
+        command.Parameters.Add("@CostCenter",SqlDbType.UniqueIdentifier).Value=(object?)filter.CostCenterId??DBNull.Value;
+        command.Parameters.Add("@WorkSite",SqlDbType.NVarChar,402).Value=(object?)RunSelectionPattern(filter.WorkSite)??DBNull.Value;
         command.Parameters.AddWithValue("@Sort", filter.SortBy);
         command.Parameters.AddWithValue("@Descending", filter.SortDirection == "desc");
         await using var reader = await command.ExecuteReaderAsync(ct);

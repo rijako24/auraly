@@ -67,7 +67,7 @@ export const payrollApi = {
   run: (id:string,employmentId?:string) => apiClient.get<PayrollRun>(`/commerce/v1/payroll/runs/${id}${employmentId?`?employmentId=${encodeURIComponent(employmentId)}`:""}`),
   calculatedEmployees:(params:{page:number;pageSize:number;from:string;to:string;search?:string})=>apiClient.get<PayrollCalculatedEmployeePage>(`/commerce/v1/payroll/calculated-employees?${new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)]))}`),
   createRun: (request:CreateRun) => apiClient.post<PayrollRun>("/commerce/v1/payroll/runs",request),
-  runEmployments: (id:string,params:{page:number;pageSize:number;search?:string;contractNumber?:string;sortBy?:string;sortDirection?:"asc"|"desc"}) => apiClient.get<PayrollRunEmploymentPage>(`/commerce/v1/payroll/runs/${id}/employments`,params),
+  runEmployments: (id:string,params:{page:number;pageSize:number;search?:string;contractNumber?:string;sortBy?:string;sortDirection?:"asc"|"desc";costCenterId?:string;workSite?:string}) => apiClient.get<PayrollRunEmploymentPage>(`/commerce/v1/payroll/runs/${id}/employments`,params),
   calculateRun: (id:string,request:CalculatePayrollRun={}) => apiClient.post<PayrollRun>(`/commerce/v1/payroll/runs/${id}/calculate`,request),
   approveRun: (id:string,rowVersion:string,key:string) => apiClient.postIdempotent(`/commerce/v1/payroll/runs/${id}/approve`,{rowVersion},key),
   saveEmployment: (request:SaveEmployment) => apiClient.put<PayrollEmployment>(`/commerce/v1/payroll/employments/${request.employmentId}`,request),

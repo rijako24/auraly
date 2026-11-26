@@ -9,7 +9,7 @@ AS RETURN
 (
     SELECT e.EmploymentId,e.PartyId,e.ContractNumber,e.MonthlySalary,e.StartDate,e.EndDate,
         e.SalaryTypeOptionId,e.RiskClassOptionId,e.WorkerSubtypeOptionId,e.AppliesTransportAllowance,e.RowVersion,
-        r.PayFrequencyOptionId,selected.BaseWorkedDays,selected.TransportBaseWorkedDays,
+        r.PayFrequencyOptionId,selected.BaseWorkedDays,selected.TransportBaseWorkedDays,e.CostCenterId,e.WorkSite,
         CONVERT(bit,CASE WHEN r.SelectionInitialized=0 OR selected.IsSelected=1
             THEN 1 ELSE 0 END) AS IsSelected
     FROM payroll.Runs r

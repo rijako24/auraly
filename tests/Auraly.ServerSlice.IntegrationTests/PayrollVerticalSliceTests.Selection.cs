@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.Commerce.Payroll.Application;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Commerce.Payroll.Domain;
+using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -41,6 +43,60 @@ public sealed partial class PayrollVerticalSliceTests
         Assert.Equal(first, Assert.Single(filtered.Items).EmploymentId);
         var combined = await service.PageRunEmploymentsAsync(user, runId, 1, 50, "Trabajador", filter: new(first.ToString(), "contractNumber", "desc"));
         Assert.Equal(1, combined.TotalCount); Assert.Equal(first, Assert.Single(combined.Items).EmploymentId);
+        double filteredP95;
+        using(var configurationClient=fixture.CreateAdminClient(AccountingPermissionCodes.Configure))
+        {
+            var centerId=Guid.NewGuid();
+            await PostAsync<AccountingCostCenterView>(configurationClient,"/api/commerce/v1/accounting/cost-centers",
+                new CreateCostCenterRequest(centerId,user.TenantId,"SF"+centerId.ToString("N")[..18],"Centro de selección",null,false));
+            await using(var seedConnection=new SqlConnection(fixture.ConnectionString))
+            {
+                await seedConnection.OpenAsync();await using var seed=new SqlCommand("""
+                    UPDATE payroll.Employments SET CostCenterId=@Center,
+                      WorkSite=CASE WHEN EmploymentId=@First THEN N'Zona_%[A]~ Norte' ELSE N'Zona otra Norte' END
+                    WHERE TenantId=@Tenant AND BusinessId=@Business AND EmploymentId IN(@First,@Second);
+                    """,seedConnection);
+                seed.Parameters.AddWithValue("@Center",centerId);seed.Parameters.AddWithValue("@Tenant",user.TenantId);
+                seed.Parameters.AddWithValue("@Business",user.BusinessId);seed.Parameters.AddWithValue("@First",first);seed.Parameters.AddWithValue("@Second",second);
+                Assert.Equal(2,await seed.ExecuteNonQueryAsync());
+            }
+            using(var calculateClient=fixture.CreateAdminClient(PayrollPermissionCodes.Calculate))
+            {
+                var centers=await calculateClient.GetFromJsonAsync<AccountingCostCenterPage>(
+                    $"/api/commerce/v1/accounting/cost-centers?costCenterId={centerId}&pageSize=1");
+                Assert.Equal(centerId,Assert.Single(centers!.Items).CostCenterId);
+                using var deniedMutation=await calculateClient.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers",
+                    new CreateCostCenterRequest(Guid.NewGuid(),user.TenantId,"NO-CREATE","No permitido",null,false));
+                Assert.Equal(System.Net.HttpStatusCode.Forbidden,deniedMutation.StatusCode);
+            }
+            using(var deniedClient=fixture.CreateAdminClient(PayrollPermissionCodes.Read))
+            {
+                using var deniedRead=await deniedClient.GetAsync("/api/commerce/v1/accounting/cost-centers?pageSize=1");
+                Assert.Equal(System.Net.HttpStatusCode.Forbidden,deniedRead.StatusCode);
+            }
+            var centerFilter=new PayrollRunEmploymentFilter(CostCenterId:centerId);
+            var centerPage=await service.PageRunEmploymentsAsync(user,runId,1,1,null,filter:centerFilter);
+            var centerNext=await service.PageRunEmploymentsAsync(user,runId,2,1,null,filter:centerFilter);
+            Assert.Equal(2,centerPage.TotalCount);Assert.Equal(2,centerNext.TotalCount);
+            Assert.Equal(new[]{first,second}.Order(),centerPage.Items.Concat(centerNext.Items).Select(value=>value.EmploymentId).Order());
+            var siteFilter=centerFilter with{WorkSite="_%[A]~"};
+            var filterSamples=new List<double>();
+            for(var sample=0;sample<20;sample++)
+            {
+                var watch=Stopwatch.StartNew();
+                using var commands=new InventoryBalanceProcessingTests.CommandCounter(database);
+                var site=await service.PageRunEmploymentsAsync(user,runId,1,1,"Trabajador",filter:siteFilter);
+                watch.Stop();Assert.Equal(1,commands.Count);filterSamples.Add(watch.Elapsed.TotalMilliseconds);
+                Assert.Equal(first,Assert.Single(site.Items).EmploymentId);Assert.Equal(1,site.TotalCount);
+                Assert.Equal(501,site.EligibleCount);Assert.Equal(501,site.SelectedCount);
+            }
+            filteredP95=filterSamples.Order().ElementAt(18);
+            Assert.True(filteredP95<1000,$"Filtered worker page exceeded one second: {filteredP95:F1} ms.");
+            Assert.Empty((await service.PageRunEmploymentsAsync(user,runId,1,1,null,filter:siteFilter with{CostCenterId=Guid.NewGuid()})).Items);
+            Assert.Empty((await service.PageRunEmploymentsAsync(user,runId,1,1,null,filter:siteFilter with{WorkSite="No existe"})).Items);
+            await Assert.ThrowsAsync<PayrollValidationException>(()=>service.PageRunEmploymentsAsync(user,runId,1,1,null,filter:centerFilter with{CostCenterId=Guid.Empty}));
+            await Assert.ThrowsAsync<PayrollValidationException>(()=>service.PageRunEmploymentsAsync(user,runId,1,1,null,filter:centerFilter with{WorkSite=new string('a',201)}));
+        }
         var ordered = await service.PageRunEmploymentsAsync(user, runId, 1, 50, null, filter: new(null, "contractNumber", "desc"));
         var orderedNext = await service.PageRunEmploymentsAsync(user, runId, 2, 50, null, filter: new(null, "contractNumber", "desc"));
         var orderedContracts = ordered.Items.Concat(orderedNext.Items).Select(item => item.ContractNumber).ToArray();
@@ -84,6 +140,6 @@ public sealed partial class PayrollVerticalSliceTests
         Assert.Equal(2, (await service.PageRunEmploymentsAsync(user, runId, 1, 50, null)).SelectedCount);
         var path = Path.Combine(AppContext.BaseDirectory, "TestResults", "payroll-selection-page.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { workers = 501, pageSize = 50, commands = 1, p95, samples }));
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { workers = 501, pageSize = 50, commands = 1, p95, filteredP95, samples }));
     }
 }

@@ -22,7 +22,7 @@ for(const initialFlag of [true,false])test(`contrato: guardar auxilio ${initialF
     const path=new URL(route.request().url()).pathname;
     if(path.endsWith("/options")){optionsReads++;await route.fulfill({json:{catalogs,concepts:[],employments:[],parties:[],ruleSets:[],settings:null,
       electronicConfiguration:null,fiscalIssuers:[],deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
-    if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[]});return;}
+    if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
     if(path.endsWith("/employments")){employmentReads++;await route.fulfill({json:{items:[employment],page:1,pageSize:25,totalCount:1,totalPages:1}});return;}
     if(path.endsWith(`/employments/${id(1)}`)&&route.request().method()==="PUT"){
       saves++;
@@ -51,7 +51,7 @@ for(const initialFlag of [true,false])test(`contrato: guardar auxilio ${initialF
   await page.getByRole("row").filter({hasText:"Trabajadora auxilio"}).getByRole("button",{name:"Editar",exact:true}).click();
   await expect(flag).toBeChecked({checked:!initialFlag});
   await modal.screenshot({path:testInfo.outputPath("contrato-auxilio.png")});
-  expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(employmentReads).toBe(1);
+  expect(optionsReads).toBe(1);expect(runsReads).toBe(0);expect(employmentReads).toBe(1);
 });
 
 test("cálculo: muestra la respuesta autoritativa sin un segundo GET",async({page,baseURL})=>{
@@ -64,7 +64,7 @@ test("cálculo: muestra la respuesta autoritativa sin un segundo GET",async({pag
     const path=new URL(route.request().url()).pathname;
     if(path.endsWith("/options")){optionsReads++;await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,
       electronicConfiguration:null,fiscalIssuers:[],deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
-    if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[run]});return;}
+    if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:{items:[run],page:1,pageSize:20,totalCount:1,totalPages:1}});return;}
     if(path.endsWith(`/runs/${id(20)}`)){detailReads++;await route.fulfill({json:run});return;}
     if(path.endsWith(`/runs/${id(20)}/employments`)){await route.fulfill({json:{items:[{employmentId:id(23),employeeName:"Trabajadora calculada",identification:"123",contractNumber:"AUX",startDate:"2026-01-01",endDate:null,payFrequencyName:"Mensual",isSelected:true}],page:1,pageSize:50,totalCount:1,eligibleCount:1,selectedCount:1,rowVersion:run.rowVersion}});return;}
     if(path.endsWith("/calculate")){calculations++;await route.fulfill({json:{...run,status:"Calculated",calculationVersion:1,totalEarnings:1662000,totalDeductions:120000,
@@ -90,7 +90,7 @@ test("contratos: sólo lectura, vacío y recuperación explícita de la consulta
       await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,
         electronicConfiguration:null,fiscalIssuers:[],deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;
     }
-    if(path.endsWith("/runs")){await route.fulfill({json:[]});return;}
+    if(path.endsWith("/runs")){await route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0,totalPages:0}});return;}
     if(path.endsWith("/employments")){
       if(unavailable){await route.fulfill({status:503,json:{detail:"Contratos no disponibles"}});return;}
       await route.fulfill({json:{items:[],page:1,pageSize:25,totalCount:0,totalPages:0}});return;

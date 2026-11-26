@@ -174,6 +174,11 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
             $"/api/commerce/v1/payroll/runs/{runId:D}/employments?page=1&pageSize=1&search=CERT-EMP&contractNumber=CERT-EMP-001&sortBy=contractNumber&sortDirection=desc");
         Assert.Equal(employmentId, Assert.Single(candidates.Items).EmploymentId);
         Assert.Equal(1, candidates.TotalCount); Assert.Equal(run.RowVersion, candidates.RowVersion);
+        var filteredOut=await GetAsync<PayrollRunEmploymentPage>(client,
+            $"/api/commerce/v1/payroll/runs/{runId:D}/employments?page=1&pageSize=1&costCenterId={Guid.NewGuid()}&workSite=NoExiste");
+        Assert.Empty(filteredOut.Items);Assert.Equal(0,filteredOut.TotalCount);
+        using(var invalidCenter=await client.GetAsync($"/api/commerce/v1/payroll/runs/{runId:D}/employments?costCenterId={Guid.Empty}"))
+            Assert.Equal(HttpStatusCode.BadRequest,invalidCenter.StatusCode);
         using (var invalidSort = await client.GetAsync($"/api/commerce/v1/payroll/runs/{runId:D}/employments?sortBy=notAColumn"))
             Assert.Equal(HttpStatusCode.BadRequest, invalidSort.StatusCode);
         run = await PostAsync<PayrollRunView>(client,
