@@ -779,6 +779,12 @@ for(const width of [390,1366,1920])test(`bandeja de novedades pagina antes de ab
     const tab=element.getBoundingClientRect(),viewport=element.parentElement!.parentElement!.getBoundingClientRect();
     return tab.left>=viewport.left&&tab.right<=viewport.right;
   })).toBe(true);
+  const listBounds=await list.boundingBox();
+  for(const button of await list.getByRole("button",{name:/^(Anterior|Siguiente) trabajadores$/}).all()){
+    const buttonBounds=await button.boundingBox();
+    expect(buttonBounds!.x).toBeGreaterThanOrEqual(listBounds!.x);
+    expect(buttonBounds!.x+buttonBounds!.width).toBeLessThanOrEqual(listBounds!.x+listBounds!.width);
+  }
   await list.getByRole("button",{name:"Siguiente trabajadores"}).click();
   await expect(list.getByRole("button",{name:"Trabajador 20",exact:true})).toBeVisible();
   expect(new URL(pages.at(-1)!).searchParams.get("page")).toBe("2");

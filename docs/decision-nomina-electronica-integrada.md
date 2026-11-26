@@ -1737,6 +1737,8 @@ para conteo y página y registra la anomalía sin nombres ni identificación per
 No reescribe resultados aprobados ni añade estados o procesos de reparación.
 En pantallas angostas, la franja de secciones mantiene visible la pestaña activa
 al abrirla o cambiar entre anchos de escritorio y móvil, sin consultar recursos.
+Los controles de paginación se distribuyen en varias líneas si falta ancho,
+sin recortar botones ni provocar desplazamiento horizontal de la página.
 
 Guardar conceptos y condiciones del empleador actualiza el propietario de
 `options` con la respuesta del comando, sin reconstruir el workspace. Las

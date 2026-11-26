@@ -101,7 +101,7 @@ export function PayrollRunNovelties({ run, employmentId, onOpen, onBack, loading
                     <dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt>Devengado</dt><dd>{money.format(employee.earnings)}</dd></div><div className="flex justify-between gap-3"><dt>Deducido</dt><dd>{money.format(employee.deductions)}</dd></div><div className="flex justify-between gap-3 font-semibold"><dt>Neto</dt><dd>{money.format(employee.netPayable)}</dd></div></dl>
                 </article>)}</div>
                 {list.data?.items.length===0&&<p>No hay trabajadores liquidados en este período.</p>}
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{list.data?.totalCount??0} resultados · Página {page}</span><div className="flex gap-2"><Button variant="outline" disabled={page===1||calculating} onClick={()=>setPage(value=>value-1)}>Anterior trabajadores</Button><Button variant="outline" disabled={page*20>=(list.data?.totalCount??0)||calculating} onClick={()=>setPage(value=>value+1)}>Siguiente trabajadores</Button></div></div>
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{list.data?.totalCount??0} resultados · Página {page}</span><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={page===1||calculating} onClick={()=>setPage(value=>value-1)}>Anterior trabajadores</Button><Button variant="outline" disabled={page*20>=(list.data?.totalCount??0)||calculating} onClick={()=>setPage(value=>value+1)}>Siguiente trabajadores</Button></div></div>
             </>}
         </section>}
         {receiptLoading&&<p role="status">Preparando desprendible…</p>}
