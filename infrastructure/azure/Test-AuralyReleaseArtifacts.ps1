@@ -13,6 +13,10 @@ if ($manifest.product -ne 'AURALY' -or $manifest.version -ne $ReleaseVersion -or
     $manifest.commit -notmatch '^[a-fA-F0-9]{40}$') {
     throw 'El manifiesto no es un release Auraly limpio de la version solicitada.'
 }
+$projectionVersion=0
+if (-not [int]::TryParse("$($manifest.reportingProjectionVersion)",[ref]$projectionVersion) -or $projectionVersion -lt 1 -or $projectionVersion -gt [int16]::MaxValue) {
+    throw 'El release no identifica la versión canónica de reporting.'
+}
 if (@($manifest.artifacts.name | Sort-Object -Unique).Count -ne @($manifest.artifacts).Count) {
     throw 'El manifiesto contiene artefactos duplicados.'
 }
@@ -34,6 +38,7 @@ foreach ($requiredName in @(
     "auraly-database-$ReleaseVersion.dacpac",
     "auraly-function-$ReleaseVersion.zip",
     "auraly-api-$ReleaseVersion.zip",
+    "auraly-reporting-maintenance-$ReleaseVersion.zip",
     "auraly-pos-$ReleaseVersion.exe",
     "auraly-pos-prod-$ReleaseVersion.exe")) {
     if (-not ($manifest.artifacts.name -contains $requiredName)) {

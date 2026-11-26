@@ -36,7 +36,7 @@ public sealed partial class AccountingVerticalSliceTests
             }
             var account=method=="Cash"?await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture,admin):
                 await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,admin,method=="Transfer"?"1118":"1398","Asset",method=="Transfer"?"Bank":"CardClearing","Debit",bankId);
-            var request=new SavePaymentMethodRequest(Guid.NewGuid(),$"DSP-{Guid.NewGuid():N}",method,types.Single(type=>type.Code==method).Id,account.AccountId,true,true,false,false,true,10);
+            var request=new SavePaymentMethodRequest(Guid.NewGuid(),$"DSP-{Guid.NewGuid():N}",method,types.Single(type=>type.Code==method).Id,account.AccountId,true,true,false,false,true,10,BankAccountId:bankId);
             using var saved=await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{request.PaymentMethodId}",request);
             Assert.True(saved.IsSuccessStatusCode,await saved.Content.ReadAsStringAsync());forms.Add((await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method);
         }

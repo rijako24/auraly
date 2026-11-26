@@ -8,17 +8,19 @@ namespace Auraly.Commerce.Payroll.Infrastructure;
 
 public sealed partial class SqlPayrollStore
 {
-    public async Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,CancellationToken ct)
+    public async Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,string sortBy,bool descending,CancellationToken ct)
     {
+        var column=sortBy switch {"code"=>"Code","name"=>"Name","status"=>"IsActive",_=>throw new ArgumentOutOfRangeException(nameof(sortBy))};
+        var direction=descending?"DESC":"ASC";
         await using var connection=connections.Create();await connection.OpenAsync(ct);
-        await using var command=new SqlCommand("""
+        await using var command=new SqlCommand($"""
             SELECT COUNT(*) FROM payroll.AccountingProfiles WHERE TenantId=@Tenant
               AND (@Active IS NULL OR IsActive=@Active)
               AND (@Search IS NULL OR Code LIKE N'%'+@Search+N'%' OR Name LIKE N'%'+@Search+N'%');
             SELECT ProfileId,Code,Name,RuleSetId,IsActive,RowVersion FROM payroll.AccountingProfiles WHERE TenantId=@Tenant
               AND (@Active IS NULL OR IsActive=@Active)
               AND (@Search IS NULL OR Code LIKE N'%'+@Search+N'%' OR Name LIKE N'%'+@Search+N'%')
-            ORDER BY Name,ProfileId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
+            ORDER BY {column} {direction},ProfileId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value);
         command.Parameters.Add("@Active",SqlDbType.Bit).Value=(object?)isActive??DBNull.Value;
@@ -41,9 +43,33 @@ public sealed partial class SqlPayrollStore
         await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,ct);
         try
         {
+            PayrollRuleSetView? createdRules=null;
+            if(request.Configuration is { } initial)
+            {
+                if(request.RowVersion is not null)
+                {
+                    await using var head=new SqlCommand("""
+                        SELECT rules.CountryCode FROM payroll.AccountingProfiles profile WITH(UPDLOCK,HOLDLOCK)
+                        JOIN payroll.RuleSets rules ON rules.RuleSetId=profile.RuleSetId AND (rules.TenantId=@Tenant OR rules.TenantId IS NULL)
+                        WHERE profile.ProfileId=@Id AND profile.TenantId=@Tenant AND profile.RuleSetId=@Rules AND profile.RowVersion=@Version;
+                        """,connection,transaction);
+                    head.Parameters.AddWithValue("@Tenant",user.TenantId);head.Parameters.AddWithValue("@Id",request.ProfileId);
+                    head.Parameters.AddWithValue("@Rules",request.RuleSetId);head.Parameters.Add("@Version",SqlDbType.Binary,8).Value=request.RowVersion;
+                    await using var reader=await head.ExecuteReaderAsync(ct);
+                    if(!await reader.ReadAsync(ct))throw new PayrollConflictException("El perfil cambió. Ábrelo nuevamente antes de guardar.");
+                    var profileCode=$"PROFILE-{request.ProfileId:N}".ToUpperInvariant();
+                    initial=initial with{CountryCode=reader.GetString(0),Code=profileCode};
+                }
+                var savedVersion=await SaveRuleSetCoreAsync(connection,transaction,user,initial,ct,allowRevision:true);
+                await ApproveRuleSetCoreAsync(connection,transaction,user,initial.RuleSetId,savedVersion,ct);
+                createdRules=await ReadRuleSetAsync(connection,transaction,user.TenantId,initial.RuleSetId,ct);
+            }
             await using var command=new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM payroll.RuleSets WHERE RuleSetId=@Rules
-                  AND (TenantId=@Tenant OR TenantId IS NULL) AND Status=N'Approved')
+                IF NOT EXISTS(SELECT 1 FROM payroll.RuleSets rules WHERE rules.RuleSetId=@Rules
+                  AND (rules.TenantId=@Tenant OR rules.TenantId IS NULL)
+                  AND (rules.Status=N'Approved' OR rules.Status=N'Retired' AND EXISTS(
+                    SELECT 1 FROM payroll.AccountingProfiles existing WHERE existing.ProfileId=@Id
+                      AND existing.TenantId=@Tenant AND existing.RuleSetId=rules.RuleSetId)))
                   THROW 51707,N'Los parámetros deben estar aprobados y pertenecer a esta empresa o al catálogo general.',1;
                 DECLARE @Lines TABLE(Id uniqueidentifier PRIMARY KEY,ConceptId uniqueidentifier,DebitAccountId uniqueidentifier,
                   CreditAccountId uniqueidentifier,BeneficiaryPartyId uniqueidentifier,EffectiveFrom date,EffectiveTo date);
@@ -99,13 +125,14 @@ public sealed partial class SqlPayrollStore
             command.Parameters.Add("@Mappings",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(request.Mappings,Json);
             await command.ExecuteNonQueryAsync(ct);
             var saved=await ReadProfileAsync(connection,transaction,user.TenantId,request.ProfileId,ct);
-            await transaction.CommitAsync(ct);return saved;
+            await transaction.CommitAsync(ct);return saved with{CreatedRuleSet=createdRules};
         }
-        catch(SqlException error) when(error.Number is 51707 or 51708 or 2601 or 2627)
+        catch(SqlException error) when(error.Number is 51707 or 51708 or 51720 or 51721 or 2601 or 2627)
         {
             if(transaction.Connection is not null)await transaction.RollbackAsync(CancellationToken.None);
             if(error.Number==51707)throw new PayrollValidationException(error.Message);
-            throw new PayrollConflictException(error.Number==51708?error.Message:"El código o una identidad del perfil ya están en uso.");
+            throw new PayrollConflictException(error.Number is 51708 or 51720 or 51721?error.Message:
+                "El código, una identidad o la fecha de vigencia ya están en uso. Revisa los datos del perfil.");
         }
         catch{if(transaction.Connection is not null)await transaction.RollbackAsync(CancellationToken.None);throw;}
     }

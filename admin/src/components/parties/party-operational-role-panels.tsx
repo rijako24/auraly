@@ -189,7 +189,8 @@ export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerS
   const employeeQuery = useQuery({ queryKey: ["employees", employeeId], queryFn: () => employeesApi.getById(employeeId) });
   const hoursQuery = useQuery({ queryKey: ["employees", employeeId, "working-hours"], queryFn: () => employeesApi.getWorkingHours(employeeId) });
   const services = useServices({ page: 1, pageSize: 500 });
-  const payroll = useQuery({ queryKey: ["payroll-options", businessId, partyId], queryFn: payrollApi.options, enabled: Boolean(businessId && partyId && canReadPayroll), retry: false });
+  const payroll = useQuery({ queryKey: ["payroll-party-employment", businessId, partyId], queryFn: ()=>payrollApi.employments({page:1,pageSize:1,partyId}), enabled: Boolean(businessId && partyId && canReadPayroll),
+    staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false,retry:false });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [serviceToAdd, setServiceToAdd] = useState("");
   const [active, setActive] = useState(true);
@@ -232,7 +233,7 @@ export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerS
   if (employeeQuery.isLoading || hoursQuery.isLoading) return <PanelLoading />;
   if (!employeeQuery.data) return <PanelError text="No fue posible cargar la configuración del empleado." />;
   const available = (services.data?.items ?? []).filter((item) => item.isActive && !selectedIds.has(item.serviceId));
-  const employment = payroll.data?.employments.find((item) => item.partyId === partyId);
+  const employment = payroll.data?.items[0];
 
   return <div className="space-y-5">
     <PanelHeader icon={Scissors} title="Configuración del empleado" description="Servicios, disponibilidad y estado en el mismo tercero.">

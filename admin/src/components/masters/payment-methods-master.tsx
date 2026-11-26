@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AccountSelect } from "@/components/accounting/account-select";
+import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
+import { accountingApi, type BankAccountOption } from "@/services/api/accounting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +27,7 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState<SavePaymentMethod | null>(null);
   const [account, setAccount] = useState<{accountId:string;code:string;name:string} | null>(null);
+  const [bankName,setBankName]=useState<string|null>(null);
   const filters = { page, pageSize: 50, search: search || undefined };
   const queryKey = ["payment-methods", tenantId, filters];
   const list = useQuery({ queryKey, queryFn: () => paymentMethodsApi.list(filters), enabled: !!tenantId });
@@ -40,9 +43,10 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
   function edit(value?: PaymentMethod) {
     save.reset();
     setEditingTenant(tenantId);
+    setBankName(value?.methodCode==="Transfer"?value.bankAccountName??null:null);
     setAccount(value ? {accountId:value.accountId,code:value.accountCode,name:value.accountName} : null);
-    setDraft(value ? { ...value } : { paymentMethodId: crypto.randomUUID(), code: "", name: "", paymentTypeId: "",
-      accountId: "", useForSales: false, useForReceipts: false, useForSupplierPayments: false,
+    setDraft(value ? { ...value,bankAccountId:value.methodCode==="Transfer"?value.bankAccountId:null } : { paymentMethodId: crypto.randomUUID(), code: "", name: "", paymentTypeId: "",
+      accountId: "",bankAccountId:null, useForSales: false, useForReceipts: false, useForSupplierPayments: false,
       useForPayroll: false, useForVouchers: false, isActive: true, sortOrder: 10 });
   }
   return <section className="space-y-4 rounded-2xl border bg-card p-5">
@@ -63,7 +67,13 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
             <div className="grid gap-4 sm:grid-cols-6">
               <div className="space-y-2 sm:col-span-2"><Label htmlFor="payment-form-code">Código</Label><Input id="payment-form-code" required maxLength={64} value={draft.code} disabled={!!draft.rowVersion || save.isPending} onChange={event=>setDraft({...draft,code:event.target.value})}/></div>
               <div className="space-y-2 sm:col-span-4"><Label htmlFor="payment-form-name">Nombre</Label><Input id="payment-form-name" required maxLength={160} value={draft.name} disabled={save.isPending} onChange={event=>setDraft({...draft,name:event.target.value})}/></div>
-              <div className="space-y-2 sm:col-span-2"><Label htmlFor="payment-form-type">Tipo</Label><Select value={draft.paymentTypeId} disabled={save.isPending || types.isError || types.isPending} onValueChange={value=>{const restricted=types.data?.some(type=>type.id===value&&type.code==="Credit");setDraft({...draft,paymentTypeId:value,...(restricted?{useForSales:true,useForReceipts:false,useForSupplierPayments:false,useForPayroll:false,useForVouchers:false}:{})});}}><SelectTrigger id="payment-form-type"><SelectValue placeholder="Seleccionar tipo"/></SelectTrigger><SelectContent>{types.data?.map(type=><SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>)}</SelectContent></Select></div>
+              <div className="space-y-2 sm:col-span-2"><Label htmlFor="payment-form-type">Tipo</Label><Select value={draft.paymentTypeId} disabled={save.isPending || types.isError || types.isPending} onValueChange={value=>{const restricted=types.data?.some(type=>type.id===value&&type.code==="Credit");setBankName(null);setDraft({...draft,paymentTypeId:value,bankAccountId:null,...(restricted?{useForSales:true,useForReceipts:false,useForSupplierPayments:false,useForPayroll:false,useForVouchers:false}:{})});}}><SelectTrigger id="payment-form-type"><SelectValue placeholder="Seleccionar tipo"/></SelectTrigger><SelectContent>{types.data?.map(type=><SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>)}</SelectContent></Select></div>
+              {selectedType==="Transfer"&&<div className="space-y-2 sm:col-span-6"><Label>Cuenta bancaria</Label><PagedEntitySelect<BankAccountOption> value={draft.bankAccountId??""} ariaLabel="Cuenta bancaria de transferencia" queryKey={["payment-form-banks",tenantId]}
+                disabled={save.isPending} placeholder="Selecciona una cuenta bancaria" searchPlaceholder="Buscar banco, nombre o número de cuenta" wrapLabels
+                selectedOption={draft.bankAccountId?{value:draft.bankAccountId,label:bankName??"Cuenta bancaria seleccionada"}:null}
+                loadPage={(search,page,pageSize)=>accountingApi.bankAccountOptions({search,page,pageSize})}
+                getOption={bank=>({value:bank.bankAccountId,label:bank.displayName,description:`${bank.bankName} · ${bank.accountNumber}`})}
+                onChange={(id,option)=>{setDraft({...draft,bankAccountId:id||null});setBankName(option.label);}}/></div>}
               <div className="space-y-2 sm:col-span-4"><Label>Auxiliar contable</Label><AccountSelect value={draft.accountId} accounts={account?[account]:[]} onChange={(id,value)=>{setDraft({...draft,accountId:id});setAccount(value??null);}} disabled={save.isPending}/></div>
             </div>
             <fieldset disabled={save.isPending} className="space-y-3">
@@ -88,7 +98,7 @@ export function PaymentMethodsMaster({ canManage }: { canManage: boolean }) {
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t bg-muted/20 px-5 py-4 sm:px-6">
             <Button type="button" variant="outline" disabled={save.isPending} onClick={()=>setDraft(null)}>Cancelar</Button>
-            <Button type="submit" disabled={save.isPending || !draft.accountId || !draft.paymentTypeId}>{save.isPending ? "Guardando…" : "Guardar forma"}</Button>
+            <Button type="submit" disabled={save.isPending || !draft.accountId || !draft.paymentTypeId || selectedType==="Transfer"&&draft.isActive&&!draft.bankAccountId}>{save.isPending ? "Guardando…" : "Guardar forma"}</Button>
           </div>
         </form>
       </DialogContent>

@@ -893,6 +893,21 @@ canónico y lecturas completas mientras otro lector o escritor conserva su lock.
 El frontend propaga cancelación al cambiar filtros y conserva el plazo
 de timeout, incluso durante la lectura del cuerpo de la respuesta.
 
+El processor conserva el `Shared` transaccional del recurso por sede; la
+reconstrucción mantiene `Exclusive` de sesión durante todas sus páginas.
+La lectura inicial de `RebuildInProgress` usa `READCOMMITTEDLOCK` y termina antes
+de tomar el trabajo. El grafo de la regresión local mostró un replay esperando
+`UQ_SalesReportingJobs_Source` mientras retenía `RangeS-S` en el checkpoint,
+que el primer intento necesitaba actualizar: ese orden producía un interbloqueo.
+El hint libera solamente esa lectura; el lock de aplicación conserva la exclusión
+de rebuild y las escrituras de hechos, agregados y checkpoint continúan en la
+misma transacción serializable. No se añade reintento, cola ni lector alterno.
+La semántica del hint está documentada por
+[SQL Server](https://learn.microsoft.com/en-us/sql/t-sql/queries/hints-transact-sql-table).
+La prueba retiene el trabajo desde otra transacción, espera al replay y verifica
+que el checkpoint puede actualizarse sin un ciclo; después comprueba que el
+replay no incrementa los intentos.
+
 El índice existente `IX_SalesReportLineFacts_Business_Date` incluye también
 `ProductName`, `SupplierId`, `SupplierName` y `BusinessLocalHour`, los atributos congelados que usan
 los rankings y agrupaciones habituales. El plan del ensayo de volumen recorría
@@ -1028,6 +1043,34 @@ canónica del negocio con `CommerceSellers` o `Suppliers`:
 
 Las restricciones se aplican antes de ejecutar cada consulta semántica. No son
 filtros cosméticos del navegador.
+
+## Actualización de versión durante el despliegue
+
+Si la versión canónica de la proyección cambia o una migración marca su
+reconstrucción, publicar el esquema no habilita todavía las operaciones.
+`Publish-AuralyReleasePipeline.ps1` conserva detenidos API y Function y ejecuta
+`rebuild-sales-reporting` de la consola existente antes de arrancar los binarios
+nuevos. La consola es un artefacto inmutable del mismo release, con su versión
+de proyección obtenida del binario y hash verificado. Utiliza .NET 8, ya fijado
+en el ejecutor del despliegue; no depende del runtime del App Service ni
+introduce otro writer, paquete o usuario SQL.
+
+El orquestador selecciona por conjunto las sedes que requieren actualización,
+con límite explícito de 100 y dos horas para el conjunto. La reconstrucción
+histórica S1 reproduce miles de transacciones y no se confunde con la latencia
+de una venta nueva; su tiempo real se conserva en la evidencia del ensayo.
+Ejecuta el motor canónico con sus transacciones independientes, sin alterar
+documentos, saldos, asientos ni inventario. La conexión del proceso utiliza
+Active Directory Default con AzureCliCredential y la identidad del despliegue
+ya autorizada por Azure Login; no crea contraseñas ni transporta secretos a otro
+host. Reutiliza la regla SQL temporal del mismo despliegue. Los secretos de
+bootstrap y WhatsApp se excluyen del entorno del proceso. Al finalizar se
+retiran el proceso y directorio temporal propios, incluso ante fallo; su ruta
+absoluta se valida antes de borrarla. La verificación abre su conexión SQL con
+un token Entra vigente; no depende de la conexión inactiva durante el replay.
+Se verifica por conjunto que todos los checkpoints estén completos en la versión
+publicada. Un fallo conserva detenidos los escritores: no reactiva un binario
+anterior contra el esquema nuevo ni presenta una operación incompleta como lista.
 
 ## Fuera de alcance
 

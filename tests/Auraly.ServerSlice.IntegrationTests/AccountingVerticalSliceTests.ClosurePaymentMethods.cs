@@ -251,14 +251,14 @@ public sealed partial class AccountingVerticalSliceTests
         if (!sameForm)
         using (var changed = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{original.PaymentMethodId}",
             new SavePaymentMethodRequest(original.PaymentMethodId, original.Code, original.Name, original.PaymentTypeId, other.AccountId,
-                true, true, false, false, true, 10, original.RowVersion)))
+                true, true, false, false, true, 10, original.RowVersion,BankAccountId:other.BankAccountId)))
             Assert.True(changed.IsSuccessStatusCode, await changed.Content.ReadAsStringAsync());
         if (remapTarget)
         {
             var replacement = await CreateClosureFormAsync(admin, targetType);
             using var changed = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{target.PaymentMethodId}",
                 new SavePaymentMethodRequest(target.PaymentMethodId, target.Code, target.Name, target.PaymentTypeId, replacement.AccountId,
-                    true, true, false, false, true, 10, target.RowVersion));
+                    true, true, false, false, true, 10, target.RowVersion,BankAccountId:replacement.BankAccountId));
             Assert.True(changed.IsSuccessStatusCode, await changed.Content.ReadAsStringAsync());
             target = (await changed.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
         }
@@ -267,7 +267,7 @@ public sealed partial class AccountingVerticalSliceTests
         {
             using var deactivate = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{target.PaymentMethodId}",
                 new SavePaymentMethodRequest(target.PaymentMethodId, target.Code, target.Name, target.PaymentTypeId, target.AccountId,
-                    true, true, false, false, false, 10, target.RowVersion));
+                    true, true, false, false, false, 10, target.RowVersion,BankAccountId:target.BankAccountId));
             Assert.True(deactivate.IsSuccessStatusCode, await deactivate.Content.ReadAsStringAsync());
             target = (await deactivate.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
             await processor.ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, default);
@@ -275,7 +275,7 @@ public sealed partial class AccountingVerticalSliceTests
             Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", reconciliation.ReconciliationId));
             using var activate = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{target.PaymentMethodId}",
                 new SavePaymentMethodRequest(target.PaymentMethodId, target.Code, target.Name, target.PaymentTypeId, target.AccountId,
-                    true, true, false, false, true, 10, target.RowVersion));
+                    true, true, false, false, true, 10, target.RowVersion,BankAccountId:target.BankAccountId));
             Assert.True(activate.IsSuccessStatusCode, await activate.Content.ReadAsStringAsync());
             target = (await activate.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
         }
@@ -401,7 +401,7 @@ public sealed partial class AccountingVerticalSliceTests
             var nextAccount = await CreateClosureFormAsync(admin, targetType);
             using var remapped = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{target.PaymentMethodId}",
                 new SavePaymentMethodRequest(target.PaymentMethodId, target.Code, target.Name, target.PaymentTypeId,
-                    nextAccount.AccountId, true, true, false, false, true, 10, target.RowVersion));
+                    nextAccount.AccountId, true, true, false, false, true, 10, target.RowVersion,BankAccountId:nextAccount.BankAccountId));
             Assert.True(remapped.IsSuccessStatusCode, await remapped.Content.ReadAsStringAsync());
             ReturnableSalePayment effective;
             using (var commands = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnection(fixture.ConnectionString).Database))
@@ -458,9 +458,17 @@ public sealed partial class AccountingVerticalSliceTests
                     "Asset", method == "Transfer" ? "Bank" : "CardClearing", "Debit", bank);
             accountId = account.AccountId;
         }
+        Guid? configuredBank=null;
+        if(method=="Transfer")
+        {
+            await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+            await using var read=new SqlCommand("SELECT BankAccountId FROM dbo.AccountingAccounts WHERE AccountId=@Account AND TenantId=@Tenant;",connection);
+            read.Parameters.AddWithValue("@Account",accountId!.Value);read.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+            configuredBank=(Guid?)await read.ExecuteScalarAsync();
+        }
         var options = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
         var request = new SavePaymentMethodRequest(Guid.NewGuid(), $"CLS-{Guid.NewGuid():N}", $"Forma de conciliación {method}",
-            options.Single(item => item.Code == method).Id, accountId.Value, true, true, false, false, true, 10);
+            options.Single(item => item.Code == method).Id, accountId.Value, true, true, false, false, true, 10,BankAccountId:configuredBank);
         using var response = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{request.PaymentMethodId}", request);
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;

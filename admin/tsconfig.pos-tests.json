@@ -9,6 +9,7 @@
     "rootDir": "src"
   },
   "include": [
+    "src/lib/payroll-receipt.test.ts",
     "src/lib/utils.test.ts",
     "src/lib/accounting-document-date.ts",
     "src/lib/accounting-document-date.test.ts",

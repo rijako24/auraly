@@ -113,6 +113,7 @@ public sealed record PayrollEmployeeCalculationInput(
     decimal? TransportBaseWorkedDays = null)
 {
     public int? PeriodDays { get; init; }
+    public bool PaysPensionContributions { get; init; } = true;
 }
 
 public sealed record PayrollConceptWorkedDays(Guid ConceptId, decimal BaseDays, decimal WorkedDays);
@@ -131,7 +132,10 @@ public sealed record PayrollCalculatedLine(
     decimal? BaseAmount,
     decimal Amount,
     bool IsEmployerCost,
-    bool IsSalaryBase);
+    bool IsSalaryBase)
+{
+    public string? SystemRoleCode {get;init;}
+}
 
 public sealed record PayrollEmployeeCalculation(
     Guid EmploymentId,
@@ -263,13 +267,15 @@ public sealed class PayrollCalculator
 
         AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployeeHealth], contributionBase,
             Rule(rules, PayrollRuleParameterCodes.EmployeeHealthRate));
-        AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployeePension], contributionBase,
-            Rule(rules, PayrollRuleParameterCodes.EmployeePensionRate));
+        if(input.PaysPensionContributions)
+            AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployeePension], contributionBase,
+                Rule(rules, PayrollRuleParameterCodes.EmployeePensionRate));
         if (!input.IsEmployerExemptFromHealthSenaIcbf)
             AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployerHealth], contributionBase,
                 Rule(rules, PayrollRuleParameterCodes.EmployerHealthRate), true);
-        AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployerPension], contributionBase,
-            Rule(rules, PayrollRuleParameterCodes.EmployerPensionRate), true);
+        if(input.PaysPensionContributions)
+            AddPercentage(lines, concepts[PayrollSystemConceptRoles.EmployerPension], contributionBase,
+                Rule(rules, PayrollRuleParameterCodes.EmployerPensionRate), true);
         AddPercentage(lines, concepts[PayrollSystemConceptRoles.OccupationalRisk], contributionBase, input.RiskRate, true);
         AddPercentage(lines, concepts[PayrollSystemConceptRoles.CompensationFund], contributionBase,
             Rule(rules, PayrollRuleParameterCodes.CompensationFundRate), true);
@@ -434,7 +440,7 @@ public sealed class PayrollCalculator
         lines.Add(new PayrollCalculatedLine(concept.ConceptId, noveltyId, agreementId, concept.Code,
             concept.Name, concept.Nature, concept.AccountingCategoryCode, concept.DianConceptCode,
             quantity, rate, baseAmount is null ? null : Money(baseAmount.Value), amount,
-            isEmployerCost, concept.IsSalaryBase));
+            isEmployerCost, concept.IsSalaryBase){SystemRoleCode=concept.SystemRoleCode});
 
     private static decimal Money(decimal value) => decimal.Round(value, 2, MidpointRounding.AwayFromZero);
 
@@ -445,7 +451,7 @@ public sealed class PayrollCalculator
             x.Rate?.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
             x.BaseAmount?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
             x.Amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
-            x.IsSalaryBase ? "1" : "0")));
+            x.IsSalaryBase ? "1" : "0",x.SystemRoleCode??string.Empty)));
         return SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
     }
 }

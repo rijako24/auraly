@@ -80,13 +80,15 @@ IF EXISTS(SELECT 1 FROM @PaymentUpgradeCandidates candidate
   THROW 51986,N'Un código de forma de pago del plan ya pertenece a otra configuración; no se sobrescribió.',1;
 
 DECLARE @PaymentUpgradeCreated table(PaymentMethodId uniqueidentifier PRIMARY KEY);
-INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,
+INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,BankAccountId,
   UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers,IsActive,SortOrder,Version,CreatedAt,UpdatedAt)
 OUTPUT inserted.PaymentMethodId INTO @PaymentUpgradeCreated
 SELECT @PaymentUpgradeTenant,NEWID(),candidate.Code,candidate.Name,type.OptionId,candidate.AccountId,
+  CASE WHEN type.Code=N'Transfer' THEN account.BankAccountId END,
   template.UseForSales,template.UseForReceipts,template.UseForSupplierPayments,template.UseForPayroll,
   template.UseForVouchers,1,template.SortOrder,1,@PaymentUpgradeNow,@PaymentUpgradeNow
 FROM @PaymentUpgradeCandidates candidate
+JOIN dbo.AccountingAccounts account ON account.AccountId=candidate.AccountId AND account.TenantId=@PaymentUpgradeTenant
 JOIN reference.Options type ON type.CatalogCode=N'payment-method' AND type.Code=candidate.MethodCode AND type.IsActive=1
 JOIN dbo.AccountingConfigurationProfiles profile ON profile.IsDefault=1 AND profile.IsActive=1
 JOIN dbo.AccountingConfigurationProfilePaymentMethods template

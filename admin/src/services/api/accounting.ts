@@ -74,6 +74,7 @@ export interface BankAccount {
   accountTypeName:string;bankName:string;accountNumber:string;displayName:string;
   currencyCode:string;isPrimary:boolean;isActive:boolean;rowVersion:string;auxiliaryCount:number;
 }
+export interface BankAccountOption {bankAccountId:string;displayName:string;bankName:string;accountNumber:string;isActive:boolean}
 export interface SaveBankAccount {
   bankAccountId:string;accountingAccountId?:string|null;accountTypeOptionId:string;
   bankName:string;accountNumber:string;displayName:string;isPrimary:boolean;
@@ -176,6 +177,7 @@ export const accountingApi = {
   accountOptions:(params:{page:number;pageSize:number;search?:string;expenseOnly?:boolean;liabilityOnly?:boolean;accountId?:string;groupingOnly?:boolean})=>apiClient.get<{items:AccountingAccount[];page:number;pageSize:number;totalCount:number;totalPages:number}>("/commerce/v1/accounting/account-options",params),
   accounts: () => apiClient.get<AccountingAccount[]>("/commerce/v1/accounting/accounts"),
   bankAccounts: (includeInactive=false) => apiClient.get<BankAccount[]>("/commerce/v1/accounting/bank-accounts", {includeInactive}),
+  bankAccountOptions:(params:{page:number;pageSize:number;search?:string})=>apiClient.get<{items:BankAccountOption[];page:number;pageSize:number;totalCount:number;totalPages:number}>("/commerce/v1/accounting/bank-account-options",params),
   saveBankAccount: (request:SaveBankAccount) => apiClient.put<BankAccount>(`/commerce/v1/accounting/bank-accounts/${request.bankAccountId}`,request),
   bankReconciliations: (query:BankReconciliationQuery) => apiClient.get<BankReconciliationPage>(`/commerce/v1/accounting/bank-reconciliations?${new URLSearchParams(Object.entries(query).filter(([,value])=>value!=null&&value!=="").map(([key,value])=>[key,String(value)]))}`),
   bankReconciliation: (id:string,query:BankReconciliationDetailQuery) => apiClient.get<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}?${new URLSearchParams(Object.entries(query).filter(([,value])=>value!=null&&value!=="").map(([key,value])=>[key,String(value)]))}`),

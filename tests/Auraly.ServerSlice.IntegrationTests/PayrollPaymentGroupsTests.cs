@@ -102,7 +102,7 @@ public sealed class PayrollPaymentGroupsTests(ServerSliceFixture fixture)
         Assert.Equal(count,preview.PayableEmployees.Count);
         var request=new CreatePayrollPaymentBatchRequest(Guid.NewGuid(),runId,transfer.OptionId,end,"TRANSFER-GROUP");
         SavePaymentMethodRequest? configuration=null; PaymentMethodView? form=null;
-        AccountingAccountView? currentBank=null; Guid? originalPayable=null; Guid cashTypeId=Guid.Empty;
+        PayrollBankAuxiliary? currentBank=null; Guid? originalPayable=null; Guid cashTypeId=Guid.Empty;
         if(configured)
         {
             var before=await CreateBankAuxiliaryAsync(client);
@@ -110,7 +110,7 @@ public sealed class PayrollPaymentGroupsTests(ServerSliceFixture fixture)
             var types=(await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
             cashTypeId=types.Single(type=>type.Code=="Cash").Id;
             configuration=new(Guid.NewGuid(),$"PAYROLL-{Guid.NewGuid():N}","Banco anterior nómina",
-                types.Single(type=>type.Code=="Transfer").Id,before.AccountId,false,false,false,true,true,10);
+                types.Single(type=>type.Code=="Transfer").Id,before.AccountId,false,false,false,true,true,10,BankAccountId:before.BankAccountId);
             using var saved=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configuration.PaymentMethodId}",configuration);
             Assert.True(saved.IsSuccessStatusCode,await saved.Content.ReadAsStringAsync());
             form=(await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
@@ -172,7 +172,7 @@ public sealed class PayrollPaymentGroupsTests(ServerSliceFixture fixture)
                 fixture.TenantId,fixture.BusinessId,PayrollAccountingCategories.NetPayable,changedPayable.AccountId,new(2026,1,1),null)))
                 Assert.True(changed.IsSuccessStatusCode,await changed.Content.ReadAsStringAsync());
             using var disabled=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form!.PaymentMethodId}",
-                configuration! with {AccountId=currentBank!.AccountId,Name="Banco vigente nómina",IsActive=false,RowVersion=form.RowVersion});
+                configuration! with {AccountId=currentBank!.AccountId,BankAccountId=currentBank.BankAccountId,Name="Banco vigente nómina",IsActive=false,RowVersion=form.RowVersion});
             Assert.True(disabled.IsSuccessStatusCode,await disabled.Content.ReadAsStringAsync());
             form=(await disabled.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
             await scope.ServiceProvider.GetRequiredService<PayrollService>().CreatePaymentBatchAsync(user,request);
@@ -190,7 +190,7 @@ public sealed class PayrollPaymentGroupsTests(ServerSliceFixture fixture)
             }
             await AssertPaymentOutcomeAsync(client,request.PaymentBatchId,people[0].Id,start,end,false,"AccountingPendingConfiguration");
             using var enabled=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form.PaymentMethodId}",
-                configuration! with {AccountId=currentBank.AccountId,Name="Banco vigente nómina",RowVersion=form.RowVersion});
+                configuration! with {AccountId=currentBank.AccountId,BankAccountId=currentBank.BankAccountId,Name="Banco vigente nómina",RowVersion=form.RowVersion});
             Assert.True(enabled.IsSuccessStatusCode,await enabled.Content.ReadAsStringAsync());
             form=(await enabled.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
             if (count == 2)
@@ -325,20 +325,23 @@ public sealed class PayrollPaymentGroupsTests(ServerSliceFixture fixture)
         Assert.True(acceptanceMs<2000,$"Acceptance exceeded 2 s: {acceptanceMs:F1} ms");
         Assert.True(readP95<1000,$"Payment preview p95 exceeded 1 s: {readP95:F1} ms");
     }
-    private async Task<AccountingAccountView> CreateBankAuxiliaryAsync(HttpClient client)
+    private sealed record PayrollBankAuxiliary(Guid AccountId, Guid BankAccountId);
+
+    private async Task<PayrollBankAuxiliary> CreateBankAuxiliaryAsync(HttpClient client)
     {
         var types=(await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/bank-account-type"))!;
         var bankId=Guid.NewGuid();
         using var saved=await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId}",
             new SaveBankAccountRequest(bankId,null,types.Single(type=>type.Code=="Checking").Id,"Banco nómina",bankId.ToString("N"),"Banco nómina",false,true,null));
         Assert.True(saved.IsSuccessStatusCode,await saved.Content.ReadAsStringAsync());
-        return await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,"1197","Asset","Bank","Debit",bankId);
+        var account=await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,"1197","Asset","Bank","Debit",bankId);
+        return new(account.AccountId,bankId);
     }
 
     private async Task AssertPaymentOutcomeAsync(HttpClient client,Guid batchId,Guid partyId,DateOnly start,DateOnly end,bool paid,string status)
     {
-        var options=(await client.GetFromJsonAsync<PayrollWorkspaceOptions>("/api/commerce/v1/payroll/options"))!;
-        var batch=Assert.Single(options.PaymentBatches,value=>value.PaymentBatchId==batchId);
+        var page=(await client.GetFromJsonAsync<PayrollHistoryPage<PayrollPaymentBatchView>>("/api/commerce/v1/payroll/payments?page=1&pageSize=50"))!;
+        var batch=Assert.Single(page.Items,value=>value.PaymentBatchId==batchId);
         Assert.Equal(paid,batch.IsPaid);Assert.Equal(status,batch.AccountingStatus);
         var query=$"from={start:yyyy-MM-dd}&to={end:yyyy-MM-dd}&partyId={partyId:D}";
         var summary=(await client.GetFromJsonAsync<PayrollReportResult>($"/api/commerce/v1/payroll/reports/payroll-summary?{query}"))!;

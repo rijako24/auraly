@@ -71,7 +71,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,CreditAmount,CollectedAmount,RecognizedCostAmount,
               ProjectionVersion,SourcePayloadHash,ProjectedAt,ProductQuantity,MissingCostLineCount)
             SELECT Id,@Tenant,@Business,Type,Number,CONVERT(datetimeoffset,Date),Date,N'UTC',Warehouse,N'Principal',N'Sin vendedor',Customer,N'ID',Name,N'Online',
-              Base+CASE WHEN Number=N'ACTUAL' THEN 10 ELSE 0 END,CASE WHEN Number=N'ACTUAL' THEN 10 ELSE 0 END,Base,Tax,Base+Tax,0,Base+Tax,Cost,5,HASHBYTES('SHA2_256',N'fixture'),SYSDATETIMEOFFSET(),
+              Base+CASE WHEN Number=N'ACTUAL' THEN 10 ELSE 0 END,CASE WHEN Number=N'ACTUAL' THEN 10 ELSE 0 END,Base,Tax,Base+Tax,0,Base+Tax,Cost,@ProjectionVersion,HASHBYTES('SHA2_256',N'fixture'),SYSDATETIMEOFFSET(),
               CASE WHEN Type=N'ServiceInvoice' THEN 0 WHEN Number=N'ACTUAL' THEN 3 ELSE 1 END,CASE WHEN Type=N'ServiceInvoice' THEN 1 ELSE 0 END
             FROM (VALUES
               (@Invoice,N'SalesInvoice',N'ACTUAL',CONVERT(date,'20261101'),@Warehouse,@CustomerA,N'Cliente A',320.0,41.8,CONVERT(decimal(19,4),180)),
@@ -84,7 +84,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RecognizedCostAmount,CostAvailable,ProjectionVersion,ProjectedAt)
             SELECT NEWID(),@Tenant,@Business,Id,Type,Line,Original,Line,Movement,CONVERT(datetimeoffset,Date),Date,@Warehouse,Customer,Product,
               Code,Code,Supplier,SupplierName,Waiter,WaiterName,N'EA',N'IVA',Rate,
-              Quantity,Base+CASE WHEN Id=@Invoice AND Line=1 THEN 10 ELSE 0 END,CASE WHEN Id=@Invoice AND Line=1 THEN 10 ELSE 0 END,Base,Tax,Base+Tax,Cost,1,5,SYSDATETIMEOFFSET()
+              Quantity,Base+CASE WHEN Id=@Invoice AND Line=1 THEN 10 ELSE 0 END,CASE WHEN Id=@Invoice AND Line=1 THEN 10 ELSE 0 END,Base,Tax,Base+Tax,Cost,1,@ProjectionVersion,SYSDATETIMEOFFSET()
             FROM (VALUES
               (@Invoice,N'SalesInvoice',1,@Invoice,N'Sale',CONVERT(date,'20261101'),@CustomerA,@ProductA,N'Producto A',@SupplierA,N'Proveedor A',@WaiterA,N'Mesero A',19.0,2.0,200.0,38.0,120.0),
               (@Invoice,N'SalesInvoice',2,@Invoice,N'Sale',CONVERT(date,'20261101'),@CustomerA,@ProductB,N'Producto B',@SupplierB,N'Proveedor B',@WaiterB,N'Mesero B',0.0,1.0,100.0,0.0,60.0),
@@ -95,7 +95,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               OriginalSaleDocumentId,MovementType,OccurredAt,BusinessLocalDate,CustomerId,BillableServiceId,ServiceCode,ServiceName,
               UnitCode,Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxCode,TaxRate,TaxAmount,TotalAmount,ProjectionVersion,ProjectedAt)
             VALUES(NEWID(),@Tenant,@Business,@Service,N'ServiceInvoice',1,@Service,N'Sale','2026-11-02','20261102',@CustomerC,NEWID(),N'SV',N'Servicio',
-              N'EA',1,50,0,50,N'IVA',19,9.5,59.5,5,SYSDATETIMEOFFSET());
+              N'EA',1,50,0,50,N'IVA',19,9.5,59.5,@ProjectionVersion,SYSDATETIMEOFFSET());
             INSERT reporting.SalesReportTaxFacts(SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,TaxCode,TaxRate,TenantId,BusinessId,
               BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt,OfficialDocumentTotalAmount)
             SELECT Id,Type,Original,N'IVA',Rate,@Tenant,@Business,Date,Base,Tax,Base+Tax,SYSDATETIMEOFFSET(),CONVERT(datetimeoffset,Date),
@@ -122,7 +122,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               DiscountAmount,NetAmount,TaxAmount,TotalAmount,CurrencyCode,FunctionalNetAmount,FunctionalTaxAmount,FunctionalTotalAmount,
               ExchangeRate,ProjectionVersion,ProjectedAt)
             SELECT NEWID(),@Tenant,@Business,NEWID(),Type,1,CONVERT(datetimeoffset,Date),Date,@SupplierA,N'Proveedor A',@Warehouse,N'Principal',
-              @ProductA,N'Producto A',Qty,UnitCost,0,Base,Tax,Total,Currency,FunctionalBase,FunctionalTax,FunctionalTotal,Rate,5,SYSDATETIMEOFFSET()
+              @ProductA,N'Producto A',Qty,UnitCost,0,Base,Tax,Total,Currency,FunctionalBase,FunctionalTax,FunctionalTotal,Rate,@ProjectionVersion,SYSDATETIMEOFFSET()
             FROM(VALUES
               (N'GoodsReceipt',CONVERT(date,'20261101'),10,10.0,100.0,19.0,119.0,N'USD',400000.0,76000.0,476000.0,4000.0),
               (N'PurchaseReturn',CONVERT(date,'20261102'),-1,10000.0,-10000.0,-1900.0,-11900.0,N'COP',-10000.0,-1900.0,-11900.0,1.0),
@@ -134,12 +134,13 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
                     ("@CustomerA",customerA),("@CustomerB",customerB),("@CustomerC",customerC),("@SupplierA",supplierA),("@SupplierB",supplierB),
                     ("@WaiterA",waiterA),("@WaiterB",waiterB),("@ProductA",Guid.NewGuid()),("@ProductB",Guid.NewGuid()),("@Seller",seller),("@BilledBy",billedBy)})
             seed.Parameters.AddWithValue(pair.Item1,pair.Item2);
+        seed.Parameters.AddWithValue("@ProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);
         await seed.ExecuteNonQueryAsync();
         await using(var daily=new SqlCommand("""
             INSERT reporting.SalesReportDailyTotals(BusinessId,BusinessLocalDate,CurrencyCode,DocumentCount,UnitsSold,UnitsReturned,
               GrossSales,Discounts,Returns,NetUntaxedSales,NetTax,NetTotalSales,NetRecognizedCost,GrossProfit,
               UnknownCostDocumentCount,CreditSales,Collected,Refunded,ProjectionVersion,UpdatedAt)
-            SELECT @Business,Date,N'COP',Documents,Sold,Returned,Gross,Discount,Returns,Net,Tax,Official,Cost,Profit,UnknownCost,0,Collected,Refunded,5,SYSDATETIMEOFFSET()
+            SELECT @Business,Date,N'COP',Documents,Sold,Returned,Gross,Discount,Returns,Net,Tax,Official,Cost,Profit,UnknownCost,0,Collected,Refunded,@ProjectionVersion,SYSDATETIMEOFFSET()
             FROM(VALUES
               (CONVERT(date,'20260901'),1,1,0,100,0,0,100,19,119,60,40,0,119,0),
               (CONVERT(date,'20261101'),1,3,0,330,10,0,320,41.8,400,180,140,0,400,0),
@@ -147,7 +148,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               (CONVERT(date,'20261103'),0,0,1,0,0,100,-100,-19,-119,-60,-40,0,0,119)
             ) v(Date,Documents,Sold,Returned,Gross,Discount,Returns,Net,Tax,Official,Cost,Profit,UnknownCost,Collected,Refunded);
             """,connection))
-        {daily.Parameters.AddWithValue("@Business",business);await daily.ExecuteNonQueryAsync();}
+        {daily.Parameters.AddWithValue("@Business",business);daily.Parameters.AddWithValue("@ProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);await daily.ExecuteNonQueryAsync();}
         var areaA=Guid.NewGuid();var areaB=Guid.NewGuid();var lineA=Guid.NewGuid();var lineB=Guid.NewGuid();
         var groupA=Guid.NewGuid();var groupB=Guid.NewGuid();var subgroupA=Guid.NewGuid();var subgroupB=Guid.NewGuid();
         var hierarchyA=System.Text.Json.JsonSerializer.Serialize(new {AreaId=areaA,AreaName="Área A",LineId=lineA,LineName="Línea A",GroupId=groupA,GroupName="Grupo A",SubgroupId=subgroupA,SubgroupName="Subgrupo A"});

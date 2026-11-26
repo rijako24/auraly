@@ -1,16 +1,19 @@
 import { apiClient } from "@/services/api/client";
 
-export interface PayrollEmploymentConfiguration { accountingProfileId:string|null;healthPartyId:string|null;pensionPartyId:string|null;severancePartyId:string|null;riskPartyId:string|null;compensationPartyId:string|null;costCenterId:string|null }
-export interface PayrollEmploymentConfigurationView { values:PayrollEmploymentConfiguration;profileName:string|null;costCenterName:string|null;healthName:string|null;pensionName:string|null;severanceName:string|null;riskName:string|null;compensationName:string|null }
+export interface PayrollEmploymentDetails {jobTitle:string|null;workSite:string|null;plannedEndDate:string|null;withdrawalReason:string|null;trialReviewDate:string|null;arlPilaCode:string|null;supervisorPartyId:string|null;vacationCutoffDate:string|null;vacationDaysUsed:number|null}
+export interface PayrollEmploymentConfiguration { details?:PayrollEmploymentDetails|null; accountingProfileId:string|null;healthPartyId:string|null;pensionPartyId:string|null;severancePartyId:string|null;riskPartyId:string|null;compensationPartyId:string|null;costCenterId:string|null }
+export interface PayrollEmploymentConfigurationView { supervisorName?:string|null; values:PayrollEmploymentConfiguration;profileName:string|null;costCenterName:string|null;healthName:string|null;pensionName:string|null;severanceName:string|null;riskName:string|null;compensationName:string|null }
 export interface PayrollProfileMapping { beneficiaryPartyId?:string|null;beneficiaryName?:string|null; mappingId:string;conceptId:string|null;debitAccountId:string|null;creditAccountId:string|null;effectiveFrom:string;effectiveTo:string|null;debitAccountLabel?:string|null;creditAccountLabel?:string|null }
-export interface PayrollProfile { profileId:string;code:string;name:string;ruleSetId:string;isActive:boolean;rowVersion:string;mappings:PayrollProfileMapping[] }
+export interface PayrollProfile { createdRuleSet?:PayrollRuleSet|null; profileId:string;code:string;name:string;ruleSetId:string;isActive:boolean;rowVersion:string;mappings:PayrollProfileMapping[] }
 export interface PayrollProfilePage { items:PayrollProfile[];page:number;pageSize:number;totalCount:number;totalPages:number }
-export type SavePayrollProfile = Omit<PayrollProfile,"rowVersion"> & {rowVersion:string|null};
+export type SavePayrollProfile = Omit<PayrollProfile,"rowVersion"|"createdRuleSet"> & {rowVersion:string|null;configuration?:SaveRuleSet|null};
 
 export interface PayrollCatalogOption { optionId:string;catalogCode:string;code:string;label:string;description:string|null;metadataCode:string|null;dianCode:string|null;isActive:boolean;sortOrder:number }
 export interface PayrollConcept { conceptId:string;code:string;name:string;natureCode:string;calculationMethodCode:string;treatmentCode:string;dianConceptCode:string|null;accountingCategoryCode:string;systemRoleCode:string|null;isSalaryBase:boolean;isSocialSecurityBase:boolean;isBenefitsBase:boolean;isTaxWithholdingBase:boolean;requiresDeductionAgreement:boolean;effectiveFrom:string;effectiveTo:string|null;isActive:boolean;rowVersion:string }
 export interface PayrollEmployment { configuration?:PayrollEmploymentConfigurationView|null; appliesTransportAllowance?:boolean; employmentId:string;partyId:string;businessId:string;contractNumber:string;employeeName:string;monthlySalary:number;isActive:boolean;employeeId:string|null;contractTypeOptionId:string;salaryTypeOptionId:string;payFrequencyOptionId:string;riskClassOptionId:string;workerTypeOptionId:string;workerSubtypeOptionId:string|null;paymentMethodOptionId:string;startDate:string;endDate:string|null;integralSalaryPercentage:number|null;bankAccountReference:string|null;bankOptionId:string|null;bankAccountTypeOptionId:string|null;bankAccountNumber:string|null;rowVersion:string }
 export interface PayrollEmploymentPage { items:PayrollEmployment[];page:number;pageSize:number;totalCount:number;totalPages:number }
+export interface PayrollCalculatedEmployeeRow {payrollRunEmployeeId:string;rowVersion:string;payrollRunId:string;employmentId:string;partyId:string;employeeName:string;identification:string|null;contractNumber:string|null;periodStart:string;periodEnd:string;status:string;workedDays:number;earnings:number;deductions:number;netPayable:number}
+export interface PayrollCalculatedEmployeePage {items:PayrollCalculatedEmployeeRow[];page:number;pageSize:number;totalCount:number}
 export interface PayrollParty { partyId:string;employeeId:string;identification:string;name:string }
 export interface PayrollRuleParameter { code:string;numericValue:number;unitCode:string;description:string|null }
 export interface PayrollRuleSet { isGlobal:boolean; ruleSetId:string;countryCode:string;code:string;name:string;effectiveFrom:string;effectiveTo:string|null;sourceReference:string;status:string;parameters:PayrollRuleParameter[];rowVersion:string }
@@ -18,15 +21,17 @@ export interface PayrollSettings { isEmployerExemptFromHealthSenaIcbf:boolean;el
 export interface FiscalIssuerOption { fiscalIssuerConfigurationId:string;version:number;legalName:string;softwareIdentificationCode:string;softwarePinSecretReference:string;environment:number;testSetId:string|null;isActive:boolean }
 export interface ElectronicPayrollConfiguration { businessId:string;fiscalIssuerConfigurationId:string;softwareIdentificationCode:string;softwarePinSecretReference:string;testSetId:string|null;prefix:string;nextConsecutive:number;qrValidationUrl:string;isActive:boolean;rowVersion:string }
 export interface PayrollDeductionAgreement { deductionAgreementId:string;employmentId:string;employeeName:string;conceptId:string;conceptName:string;authorityOptionId:string;beneficiaryPartyId:string|null;authorityName:string;referenceNumber:string;evidenceUrl:string;effectiveFrom:string;effectiveTo:string|null;authorizedTotal:number|null;installmentAmount:number|null;deductedToDate:number;priority:number;mustProtectMinimumNetPay:boolean;isActive:boolean;rowVersion:string }
-export interface PayrollNovelty { rowVersion?:string;reasonId?:string|null; noveltyId:string;employmentId:string;employeeName:string;conceptId:string;conceptName:string;noveltyTypeOptionId:string;noveltyTypeName:string;deductionAgreementId:string|null;startDate:string;endDate:string;quantity:number;unitAmount:number|null;totalAmount:number;notes:string|null;evidenceUrl:string|null;status:string }
+export interface PayrollNovelty { costCenterId?:string|null;costCenterName?:string|null;rowVersion?:string;reasonId?:string|null; noveltyId:string;employmentId:string;employeeName:string;conceptId:string;conceptName:string;noveltyTypeOptionId:string;noveltyTypeName:string;deductionAgreementId:string|null;startDate:string;endDate:string;quantity:number;unitAmount:number|null;totalAmount:number;notes:string|null;evidenceUrl:string|null;status:string }
 export interface PayrollPayableEmployee { payrollRunEmployeeId:string;paymentMethodOptionId:string;paymentMethodName:string;amount:number;bankDestinationComplete:boolean;employeeName:string }
 export interface PayrollPaymentBatch { accountingStatus?:string|null; isPaid?:boolean; paymentMethodId?:string|null; accountId?:string|null; remainingEmployees:PayrollPayableEmployee[]; paymentBatchId:string;payrollRunId:string;paymentDate:string;paymentMethodOptionId:string;paymentMethodName:string;referenceNumber:string;status:string;employeeCount:number;totalAmount:number;rowVersion:string }
 export interface PayrollReportColumn { key:string;label:string;format:"text"|"number"|"currency"|"date"|"datetime";align:"left"|"right" }
 export interface PayrollReportDefinition { code:string;name:string;description:string;dataset:string;columns:PayrollReportColumn[];sortOrder:number }
 export interface PayrollReportResult { definition:PayrollReportDefinition;from:string;to:string;rows:Array<Record<string,string|number|null>> }
-export interface PayrollOptions { catalogs:Record<string,PayrollCatalogOption[]>;concepts:PayrollConcept[];employments:PayrollEmployment[];parties:PayrollParty[];ruleSets:PayrollRuleSet[];settings:PayrollSettings|null;electronicConfiguration:ElectronicPayrollConfiguration|null;fiscalIssuers:FiscalIssuerOption[];deductionAgreements:PayrollDeductionAgreement[];novelties:PayrollNovelty[];paymentBatches:PayrollPaymentBatch[];electronicPeriods:ElectronicPayrollPeriod[] }
+export interface PayrollOptions {catalogs:Record<string,PayrollCatalogOption[]>;concepts:PayrollConcept[];settings:PayrollSettings|null;electronicConfiguration:ElectronicPayrollConfiguration|null;fiscalIssuers:FiscalIssuerOption[]}
+export interface PayrollHistoryPage<T> {items:T[];page:number;pageSize:number;totalCount:number;totalPages:number}
+export interface PayrollRunPage {items:PayrollRunSummary[];page:number;pageSize:number;totalCount:number;totalPages:number}
 export interface PayrollRunSummary { payrollRunId:string;runKind:string;periodStart:string;periodEnd:string;paymentDate:string;status:string;employeeCount:number;totalEarnings:number;totalDeductions:number;netPayable:number;rowVersion:string }
-export interface PayrollRunLine { payrollRunLineId?:string;noveltyId?:string|null;deductionAgreementId?:string|null; lineNumber:number;conceptId:string;conceptCode:string;conceptName:string;natureCode:string;dianConceptCode:string|null;accountingCategoryCode:string;quantity:number;rate:number|null;baseAmount:number|null;amount:number;isEmployerCost:boolean;isSalaryBase:boolean }
+export interface PayrollRunLine { costCenterName?:string|null;costCenterId?:string|null;notes?:string|null;evidenceUrl?:string|null;payrollRunLineId?:string;noveltyId?:string|null;deductionAgreementId?:string|null; lineNumber:number;conceptId:string;conceptCode:string;conceptName:string;natureCode:string;dianConceptCode:string|null;accountingCategoryCode:string;quantity:number;rate:number|null;baseAmount:number|null;amount:number;isEmployerCost:boolean;isSalaryBase:boolean }
 export interface PayrollConceptWorkedDays { conceptId:string;baseDays:number;workedDays:number }
 export interface PayrollRunEmployee { conceptWorkedDays?:PayrollConceptWorkedDays[];monthlySalary?:number|null;novelties?:PayrollNovelty[];identification?:string|null;contractNumber?:string|null;baseWorkedDays?:number|null;maximumContractDays?:number|null;periodDays?:number|null; payrollRunEmployeeId:string;employmentId:string;partyId:string;employeeName:string;workedDays:number;earnings:number;deductions:number;employerContributions:number;provisions:number;netPayable:number;lines:PayrollRunLine[] }
 export interface PayrollRun extends PayrollRunSummary { isPartialCalculation?:boolean; payableEmployees:PayrollPayableEmployee[]; businessId:string;ruleSetId:string|null;originalPayrollRunId:string|null;calculationVersion:number;totalEmployerContributions:number;totalProvisions:number;employees:PayrollRunEmployee[] }
@@ -36,11 +41,11 @@ export interface SaveConcept { conceptId:string;code:string;name:string;natureOp
 export interface SaveRuleSet { ruleSetId:string;countryCode:string;code:string;name:string;effectiveFrom:string;effectiveTo:string|null;sourceReference:string;parameters:Array<{code:string;numericValue:number;unitCode:string;description:string|null}>;rowVersion:string|null }
 export interface CreateRun { payrollRunId:string;businessId:string;payFrequencyOptionId:string;runKind:string;originalPayrollRunId:string|null;periodStart:string;periodEnd:string;paymentDate:string }
 export interface ElectronicPayrollDocument { electronicPayrollDocumentId:string;partyId:string;employeeName:string;documentKind:string;fiscalDocumentId:string|null;status:string;sourceHashHex:string }
-export interface ElectronicPayrollPeriod { electronicPeriodId:string;year:number;month:number;status:string;documents:ElectronicPayrollDocument[];rowVersion:string }
+export interface ElectronicPayrollPeriod { documentCount?:number; electronicPeriodId:string;year:number;month:number;status:string;documents:ElectronicPayrollDocument[];rowVersion:string }
 export interface GenerateElectronicPayrollPeriod { electronicPeriodId:string;businessId:string;year:number;month:number }
 export interface SaveElectronicPayrollConfiguration { businessId:string;fiscalIssuerConfigurationId:string;softwareIdentificationCode:string;softwarePinSecretReference:string;testSetId:string|null;prefix:string;nextConsecutive:number;qrValidationUrl:string;isActive:boolean;rowVersion:string|null }
 export interface SaveDeductionAgreement { deductionAgreementId:string;employmentId:string;conceptId:string;authorityOptionId:string;beneficiaryPartyId:string|null;referenceNumber:string;evidenceUrl:string;effectiveFrom:string;effectiveTo:string|null;authorizedTotal:number|null;installmentAmount:number|null;priority:number;mustProtectMinimumNetPay:boolean;isActive:boolean;rowVersion:string|null }
-export interface SavePayrollNovelty { rowVersion?:string|null; noveltyId:string;employmentId:string;conceptId:string;noveltyTypeOptionId:string;reasonId:string|null;deductionAgreementId:string|null;startDate:string;endDate:string;quantity:number;unitAmount:number|null;totalAmount:number;notes:string|null;evidenceUrl:string|null }
+export interface SavePayrollNovelty { costCenterId?:string|null;rowVersion?:string|null; noveltyId:string;employmentId:string;conceptId:string;noveltyTypeOptionId:string;reasonId:string|null;deductionAgreementId:string|null;startDate:string;endDate:string;quantity:number;unitAmount:number|null;totalAmount:number;notes:string|null;evidenceUrl:string|null }
 export interface CreatePayrollPayment { paymentMethodId?:string; paymentBatchId:string;payrollRunId:string;paymentMethodOptionId:string;paymentDate:string;referenceNumber:string }
 
 export interface PayrollRunEmploymentCandidate { employmentId:string;employeeName:string;identification:string;contractNumber:string;startDate:string;endDate:string|null;payFrequencyName:string;isSelected:boolean }
@@ -48,19 +53,25 @@ export interface PayrollRunEmploymentPage { items:PayrollRunEmploymentCandidate[
 export interface CalculatePayrollRun { recalculateEmploymentIds?:string[]; rowVersion?:string;selectAll?:boolean;selectionChanges?:Array<{employmentId:string;isSelected:boolean}>;workedDaysChanges?:Array<{employmentId:string;workedDays:number;conceptId?:string}> }
 
 export const payrollApi = {
-  profiles: (params:{page:number;pageSize:number;search?:string;isActive?:boolean}) => apiClient.get<PayrollProfilePage>("/commerce/v1/payroll/profiles",params),
+  profileRuleSets:(id:string,page:number,pageSize=20)=>apiClient.get<{items:PayrollRuleSet[];page:number;pageSize:number;totalCount:number}>(`/commerce/v1/payroll/profiles/${id}/rule-sets`,{page,pageSize}),
+  profiles: (params:{page:number;pageSize:number;search?:string;isActive?:boolean;sortBy?:"code"|"name"|"status";sortDirection?:"asc"|"desc"}) => apiClient.get<PayrollProfilePage>("/commerce/v1/payroll/profiles",params),
   profile: (id:string) => apiClient.get<PayrollProfile>(`/commerce/v1/payroll/profiles/${id}`),
   saveProfile: (request:SavePayrollProfile) => apiClient.put<PayrollProfile>(`/commerce/v1/payroll/profiles/${request.profileId}`,request),
   options: () => apiClient.get<PayrollOptions>("/commerce/v1/payroll/options"),
-  employments: (params:{page:number;pageSize:number;search?:string;isActive?:boolean;employmentId?:string}) => apiClient.get<PayrollEmploymentPage>("/commerce/v1/payroll/employments",params),
-  runs: () => apiClient.get<PayrollRunSummary[]>("/commerce/v1/payroll/runs"),
-  run: (id:string) => apiClient.get<PayrollRun>(`/commerce/v1/payroll/runs/${id}`),
+  employments: (params:{page:number;pageSize:number;search?:string;isActive?:boolean;employmentId?:string;partyId?:string}) => apiClient.get<PayrollEmploymentPage>("/commerce/v1/payroll/employments",params),
+  agreements: (params:{page:number;pageSize:number;employmentId?:string;conceptId?:string;active?:boolean;search?:string}) => apiClient.get<PayrollHistoryPage<PayrollDeductionAgreement>>("/commerce/v1/payroll/deduction-agreements",params),
+  payments: (page:number,pageSize=20) => apiClient.get<PayrollHistoryPage<PayrollPaymentBatch>>("/commerce/v1/payroll/payments",{page,pageSize}),
+  electronicPeriods: (page:number,pageSize=20) => apiClient.get<PayrollHistoryPage<ElectronicPayrollPeriod>>("/commerce/v1/payroll/electronic-periods",{page,pageSize}),
+  electronicDocuments: (id:string,page:number,pageSize=20) => apiClient.get<PayrollHistoryPage<ElectronicPayrollDocument>>(`/commerce/v1/payroll/electronic-periods/${id}/documents`,{page,pageSize}),
+  runs: (params:{page:number;pageSize:number;status?:string;kind?:string;search?:string}) => apiClient.get<PayrollRunPage>("/commerce/v1/payroll/runs",params),
+  run: (id:string,employmentId?:string) => apiClient.get<PayrollRun>(`/commerce/v1/payroll/runs/${id}${employmentId?`?employmentId=${encodeURIComponent(employmentId)}`:""}`),
+  calculatedEmployees:(params:{page:number;pageSize:number;from:string;to:string;search?:string})=>apiClient.get<PayrollCalculatedEmployeePage>(`/commerce/v1/payroll/calculated-employees?${new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)]))}`),
   createRun: (request:CreateRun) => apiClient.post<PayrollRun>("/commerce/v1/payroll/runs",request),
   runEmployments: (id:string,params:{page:number;pageSize:number;search?:string;contractNumber?:string;sortBy?:string;sortDirection?:"asc"|"desc"}) => apiClient.get<PayrollRunEmploymentPage>(`/commerce/v1/payroll/runs/${id}/employments`,params),
   calculateRun: (id:string,request:CalculatePayrollRun={}) => apiClient.post<PayrollRun>(`/commerce/v1/payroll/runs/${id}/calculate`,request),
   approveRun: (id:string,rowVersion:string,key:string) => apiClient.postIdempotent(`/commerce/v1/payroll/runs/${id}/approve`,{rowVersion},key),
   saveEmployment: (request:SaveEmployment) => apiClient.put<PayrollEmployment>(`/commerce/v1/payroll/employments/${request.employmentId}`,request),
-  saveConcept: (request:SaveConcept) => apiClient.put(`/commerce/v1/payroll/concepts/${request.conceptId}`,request),
+  saveConcept: (request:SaveConcept) => apiClient.put<PayrollConcept>(`/commerce/v1/payroll/concepts/${request.conceptId}`,request),
   saveRuleSet: (request:SaveRuleSet) => apiClient.put<PayrollRuleSet>(`/commerce/v1/payroll/rule-sets/${request.ruleSetId}`,request),
   approveRuleSet: (id:string,rowVersion:string) => apiClient.post<PayrollRuleSet>(`/commerce/v1/payroll/rule-sets/${id}/approve`,{rowVersion}),
   retireRuleSet: (id:string,rowVersion:string) => apiClient.post<PayrollRuleSet>(`/commerce/v1/payroll/rule-sets/${id}/retire`,{rowVersion}),
@@ -78,6 +89,6 @@ export const payrollApi = {
   voidNovelty: (id:string,rowVersion:string) => apiClient.post<PayrollNovelty>(`/commerce/v1/payroll/novelties/${id}/void`,{rowVersion}),
   createPayment: (request:CreatePayrollPayment) => apiClient.post<PayrollPaymentBatch>("/commerce/v1/payroll/payments",request),
   reportDefinitions: () => apiClient.get<PayrollReportDefinition[]>("/commerce/v1/payroll/reports/definitions"),
-  report: (code:string,from:string,to:string,partyId?:string) =>
-    apiClient.get<PayrollReportResult>(`/commerce/v1/payroll/reports/${encodeURIComponent(code)}`,{from,to,partyId}),
+  report: (code:string,from:string,to:string,partyId?:string,employeeResultId?:string) =>
+    apiClient.get<PayrollReportResult>(`/commerce/v1/payroll/reports/${encodeURIComponent(code)}`,{from,to,partyId,employeeResultId}),
 };

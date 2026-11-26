@@ -68,7 +68,7 @@ public sealed partial class PayrollVerticalSliceTests
         var detail=await GetAsync<PayrollRunView>(client,$"/api/commerce/v1/payroll/runs/{run.PayrollRunId}");
         Assert.All(detail.Employees,employee=>Assert.All(employee.Novelties,novelty=>Assert.Equal(employee.EmploymentId,novelty.EmploymentId)));
         Assert.DoesNotContain(detail.Employees.SelectMany(employee=>employee.Novelties),novelty=>novelty.NoveltyId==future.NoveltyId);
-        Assert.Empty((await GetAsync<PayrollWorkspaceOptions>(client,"/api/commerce/v1/payroll/options")).Novelties);
+        Assert.DoesNotContain("\"novelties\":",await client.GetStringAsync("/api/commerce/v1/payroll/options"));
         return detail;
     }
 
@@ -97,6 +97,28 @@ public sealed partial class PayrollVerticalSliceTests
         var unaffected=full.Employees.Where(value=>value.EmploymentId!=employmentId).ToDictionary(value=>value.EmploymentId);
         var current=full;var samples=new List<double>();var sqlSamples=new List<double[]>();
         var database=new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        var pageSamples=new List<double>();var pageIdentities=new List<Guid>();
+        for(var sample=0;sample<20;sample++)
+        {
+            using var commands=new InventoryBalanceProcessingTests.CommandCounter(database);
+            var watch=Stopwatch.StartNew();
+            var page=await service.PageCalculatedEmployeesAsync(user,sample%2+1,50,initial.PeriodStart,initial.PeriodEnd,null);
+            pageSamples.Add(watch.Elapsed.TotalMilliseconds);
+            Assert.Equal(1,commands.Count);Assert.Equal(500,page.TotalCount);Assert.Equal(50,page.Items.Count);
+            if(sample<2)pageIdentities.AddRange(page.Items.Select(row=>row.EmploymentId));
+        }
+        Assert.Equal(100,pageIdentities.Distinct().Count());
+        var pageP95=pageSamples.Order().ElementAt(18);
+        Assert.True(pageP95<1000,$"La bandeja de novedades superó su presupuesto: {pageP95:F1} ms.");
+        await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory,"payroll-calculated-page-performance.json"),
+            JsonSerializer.Serialize(new{workers=500,pageSize=50,commands=1,p95=pageP95,samples=pageSamples}));
+        using(var commands=new InventoryBalanceProcessingTests.CommandCounter(database))
+        {
+            var partial=await store.GetRunAsync(user,initial.PayrollRunId,CancellationToken.None,employmentId);
+            Assert.Equal(1,commands.Count);Assert.Equal(employmentId,Assert.Single(partial.Employees).EmploymentId);Assert.True(partial.IsPartialCalculation);
+        }
+        Assert.Empty((await service.PageCalculatedEmployeesAsync(user with{TenantId=Guid.NewGuid()},1,20,initial.PeriodStart,initial.PeriodEnd,null)).Items);
+        Assert.Empty((await service.PageCalculatedEmployeesAsync(user with{BusinessId=Guid.NewGuid()},1,20,initial.PeriodStart,initial.PeriodEnd,null)).Items);
         for(var index=0;index<20;index++)
         {
             var days=index%2==0?25:28;

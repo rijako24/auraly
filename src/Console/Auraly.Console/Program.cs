@@ -74,6 +74,14 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
+// Release metadata comes from the same compiled projection owner. This command
+// requires no connection, configuration, credentials or database access.
+if(args is ["reporting-projection-version"])
+{
+    Console.WriteLine(Auraly.Infrastructure.Persistence.SqlSalesReportingProjectionWriter.ProjectionVersion);
+    return;
+}
+
 var environmentConfiguration = new Dictionary<string, string?>();
 
 AddEnvironmentOverride(environmentConfiguration, "ConnectionStrings:DefaultConnection", "ConnectionStrings__DefaultConnection");

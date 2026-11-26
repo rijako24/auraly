@@ -557,18 +557,26 @@ CREATE TABLE [dbo].[AccountingEntryLines]
     -- Frozen with the journal line. Historical lines remain unknown, not zero.
     [BaseAmount] DECIMAL(19,4) NULL,
     [SourceLineId] UNIQUEIDENTIFIER NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [CK_AccountingEntryLines_SourceIdentity] CHECK ([SourceLineId] IS NULL OR [SourceLineId]<>'00000000-0000-0000-0000-000000000000'),
     CONSTRAINT [PK_AccountingEntryLines] PRIMARY KEY CLUSTERED ([EntryId],[LineNumber]),
     CONSTRAINT [FK_AccountingEntryLines_Entry] FOREIGN KEY ([EntryId]) REFERENCES [dbo].[AccountingEntries]([EntryId]),
     CONSTRAINT [FK_AccountingEntryLines_Account] FOREIGN KEY ([AccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
     CONSTRAINT [FK_AccountingEntryLines_Party] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties]([PartyId]),
     CONSTRAINT [FK_AccountingEntryLines_CostCenter] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
+    CONSTRAINT [FK_AccountingEntryLines_Bank] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts]([BankAccountId]),
     CONSTRAINT [CK_AccountingEntryLines_Number] CHECK ([LineNumber]>0),
     CONSTRAINT [CK_AccountingEntryLines_Side] CHECK (([Debit]>0 AND [Credit]=0) OR ([Credit]>0 AND [Debit]=0))
 );
 GO
 CREATE INDEX [IX_AccountingEntryLines_Account_Entry]
-    ON [dbo].[AccountingEntryLines]([AccountId],[EntryId]) INCLUDE([Debit],[Credit],[PartyId],[CostCenterId],[BaseAmount]);
+    ON [dbo].[AccountingEntryLines]([AccountId],[EntryId]) INCLUDE([Debit],[Credit],[PartyId],[CostCenterId],[BaseAmount],[BankAccountId]);
+GO
+CREATE INDEX IX_AccountingEntryLines_Bank_Entry ON dbo.AccountingEntryLines(BankAccountId,EntryId)
+    INCLUDE(AccountId,Debit,Credit) WHERE BankAccountId IS NOT NULL;
+GO
+CREATE INDEX IX_AccountingEntryLines_Account_Bank ON dbo.AccountingEntryLines(AccountId,BankAccountId)
+    WHERE BankAccountId IS NOT NULL;
 GO
 CREATE INDEX [IX_AccountingEntryLines_Party_Entry]
     ON [dbo].[AccountingEntryLines]([PartyId],[EntryId]) WHERE [PartyId] IS NOT NULL;

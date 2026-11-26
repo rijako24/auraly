@@ -25,7 +25,7 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
     }
 
     public async Task<PayrollReportResult> RunAsync(PayrollUserIdentity user,
-        string code, DateOnly from, DateOnly to, Guid? partyId, CancellationToken ct)
+        string code, DateOnly from, DateOnly to, Guid? partyId, CancellationToken ct,Guid? employeeResultId=null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -43,14 +43,16 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
             definition = ReadDefinition(reader);
         }
 
+        if(employeeResultId.HasValue&&definition.Dataset!=PayrollReportDataset.PayrollReceipt)
+            throw new PayrollValidationException("La consulta individual corresponde al desprendible laboral.");
         await using var command = new SqlCommand(Sql(definition.Dataset), connection);
+        command.Parameters.AddWithValue("@EmployeeResultId",(object?)employeeResultId??DBNull.Value);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@PartyId", (object?)partyId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@TaxWithholdingRole",
-            PayrollSystemConceptRoleCodes.LaborWithholding);
+        command.Parameters.AddWithValue("@TaxWithholdingCategory",PayrollAccountingCategories.WithholdingPayable);
         var rows = new List<IReadOnlyDictionary<string, object?>>();
         await using var data = await command.ExecuteReaderAsync(ct);
         while (await data.ReadAsync(ct))
@@ -107,8 +109,8 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
 
     private const string SummarySql = """
         SELECT re.PayrollRunEmployeeId [id],re.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.EmployeeName') [employeeName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Identification') [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
           re.WorkedDays [workedDays],re.Earnings [earnings],re.Deductions [deductions],
           re.NetPayable [netPayable],
           CASE WHEN EXISTS(SELECT 1 FROM payroll.PaymentLines pl JOIN payroll.PaymentBatchPostingStatus pb
@@ -121,7 +123,6 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
               AND EOMONTH(DATEFROMPARTS(ep.Year,ep.Month,1))>=r.PeriodStart
             ORDER BY d.CreatedAt DESC),N'Pending') [electronicStatus]
         FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
-        JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=r.TenantId
         WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.Status=N'Approved'
           AND r.PeriodEnd>=@From AND r.PeriodStart<=@To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
         ORDER BY r.PeriodEnd DESC,[employeeName];
@@ -129,30 +130,39 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
 
     private const string ConceptSql = """
         SELECT l.PayrollRunLineId [id],re.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.EmployeeName') [employeeName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Identification') [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
           l.ConceptCode [conceptCode],l.ConceptName [conceptName],l.NatureCode [nature],
           l.Quantity [quantity],l.BaseAmount [baseAmount],l.Rate [rate],l.Amount [amount]
         FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
         JOIN payroll.RunLines l ON l.PayrollRunEmployeeId=re.PayrollRunEmployeeId
-        JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=r.TenantId
         WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.Status=N'Approved'
           AND r.PeriodEnd>=@From AND r.PeriodStart<=@To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
         """;
 
     private const string ReceiptSql = """
         SELECT l.PayrollRunLineId [id],re.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],e.ContractNumber [contractNumber],
-          r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],r.PaymentDate [paymentDate],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.EmployeeName') [employeeName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Identification') [identification],JSON_VALUE(re.EmployeeSnapshotJson,'$.ContractNumber') [contractNumber],
+          r.Status [runStatus],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],r.PaymentDate [paymentDate],CASE WHEN posting.IsPaid=1 THEN payment.PaymentDate END [paidDate],
+          TRY_CONVERT(decimal(19,4),JSON_VALUE(re.EmployeeSnapshotJson,'$.MonthlySalary')) [monthlySalary],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Configuration.ProfileName') [profileName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Configuration.CostCenterName') [costCenterName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Configuration.HealthName') [healthName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Configuration.PensionName') [pensionName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Configuration.Values.Details.JobTitle') [jobTitle],
+          re.PayrollRunEmployeeId [payrollRunEmployeeId],re.EmploymentId [employmentId],r.PayrollRunId [payrollRunId],
           re.WorkedDays [workedDays],l.ConceptCode [conceptCode],l.ConceptName [conceptName],
           l.NatureCode [nature],l.Quantity [quantity],l.Amount [amount],
+          l.CostCenterName [lineCostCenterName],l.Notes [notes],l.EvidenceUrl [evidenceUrl],
           re.Earnings [earnings],re.Deductions [deductions],re.NetPayable [netPayable]
         FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
         JOIN payroll.RunLines l ON l.PayrollRunEmployeeId=re.PayrollRunEmployeeId
-        JOIN payroll.Employments e ON e.EmploymentId=re.EmploymentId AND e.TenantId=r.TenantId
-        JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=r.TenantId
-        WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.Status=N'Approved'
+        LEFT JOIN payroll.PaymentLines paid ON paid.PayrollRunEmployeeId=re.PayrollRunEmployeeId
+        LEFT JOIN payroll.PaymentBatches payment ON payment.PaymentBatchId=paid.PaymentBatchId AND payment.TenantId=r.TenantId AND payment.BusinessId=r.BusinessId
+        LEFT JOIN payroll.PaymentBatchPostingStatus posting ON posting.PaymentBatchId=payment.PaymentBatchId AND posting.TenantId=payment.TenantId AND posting.BusinessId=payment.BusinessId
+        WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND (r.Status=N'Approved' OR @EmployeeResultId IS NOT NULL AND r.Status=N'Calculated')
+          AND (@EmployeeResultId IS NULL OR re.PayrollRunEmployeeId=@EmployeeResultId)
           AND r.PeriodEnd>=@From AND r.PeriodStart<=@To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
         ORDER BY r.PeriodEnd DESC,[employeeName],l.LineNumber;
         """;
@@ -162,12 +172,11 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
 
     private const string LaborCostSql = """
         SELECT re.PayrollRunEmployeeId [id],re.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.EmployeeName') [employeeName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Identification') [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
           re.Earnings [earnings],re.EmployerContributions [employerContributions],
           re.Provisions [provisions],re.Earnings+re.EmployerContributions+re.Provisions [totalLaborCost]
         FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
-        JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=r.TenantId
         WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.Status=N'Approved'
           AND r.PeriodEnd>=@From AND r.PeriodStart<=@To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
         ORDER BY r.PeriodEnd DESC,[employeeName];
@@ -175,14 +184,13 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
 
     private const string PaymentsSql = """
         SELECT pl.PaymentLineId [id],re.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],b.PaymentDate [paymentDate],COALESCE(b.PaymentMethodName,o.Label) [paymentMethod],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.EmployeeName') [employeeName],
+          JSON_VALUE(re.EmployeeSnapshotJson,'$.Identification') [identification],b.PaymentDate [paymentDate],COALESCE(b.PaymentMethodName,o.Label) [paymentMethod],
           b.ReferenceNumber [paymentReference],pl.Amount [amount],posting.AccountingStatus [status]
         FROM payroll.PaymentBatches b JOIN payroll.PaymentBatchPostingStatus posting
           ON posting.PaymentBatchId=b.PaymentBatchId AND posting.TenantId=b.TenantId AND posting.BusinessId=b.BusinessId AND posting.IsPaid=1
         JOIN payroll.PaymentLines pl ON pl.PaymentBatchId=b.PaymentBatchId
         JOIN payroll.RunEmployees re ON re.PayrollRunEmployeeId=pl.PayrollRunEmployeeId
-        JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=b.TenantId
         JOIN payroll.CatalogOptions o ON o.OptionId=b.PaymentMethodOptionId
         WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
           AND b.PaymentDate BETWEEN @From AND @To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
@@ -191,13 +199,12 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
 
     private const string ElectronicSql = """
         SELECT d.ElectronicPayrollDocumentId [id],d.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],CONCAT(ep.Year,N'-',RIGHT(CONCAT(N'0',ep.Month),2)) [period],
+          JSON_VALUE(d.SourceSnapshotJson,'$.employeeName') [employeeName],
+          JSON_VALUE(d.SourceSnapshotJson,'$.employeeIdentification') [identification],CONCAT(ep.Year,N'-',RIGHT(CONCAT(N'0',ep.Month),2)) [period],
           d.DocumentKind [documentKind],d.Status [payrollStatus],fd.FiscalStatus [fiscalStatus],
           process.TrackId [trackId],d.CreatedAt [createdAt]
         FROM payroll.ElectronicDocuments d JOIN payroll.ElectronicPeriods ep
           ON ep.ElectronicPeriodId=d.ElectronicPeriodId
-        JOIN dbo.Parties p ON p.PartyId=d.PartyId AND p.TenantId=d.TenantId
         LEFT JOIN dbo.FiscalDocuments fd ON fd.DocumentId=d.FiscalDocumentId
         LEFT JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=d.FiscalDocumentId
         WHERE d.TenantId=@TenantId AND d.BusinessId=@BusinessId
@@ -207,20 +214,21 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
         """;
 
     private const string IncomeWithholdingSql = """
-        SELECT re.PartyId [id],re.PartyId [partyId],
-          COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],MIN(r.PeriodStart) [periodStart],MAX(r.PeriodEnd) [periodEnd],
-          SUM(CASE WHEN l.NatureCode=N'Earning' THEN l.Amount ELSE 0 END) [employmentIncome],
-          SUM(CASE WHEN role.Code=@TaxWithholdingRole THEN l.Amount ELSE 0 END) [withholding],
-          SUM(CASE WHEN l.NatureCode=N'Deduction' THEN l.Amount ELSE 0 END) [totalDeductions]
-        FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
-        JOIN payroll.RunLines l ON l.PayrollRunEmployeeId=re.PayrollRunEmployeeId
-        JOIN payroll.Concepts c ON c.ConceptId=l.ConceptId
-        LEFT JOIN payroll.CatalogOptions role ON role.OptionId=c.SystemRoleOptionId
-        JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=r.TenantId
-        WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.Status=N'Approved'
-          AND r.PeriodEnd>=@From AND r.PeriodStart<=@To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
-        GROUP BY re.PartyId,p.DisplayName,p.LegalName,p.FirstName,p.LastName,p.Identification
-        ORDER BY [employeeName];
+        WITH PeriodLines AS(
+          SELECT re.PartyId,r.PeriodStart,r.PeriodEnd,l.NatureCode,l.Amount,l.AccountingCategoryCode,
+            JSON_VALUE(re.EmployeeSnapshotJson,'$.EmployeeName') EmployeeName,
+            JSON_VALUE(re.EmployeeSnapshotJson,'$.Identification') Identification,
+            DENSE_RANK() OVER(PARTITION BY re.PartyId ORDER BY r.PeriodEnd DESC,r.PeriodStart DESC,r.PayrollRunId DESC) SourceOrder
+          FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
+          JOIN payroll.RunLines l ON l.PayrollRunEmployeeId=re.PayrollRunEmployeeId
+          WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.Status=N'Approved'
+            AND r.PeriodEnd>=@From AND r.PeriodStart<=@To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
+        )
+        SELECT PartyId [id],PartyId [partyId],MAX(CASE WHEN SourceOrder=1 THEN EmployeeName END) [employeeName],
+          MAX(CASE WHEN SourceOrder=1 THEN Identification END) [identification],MIN(PeriodStart) [periodStart],MAX(PeriodEnd) [periodEnd],
+          SUM(CASE WHEN NatureCode=N'Earning' THEN Amount ELSE 0 END) [employmentIncome],
+          SUM(CASE WHEN AccountingCategoryCode=@TaxWithholdingCategory THEN Amount ELSE 0 END) [withholding],
+          SUM(CASE WHEN NatureCode=N'Deduction' THEN Amount ELSE 0 END) [totalDeductions]
+        FROM PeriodLines GROUP BY PartyId ORDER BY [employeeName];
         """;
 }

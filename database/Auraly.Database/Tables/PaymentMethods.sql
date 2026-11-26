@@ -6,6 +6,7 @@ CREATE TABLE [reference].[PaymentMethods]
     [Name] nvarchar(160) NOT NULL,
     [PaymentTypeId] uniqueidentifier NOT NULL,
     [AccountId] uniqueidentifier NOT NULL,
+    [BankAccountId] uniqueidentifier NULL,
     [UseForSales] bit NOT NULL,
     [UseForReceipts] bit NOT NULL,
     [UseForSupplierPayments] bit NOT NULL,
@@ -24,9 +25,15 @@ CREATE TABLE [reference].[PaymentMethods]
     CONSTRAINT [FK_PaymentMethods_Tenant] FOREIGN KEY ([TenantId]) REFERENCES dbo.Tenants(TenantId),
     CONSTRAINT [FK_PaymentMethods_Type] FOREIGN KEY ([PaymentTypeId]) REFERENCES reference.Options(OptionId),
     CONSTRAINT [FK_PaymentMethods_Account] FOREIGN KEY ([TenantId],[AccountId]) REFERENCES dbo.AccountingAccounts(TenantId,AccountId),
+    CONSTRAINT [FK_PaymentMethods_Bank] FOREIGN KEY ([TenantId],[BankAccountId]) REFERENCES accounting.BankAccounts(TenantId,BankAccountId),
     CONSTRAINT [CK_PaymentMethods_Values] CHECK (LEN(LTRIM(RTRIM(Code)))>0 AND LEN(LTRIM(RTRIM(Name)))>0 AND SortOrder>=0 AND Version>0)
 );
 GO
 CREATE INDEX IX_PaymentMethods_Active ON reference.PaymentMethods(TenantId,IsActive,SortOrder,PaymentMethodId)
-    INCLUDE(Code,Name,PaymentTypeId,AccountId,UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers);
+    INCLUDE(Code,Name,PaymentTypeId,AccountId,BankAccountId,UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers);
+GO
+CREATE INDEX IX_PaymentMethods_Account_Bank ON reference.PaymentMethods(TenantId,AccountId,BankAccountId) INCLUDE(IsActive,PaymentTypeId);
+GO
+CREATE INDEX IX_PaymentMethods_Bank_Account ON reference.PaymentMethods(TenantId,BankAccountId,AccountId)
+    INCLUDE(IsActive,PaymentTypeId) WHERE BankAccountId IS NOT NULL;
 GO

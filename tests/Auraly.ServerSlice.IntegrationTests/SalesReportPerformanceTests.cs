@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Xml.Linq;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -44,7 +45,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
               RecognizedCostAmount,ProjectionVersion,SourcePayloadHash,ProjectedAt,ProductQuantity)
             SELECT Id,@Tenant,@Business,N'SalesInvoice',CONCAT(N'PERF-',Seq),CONVERT(datetimeoffset,Date),Date,N'UTC',@Warehouse,
               N'Bodega',N'Sin vendedor',Customer,CONCAT(N'ID-',Seq%2000),CONCAT(N'Cliente ',Seq%2000),N'Online',
-              1000,0,1000,190,1200,10,0,1200,600,5,HASHBYTES('SHA2_256',N'performance fixture'),SYSDATETIMEOFFSET(),10 FROM #Documents;
+              1000,0,1000,190,1200,10,0,1200,600,@ProjectionVersion,HASHBYTES('SHA2_256',N'performance fixture'),SYSDATETIMEOFFSET(),10 FROM #Documents;
             RAISERROR(N'Benchmark seed: documents complete',10,1) WITH NOWAIT;
             INSERT reporting.SalesReportPaymentFacts(SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
               BusinessLocalDate,MovementType,MethodCode,Amount,ProjectedAt)
@@ -73,7 +74,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             SELECT CONVERT(uniqueidentifier,SUBSTRING(CONVERT(binary(16),@Business),1,10)+CONVERT(binary(6),CONVERT(bigint,d.Seq)*16+line.Number)),
               @Tenant,@Business,d.Id,N'SalesInvoice',line.Number,d.Id,line.Number,N'Sale',CONVERT(datetimeoffset,d.Date),d.Date,
               @Warehouse,d.Customer,p.ProductId,p.ProductCode,p.ProductName,p.CategoryId,p.CategoryName,
-              p.SupplierId,p.SupplierName,w.WaiterId,w.WaiterName,N'EA',N'IVA',19,1,100,0,100,19,119,60,1,5,SYSDATETIMEOFFSET()
+              p.SupplierId,p.SupplierName,w.WaiterId,w.WaiterName,N'EA',N'IVA',19,1,100,0,100,19,119,60,1,@ProjectionVersion,SYSDATETIMEOFFSET()
             FROM #Documents d CROSS JOIN(VALUES(1),(2),(3),(4),(5),(6),(7),(8),(9),(10)) line(Number)
             JOIN #SeedProducts p ON p.Slot=(d.Seq+line.Number)%1000
             JOIN #SeedWaiters w ON w.Slot=line.Number%5
@@ -87,7 +88,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             INSERT reporting.SalesReportDailyTotals(BusinessId,BusinessLocalDate,CurrencyCode,DocumentCount,UnitsSold,UnitsReturned,
               GrossSales,Discounts,Returns,NetUntaxedSales,NetTax,NetTotalSales,NetRecognizedCost,GrossProfit,CreditSales,Collected,Refunded,ProjectionVersion,UpdatedAt)
             SELECT @Business,Date,N'COP',COUNT_BIG(*),COUNT_BIG(*)*10,0,COUNT_BIG(*)*1000,0,0,COUNT_BIG(*)*1000,
-              COUNT_BIG(*)*190,COUNT_BIG(*)*1200,COUNT_BIG(*)*600,COUNT_BIG(*)*400,0,COUNT_BIG(*)*1200,0,5,SYSDATETIMEOFFSET()
+              COUNT_BIG(*)*190,COUNT_BIG(*)*1200,COUNT_BIG(*)*600,COUNT_BIG(*)*400,0,COUNT_BIG(*)*1200,0,@ProjectionVersion,SYSDATETIMEOFFSET()
             FROM #Documents GROUP BY Date;
             SELECT Id OriginalId,NEWID() Id,CASE WHEN Date<'20261104' THEN DATEADD(day,1,Date) ELSE Date END Date
             INTO #Returns FROM #Documents WHERE Seq%20=0;
@@ -97,7 +98,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
               Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RecognizedCostAmount,CostAvailable,ProjectionVersion,ProjectedAt)
             SELECT NEWID(),@Tenant,@Business,r.Id,N'SalesReturn',1,r.OriginalId,1,N'Return',CONVERT(datetimeoffset,r.Date),r.Date,
               f.WarehouseId,f.CustomerId,f.ProductId,f.ProductCode,f.ProductName,f.CategoryId,f.CategoryName,f.SupplierId,f.SupplierName,
-              f.WaiterPartyId,f.WaiterName,f.UnitCode,f.TaxCode,f.TaxRate,-1,-100,0,-100,-19,-119,-60,1,5,SYSDATETIMEOFFSET()
+              f.WaiterPartyId,f.WaiterName,f.UnitCode,f.TaxCode,f.TaxRate,-1,-100,0,-100,-19,-119,-60,1,@ProjectionVersion,SYSDATETIMEOFFSET()
             FROM #Returns r JOIN reporting.SalesReportLineFacts f ON f.SourceDocumentId=r.OriginalId AND f.SourceDocumentType=N'SalesInvoice' AND f.SourceLineNumber=1;
             INSERT reporting.SalesReportTaxFacts(SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,TaxCode,TaxRate,
               TenantId,BusinessId,BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt,OccurredAt,OfficialDocumentTotalAmount)
@@ -110,7 +111,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             FROM reporting.SalesReportDailyTotals daily JOIN(SELECT Date,COUNT(*) Count FROM #Returns GROUP BY Date) returned
               ON returned.Date=daily.BusinessLocalDate WHERE daily.BusinessId=@Business;
             INSERT reporting.SalesReportingCheckpoints(BusinessId,ProjectionVersion,LastSourceDocumentId,LastSourceDocumentType,LastProjectedAt)
-            SELECT TOP(1) @Business,5,Id,N'SalesInvoice',SYSDATETIMEOFFSET() FROM #Documents;
+            SELECT TOP(1) @Business,@ProjectionVersion,Id,N'SalesInvoice',SYSDATETIMEOFFSET() FROM #Documents;
             RAISERROR(N'Benchmark seed: returns and daily totals complete',10,1) WITH NOWAIT;
             UPDATE STATISTICS reporting.SalesReportDocuments WITH FULLSCAN;
             UPDATE STATISTICS reporting.SalesReportLineFacts WITH FULLSCAN;
@@ -119,7 +120,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
         {
             connection.InfoMessage+=(_,message)=>output.WriteLine(message.Message);
             seed.Parameters.AddWithValue("@Business",business);seed.Parameters.AddWithValue("@Tenant",fixture.TenantId);
-            seed.Parameters.AddWithValue("@Warehouse",warehouse);seed.CommandTimeout=600;await seed.ExecuteNonQueryAsync();
+            seed.Parameters.AddWithValue("@Warehouse",warehouse);seed.Parameters.AddWithValue("@ProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);seed.CommandTimeout=600;await seed.ExecuteNonQueryAsync();
         }
         using var scope=fixture.CreateScope();var reports=scope.ServiceProvider.GetRequiredService<SalesReportingService>();
         var user=new SalesReportingUserIdentity(fixture.UserId,fixture.TenantId,business,

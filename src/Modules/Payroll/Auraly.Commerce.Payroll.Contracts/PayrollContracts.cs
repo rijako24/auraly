@@ -51,6 +51,7 @@ public static class PayrollPaymentLimits
 public static class PayrollAccountingCategories
 {
     public const string NetPayable = "NetPayrollPayable";
+    public const string WithholdingPayable = "PayrollWithholdingPayable";
 }
 
 public static class PayrollSystemConceptRoleCodes
@@ -75,19 +76,20 @@ public sealed record PayrollCatalogOption(
     bool IsActive,
     int SortOrder);
 
+public sealed record PayrollRuleSetPage(IReadOnlyList<PayrollRuleSetView> Items,int Page,int PageSize,int TotalCount);
+
+public sealed record PayrollCalculatedEmployeeRow(Guid PayrollRunId,Guid EmploymentId,Guid PartyId,
+    string EmployeeName,string? Identification,string? ContractNumber,DateOnly PeriodStart,DateOnly PeriodEnd,
+    string Status,decimal WorkedDays,decimal Earnings,decimal Deductions,decimal NetPayable,Guid PayrollRunEmployeeId,byte[] RowVersion);
+public sealed record PayrollCalculatedEmployeePage(IReadOnlyList<PayrollCalculatedEmployeeRow> Items,
+    int Page,int PageSize,int TotalCount);
+
 public sealed record PayrollWorkspaceOptions(
-    IReadOnlyDictionary<string, IReadOnlyList<PayrollCatalogOption>> Catalogs,
+    IReadOnlyDictionary<string,IReadOnlyList<PayrollCatalogOption>> Catalogs,
     IReadOnlyList<PayrollConceptView> Concepts,
-    IReadOnlyList<PayrollEmploymentOption> Employments,
-    IReadOnlyList<PayrollPartyOption> Parties,
-    IReadOnlyList<PayrollRuleSetView> RuleSets,
     PayrollSettingsView? Settings,
     ElectronicPayrollConfigurationView? ElectronicConfiguration,
-    IReadOnlyList<FiscalIssuerOption> FiscalIssuers,
-    IReadOnlyList<PayrollDeductionAgreementSummary> DeductionAgreements,
-    IReadOnlyList<PayrollNoveltyView> Novelties,
-    IReadOnlyList<PayrollPaymentBatchView> PaymentBatches,
-    IReadOnlyList<ElectronicPayrollPeriodView> ElectronicPeriods);
+    IReadOnlyList<FiscalIssuerOption> FiscalIssuers);
 
 public sealed record FiscalIssuerOption(
     Guid FiscalIssuerConfigurationId,
@@ -123,12 +125,6 @@ public sealed record SaveElectronicPayrollConfigurationRequest(
     bool IsActive,
     byte[]? RowVersion);
 
-public sealed record PayrollPartyOption(
-    Guid PartyId,
-    Guid EmployeeId,
-    string Identification,
-    string Name);
-
 public sealed record PayrollEmploymentOption(
     Guid EmploymentId,
     Guid PartyId,
@@ -160,11 +156,21 @@ public sealed record PayrollEmploymentOption(
 
 public sealed record PayrollEmploymentConfiguration(
     Guid? AccountingProfileId,Guid? HealthPartyId,Guid? PensionPartyId,
-    Guid? SeverancePartyId,Guid? RiskPartyId,Guid? CompensationPartyId,Guid? CostCenterId);
+    Guid? SeverancePartyId,Guid? RiskPartyId,Guid? CompensationPartyId,Guid? CostCenterId)
+{
+    public PayrollEmploymentDetails? Details { get; init; }
+}
+
+public sealed record PayrollEmploymentDetails(string? JobTitle,string? WorkSite,DateOnly? PlannedEndDate,
+    string? WithdrawalReason,DateOnly? TrialReviewDate,string? ArlPilaCode,Guid? SupervisorPartyId,
+    DateOnly? VacationCutoffDate,decimal? VacationDaysUsed);
 
 public sealed record PayrollEmploymentConfigurationView(
     PayrollEmploymentConfiguration Values,string? ProfileName,string? CostCenterName,
-    string? HealthName,string? PensionName,string? SeveranceName,string? RiskName,string? CompensationName);
+    string? HealthName,string? PensionName,string? SeveranceName,string? RiskName,string? CompensationName)
+{
+    public string? SupervisorName { get; init; }
+}
 
 public sealed record PayrollProfileMapping(Guid MappingId,Guid? ConceptId,Guid? DebitAccountId,
     Guid? CreditAccountId,DateOnly EffectiveFrom,DateOnly? EffectiveTo,
@@ -174,10 +180,16 @@ public sealed record PayrollProfileMapping(Guid MappingId,Guid? ConceptId,Guid? 
     public string? BeneficiaryName { get; init; }
 }
 public sealed record PayrollProfileView(Guid ProfileId,string Code,string Name,Guid RuleSetId,
-    bool IsActive,byte[] RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings);
+    bool IsActive,byte[] RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings)
+{
+    public PayrollRuleSetView? CreatedRuleSet { get; init; }
+}
 public sealed record PayrollProfilePage(IReadOnlyList<PayrollProfileView> Items,int Page,int PageSize,int TotalCount,int TotalPages);
 public sealed record SavePayrollProfileRequest(Guid ProfileId,string Code,string Name,Guid RuleSetId,
-    bool IsActive,byte[]? RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings);
+    bool IsActive,byte[]? RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings)
+{
+    public SavePayrollRuleSetRequest? Configuration { get; init; }
+}
 
 public sealed record PayrollEmploymentPage(
     IReadOnlyList<PayrollEmploymentOption> Items,
@@ -342,7 +354,10 @@ public sealed record PayrollDeductionAgreementView(
     short Priority,
     bool MustProtectMinimumNetPay,
     bool IsActive,
-    byte[] RowVersion);
+    byte[] RowVersion,
+    string EmployeeName,
+    string ConceptName,
+    string AuthorityName);
 
 public sealed record PayrollDeductionAgreementSummary(
     Guid DeductionAgreementId,
@@ -390,6 +405,7 @@ public sealed record SavePayrollNoveltyRequest(
     string? Notes,
     string? EvidenceUrl)
 {
+    public Guid? CostCenterId { get; init; }
     public byte[]? RowVersion { get; init; }
 }
 
@@ -411,6 +427,8 @@ public sealed record PayrollNoveltyView(
     string? EvidenceUrl,
     string Status)
 {
+    public Guid? CostCenterId {get;init;}
+    public string? CostCenterName {get;init;}
     public Guid? ReasonId { get; init; }
     public byte[] RowVersion { get; init; } = [];
 }
@@ -505,6 +523,10 @@ public sealed record PayrollRunView(
     public bool IsPartialCalculation { get; init; }
 }
 
+public sealed record PayrollHistoryPage<T>(IReadOnlyList<T> Items,int Page,int PageSize,int TotalCount,int TotalPages);
+
+public sealed record PayrollRunPage(IReadOnlyList<PayrollRunSummary> Items,int Page,int PageSize,int TotalCount,int TotalPages);
+
 public sealed record PayrollRunSummary(
     Guid PayrollRunId,
     string RunKind,
@@ -555,6 +577,10 @@ public sealed record PayrollRunLineView(
     decimal Amount,
     bool IsEmployerCost)
 {
+    public Guid? CostCenterId {get;init;}
+    public string? CostCenterName {get;init;}
+    public string? Notes {get;init;}
+    public string? EvidenceUrl {get;init;}
     public Guid PayrollRunLineId { get; init; }
     public Guid? NoveltyId { get; init; }
     public Guid? DeductionAgreementId { get; init; }
@@ -592,8 +618,12 @@ public sealed record ElectronicPayrollPeriodView(
     byte Month,
     string Status,
     IReadOnlyList<ElectronicPayrollDocumentView> Documents,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public int DocumentCount {get;init;}
+}
 
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<PayrollReportDataset>))]
 public enum PayrollReportDataset
 {
     PayrollSummary,
@@ -697,7 +727,11 @@ public sealed record PayrollAccountingLine(
     Guid? PartyId,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Description,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? EmployeeIndex=null,
-    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? ConceptIndex=null);
+    [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? ConceptIndex=null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? CostCenterId {get;init;}
+}
 
 public sealed record PayrollAccountingEmployee(Guid EmploymentId,Guid? ProfileId,Guid? CostCenterId);
 public sealed record PayrollAccountingConcept(Guid? ConceptId,string Description);

@@ -276,7 +276,7 @@ public sealed partial class DispatchDeliveryPaymentsTests(ServerSliceFixture fix
                 method == "Transfer" ? "1119" : "1399", "Asset", method == "Transfer" ? "Bank" : "CardClearing", "Debit", bankId);
         var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
         var save = new SavePaymentMethodRequest(Guid.NewGuid(), $"DELIVERY-{Guid.NewGuid():N}", $"Recaudo {method}",
-            types.Single(type => type.Code == method).Id, account.AccountId, true, true, false, false, true, 10);
+            types.Single(type => type.Code == method).Id, account.AccountId, true, true, false, false, true, 10,BankAccountId:bankId);
         using var created = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}", save);
         Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
         return (await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;

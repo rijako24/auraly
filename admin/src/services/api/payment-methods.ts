@@ -3,7 +3,7 @@ import { apiClient } from "./client";
 export type PaymentMethod = {
   paymentMethodId: string; code: string; name: string; paymentTypeId: string;
   methodCode: string; typeLabel: string; accountId: string; accountCode: string;
-  accountName: string; bankAccountId: string | null; useForSales: boolean;
+  accountName: string; bankAccountId: string | null; bankAccountName?:string|null; useForSales: boolean;
   useForReceipts: boolean; useForSupplierPayments: boolean; useForPayroll: boolean;
   useForVouchers?: boolean;
   isActive: boolean; sortOrder: number; version: number; rowVersion: string;
@@ -16,7 +16,7 @@ export type PaymentMethodQuery = {
 export type PaymentMethodPage = { items: PaymentMethod[]; page: number; pageSize: number; totalCount: number };
 export type SavePaymentMethod = Pick<PaymentMethod, "paymentMethodId" | "code" | "name" | "paymentTypeId" |
   "accountId" | "useForSales" | "useForReceipts" | "useForSupplierPayments" | "useForPayroll" | "useForVouchers" |
-  "isActive" | "sortOrder"> & { rowVersion?: string };
+  "isActive" | "sortOrder"> & { rowVersion?: string;bankAccountId?:string|null };
 
 export const paymentMethodsApi = {
   list: (query: PaymentMethodQuery) => apiClient.get<PaymentMethodPage>("/commerce/v1/payment-methods/", query),

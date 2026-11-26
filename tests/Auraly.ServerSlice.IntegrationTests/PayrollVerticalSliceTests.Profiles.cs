@@ -14,6 +14,236 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class PayrollVerticalSliceTests
 {
     [Fact]
+    public async Task New_profile_saves_its_parameters_atomically_without_selecting_another_configuration()
+    {
+        using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure);
+        SavePayrollProfileRequest Request()
+        {
+            var id=Guid.NewGuid();var ruleId=Guid.NewGuid();
+            return new(id,"INLINE"+id.ToString("N")[..12],"Perfil con porcentajes propios",ruleId,true,null,[])
+            {
+                Configuration=new(ruleId,"CO","IGNORED","Nombre sustituido por el del perfil",new(2026,1,1),null,
+                    "Parámetros sintéticos, no tarifas legales",Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,row.Value,"Value",null)).ToArray(),null)
+            };
+        }
+        var request=Request();PayrollProfileView saved;
+        using(var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter:command=>command.CommandText.Contains("payroll.",StringComparison.Ordinal)))
+        {
+            saved=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{request.ProfileId}",request);
+            Assert.Equal(6,commands.Count);
+        }
+        Assert.NotNull(saved.CreatedRuleSet);Assert.Equal("Approved",saved.CreatedRuleSet.Status);
+        Assert.Equal($"PROFILE-{saved.ProfileId:N}".ToUpperInvariant(),saved.CreatedRuleSet.Code);Assert.Equal(saved.Name,saved.CreatedRuleSet.Name);
+        Assert.Equal(Rules().Count,saved.CreatedRuleSet.Parameters.Count);
+        Assert.Equal(saved.RuleSetId,saved.CreatedRuleSet.RuleSetId);
+        var nextId=Guid.NewGuid();var changed=request with{RowVersion=saved.RowVersion,Name="Perfil editado en la misma ficha",
+            Configuration=request.Configuration! with{RuleSetId=nextId,Code="OTHER-SERIES",CountryCode="PE",EffectiveFrom=new(2027,1,1),
+                Parameters=request.Configuration!.Parameters.Select(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate?row with{NumericValue=.05m}:row).ToArray()}};
+        PayrollProfileView updated;
+        using(var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter:command=>command.CommandText.Contains("payroll.",StringComparison.Ordinal)))
+        {
+            updated=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{saved.ProfileId}",changed);
+            Assert.Equal(7,commands.Count);
+        }
+        Assert.Equal(saved.RuleSetId,updated.RuleSetId);Assert.Equal(nextId,updated.CreatedRuleSet!.RuleSetId);
+        Assert.Equal(saved.CreatedRuleSet.Code,updated.CreatedRuleSet.Code);Assert.Equal("CO",updated.CreatedRuleSet.CountryCode);
+        Assert.Equal(.05m,updated.CreatedRuleSet.Parameters.Single(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate).NumericValue);
+        var history=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{saved.ProfileId}/rule-sets?page=1&pageSize=1");
+        Assert.Equal(2,history.TotalCount);Assert.Equal(nextId,Assert.Single(history.Items).RuleSetId);
+        using(var stale=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{saved.ProfileId}",changed))
+            Assert.Equal(HttpStatusCode.Conflict,stale.StatusCode);
+        var correctionId=Guid.NewGuid();
+        var correction=changed with{RowVersion=updated.RowVersion,Configuration=changed.Configuration! with{
+            RuleSetId=correctionId,Parameters=changed.Configuration!.Parameters.Select(row=>
+                row.Code==PayrollRuleParameterCodes.EmployeeHealthRate?row with{NumericValue=.06m}:row).ToArray()}};
+        var corrected=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{saved.ProfileId}",correction);
+        Assert.Equal(correctionId,corrected.CreatedRuleSet!.RuleSetId);
+        Assert.Equal(.06m,corrected.CreatedRuleSet.Parameters.Single(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate).NumericValue);
+        history=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{saved.ProfileId}/rule-sets?page=1&pageSize=20");
+        Assert.Equal(3,history.TotalCount);Assert.Equal(correctionId,history.Items[0].RuleSetId);
+        Assert.Equal(.05m,history.Items.Single(row=>row.RuleSetId==nextId).Parameters.Single(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate).NumericValue);
+        await AssertProfileResolutionAsync(saved.ProfileId,new(2026,12,1),saved.RuleSetId);
+        await AssertProfileResolutionAsync(saved.ProfileId,new(2027,1,1),correctionId);
+        var broken=Request();broken=broken with{Mappings=[new(Guid.NewGuid(),null,null,Guid.NewGuid(),new(2026,1,1),null)]};
+        using var invalid=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{broken.ProfileId}",broken);
+        Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var check=new SqlCommand("""
+            SELECT(SELECT COUNT(*) FROM payroll.AccountingProfiles WHERE ProfileId=@Profile)+
+              (SELECT COUNT(*) FROM payroll.RuleSets WHERE RuleSetId=@Rules)+
+              (SELECT COUNT(*) FROM payroll.RuleParameters WHERE RuleSetId=@Rules);
+            """,connection);
+        check.Parameters.AddWithValue("@Profile",broken.ProfileId);check.Parameters.AddWithValue("@Rules",broken.RuleSetId);
+        Assert.Equal(0,Convert.ToInt32(await check.ExecuteScalarAsync()));
+        var incomplete=Request();incomplete=incomplete with{Configuration=incomplete.Configuration! with{Parameters=[]}};
+        using var missing=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{incomplete.ProfileId}",incomplete);
+        Assert.Equal(HttpStatusCode.BadRequest,missing.StatusCode);
+        var precise=Request();precise=precise with{Configuration=precise.Configuration! with{
+            Parameters=precise.Configuration!.Parameters.Select(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate?row with{NumericValue=.0400000001m}:row).ToArray()}};
+        using var precision=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{precise.ProfileId}",precise);
+        Assert.Equal(HttpStatusCode.BadRequest,precision.StatusCode);
+        var competing=Request();
+        var responses=await Task.WhenAll(client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{competing.ProfileId}",competing),
+            client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{competing.ProfileId}",competing));
+        try
+        {
+            Assert.Single(responses,response=>response.StatusCode==HttpStatusCode.OK);
+            Assert.Single(responses,response=>response.StatusCode==HttpStatusCode.Conflict);
+        }
+        finally{foreach(var response in responses)response.Dispose();}
+        check.Parameters["@Profile"].Value=competing.ProfileId;check.Parameters["@Rules"].Value=competing.RuleSetId;
+        Assert.Equal(2+Rules().Count,Convert.ToInt32(await check.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Editing_a_shared_profile_keeps_other_profiles_and_earlier_periods_on_their_configured_base()
+    {
+        using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure);
+        var rulesId=Guid.NewGuid();
+        var draft=await PutAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{rulesId}",
+            new SavePayrollRuleSetRequest(rulesId,"CO","BASE"+rulesId.ToString("N")[..12],"Base compartida sintética",new(2026,1,1),null,
+                "Datos de prueba",Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,row.Value,"Value",null)).ToArray(),null));
+        await PostAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{rulesId}/approve",new{rowVersion=draft.RowVersion});
+        async Task<PayrollProfileView> Profile()
+        {
+            var id=Guid.NewGuid();
+            return await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{id}",
+                new SavePayrollProfileRequest(id,id.ToString("N"),"Perfil de prueba",rulesId,true,null,[]));
+        }
+        var first=await Profile();var neighbor=await Profile();var ownId=Guid.NewGuid();
+        await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{first.ProfileId}",
+            new SavePayrollProfileRequest(first.ProfileId,first.Code,first.Name,first.RuleSetId,true,first.RowVersion,[]){
+                Configuration=new(ownId,"CO",draft.Code,first.Name,new(2027,1,1),null,"Corrección del perfil",
+                    Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,
+                        row.Key==PayrollRuleParameterCodes.EmployeeHealthRate?.05m:row.Value,"Value",null)).ToArray(),null)});
+        await AssertProfileResolutionAsync(first.ProfileId,new(2026,12,1),rulesId);
+        await AssertProfileResolutionAsync(first.ProfileId,new(2027,1,1),ownId);
+        await AssertProfileResolutionAsync(neighbor.ProfileId,new(2027,1,1),rulesId);
+        var history=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{first.ProfileId}/rule-sets?page=1&pageSize=20");
+        Assert.Equal(2,history.TotalCount);Assert.Equal(ownId,history.Items[0].RuleSetId);
+    }
+
+    [Fact]
+    public async Task Editing_a_profile_with_retired_configuration_publishes_a_revision_without_restoring_the_old_values()
+    {
+        using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure);
+        var profileId=Guid.NewGuid();var rulesId=Guid.NewGuid();
+        var parameters=Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,row.Value,"Value",null)).ToArray();
+        var saved=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{profileId}",
+            new SavePayrollProfileRequest(profileId,"RET"+profileId.ToString("N")[..12],"Perfil retirado de prueba",rulesId,true,null,[]){
+                Configuration=new(rulesId,"CO","IGNORED","Configuración sintética",new(2026,1,1),null,"Datos sintéticos",parameters,null)});
+        await PostAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{rulesId}/retire",new{rowVersion=saved.CreatedRuleSet!.RowVersion});
+        var revision=Guid.NewGuid();
+        var updated=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{profileId}",
+            new SavePayrollProfileRequest(profileId,saved.Code,saved.Name,rulesId,true,saved.RowVersion,[]){
+                Configuration=new(revision,"CO","IGNORED",saved.Name,new(2026,1,1),null,"Corrección explícita",parameters,null)});
+        Assert.Equal(rulesId,updated.RuleSetId);
+        Assert.Equal(revision,updated.CreatedRuleSet!.RuleSetId);
+        Assert.Equal("Approved",updated.CreatedRuleSet.Status);
+        await AssertProfileResolutionAsync(profileId,new(2026,1,1),revision);
+        var history=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{profileId}/rule-sets?page=1&pageSize=20");
+        Assert.Equal("Retired",history.Items.Single(item=>item.RuleSetId==rulesId).Status);
+        var other=Guid.NewGuid();
+        using var invalid=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/profiles/{other}",
+            new SavePayrollProfileRequest(other,"NEW"+other.ToString("N")[..12],"Otro perfil",rulesId,true,null,[]));
+        Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
+    }
+
+    private async Task AssertProfileResolutionAsync(Guid profile,DateOnly from,Guid expected)
+    {
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var command=new SqlCommand("SELECT RuleSetId,Issue FROM payroll.ProfileRuleConfiguration(@Tenant,@Profile,@From,@From);",connection);
+        command.Parameters.AddWithValue("@Tenant",fixture.TenantId);command.Parameters.AddWithValue("@Profile",profile);
+        command.Parameters.AddWithValue("@From",from.ToDateTime(TimeOnly.MinValue));
+        await using var reader=await command.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
+        Assert.Equal(expected,reader.GetGuid(0));Assert.True(reader.IsDBNull(1));
+    }
+
+    [Fact]
+    public async Task Payroll_profile_pages_remain_bounded_with_500_profiles()
+    {
+        using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure);
+        var prefix="PERF"+Guid.NewGuid().ToString("N")[..12];
+        var id=Guid.NewGuid();
+        var draft=await PutAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{id}",
+            new SavePayrollRuleSetRequest(id,"CO",prefix,"Parámetros sintéticos de rendimiento",new(2026,1,1),null,
+                "Datos sintéticos de prueba",Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,row.Value,"Value",null)).ToArray(),null));
+        await PostAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{id}/approve",new{rowVersion=draft.RowVersion});
+        await using(var connection=new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed=new SqlCommand("""
+                INSERT payroll.AccountingProfiles(ProfileId,TenantId,Code,Name,RuleSetId,IsActive,UpdatedBy,UpdatedAt)
+                SELECT NEWID(),@Tenant,@Prefix+RIGHT(N'0000'+CONVERT(nvarchar(4),n),4),N'Perfil '+CONVERT(nvarchar(4),n),@Rules,1,@User,SYSUTCDATETIME()
+                FROM(SELECT TOP(500) ROW_NUMBER() OVER(ORDER BY a.n,b.n,c.n) n
+                  FROM(VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) a(n)
+                  CROSS JOIN(VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) b(n)
+                  CROSS JOIN(VALUES(0),(1),(2),(3),(4)) c(n)) generated;
+                """,connection);
+            seed.Parameters.AddWithValue("@Tenant",fixture.TenantId);seed.Parameters.AddWithValue("@Prefix",prefix);
+            seed.Parameters.AddWithValue("@Rules",id);seed.Parameters.AddWithValue("@User",fixture.UserId);
+            Assert.Equal(500,await seed.ExecuteNonQueryAsync());
+        }
+        var samples=new List<double>();
+        for(var sample=0;sample<20;sample++)
+        {
+            using var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter:command=>command.CommandText.Contains("FROM payroll.AccountingProfiles",StringComparison.Ordinal));
+            var clock=System.Diagnostics.Stopwatch.StartNew();
+            var page=await GetAsync<PayrollProfilePage>(client,$"/api/commerce/v1/payroll/profiles?page={sample%2+1}&pageSize=50&search={prefix}&sortBy=code&sortDirection=asc");
+            samples.Add(clock.Elapsed.TotalMilliseconds);
+            Assert.Equal(1,commands.Count);Assert.Equal(500,page.TotalCount);Assert.Equal(10,page.TotalPages);
+            Assert.Equal(50,page.Items.Count);Assert.All(page.Items,row=>Assert.Empty(row.Mappings));
+            Assert.Equal(prefix+(sample%2==0?"0001":"0051"),page.Items[0].Code);
+        }
+        var p95=samples.Order().ElementAt(18);
+        await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory,"payroll-profile-page-performance.json"),
+            System.Text.Json.JsonSerializer.Serialize(new{profiles=500,pageSize=50,commands=1,p95,samples}));
+        Assert.True(p95<1000,$"La página de perfiles superó su presupuesto: {p95:F1} ms.");
+    }
+
+    [Theory]
+    [InlineData("code","asc")]
+    [InlineData("code","desc")]
+    [InlineData("name","asc")]
+    [InlineData("name","desc")]
+    [InlineData("status","asc")]
+    [InlineData("status","desc")]
+    public async Task Payroll_profile_pages_apply_server_order_before_limiting(string sortBy,string direction)
+    {
+        using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure);
+        var prefix="SORT"+Guid.NewGuid().ToString("N")[..12];
+        var ruleId=Guid.NewGuid();
+        var draft=await PutAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{ruleId}",
+            new SavePayrollRuleSetRequest(ruleId,"CO",prefix,"Parámetros sintéticos de ordenación",new(2026,1,1),null,
+                "Datos sintéticos de prueba",Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,row.Value,"Value",null)).ToArray(),null));
+        var rules=await PostAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{ruleId}/approve",new{rowVersion=draft.RowVersion});
+        var alphaId=Guid.NewGuid();
+        var alpha=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{alphaId}",
+            new SavePayrollProfileRequest(alphaId,prefix+"-A","Zulu "+prefix,rules.RuleSetId,true,null,[]));
+        var zuluId=Guid.NewGuid();
+        var zulu=await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{zuluId}",
+            new SavePayrollProfileRequest(zuluId,prefix+"-Z","Alpha "+prefix,rules.RuleSetId,false,null,[]));
+        var expected=sortBy=="code"?alpha:zulu;
+        if(direction=="desc")expected=expected==alpha?zulu:alpha;
+        PayrollProfilePage page;
+        using(var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter:command=>command.CommandText.Contains("FROM payroll.AccountingProfiles",StringComparison.Ordinal)))
+        {
+            page=await GetAsync<PayrollProfilePage>(client,$"/api/commerce/v1/payroll/profiles?page=1&pageSize=1&search={prefix}&sortBy={sortBy}&sortDirection={direction}");
+            Assert.Equal(1,commands.Count);
+        }
+        Assert.Equal(2,page.TotalCount);Assert.Equal(2,page.TotalPages);
+        Assert.Equal(expected.ProfileId,Assert.Single(page.Items).ProfileId);Assert.Empty(page.Items[0].Mappings);
+        var second=await GetAsync<PayrollProfilePage>(client,$"/api/commerce/v1/payroll/profiles?page=2&pageSize=1&search={prefix}&sortBy={sortBy}&sortDirection={direction}");
+        Assert.NotEqual(expected.ProfileId,Assert.Single(second.Items).ProfileId);
+        using var invalid=await client.GetAsync("/api/commerce/v1/payroll/profiles?sortBy=unrecognized");
+        Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
+    }
+
+    [Fact]
     public async Task Contract_profile_uses_period_versions_current_posting_accounts_and_original_payable_when_paid()
     {
         using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure,
@@ -56,14 +286,22 @@ public sealed partial class PayrollVerticalSliceTests
                 firstRules.EffectiveFrom,null,"Datos sintéticos para comprobar agrupación y alcance",
                 firstRules.Parameters.Select(row=>new SavePayrollRuleParameterRequest(row.Code,row.NumericValue,row.UnitCode,row.Description)).ToArray(),null));
         Assert.False(localDraft.IsGlobal);
-        var globalOptions=await GetAsync<PayrollWorkspaceOptions>(client,"/api/commerce/v1/payroll/options");
-        Assert.True(globalOptions.RuleSets.Single(row=>row.RuleSetId==firstRules.RuleSetId).IsGlobal);
-        Assert.Equal(firstRules.Parameters.Count,globalOptions.RuleSets.Single(row=>row.RuleSetId==firstRules.RuleSetId).Parameters.Count);
-        Assert.Equal(firstRules.Parameters.Count,globalOptions.RuleSets.Single(row=>row.RuleSetId==localDraftId).Parameters.Count);
         var center=await PostAsync<AccountingCostCenterView>(client,"/api/commerce/v1/accounting/cost-centers",
             new CreateCostCenterRequest(Guid.NewGuid(),fixture.TenantId,"P"+Guid.NewGuid().ToString("N")[..20],"Centro contractual de prueba",null,false));
         configuration=configuration with{CostCenterId=center.CostCenterId};
         var profile=await GetAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{configuration.AccountingProfileId}");
+        using(var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter:command=>command.CommandText.Contains("DECLARE @Country",StringComparison.Ordinal)))
+        {
+            var versions=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{profile.ProfileId}/rule-sets?page=1&pageSize=1");
+            Assert.Equal(2,versions.TotalCount);Assert.Single(versions.Items);Assert.Equal(1,commands.Count);
+            var other=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{profile.ProfileId}/rule-sets?page=2&pageSize=1");
+            Assert.Single(other.Items);Assert.Equal(2,commands.Count);
+            var all=versions.Items.Concat(other.Items).ToArray();
+            Assert.True(all.Single(row=>row.RuleSetId==firstRules.RuleSetId).IsGlobal);
+            Assert.All(all,row=>Assert.Equal(firstRules.Parameters.Count,row.Parameters.Count));
+            Assert.NotEqual(versions.Items[0].RuleSetId,other.Items[0].RuleSetId);
+        }
         var inactiveId=Guid.NewGuid();var search=profile.Code[..8];
         await PutAsync<PayrollProfileView>(client,$"/api/commerce/v1/payroll/profiles/{inactiveId}",
             new SavePayrollProfileRequest(inactiveId,search+"-INACTIVE","AAAA perfil inactivo",firstRules.RuleSetId,false,null,[]));
@@ -87,6 +325,9 @@ public sealed partial class PayrollVerticalSliceTests
             Update(profile,[mappings[0] with{DebitAccountId=firstNet.AccountId}])))
             Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
         var employmentId=Guid.NewGuid();var person=await CreateEmployeePartyAsync(Guid.NewGuid().ToString("N"));
+        var supervisor=await CreateEmployeePartyAsync(Guid.NewGuid().ToString("N"));
+        configuration=configuration with{Details=new("Auxiliar de prueba","Sede de prueba",new(2026,6,30),null,
+            new(2026,2,28),"ARL-TEST",supervisor,new(2025,12,31),2.5m)};
         var employmentRequest=new SavePayrollEmploymentRequest(employmentId,person,fixture.BusinessId,null,
             Option(PayrollCatalogCodes.ContractType,"Indefinite"),Option(PayrollCatalogCodes.SalaryType,"Ordinary"),
             Option(PayrollCatalogCodes.PayFrequency,"Monthly"),Option(PayrollCatalogCodes.RiskClass,"I"),
@@ -96,8 +337,18 @@ public sealed partial class PayrollVerticalSliceTests
         using(var invalid=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/employments/{employmentId}",
             employmentRequest with{Configuration=configuration with{HealthPartyId=person}}))
             Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
+        using(var invalid=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/employments/{employmentId}",
+            employmentRequest with{Configuration=configuration with{Details=configuration.Details! with{SupervisorPartyId=person}}}))
+            Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
+        using(var invalid=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/employments/{employmentId}",
+            employmentRequest with{Configuration=configuration with{Details=configuration.Details! with{SupervisorPartyId=Guid.NewGuid()}}}))
+            Assert.Equal(HttpStatusCode.BadRequest,invalid.StatusCode);
         var employment=await PutAsync<PayrollEmploymentView>(client,$"/api/commerce/v1/payroll/employments/{employmentId}",employmentRequest);
         Assert.Equal(configuration,employment.Configuration!.Values);Assert.Equal("EPS de prueba",employment.Configuration.HealthName);
+        Assert.False(string.IsNullOrWhiteSpace(employment.Configuration.SupervisorName));
+        var preserved=await PutAsync<PayrollEmploymentView>(client,$"/api/commerce/v1/payroll/employments/{employmentId}",
+            employmentRequest with{RowVersion=employment.RowVersion,Configuration=configuration with{Details=null}});
+        Assert.Equal(configuration.Details,preserved.Configuration!.Values.Details);employment=preserved;
         var page=await GetAsync<PayrollEmploymentPage>(client,$"/api/commerce/v1/payroll/employments?page=1&pageSize=1&employmentId={employmentId}");
         Assert.Equal(configuration,Assert.Single(page.Items).Configuration!.Values);
         using(var payrollOnly=fixture.CreateAdminClient(PayrollPermissionCodes.Manage))
@@ -157,6 +408,13 @@ public sealed partial class PayrollVerticalSliceTests
             await using var read=new SqlCommand("SELECT EmployeeSnapshotJson FROM payroll.RunEmployees WHERE PayrollRunId=@Run;",connection);
             read.Parameters.AddWithValue("@Run",firstRun.PayrollRunId);
             var original=(string)(await read.ExecuteScalarAsync())!;
+            using(var snapshot=System.Text.Json.JsonDocument.Parse(original))
+            {
+                var details=snapshot.RootElement.GetProperty("Configuration").GetProperty("Values").GetProperty("Details");
+                Assert.Equal("Auxiliar de prueba",details.GetProperty("JobTitle").GetString());
+                Assert.Equal(2.5m,details.GetProperty("VacationDaysUsed").GetDecimal());
+                Assert.True(snapshot.RootElement.GetProperty("PaysPensionContributions").GetBoolean());
+            }
             foreach(var field in new[]{"SnapshotVersion","EffectiveRuleSetId"})
             {
                 try
@@ -253,8 +511,35 @@ public sealed partial class PayrollVerticalSliceTests
         await processor.ProcessAsync(firstRun.PayrollRunId,PayrollAccountingDocumentTypes.Accrual,fixture.BusinessId,default);
         Assert.Equal(entry.EntryId,(await accounting.GetEntryAsync(accountingActor,firstRun.PayrollRunId))!.EntryId);
         Assert.Equal(paymentEntry.EntryId,(await accounting.GetEntryAsync(accountingActor,batch))!.EntryId);
+        employmentRequest=employmentRequest with{WorkerSubtypeOptionId=Option(PayrollCatalogCodes.WorkerSubtype,"01"),
+            Configuration=configuration with{Details=configuration.Details! with{JobTitle="Cargo posterior"}}};
+        employment=await PutAsync<PayrollEmploymentView>(client,$"/api/commerce/v1/payroll/employments/{employmentId}",
+            employmentRequest with{RowVersion=employment.RowVersion});
         var nextRun=await Calculate(12);
         Assert.Equal(150_000,Assert.Single(nextRun.Employees).Lines.Single(row=>row.ConceptCode=="HEALTH_EMPLOYEE").Amount);
+        Assert.DoesNotContain(Assert.Single(nextRun.Employees).Lines,line=>line.ConceptCode is "PENSION_EMPLOYEE" or "PENSION_EMPLOYER");
+        await using(var connection=new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using(var snapshot=new SqlCommand("""
+                SELECT JSON_VALUE(EmployeeSnapshotJson,'$.Configuration.Values.Details.JobTitle')
+                FROM payroll.RunEmployees WHERE PayrollRunId=@Run;
+                """,connection))
+            {
+                snapshot.Parameters.AddWithValue("@Run",firstRun.PayrollRunId);
+                Assert.Equal("Auxiliar de prueba",await snapshot.ExecuteScalarAsync());
+            }
+            await using var change=new SqlCommand("UPDATE payroll.CatalogOptions SET MetadataCode=@Metadata WHERE OptionId=@Subtype;",connection);
+            change.Parameters.AddWithValue("@Subtype",Option(PayrollCatalogCodes.WorkerSubtype,"01"));
+            change.Parameters.AddWithValue("@Metadata","ChangedForTest");
+            try
+            {
+                await change.ExecuteNonQueryAsync();
+                await Assert.ThrowsAsync<PayrollConflictException>(()=>store.ApproveRunAsync(actor,nextRun.PayrollRunId,
+                    "changed-pension-trait",nextRun.RowVersion,default));
+            }
+            finally{change.Parameters["@Metadata"].Value="PensionExempt";await change.ExecuteNonQueryAsync();}
+        }
         Assert.Equal(configuration.AccountingProfileId,(await GetAsync<PayrollEmploymentPage>(client,
             $"/api/commerce/v1/payroll/employments?page=1&pageSize=1&employmentId={employmentId}")).Items[0].Configuration!.Values.AccountingProfileId);
         await PostAsync<PayrollRuleSetView>(client,$"/api/commerce/v1/payroll/rule-sets/{futureRules.RuleSetId}/retire",new{rowVersion=futureRules.RowVersion});

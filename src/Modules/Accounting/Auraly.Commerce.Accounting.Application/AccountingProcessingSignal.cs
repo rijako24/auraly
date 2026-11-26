@@ -117,6 +117,7 @@ public static class AccountingProcessingPolicy
         InventoryDocumentTypes.Adjustment,
         InventoryDocumentTypes.Damage,
         InventoryDocumentTypes.Conversion,
+        InventoryDocumentTypes.Production,
         InventoryDocumentTypes.TransferReceipt,
         DispatchAccountingDocumentTypes.CashDifference
     ];

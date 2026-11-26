@@ -14,28 +14,30 @@ public static class PayrollApi
         group.MapGet("/options", (HttpContext context, PayrollService service,
             CancellationToken ct) => Execute(() => service.GetOptionsAsync(context.User.Identity(), ct)));
 
-        group.MapGet("/profiles",(HttpContext context,int? page,int? pageSize,string? search,bool? isActive,PayrollService service,CancellationToken ct)=>
-            Execute(()=>service.PageProfilesAsync(context.User.Identity(),page??1,pageSize??20,search,isActive,ct)));
+        group.MapGet("/profiles",(HttpContext context,int? page,int? pageSize,string? search,bool? isActive,string? sortBy,string? sortDirection,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PageProfilesAsync(context.User.Identity(),page??1,pageSize??20,search,isActive,ct,sortBy,sortDirection)));
         group.MapGet("/profiles/{id:guid}",(HttpContext context,Guid id,PayrollService service,CancellationToken ct)=>
             Execute(()=>service.GetProfileAsync(context.User.Identity(),id,ct)));
+        group.MapGet("/profiles/{id:guid}/rule-sets",(HttpContext context,Guid id,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PageProfileRuleSetsAsync(context.User.Identity(),id,page??1,pageSize??20,ct)));
         group.MapPut("/profiles/{id:guid}",(HttpContext context,Guid id,SavePayrollProfileRequest request,PayrollService service,CancellationToken ct)=>
             id!=request.ProfileId?Task.FromResult<IResult>(Results.BadRequest()):Execute(()=>service.SaveProfileAsync(context.User.Identity(),request,ct)));
 
         group.MapGet("/employments", (HttpContext context, int? page, int? pageSize,
-            string? search, bool? isActive, Guid? employmentId, PayrollService service,
+            string? search, bool? isActive, Guid? employmentId,Guid? partyId, PayrollService service,
             CancellationToken ct) => Execute(() => service.PageEmploymentsAsync(
                 context.User.Identity(), page ?? 1, pageSize ?? 30, search, isActive,
-                employmentId, ct)));
+                employmentId, ct,partyId)));
 
         group.MapGet("/reports/definitions", (HttpContext context,
             PayrollReportingService service, CancellationToken ct) =>
             Execute(() => service.ListDefinitionsAsync(context.User.Identity(), ct)));
 
         group.MapGet("/reports/{code}", (HttpContext context, string code,
-            DateOnly from, DateOnly to, Guid? partyId,
+            DateOnly from, DateOnly to, Guid? partyId,Guid? employeeResultId,
             PayrollReportingService service, CancellationToken ct) =>
             Execute(() => service.RunAsync(context.User.Identity(), code,
-                from, to, partyId, ct)));
+                from, to, partyId, ct,employeeResultId)));
 
         group.MapPut("/settings", (HttpContext context, SavePayrollSettingsRequest request,
             PayrollService service, CancellationToken ct) =>
@@ -109,12 +111,24 @@ public static class PayrollApi
             ExecuteCreated(() => service.CreateRunAsync(context.User.Identity(), request, ct),
                 value => $"/api/commerce/v1/payroll/runs/{value.PayrollRunId:D}"));
 
-        group.MapGet("/runs", (HttpContext context, PayrollService service,
-            CancellationToken ct) => Execute(() => service.ListRunsAsync(context.User.Identity(), ct)));
+        group.MapGet("/runs", (HttpContext context,int? page,int? pageSize,string? status,string? kind,string? search,PayrollService service,
+            CancellationToken ct) => Execute(() => service.PageRunsAsync(context.User.Identity(),page??1,pageSize??20,status,kind,search,ct)));
 
-        group.MapGet("/runs/{id:guid}", (HttpContext context, Guid id,
+        group.MapGet("/deduction-agreements",(HttpContext context,int? page,int? pageSize,Guid? employmentId,Guid? conceptId,bool? active,string? search,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PageAgreementsAsync(context.User.Identity(),page??1,pageSize??20,employmentId,conceptId,active,search,ct)));
+        group.MapGet("/payments",(HttpContext context,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PagePaymentsAsync(context.User.Identity(),page??1,pageSize??20,ct)));
+        group.MapGet("/electronic-periods",(HttpContext context,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PageElectronicPeriodsAsync(context.User.Identity(),page??1,pageSize??20,ct)));
+        group.MapGet("/electronic-periods/{id:guid}/documents",(HttpContext context,Guid id,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PageElectronicDocumentsAsync(context.User.Identity(),id,page??1,pageSize??20,ct)));
+
+        group.MapGet("/calculated-employees",(HttpContext context,int? page,int? pageSize,DateOnly from,DateOnly to,string? search,
+            PayrollService service,CancellationToken ct)=>Execute(()=>service.PageCalculatedEmployeesAsync(context.User.Identity(),page??1,pageSize??20,from,to,search,ct)));
+
+        group.MapGet("/runs/{id:guid}", (HttpContext context, Guid id,Guid? employmentId,
             PayrollService service, CancellationToken ct) =>
-            Execute(() => service.GetRunAsync(context.User.Identity(), id, ct)));
+            Execute(() => service.GetRunAsync(context.User.Identity(), id, ct,employmentId)));
 
         group.MapPost("/runs/{id:guid}/calculate", (HttpContext context, Guid id,
             CalculatePayrollRunRequest? request, PayrollService service, CancellationToken ct) =>

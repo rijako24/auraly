@@ -50,6 +50,9 @@ BEGIN
     WHERE job.SourceDocumentType<>N'RestaurantTipReversal';
     IF EXISTS(SELECT 1 FROM @ReferencedBanks)
     BEGIN
+    DECLARE @LockedForms TABLE(PaymentMethodId uniqueidentifier PRIMARY KEY);
+    INSERT @LockedForms SELECT DISTINCT form.PaymentMethodId FROM @ReferencedBanks requested
+    JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.TenantId=@TenantId AND form.BankAccountId=requested.BankAccountId;
     INSERT @Resolved
     SELECT job.JobId,bank.BankAccountId,configured.AccountId
     FROM @ReferencedBanks bank JOIN @Jobs job ON job.JobId=bank.JobId

@@ -29,16 +29,27 @@ public sealed partial class OnlineSalesCheckoutTests
                 bankId.ToString("N"), "Transferencia de prueba", false, true, null)))
             Assert.True(bank.IsSuccessStatusCode, await bank.Content.ReadAsStringAsync());
         var account = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(
-            fixture, client, "1110", "Asset", "Bank", "Debit", bankId);
+            fixture, client, "1110", "Asset", "Bank", "Debit");
         var type = (await client.GetFromJsonAsync<ReferenceOption[]>(
             "/api/commerce/v1/reference-options/payment-method"))!.Single(value => value.Code == "Transfer");
         var configured = new SavePaymentMethodRequest(Guid.NewGuid(), $"BANK-{Guid.NewGuid():N}",
             "Transferencia compartida", type.Id, account.AccountId, true, true, true, true, true, 40,
-            UseForVouchers: true);
+            UseForVouchers: true,BankAccountId:bankId);
+        using(var missingBank=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configured.PaymentMethodId}",configured with{BankAccountId=null}))
+            Assert.Equal(HttpStatusCode.BadRequest,missingBank.StatusCode);
+        using(var foreignBank=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configured.PaymentMethodId}",configured with{BankAccountId=Guid.NewGuid()}))
+            Assert.Equal(HttpStatusCode.BadRequest,foreignBank.StatusCode);
         using var saved = await client.PutAsJsonAsync(
             $"/api/commerce/v1/payment-methods/{configured.PaymentMethodId}", configured);
         Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
         var form = (await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+        Assert.Equal(bankId,form.BankAccountId);Assert.Equal("Transferencia de prueba",form.BankAccountName);
+        using(var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter:command=>command.CommandText.Contains("SELECT COUNT(*) FROM accounting.BankAccounts",StringComparison.Ordinal)))
+        {
+            var banks=await client.GetFromJsonAsync<BankAccountOptionPage>($"/api/commerce/v1/accounting/bank-account-options?page=1&pageSize=1&search={bankId:N}");
+            Assert.Equal(1,commands.Count);Assert.Contains(banks!.Items,item=>item.BankAccountId==bankId);
+        }
         var captured = await CaptureAsync(client, await OpenAsync(client));
         var adjustment = PosPaymentRoundingPolicy.Adjustment(captured.PayableAmount);
         var request = new CompleteOnlineSalesDraftRequest(captured.Version,
@@ -67,6 +78,21 @@ public sealed partial class OnlineSalesCheckoutTests
         Assert.True(await result.ReadAsync()); Assert.Equal(1, result.GetInt32(0));
         Assert.Equal(0m, result.GetDecimal(1)); Assert.Equal(captured.PayableAmount + adjustment, result.GetDecimal(2));
         Assert.Equal(1, result.GetInt32(3)); Assert.Equal(0, result.GetInt32(4));
+        await result.CloseAsync();
+        await using(var bankProof=new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.AccountingEntryLines line JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+            WHERE entry.SourceDocumentId=@Document AND line.AccountId=@Account AND line.BankAccountId=@Bank;
+            SELECT COUNT(*) FROM accounting.BankBookEntries(@Tenant,@Bank) book
+            JOIN dbo.AccountingEntries entry ON entry.EntryId=book.EntryId WHERE entry.SourceDocumentId=@Document;
+            SELECT BankAccountId FROM dbo.AccountingAccounts WHERE AccountId=@Account;
+            """,connection))
+        {
+            bankProof.Parameters.AddWithValue("@Document",completed.Receipt.DocumentId);bankProof.Parameters.AddWithValue("@Account",account.AccountId);
+            bankProof.Parameters.AddWithValue("@Bank",bankId);bankProof.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+            await using var proof=await bankProof.ExecuteReaderAsync();Assert.True(await proof.ReadAsync());Assert.Equal(1,proof.GetInt32(0));
+            await proof.NextResultAsync();Assert.True(await proof.ReadAsync());Assert.Equal(1,proof.GetInt32(0));
+            await proof.NextResultAsync();Assert.True(await proof.ReadAsync());Assert.True(proof.IsDBNull(0));
+        }
     }
 
     [Theory]

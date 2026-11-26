@@ -1067,7 +1067,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 [],
                 [],
                 [new ProductPriceInput(productPrice, CostBasisAmount: 20_000m,
-                    TargetMarginPercent: 20m)],
+                    TargetMarginPercent: 20m, InputMode: "SalePrice")],
                 [new SupplierCostInput(
                     fixture.SupplierId,
                     "900999001",

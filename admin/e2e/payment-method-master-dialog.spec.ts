@@ -14,7 +14,8 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 100
     }, { tenantId, businessId, user });
     const types = ["Efectivo", "Tarjeta débito", "Tarjeta crédito", "Transferencia", "Crédito cliente"].map((label, index) => ({ id: `10000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`, code: ["Cash", "DebitCard", "CreditCard", "Transfer", "Credit"][index], label }));
     const account = { accountId: "44444444-4444-4444-4444-444444444444", code: "130505", name: "Clientes nacionales", allowsPosting: true, isActive: true };
-    let items: PaymentMethod[] = [], listReads = 0, typeReads = 0, writes = 0;
+    let items: PaymentMethod[] = [], listReads = 0, typeReads = 0, writes = 0,bankReads=0;
+    const bank={bankAccountId:"55555555-5555-5555-5555-555555555555",displayName:"Cuenta de recaudos",bankName:"Banco de prueba",accountNumber:"123456789",isActive:true};
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url()), path = url.pathname;
       let body: unknown = [];
@@ -24,11 +25,13 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 100
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: user.roles, permissions: user.permissions };
       else if (path.endsWith("/reference-options/payment-method")) { typeReads++; body = types; }
       else if (path.endsWith("/account-options")) body = { items: [account], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 };
+      else if(path.endsWith("/bank-account-options")){bankReads++;body={items:[bank],page:1,pageSize:10,totalCount:1,totalPages:1};}
       else if (path.includes("/payment-methods")) {
         if (route.request().method() === "PUT") {
           writes++;
           const value = route.request().postDataJSON() as SavePaymentMethod;
-          const method: PaymentMethod = { ...value, methodCode: "Credit", typeLabel: "Crédito cliente", accountCode: account.code, accountName: account.name, bankAccountId: null, version: writes, rowVersion: `VERSION-${writes}` };
+          const type=types.find(type=>type.id===value.paymentTypeId)!;
+          const method: PaymentMethod = { ...value, methodCode: type.code, typeLabel: type.label, accountCode: account.code, accountName: account.name, bankAccountId: value.bankAccountId??null,bankAccountName:value.bankAccountId?bank.displayName:null, version: writes, rowVersion: `VERSION-${writes}` };
           items = [method]; body = { method, page: { items, page: 1, pageSize: 50, totalCount: 1 } };
         } else { listReads++; body = { items, page: 1, pageSize: 50, totalCount: items.length }; }
       }
@@ -76,5 +79,24 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 100
     await expect(dialog.getByLabel("Nombre", { exact: true })).toHaveValue(items[0].name);
     await dialog.getByRole("button", { name: "Cancelar", exact: true }).click();
     await expect(dialog).toBeHidden(); expect(writes).toBe(1); expect(listReads).toBe(1);
+    expect(bankReads).toBe(0);
+    await page.getByRole("button",{name:"Nueva forma",exact:true}).click();
+    await dialog.getByLabel("Código",{exact:true}).fill("TRANSFERENCIA");
+    await dialog.getByLabel("Nombre",{exact:true}).fill("Recaudos por transferencia");
+    await dialog.getByRole("combobox",{name:"Tipo",exact:true}).click();
+    await page.getByRole("option",{name:"Transferencia",exact:true}).click();
+    expect(bankReads).toBe(0);
+    const bankCombo=dialog.getByRole("combobox",{name:"Cuenta bancaria de transferencia",exact:true});
+    await bankCombo.click();
+    await page.getByRole("option",{name:/Cuenta de recaudos/}).click();
+    await expect(bankCombo).toContainText("Cuenta de recaudos");expect(bankReads).toBe(1);
+    await dialog.getByRole("combobox",{name:"Seleccionar cuenta contable"}).click();
+    await page.getByRole("option",{name:"130505 · Clientes nacionales",exact:true}).click();
+    await expect(save).toBeInViewport();
+    await page.screenshot({path:info.outputPath(`transfer-form-${viewport.width}.png`)});
+    await save.click();await expect(dialog).toBeHidden();
+    expect(items[0].bankAccountId).toBe(bank.bankAccountId);expect(writes).toBe(2);expect(listReads).toBe(1);
+    await page.getByRole("button",{name:"Editar",exact:true}).click();
+    await expect(bankCombo).toContainText("Cuenta de recaudos");expect(bankReads).toBe(1);
   });
 }

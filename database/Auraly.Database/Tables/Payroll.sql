@@ -30,6 +30,7 @@ CREATE TABLE [payroll].[RuleSets]
     [EffectiveFrom] DATE NOT NULL,
     [EffectiveTo] DATE NULL,
     [SourceReference] NVARCHAR(500) NOT NULL,
+    [Revision] INT NOT NULL CONSTRAINT [DF_PayrollRuleSets_Revision] DEFAULT(1),
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -39,6 +40,7 @@ CREATE TABLE [payroll].[RuleSets]
     CONSTRAINT [PK_PayrollRuleSets] PRIMARY KEY ([RuleSetId]),
     CONSTRAINT [FK_PayrollRuleSets_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [CK_PayrollRuleSets_Range] CHECK ([EffectiveTo] IS NULL OR [EffectiveTo] >= [EffectiveFrom]),
+    CONSTRAINT [CK_PayrollRuleSets_Revision] CHECK ([Revision]>=1),
     CONSTRAINT [CK_PayrollRuleSets_Status] CHECK ([Status] IN (N'Draft',N'Approved',N'Retired'))
 );
 GO
@@ -56,10 +58,10 @@ CREATE TABLE [payroll].[Settings]
 );
 GO
 CREATE UNIQUE INDEX [UX_PayrollRuleSets_Global_Code_From]
-    ON [payroll].[RuleSets]([CountryCode],[Code],[EffectiveFrom]) WHERE [TenantId] IS NULL;
+    ON [payroll].[RuleSets]([CountryCode],[Code],[EffectiveFrom],[Revision]) WHERE [TenantId] IS NULL;
 GO
 CREATE UNIQUE INDEX [UX_PayrollRuleSets_Tenant_Code_From]
-    ON [payroll].[RuleSets]([TenantId],[Code],[EffectiveFrom]) WHERE [TenantId] IS NOT NULL;
+    ON [payroll].[RuleSets]([TenantId],[Code],[EffectiveFrom],[Revision]) WHERE [TenantId] IS NOT NULL;
 GO
 
 CREATE TABLE [payroll].[RuleParameters]
@@ -152,6 +154,15 @@ CREATE TABLE [payroll].[Employments]
     [RiskPartyId] UNIQUEIDENTIFIER NULL,
     [CompensationPartyId] UNIQUEIDENTIFIER NULL,
     [CostCenterId] UNIQUEIDENTIFIER NULL,
+    [JobTitle] NVARCHAR(160) NULL,
+    [WorkSite] NVARCHAR(160) NULL,
+    [PlannedEndDate] DATE NULL,
+    [WithdrawalReason] NVARCHAR(250) NULL,
+    [TrialReviewDate] DATE NULL,
+    [ArlPilaCode] NVARCHAR(32) NULL,
+    [SupervisorPartyId] UNIQUEIDENTIFIER NULL,
+    [VacationCutoffDate] DATE NULL,
+    [VacationDaysUsed] DECIMAL(9,4) NULL,
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -161,6 +172,11 @@ CREATE TABLE [payroll].[Employments]
     CONSTRAINT [PK_PayrollEmployments] PRIMARY KEY ([EmploymentId]),
     CONSTRAINT [UQ_PayrollEmployments_Tenant_Employment] UNIQUE ([TenantId],[EmploymentId]),
     CONSTRAINT [UQ_PayrollEmployments_Tenant_Contract] UNIQUE ([TenantId],[ContractNumber]),
+    CONSTRAINT [FK_PayrollEmployments_Supervisor] FOREIGN KEY ([TenantId],[SupervisorPartyId]) REFERENCES [dbo].[Parties]([TenantId],[PartyId]),
+    CONSTRAINT [CK_PayrollEmployments_PlannedEnd] CHECK ([PlannedEndDate] IS NULL OR [PlannedEndDate]>=[StartDate]),
+    CONSTRAINT [CK_PayrollEmployments_TrialReview] CHECK ([TrialReviewDate] IS NULL OR [TrialReviewDate]>=[StartDate]),
+    CONSTRAINT [CK_PayrollEmployments_VacationCutoff] CHECK ([VacationDaysUsed] IS NULL OR [VacationDaysUsed]>=0 AND [VacationCutoffDate] IS NOT NULL),
+    CONSTRAINT [CK_PayrollEmployments_SupervisorSelf] CHECK ([SupervisorPartyId] IS NULL OR [SupervisorPartyId]<>[PartyId]),
     CONSTRAINT [FK_PayrollEmployments_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT FK_PayrollEmployments_Profile FOREIGN KEY (TenantId,AccountingProfileId) REFERENCES payroll.AccountingProfiles(TenantId,ProfileId),
     CONSTRAINT FK_PayrollEmployments_Health FOREIGN KEY (TenantId,HealthPartyId) REFERENCES dbo.Parties(TenantId,PartyId),
@@ -250,6 +266,7 @@ CREATE TABLE [payroll].[Novelties]
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [Notes] NVARCHAR(500) NULL,
     [EvidenceUrl] NVARCHAR(1000) NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -260,6 +277,7 @@ CREATE TABLE [payroll].[Novelties]
     CONSTRAINT [UQ_PayrollNovelties_Tenant_Novelty] UNIQUE ([TenantId],[NoveltyId]),
     CONSTRAINT [FK_PayrollNovelties_Employment] FOREIGN KEY ([TenantId],[EmploymentId]) REFERENCES [payroll].[Employments]([TenantId],[EmploymentId]),
     CONSTRAINT [FK_PayrollNovelties_Concept] FOREIGN KEY ([TenantId],[ConceptId]) REFERENCES [payroll].[Concepts]([TenantId],[ConceptId]),
+    CONSTRAINT [FK_PayrollNovelties_CostCenter] FOREIGN KEY ([TenantId],[CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([TenantId],[CostCenterId]),
     CONSTRAINT [FK_PayrollNovelties_Type] FOREIGN KEY ([NoveltyTypeOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
     CONSTRAINT [FK_PayrollNovelties_Reason] FOREIGN KEY ([BusinessId],[ReasonId]) REFERENCES [dbo].[BusinessReasons]([BusinessId],[ReasonId]),
     CONSTRAINT [FK_PayrollNovelties_Agreement] FOREIGN KEY ([DeductionAgreementId]) REFERENCES [payroll].[DeductionAgreements]([DeductionAgreementId]),
@@ -388,6 +406,11 @@ CREATE TABLE [payroll].[RunLines]
     [ConceptCode] NVARCHAR(32) NOT NULL,
     [ConceptName] NVARCHAR(160) NOT NULL,
     [DianConceptCode] NVARCHAR(64) NULL,
+    [SystemRoleCode] NVARCHAR(64) NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NULL,
+    [CostCenterName] NVARCHAR(160) NULL,
+    [Notes] NVARCHAR(500) NULL,
+    [EvidenceUrl] NVARCHAR(1000) NULL,
     [AccountingCategoryCode] NVARCHAR(64) NOT NULL,
     [Quantity] DECIMAL(19,6) NOT NULL,
     [Rate] DECIMAL(19,8) NULL,
@@ -399,6 +422,7 @@ CREATE TABLE [payroll].[RunLines]
     CONSTRAINT [UQ_PayrollRunLines_Employee_Number] UNIQUE CLUSTERED ([PayrollRunEmployeeId],[LineNumber]),
     CONSTRAINT [FK_PayrollRunLines_RunEmployee] FOREIGN KEY ([PayrollRunEmployeeId]) REFERENCES [payroll].[RunEmployees]([PayrollRunEmployeeId]),
     CONSTRAINT [FK_PayrollRunLines_Concept] FOREIGN KEY ([ConceptId]) REFERENCES [payroll].[Concepts]([ConceptId]),
+    CONSTRAINT [FK_PayrollRunLines_CostCenter] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
     CONSTRAINT [FK_PayrollRunLines_Novelty] FOREIGN KEY ([NoveltyId]) REFERENCES [payroll].[Novelties]([NoveltyId]),
     CONSTRAINT [FK_PayrollRunLines_Agreement] FOREIGN KEY ([DeductionAgreementId]) REFERENCES [payroll].[DeductionAgreements]([DeductionAgreementId]),
     CONSTRAINT [CK_PayrollRunLines_Values] CHECK ([Quantity] >= 0 AND [Amount] >= 0 AND ([BaseAmount] IS NULL OR [BaseAmount] >= 0))

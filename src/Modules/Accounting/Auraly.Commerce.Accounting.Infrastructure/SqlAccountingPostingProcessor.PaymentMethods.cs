@@ -68,9 +68,9 @@ public sealed partial class SqlAccountingPostingProcessor
               SELECT 0,N'Credit',CreditPaymentMethodId FROM dbo.SalesDocuments WITH(UPDLOCK,HOLDLOCK)
               WHERE DocumentId=@Document AND BusinessId=@Business AND CreditPaymentMethodId IS NOT NULL;
             UPDATE requested SET AccountId=form.AccountId,Version=form.Version,Code=form.Code,Name=form.Name,
-              BankId=CASE WHEN requested.MethodCode=N'Transfer' THEN account.BankAccountId END
+              BankId=CASE WHEN requested.MethodCode=N'Transfer' THEN form.BankAccountId END
             FROM @Resolved requested
-            JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=requested.FormId
+            JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=requested.FormId
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
               AND type.IsActive=1 AND type.Code=requested.MethodCode
             JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId
@@ -80,7 +80,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 OR (@Usage=N'CustomerPaymentMethod' AND form.UseForReceipts=1)
                 OR (@Usage=N'SupplierPaymentMethod' AND form.UseForSupplierPayments=1))));
             IF (SELECT COUNT(*) FROM @Resolved)<>@Expected OR EXISTS(SELECT 1 FROM @Resolved WHERE AccountId IS NULL)
-            BEGIN SELECT CONVERT(bit,0); RETURN; END;
+            BEGIN SELECT CONVERT(nvarchar(max),NULL); RETURN; END;
             UPDATE tender SET AccountId=resolved.AccountId,PaymentMethodVersion=resolved.Version,
               PaymentMethodCode=resolved.Code,PaymentMethodName=resolved.Name,BankAccountId=resolved.BankId
             FROM {target.Schema}.{target.Table} tender JOIN @Resolved resolved ON resolved.Line={ (target.Line is null?"1":$"tender.{target.Line}") }
@@ -93,7 +93,7 @@ public sealed partial class SqlAccountingPostingProcessor
             UPDATE account SET ConfigurationLockedAt=@Now FROM dbo.AccountingAccounts account
             WHERE account.TenantId=@Tenant AND account.ConfigurationLockedAt IS NULL
               AND EXISTS(SELECT 1 FROM @Resolved resolved WHERE resolved.AccountId=account.AccountId);
-            SELECT CONVERT(bit,1);
+            SELECT COALESCE((SELECT DISTINCT BankId BankAccountId,AccountId FROM @Resolved WHERE BankId IS NOT NULL FOR JSON PATH),N'[]');
             """, connection, transaction);
         command.Parameters.AddWithValue("@Document", source.DocumentId);
         command.Parameters.AddWithValue("@Tenant", source.TenantId);
@@ -102,7 +102,10 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@Payroll",source.DocumentType=="PayrollPayment");
         command.Parameters.AddWithValue("@Expected", configuredCount);
         command.Parameters.AddWithValue("@Now", processedAt);
-        return (bool)(await command.ExecuteScalarAsync(token))! ? source : null;
+        if(await command.ExecuteScalarAsync(token) is not string appliedBanks)return null;
+        var banks=JsonSerializer.Deserialize<BankAccountResolution[]>(source.ResolvedBankAccountsJson??"[]")!
+            .Concat(JsonSerializer.Deserialize<BankAccountResolution[]>(appliedBanks)!).Distinct().ToArray();
+        return source with{ResolvedBankAccountsJson=JsonSerializer.Serialize(banks)};
     }
 
     private static async Task<SourceEnvelope?> ResolveRestaurantTipPaymentMethodAsync(SqlConnection connection,
@@ -125,8 +128,8 @@ public sealed partial class SqlAccountingPostingProcessor
             DECLARE @Resolved table(Version int,FormCode nvarchar(64),FormName nvarchar(160),
               AccountId uniqueidentifier PRIMARY KEY,AccountCode nvarchar(32),AccountName nvarchar(200),BankAccountId uniqueidentifier);
             INSERT @Resolved
-            SELECT form.Version,form.Code,form.Name,account.AccountId,account.Code,account.Name,account.BankAccountId
-            FROM reference.PaymentMethods form WITH(HOLDLOCK)
+            SELECT form.Version,form.Code,form.Name,account.AccountId,account.Code,account.Name,form.BankAccountId
+            FROM reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK)
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId
               AND type.CatalogCode=N'payment-method' AND type.IsActive=1 AND type.Code=@Method
             JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=form.TenantId AND account.AccountId=form.AccountId
@@ -170,9 +173,9 @@ public sealed partial class SqlAccountingPostingProcessor
               AccountCode nvarchar(32),AccountName nvarchar(200));
             INSERT @Resolved(SourceLineId,FormId,MethodCode,AccountId,Version,Code,Name,BankId,AccountCode,AccountName)
             SELECT input.LineId,input.PaymentMethodId,input.MethodCode,account.AccountId,form.Version,form.Code,form.Name,
-              CASE WHEN input.MethodCode=N'Transfer' THEN account.BankAccountId END,account.Code,account.Name
+              CASE WHEN input.MethodCode=N'Transfer' THEN form.BankAccountId END,account.Code,account.Name
             FROM OPENJSON(@Selected) WITH(LineId uniqueidentifier,PaymentMethodId uniqueidentifier,MethodCode nvarchar(32),Payable bit) input
-            JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
+            JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
               AND type.IsActive=1 AND type.Code=input.MethodCode
             JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId

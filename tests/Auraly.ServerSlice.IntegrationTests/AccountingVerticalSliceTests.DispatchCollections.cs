@@ -220,11 +220,11 @@ public sealed partial class AccountingVerticalSliceTests
         if(!keepCurrent)await deliveries.CloseRouteAsync(actor, draft.DispatchId,
             new(method == "Cash" ? collected : 0, null, Guid.NewGuid().ToString("N"), card ? collected : 0, method == "Transfer" ? collected : 0), default);
         if (method != "Cash" && payment is not null) await deliveries.VerifyPaymentAsync(actor, draft.DispatchId, payment.PaymentId, new(true), default);
-        async Task<PaymentMethodView> SaveTargetAsync(Guid account, bool active)
+        async Task<PaymentMethodView> SaveTargetAsync(Guid account, bool active,Guid? bank=null)
         {
             using var response = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{target.PaymentMethodId}",
                 new SavePaymentMethodRequest(target.PaymentMethodId, target.Code, target.Name, target.PaymentTypeId, account,
-                    true, true, false, false, active, 10, target.RowVersion));
+                    true, true, false, false, active, 10, target.RowVersion,BankAccountId:bank??target.BankAccountId));
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
         }
@@ -322,7 +322,7 @@ public sealed partial class AccountingVerticalSliceTests
                 Assert.True(pending);
                 Assert.Equal("SettlementAttention", await ScalarAsync<string>("SELECT Status FROM dbo.Dispatches WHERE DispatchId=@Id", draft.DispatchId));
                 var replacement = await CreateClosureFormAsync(admin, "Transfer");
-                target = await SaveTargetAsync(replacement.AccountId, true);
+                target = await SaveTargetAsync(replacement.AccountId, true,replacement.BankAccountId);
                 await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>().ProcessAsync(
                     closure, DispatchAccountingDocumentTypes.CashDifference, fixture.BusinessId, default);
             }

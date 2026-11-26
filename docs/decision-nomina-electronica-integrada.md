@@ -1639,3 +1639,105 @@ individual sobre 500 dio p95 157,76 ms, veinte muestras y diez comandos.
 Esta evidencia satisface esos gates en la repetición actual sin reserva de
 memoria, cambios globales de SQL ni modificación de sus umbrales. No certifica
 los campos, perfiles, novedades o gates fiscales todavía pendientes de 13.
+
+## 14. Cierre aprobado antes de producción (2026-11-25)
+
+El usuario pidió completar las diferencias identificadas contra las fotos de
+Mantis antes de promover la siguiente versión. Este apartado registra el alcance;
+no declara implementado ni probado lo que sigue pendiente.
+
+- Configuración presenta una sola entrada «Perfiles de nómina»: listado paginado,
+  filtro y orden de servidor, ficha de cuentas y porcentajes/topes con sus
+  vigencias. Reutiliza AccountingProfiles, RuleSets y ProfileRuleConfiguration;
+  no une tablas ni duplica porcentajes por contrato. Los contratos seleccionan
+  «Perfil de nómina» y liquidar conserva la resolución existente sin otra selección.
+  Crear y editar abre el mismo modal del perfil, con todos sus valores y cuentas
+  visibles y editables dentro de él. Se retiran la entrada, selector, ficha y modal
+  independientes de porcentajes: no existen como otro módulo de configuración.
+  «Guardar perfil» valida y aprueba su configuración con las cuentas en una sola
+  transacción usando los métodos canónicos de RuleSets. Al modificar valores se
+  conserva una nueva vigencia internamente, sin pedir otra selección al liquidar
+  ni mostrar identidades técnicas. Un fallo revierte perfil, valores y cuentas.
+  Corregir valores con la misma fecha crea una revisión interna inmutable;
+  las liquidaciones calculadas conservan la versión congelada y las nuevas
+  resuelven la última revisión aplicable. Editar un perfil que partía de una
+  base compartida crea su serie propia, sin cambiar otros perfiles ni perder
+  la base explícita para períodos anteriores a esa nueva vigencia.
+  Las vigencias se consultan por página sólo al abrir el perfil y su historial
+  es de consulta. El usuario confirmó que esta configuración aún no está en uso
+  productivo y no requiere preservar la interfaz anterior.
+- Novedades abre una bandeja paginada de trabajadores y períodos ya calculados,
+  con filtros y acciones explícitas de detalle, recálculo y desprendible. El detalle
+  conserva el mismo cálculo, días por concepto y las operaciones de guardar,
+  editar y retirar; incorpora centro, observación y evidencia de la línea y la
+  autorización de descuento en esa captura. Aprobados quedan en consulta y
+  explican el motivo; no se vuelve editable una causación aceptada.
+- Contratos completan los datos de la foto 3 sin trasladar identidad/foto/ciudad
+  desde Parties: cargo, sitio, terminación prevista separada del retiro real,
+  motivo, evaluación de prueba, código ARL/PILA, pensionado, jefe y corte de
+  vacaciones. Esos datos se congelan con el resultado; no se inventan en históricos.
+- El desprendible laboral usa el resultado congelado, con encabezado, contrato,
+  salario, afiliaciones, centro, cantidades, devengados/deducciones separados y
+  firma opcional. Los reportes y exportaciones conservan el mismo alcance y
+  filtros. No consultan el maestro vigente para reinterpretar un snapshot existente.
+- Conceptos, descuentos contra obligaciones, prestaciones y representación fiscal
+  completan los contratos de 13.2–13.6 por los propietarios existentes. Un importe
+  manual explícito no promete un autocálculo legal. No se crea otro motor de
+  cálculo, préstamo, contabilidad o DIAN ni se incorpora presentación de PILA.
+
+Las páginas nuevas consultan como máximo 50 filas y un conteo en un comando,
+antes de cargar detalles; objetivo p95 <1 s con 500 trabajadores. Sólo la sección
+visible carga sus datos. Las mutaciones reutilizan su resultado autoritativo.
+`options` contiene únicamente catálogos y configuración: no descarga contratos,
+reglas ni historiales. `runs`, `deduction-agreements`, `payments` y
+`electronic-periods` poseen páginas de servidor independientes. Los documentos
+de un período se consultan por página al desplegarlo; los selectores de
+liquidación y autorización consultan al abrirse. El vínculo desde el tercero
+consulta un único contrato filtrado por PartyId en su sede.
+Guardar una autorización devuelve también sus nombres en la lectura existente,
+sin consultar nuevamente el workspace. Crear un registro o cambiar un filtro
+que afecte el orden admite una sola relectura de la página visible. Aprobar una
+liquidación necesita una lectura de su detalle porque la aceptación devuelve
+estado y trabajo contable, no su nueva RowVersion; no recarga catálogos.
+El desprendible conserva una sola representación de datos: en móvil los
+conceptos ocupan una línea completa y cantidades/importes muestran sus rótulos
+sin partir las cifras; escritorio, impresión y exportaciones conservan la tabla.
+La ficha de perfil devuelve su detalle, no los conteos/orden de la lista: se
+admite una sola lectura de la página visible después de guardar para conservar
+los filtros y la ordenación del servidor, sin recargar el workspace ni selectores.
+Los presupuestos de cálculo y las barreras contables/fiscales de 13.7 permanecen.
+La aceptación exige regresiones de cálculo, historial, tenant/permisos,
+concurrencia/idempotencia y captura real a 1366×768, escritorio y 390×844.
+
+La bandeja de novedades expone modificar/consultar, recalcular y desprendible
+por trabajador. El recálculo reutiliza `CalculateRun` con su versión y contrato;
+actualiza la versión del encabezado en las filas del mismo período sin otro GET.
+El desprendible individual filtra por `PayrollRunEmployeeId` en el reporte
+canónico, además del tenant, sede, fechas y tercero. Sólo ese resultado admite
+consulta calculada preliminar; los reportes generales siguen tomando aprobados.
+Su pago previsto no se presenta como realizado: fecha efectiva y «Neto pagado»
+requieren `PaymentBatchPostingStatus.IsPaid`. La apertura utiliza el modal y los
+exportadores compartidos, con tabla adaptable en móvil, sin otro renderer.
+
+Guardar conceptos y condiciones del empleador actualiza el propietario de
+`options` con la respuesta del comando, sin reconstruir el workspace. Las
+consultas de nómina no refrescan datos por foco o reconexión de la ventana:
+se conserva Actualizar y las acciones explícitas de abrir un detalle. El
+historial de perfiles no inicia otra consulta durante su guardado/refresco.
+La forma nueva de `options` y las páginas de `runs`/historiales requieren
+publicar API y admin coordinadamente; no se mantienen listas vacías ni otra
+pantalla de porcentajes para simular compatibilidad con la interfaz retirada.
+
+Guardar sólo las cuentas y etiquetas del perfil conserva dos comandos SQL.
+Crear el perfil junto con sus parámetros aprobados utiliza seis; modificar
+también sus parámetros añade la lectura de versión del perfil, para siete.
+Estos conteos incluyen la lectura autoritativa de la respuesta, excluyen
+inicio/commit de la transacción y son constantes hasta 500 asignaciones. El
+guardado canónico de parámetros devuelve su RowVersion y la aprobación la
+reutiliza: no se relee el borrador completo para recuperar únicamente su versión.
+
+Editar muestra la última configuración publicada, incluida una retirada; no
+selecciona silenciosamente porcentajes aprobados anteriores. Guardar una nueva
+configuración conserva el ancla retirada de ese perfil como historia y publica
+su revisión nueva por la misma transacción. Esto no permite crear otro perfil
+con una configuración retirada ni reactiva la versión retirada.

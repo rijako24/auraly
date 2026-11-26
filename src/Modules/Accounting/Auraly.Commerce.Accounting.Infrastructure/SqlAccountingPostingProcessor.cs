@@ -544,15 +544,16 @@ public sealed partial class SqlAccountingPostingProcessor(
                 payload.Employees.Select(employee=>employee.EmploymentId).Distinct().Count()!=payload.Employees.Count ||
                 payload.Concepts.Any(concept=>concept is null || concept.ConceptId==Guid.Empty || string.IsNullOrWhiteSpace(concept.Description)) ||
                 payload.Lines.Any(line=>line.EmployeeIndex is not int worker || worker<0 || worker>=payload.Employees.Count ||
+                    line.CostCenterId==Guid.Empty ||
                     line.ConceptIndex is not int concept || concept<0 || concept>=payload.Concepts.Count ||
                     line.Description is not null && line.Description!=payload.Concepts[concept].Description ||
                     payload.Concepts[concept].ConceptId is null && line.Category!=PayrollAccountingCategories.NetPayable))
-                throw new InvalidOperationException("The payroll accounting classification references are inconsistent.");
+                throw new InvalidOperationException("Las referencias de clasificación contable de nómina no son consistentes.");
             var concepts=payload.Concepts;
             payload=payload with{Lines=payload.Lines.Select(line=>line with{Description=concepts[line.ConceptIndex!.Value].Description}).ToArray()};
         }
-        else if(payload.Lines.Any(line=>line.EmployeeIndex is not null || line.ConceptIndex is not null))
-            throw new InvalidOperationException("The payroll accounting classification references are missing.");
+        else if(payload.Lines.Any(line=>line.EmployeeIndex is not null || line.ConceptIndex is not null || line.CostCenterId is not null))
+            throw new InvalidOperationException("Faltan las referencias de clasificación contable de nómina.");
         if (payload.PayrollRunId != source.DocumentId ||
             payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
             payload.Lines.Count == 0 || payload.Lines.Any(line =>
@@ -566,8 +567,12 @@ public sealed partial class SqlAccountingPostingProcessor(
         return payload;
     }
 
-    private static PayrollAccountingEmployee? ReadPayrollEmployeeContext(PayrollAccountingPayload payload,PayrollAccountingLine line) =>
-        line.EmployeeIndex is int index?payload.Employees![index]:null;
+    private static PayrollAccountingEmployee? ReadPayrollEmployeeContext(PayrollAccountingPayload payload,PayrollAccountingLine line)
+    {
+        if(line.EmployeeIndex is not int index)return null;
+        var employee=payload.Employees![index];
+        return line.CostCenterId is {} center?employee with{CostCenterId=center}:employee;
+    }
 
     private static async Task<FinancialFactsResult> LoadInventoryOperationFactsAsync(
         SqlConnection connection,
@@ -2634,6 +2639,13 @@ public sealed partial class SqlAccountingPostingProcessor(
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await using (var command = new SqlCommand("""
+            DECLARE @BankBindings TABLE(AccountId uniqueidentifier PRIMARY KEY,BankAccountId uniqueidentifier);
+            IF EXISTS(SELECT AccountId FROM OPENJSON(@Banks) WITH(AccountId uniqueidentifier,BankAccountId uniqueidentifier)
+                WHERE AccountId IS NOT NULL AND BankAccountId IS NOT NULL GROUP BY AccountId HAVING COUNT(DISTINCT BankAccountId)>1)
+              THROW 51607,N'Un auxiliar bancario no puede representar dos cuentas bancarias en el mismo comprobante.',1;
+            INSERT @BankBindings SELECT AccountId,CONVERT(uniqueidentifier,MAX(CONVERT(nvarchar(36),BankAccountId)))
+            FROM OPENJSON(@Banks) WITH(AccountId uniqueidentifier,BankAccountId uniqueidentifier)
+            WHERE AccountId IS NOT NULL AND BankAccountId IS NOT NULL GROUP BY AccountId;
             DECLARE @JournalLines TABLE(LineNumber int PRIMARY KEY,
               AccountId uniqueidentifier,PartyId uniqueidentifier,CostCenterId uniqueidentifier,
               Description nvarchar(max),Debit decimal(19,4),Credit decimal(19,4),
@@ -2645,16 +2657,42 @@ public sealed partial class SqlAccountingPostingProcessor(
               Description nvarchar(max),Debit decimal(19,4),Credit decimal(19,4),
               SourceLineId uniqueidentifier,OpeningKind int,BaseAmount decimal(19,4),OpeningDocumentId uniqueidentifier,ExistingPositionId uniqueidentifier);
 
+            -- A correction can cancel the original bank auxiliary after its form
+            -- was remapped. Its bank is evidence of the existing journal, never
+            -- a new selection from the current form or an arbitrary bank.
+            DECLARE @OriginalBankAccounts TABLE(AccountId uniqueidentifier PRIMARY KEY,LegacyBankAccountId uniqueidentifier);
+            INSERT @OriginalBankAccounts SELECT DISTINCT line.AccountId,account.BankAccountId FROM @JournalLines line
+              JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId AND account.FinancialFunction=N'Bank'
+              WHERE NOT EXISTS(SELECT 1 FROM @BankBindings binding WHERE binding.AccountId=line.AccountId);
+            INSERT @BankBindings SELECT AccountId,LegacyBankAccountId FROM @OriginalBankAccounts WHERE LegacyBankAccountId IS NOT NULL;
+            DECLARE @HistoricalBanks TABLE(AccountId uniqueidentifier PRIMARY KEY,BankAccountId uniqueidentifier,BankCount int);
+            IF EXISTS(SELECT 1 FROM @OriginalBankAccounts WHERE LegacyBankAccountId IS NULL)
+            INSERT @HistoricalBanks
+            SELECT requested.AccountId,CONVERT(uniqueidentifier,MAX(CONVERT(nvarchar(36),history.BankAccountId))),COUNT(DISTINCT history.BankAccountId)
+            FROM @OriginalBankAccounts requested
+            JOIN dbo.AccountingEntryLines history WITH(INDEX(IX_AccountingEntryLines_Account_Bank)) ON history.AccountId=requested.AccountId AND history.BankAccountId IS NOT NULL
+            WHERE requested.LegacyBankAccountId IS NULL
+            GROUP BY requested.AccountId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1,RECOMPILE);
+            IF EXISTS(SELECT 1 FROM @HistoricalBanks WHERE BankCount<>1)
+              THROW 51607,N'El auxiliar original tiene una atribución bancaria ambigua. Revisa el comprobante original.',1;
+            INSERT @BankBindings SELECT AccountId,BankAccountId FROM @HistoricalBanks;
+            IF EXISTS(SELECT 1 FROM @BankBindings binding LEFT JOIN accounting.BankAccounts bank
+                ON bank.BankAccountId=binding.BankAccountId AND bank.TenantId=@TenantId WHERE bank.BankAccountId IS NULL)
+              THROW 51607,N'La cuenta bancaria del comprobante no pertenece a esta empresa.',1;
+
             -- Choose joins and index maintenance for this batch's real line
             -- count, rather than reuse the plan of a small earlier document.
             INSERT dbo.AccountingEntryLines
             (EntryId,LineNumber,AccountId,PartyId,PartyIdentificationSnapshot,
              PartyNameSnapshot,CostCenterId,CostCenterCodeSnapshot,
-             CostCenterNameSnapshot,Description,Debit,Credit,SourceLineId,BaseAmount)
+             CostCenterNameSnapshot,Description,Debit,Credit,SourceLineId,BaseAmount,BankAccountId)
             SELECT @EntryId,line.LineNumber,line.AccountId,line.PartyId,
                    party.Identification,party.DisplayName,line.CostCenterId,
-                   center.Code,center.Name,line.Description,line.Debit,line.Credit,line.SourceLineId,line.BaseAmount
+                   center.Code,center.Name,line.Description,line.Debit,line.Credit,line.SourceLineId,line.BaseAmount,
+                   CASE WHEN account.FinancialFunction=N'Bank' THEN binding.BankAccountId END
             FROM @JournalLines line
+            JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
+            LEFT JOIN @BankBindings binding ON binding.AccountId=line.AccountId
             LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId
             LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId AND center.TenantId=@TenantId
             OPTION(RECOMPILE);
@@ -2685,10 +2723,14 @@ public sealed partial class SqlAccountingPostingProcessor(
             FROM dbo.AccountingAccounts account JOIN (SELECT DISTINCT AccountId FROM @JournalLines) line
               ON line.AccountId=account.AccountId
             WHERE account.TenantId=@TenantId AND account.ConfigurationLockedAt IS NULL;
-            """ + BindSourceOpeningLinesSql + " SELECT @PersistedLineCount;", connection, transaction))
+            """ + BindSourceOpeningLinesSql + " SELECT @PersistedLineCount,COALESCE((SELECT binding.BankAccountId,binding.AccountId FROM @BankBindings binding WHERE EXISTS(SELECT 1 FROM @JournalLines line WHERE line.AccountId=binding.AccountId) FOR JSON PATH),N'[]');", connection, transaction))
         {
             command.Parameters.AddWithValue("@EntryId", entryId);
             command.Parameters.AddWithValue("@ConfigurationLockedAt", now);
+            var banks=JsonSerializer.Deserialize<BankAccountResolution[]>(source.ResolvedBankAccountsJson??"[]")!
+                .Concat((source.AppliedPaymentMethods??[]).Where(method=>method.BankAccountId.HasValue)
+                    .Select(method=>new BankAccountResolution(method.BankAccountId!.Value,method.AccountId)));
+            command.Parameters.Add("@Banks",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(banks);
             AddSource(command, source);
             command.Parameters.AddWithValue("@PayableOpening", (int)JournalOpeningKind.Payable);
             command.Parameters.AddWithValue("@ReceivableOpening", (int)JournalOpeningKind.Receivable);
@@ -2698,8 +2740,10 @@ public sealed partial class SqlAccountingPostingProcessor(
                 lines.Select((line, index) => new { LineNumber = index + 1, line.AccountId, line.PartyId,
                     line.CostCenterId, line.Description, line.Debit, line.Credit, line.SourceLineId, line.OpeningKind, line.BaseAmount,
                     line.OpeningDocumentId, line.ExistingPositionId }),JournalTransportJson);
-            if (await command.ExecuteScalarAsync(cancellationToken) is not int persisted || persisted != lines.Count)
-                throw new DBConcurrencyException("The complete journal entry was not persisted.");
+            await using var persisted=await command.ExecuteReaderAsync(cancellationToken);
+            if(!await persisted.ReadAsync(cancellationToken) || persisted.GetInt32(0)!=lines.Count)
+                throw new DBConcurrencyException("No se guardaron todas las partidas del asiento contable.");
+            source=source with{ResolvedBankAccountsJson=persisted.GetString(1)};
         }
         await CompletePostingAsync(connection, transaction, source, AccountingPostingStatuses.Posted, now, cancellationToken, lines);
     }

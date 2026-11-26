@@ -1,3 +1,15 @@
+CREATE FUNCTION [payroll].[WorkerSubtypeCalculationOptions]()
+RETURNS TABLE
+AS RETURN
+(
+    SELECT subtype.OptionId,subtype.IsActive,
+        CONVERT(bit,CASE WHEN subtype.MetadataCode=N'PensionExempt' THEN 0 ELSE 1 END) AS PaysPensionContributions,
+        HASHBYTES('SHA2_256',CONVERT(varbinary(max),(
+            SELECT subtype.Code,subtype.MetadataCode,subtype.DianCode,subtype.IsActive
+            FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER))) AS SourceVersion
+    FROM payroll.CatalogOptions subtype WHERE subtype.CatalogCode=N'payroll-worker-subtype'
+);
+GO
 CREATE FUNCTION [payroll].[ApplicableCalculationConcepts]
 (
     @TenantId UNIQUEIDENTIFIER,
@@ -32,13 +44,17 @@ RETURNS TABLE
 AS RETURN
 (
     SELECT CONVERT(tinyint,0) AS SourceKind,r.TenantId AS SourceId,
-        COALESCE(CONVERT(binary(8),s.RowVersion),CONVERT(binary(8),0x0)) AS SourceVersion
+        CONVERT(varbinary(32),COALESCE(CONVERT(binary(8),s.RowVersion),CONVERT(binary(8),0x0))) AS SourceVersion
     FROM payroll.Runs r LEFT JOIN payroll.Settings s ON s.TenantId=r.TenantId
     WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.PayrollRunId=@RunId
     UNION ALL
     SELECT CONVERT(tinyint,1),c.ConceptId,CONVERT(binary(8),c.RowVersion)
     FROM payroll.ApplicableCalculationConcepts(@TenantId,@BusinessId,@RunId) c
     WHERE c.SystemRoleOptionId IS NOT NULL
+    UNION ALL
+    SELECT CONVERT(tinyint,2),subtype.OptionId,CONVERT(varbinary(32),subtype.SourceVersion)
+    FROM payroll.Runs r CROSS JOIN payroll.WorkerSubtypeCalculationOptions() subtype
+    WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId AND r.PayrollRunId=@RunId
 );
 GO
 CREATE FUNCTION [payroll].[CalculationNoveltyVersions]

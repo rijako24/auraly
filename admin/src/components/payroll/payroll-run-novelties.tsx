@@ -1,19 +1,28 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useBusinessDates } from "@/hooks/use-business-dates";
+import { DatePicker } from "@/components/ui/date-picker";
 import { toast } from "sonner";
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { Calculator, Check, Eye, FileText, Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { type CalculatePayrollRun, type PayrollCatalogOption, type PayrollNovelty, type PayrollRun, type PayrollRunEmployee, type PayrollRunSummary } from "@/services/api/payroll";
+import { Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription } from "@/components/ui/dialog";
+import { ReportViewer } from "@/components/reports/report-viewer";
+import { payrollReceiptColumns,payrollReceiptRows } from "@/lib/payroll-receipt";
+import type { ReportRow } from "@/lib/report-viewer";
+import { payrollApi, type CalculatePayrollRun, type PayrollCatalogOption, type PayrollNovelty, type PayrollCalculatedEmployeeRow, type PayrollRun, type PayrollRunEmployee } from "@/services/api/payroll";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-export function PayrollRunNovelties({ runs, selectedId, run, loading, error, canCalculate, calculating, calculationErrors, natures, canManage, voiding, noveltyEditor, editorEmploymentId, onCloseEditor, onAddNovelty, onEditNovelty, onVoidNovelty, onSelect, onRetry, onCalculate }: {
-    runs: PayrollRunSummary[];
-    selectedId: string | null;
+export function PayrollRunNovelties({ run, employmentId, onOpen, onBack, loading, error, canCalculate, calculating, calculationErrors, natures, canManage, voiding, noveltyEditor, editorEmploymentId, onCloseEditor, onAddNovelty, onEditNovelty, onVoidNovelty, onRetry, onCalculate }: {
+    employmentId:string|null;
+    onOpen:(runId:string,employmentId:string)=>void;
+    onBack:()=>void;
     run: PayrollRun | null;
     loading: boolean;
     error: boolean;
@@ -29,46 +38,74 @@ export function PayrollRunNovelties({ runs, selectedId, run, loading, error, can
     onAddNovelty:(worker:PayrollRunEmployee)=>void;
     onEditNovelty:(novelty:PayrollNovelty)=>void;
     onVoidNovelty:(novelty:PayrollNovelty)=>Promise<void>;
-    onSelect: (id: string) => void;
     onRetry: () => void;
     onCalculate: (id:string,request:CalculatePayrollRun)=>Promise<PayrollRun>;
 }) {
-    const [employmentId, setEmploymentId] = useState("");
-    const completedRuns = runs.filter(item => item.status !== "Draft");
+    const alive=useRef(true),receiptRequest=useRef(false);
+    const [receipt,setReceipt]=useState<{rows:ReportRow[];description:string}|null>(null),[receiptLoading,setReceiptLoading]=useState(false);
+    useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
+    async function openReceipt(employee:PayrollCalculatedEmployeeRow){
+      if(receiptRequest.current||calculating||voiding)return;
+      receiptRequest.current=true;setReceiptLoading(true);
+      try{
+        const result=await payrollApi.report("payroll-receipt",employee.periodStart,employee.periodEnd,employee.partyId,employee.payrollRunEmployeeId);
+        if(!alive.current)return;
+        if(!result.rows.length||result.rows.some(row=>row.payrollRunEmployeeId!==employee.payrollRunEmployeeId)||!result.rows[0].employeeName)
+          throw new Error("El resultado cambió. Actualiza la bandeja antes de abrir el desprendible.");
+        setReceipt({rows:payrollReceiptRows(result.rows,false),description:`${result.rows[0].runStatus==="Calculated"?"Preliminar · ":""}${result.rows[0].employeeName} · ${result.from} a ${result.to}`});
+      }catch(error){if(alive.current)toast.error(error instanceof Error?error.message:"No fue posible abrir el desprendible.");}
+      finally{receiptRequest.current=false;if(alive.current)setReceiptLoading(false);}
+    }
+    async function recalculate(employee:PayrollCalculatedEmployeeRow){
+      if(calculating||voiding||receiptLoading||!canCalculate)return;
+      try{await onCalculate(employee.payrollRunId,{rowVersion:employee.rowVersion,recalculateEmploymentIds:[employee.employmentId]});if(alive.current)toast.success("Trabajador recalculado.");}
+      catch(error){if(alive.current)toast.error(error instanceof Error?error.message:"No fue posible recalcular el trabajador.");}
+    }
+    const today=useBusinessDates().today();
+    const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId);
+    const [page,setPage]=useState(1),[search,setSearch]=useState(""),[draft,setDraft]=useState("");
+    const [from,setFrom]=useState(`${today.slice(0,4)}-01-01`),[to,setTo]=useState(`${today.slice(0,4)}-12-31`);
+    const list=useQuery({queryKey:["payroll-calculated-employees",tenant,business,page,from,to,search],
+        queryFn:()=>payrollApi.calculatedEmployees({page,pageSize:20,from,to,search:search||undefined}),
+        enabled:!receipt&&!receiptLoading&&!employmentId&&Boolean(from&&to&&to>=from),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
     const selectedRun = run?.status !== "Draft" ? run : null;
     const worker = selectedRun?.employees.find(employee => employee.employmentId === employmentId);
     return <Card className="rounded-3xl"><CardHeader><CardTitle>Novedades de la liquidación</CardTitle>
         <CardDescription>Primero liquida los trabajadores. Después revisa sus conceptos y días. Guardar, editar o retirar una novedad actualiza automáticamente su cálculo.</CardDescription>
     </CardHeader><CardContent className="space-y-4">
-        <div className="space-y-2"><label className="text-sm font-medium" id="novelty-run-label">Liquidación</label>
-            <Select value={selectedRun ? selectedId ?? "" : ""} onValueChange={id => { setEmploymentId(""); onSelect(id); }} disabled={loading || calculating || voiding || completedRuns.length === 0}><SelectTrigger aria-labelledby="novelty-run-label"><SelectValue placeholder="Selecciona una liquidación calculada"/></SelectTrigger>
-                <SelectContent>{completedRuns.map(item => <SelectItem key={item.payrollRunId} value={item.payrollRunId}>{item.periodStart} — {item.periodEnd}</SelectItem>)}</SelectContent>
-            </Select>
-            {completedRuns.length === 0 && <p className="text-sm text-muted-foreground">Primero calcula una liquidación desde Liquidaciones para revisar aquí a sus trabajadores.</p>}
-        </div>
+        {employmentId&&<Button variant="outline" disabled={calculating||voiding} onClick={()=>{onCloseEditor();onBack();}}>Volver a trabajadores</Button>}
         {loading && <p role="status">Cargando liquidación…</p>}
         {error ? <div role="alert" className="space-y-2"><p>No fue posible cargar la liquidación.</p><Button variant="outline" onClick={onRetry}>Reintentar liquidación</Button></div>
-            : selectedRun && <>
-                {worker ? <>
-                    <Button variant="outline" disabled={calculating || voiding} onClick={()=>{onCloseEditor();setEmploymentId("");}}>Volver a trabajadores</Button>
+            : selectedRun && worker && <>
                     <WorkerDays key={`${selectedRun.payrollRunId}:${worker.employmentId}`} run={selectedRun} worker={worker} natures={natures}
                         calculationError={calculationErrors[worker.employmentId]??null}
                         disabled={loading || !canCalculate || selectedRun.status !== "Calculated"} busy={calculating} onCalculate={onCalculate}
                         canManage={canManage && selectedRun.status==="Calculated"} novelties={new Map((worker.novelties??[]).map(novelty=>[novelty.noveltyId,novelty]))} voiding={voiding}
                         noveltyEditor={editorEmploymentId===worker.employmentId?noveltyEditor:null}
                         onAddNovelty={onAddNovelty} onEditNovelty={onEditNovelty} onVoidNovelty={onVoidNovelty}/>
-                </> : <section aria-label="Trabajadores liquidados" className="space-y-3">
-                    <p className="text-sm font-medium">{selectedRun.employees.length} trabajadores liquidados · Selecciona uno para ver y modificar sus novedades.</p>
-                    <div className="max-h-[36rem] overflow-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm">
-                        <thead className="sticky top-0 bg-card"><tr className="text-left"><th className="p-3">Identificación</th><th>Contrato</th><th>Trabajador</th><th className="text-right">Días</th><th className="text-right">Devengado</th><th className="text-right">Deducido</th><th className="pr-3 text-right">Neto</th></tr></thead>
-                        <tbody>{selectedRun.employees.map(employee => <tr key={employee.employmentId} className="border-t">
-                            <td className="p-3">{employee.identification ?? "—"}</td><td>{employee.contractNumber ?? "—"}</td><td className="min-w-48 py-3"><Button variant="link" className="h-auto whitespace-normal p-0 text-left" disabled={loading || calculating}
-                                onClick={() => setEmploymentId(employee.employmentId)}>{employee.employeeName}</Button>
-                            </td><td className="text-right">{employee.workedDays}</td><td className="text-right">{money.format(employee.earnings)}</td><td className="text-right">{money.format(employee.deductions)}</td><td className="pr-3 text-right">{money.format(employee.netPayable)}</td>
-                        </tr>)}</tbody>
-                    </table>{selectedRun.employees.length === 0 && <p className="p-3 text-sm text-muted-foreground">No hay trabajadores liquidados.</p>}</div>
-                </section>}
             </>}
+        {!employmentId&&<section aria-label="Trabajadores liquidados" className="space-y-4">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2"><label className="space-y-1 text-sm">Desde<DatePicker today={today} value={from} onChange={value=>{setFrom(value);setPage(1);}}/></label>
+                <label className="space-y-1 text-sm">Hasta<DatePicker today={today} value={to} onChange={value=>{setTo(value);setPage(1);}}/></label></div>
+            <form className="flex min-w-0 gap-2" onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setPage(1);}}><Input aria-label="Buscar trabajador liquidado" className="min-w-0" value={draft} maxLength={160} placeholder="Trabajador, identificación o contrato" onChange={event=>setDraft(event.target.value)}/><Button variant="outline">Buscar</Button></form>
+            {to<from&&<p role="alert">La fecha final debe ser igual o posterior a la inicial.</p>}
+            {list.isFetching?<p role="status">Cargando trabajadores liquidados…</p>:list.isError?<div role="alert"><p>No fue posible consultar los trabajadores.</p><Button onClick={()=>void list.refetch()}>Reintentar trabajadores</Button></div>:<>
+                <div className="space-y-3">{list.data?.items.map(employee=><article key={`${employee.payrollRunId}:${employee.employmentId}`} className="grid min-w-0 gap-3 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="min-w-0 sm:col-span-2"><Button variant="link" className="h-auto max-w-full whitespace-normal p-0 text-left" disabled={calculating||voiding||receiptLoading} onClick={()=>onOpen(employee.payrollRunId,employee.employmentId)}>{employee.employeeName}</Button><p className="break-words text-sm text-muted-foreground">{employee.identification??"—"} · Contrato {employee.contractNumber??"—"}</p>
+                      <div className="mt-2 flex gap-2">
+                        <Button size="icon" variant="outline" className="size-8" disabled={calculating||voiding||receiptLoading} aria-label={`${employee.status==="Calculated"&&(canManage||canCalculate)?"Modificar":"Ver"} novedades de ${employee.employeeName}`} title={employee.status==="Calculated"&&(canManage||canCalculate)?"Modificar novedades":"Ver novedades"} onClick={()=>onOpen(employee.payrollRunId,employee.employmentId)}>{employee.status==="Calculated"&&(canManage||canCalculate)?<Pencil className="size-4"/>:<Eye className="size-4"/>}</Button>
+                        {canCalculate&&employee.status==="Calculated"&&<Button size="icon" variant="outline" className="size-8" disabled={calculating||voiding||receiptLoading} aria-label={`Recalcular a ${employee.employeeName}`} title="Recalcular trabajador" onClick={()=>void recalculate(employee)}><Calculator className="size-4"/></Button>}
+                        <Button size="icon" variant="outline" className="size-8" disabled={calculating||voiding||receiptLoading} aria-label={`Desprendible de ${employee.employeeName}`} title={employee.status==="Calculated"?"Desprendible preliminar":"Desprendible"} onClick={()=>void openReceipt(employee)}><FileText className="size-4"/></Button>
+                      </div></div>
+                    <div className="text-sm"><p>{employee.periodStart} — {employee.periodEnd}</p><p className="text-muted-foreground">{employee.status==="Approved"?"Aprobada · Solo consulta":"Calculada"} · {employee.workedDays} días</p></div>
+                    <dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt>Devengado</dt><dd>{money.format(employee.earnings)}</dd></div><div className="flex justify-between gap-3"><dt>Deducido</dt><dd>{money.format(employee.deductions)}</dd></div><div className="flex justify-between gap-3 font-semibold"><dt>Neto</dt><dd>{money.format(employee.netPayable)}</dd></div></dl>
+                </article>)}</div>
+                {list.data?.items.length===0&&<p>No hay trabajadores liquidados en este período.</p>}
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{list.data?.totalCount??0} resultados · Página {page}</span><div className="flex gap-2"><Button variant="outline" disabled={page===1||calculating} onClick={()=>setPage(value=>value-1)}>Anterior trabajadores</Button><Button variant="outline" disabled={page*20>=(list.data?.totalCount??0)||calculating} onClick={()=>setPage(value=>value+1)}>Siguiente trabajadores</Button></div></div>
+            </>}
+        </section>}
+        {receiptLoading&&<p role="status">Preparando desprendible…</p>}
+        <Dialog open={Boolean(receipt)} onOpenChange={open=>{if(!open)setReceipt(null);}}><DialogContent showClose={false} className="flex h-[95dvh] max-w-6xl flex-col overflow-hidden p-0"><DialogHeader className="sr-only"><DialogTitle>Desprendible laboral</DialogTitle><DialogDescription>Resultado congelado del trabajador y su período.</DialogDescription></DialogHeader><div className="min-h-0 flex-1 overflow-y-auto">{receipt&&<ReportViewer title="Desprendible laboral" description={receipt.description} rows={receipt.rows} columns={payrollReceiptColumns} fileName="desprendible-nomina" documentDownloads searchable={false} groupedHeaders onClose={()=>setReceipt(null)}/>}</div></DialogContent></Dialog>
     </CardContent></Card>;
 }
 
@@ -129,6 +166,7 @@ function WorkerDays({ run, worker, natures, disabled, busy, calculationError, on
     }
     return <section aria-label={`Liquidación de ${worker.employeeName}`} className="space-y-4 rounded-xl border p-4" aria-busy={busy}>
         <h3 className="font-semibold">{worker.employeeName}</h3>
+        {run.status==="Approved"?<p className="rounded-lg border bg-muted/30 p-3 text-sm">Liquidación aprobada: solo consulta. Las modificaciones se registran mediante un ajuste.</p>:!canManage&&disabled&&<p className="rounded-lg border bg-muted/30 p-3 text-sm">Solo consulta: no tienes permiso para modificar novedades ni recalcular.</p>}
         <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
             <div><dt className="text-muted-foreground">Contrato</dt><dd>{worker.contractNumber??"—"}</dd></div>
             <div><dt className="text-muted-foreground">Identificación</dt><dd>{worker.identification??"—"}</dd></div>
@@ -149,7 +187,10 @@ function WorkerDays({ run, worker, natures, disabled, busy, calculationError, on
         <div className="max-h-96 overflow-auto"><table className="w-full min-w-[640px] text-sm"><thead><tr className="text-left"><th>Concepto</th><th>Naturaleza</th><th className="px-3 text-right">Cantidad</th><th className="px-3 text-right">Base</th><th className="px-3 text-right">Valor</th><th className="px-2">Acciones</th></tr></thead>
             <tbody>{worker.lines.map(line => {const novelty=line.noveltyId?novelties.get(line.noveltyId):null;const dayInput=!line.noveltyId?dayInputs.get(line.conceptId):null;
                 const editing=dayInput && current.conceptId===line.conceptId;return <tr key={line.lineNumber} className="border-t"><td className="py-2">{line.conceptCode} · {line.conceptName}
-                {novelty?.notes && <span className="block text-xs text-muted-foreground">{novelty.notes}</span>}</td>
+                {line.notes && <span className="block text-xs text-muted-foreground">{line.notes}</span>}
+                {line.costCenterName&&<span className="block text-xs text-muted-foreground">Centro: {line.costCenterName}</span>}
+                {line.evidenceUrl&&/^https?:\/\//i.test(line.evidenceUrl)&&<a href={line.evidenceUrl} target="_blank" rel="noopener noreferrer" className="block text-xs text-primary underline">Ver soporte</a>}
+                {novelty?.notes&&novelty.notes!==line.notes&&<span className="block text-xs text-amber-700">Observación guardada pendiente de cálculo: {novelty.notes}</span>}</td>
                 <td>{natures.find(nature => nature.code === line.natureCode)?.label ?? line.natureCode}</td><td className="px-3 text-right">{editing?<form className="flex items-center justify-end gap-1" onSubmit={event=>void save(event)}>
                     <Input aria-label={`Días trabajados de ${line.conceptName}`} type="number" required min={0} max={maximum} step="0.0001" value={days} disabled={locked || voiding} onChange={event=>setDays(event.target.value)} className="h-8 w-20"/>
                     <Button type="submit" size="icon" variant="ghost" className="h-8 w-8" aria-label={`Guardar días de ${line.conceptName}`} title="Guardar días del concepto" disabled={locked || voiding}><Check className="h-4 w-4"/></Button>

@@ -9,6 +9,8 @@ public sealed class DatabaseUpgradeMigrationTests
     [InlineData("Valid", true)]
     [InlineData("Tampered", false)]
     [InlineData("MissingAdmin", false)]
+    [InlineData("MissingReportingMaintenance", false)]
+    [InlineData("InvalidReportingVersion", false)]
     [InlineData("WrongVersion", false)]
     [InlineData("PathEscape", false)]
     public async Task Immutable_release_validation_checks_actual_artifacts_before_publication(string scenario, bool expected)
@@ -23,15 +25,18 @@ public sealed class DatabaseUpgradeMigrationTests
                 New-Item -ItemType Directory -Path $Folder | Out-Null
                 $version='0.1.1-proof'
                 $names=@('auraly-admin-0.1.1-proof.zip','auraly-api-0.1.1-proof.zip','auraly-function-0.1.1-proof.zip',
-                  'auraly-database-0.1.1-proof.dacpac','auraly-pos-0.1.1-proof.exe','auraly-pos-prod-0.1.1-proof.exe')
+                  'auraly-database-0.1.1-proof.dacpac','auraly-pos-0.1.1-proof.exe','auraly-pos-prod-0.1.1-proof.exe',
+                  'auraly-reporting-maintenance-0.1.1-proof.zip')
                 $artifacts=@(foreach($name in $names){
                   $path=Join-Path $Folder $name; [IO.File]::WriteAllBytes($path,[byte[]](1,2,3))
                   @{name=$name;bytes=3;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
                 })
                 if($Scenario -eq 'MissingAdmin'){$artifacts=@($artifacts|Where-Object {$_.name -notlike 'auraly-admin-*'})}
+                if($Scenario -eq 'MissingReportingMaintenance'){$artifacts=@($artifacts|Where-Object {$_.name -notlike 'auraly-reporting-maintenance-*'})}
                 if($Scenario -eq 'PathEscape'){$artifacts[0].name='../outside.zip'}
                 if($Scenario -eq 'WrongVersion'){$version='0.1.2-proof'}
-                @{product='AURALY';version=$version;commit=('a'*40);dirty=$false;artifacts=$artifacts}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $Folder 'manifest.json')
+                $projectionVersion=if($Scenario -eq 'InvalidReportingVersion'){0}else{6}
+                @{product='AURALY';version=$version;commit=('a'*40);dirty=$false;artifacts=$artifacts;reportingProjectionVersion=$projectionVersion}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $Folder 'manifest.json')
                 if($Scenario -eq 'Tampered'){[IO.File]::WriteAllBytes((Join-Path $Folder $names[0]),[byte[]](3,2,1))}
                 $passed=$false
                 try{$manifest=& $Entry -ReleaseRoot $Folder -ReleaseVersion '0.1.1-proof';$passed=$manifest.version -eq '0.1.1-proof'}catch{$passed=$false}

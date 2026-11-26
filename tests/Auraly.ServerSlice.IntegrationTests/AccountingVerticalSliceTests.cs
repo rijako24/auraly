@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Contracts.Inventory;
 using Auraly.Api;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
@@ -320,7 +321,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     }
 
     [Fact]
-    public async Task Accounting_document_type_catalog_matches_the_processing_policy()
+    public async Task Accounting_document_type_catalog_covers_posting_and_nonposting_inventory_labels()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read);
         using var response = await client.GetAsync(
@@ -330,8 +331,12 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var options = await response.Content.ReadFromJsonAsync<IReadOnlyList<ReferenceOption>>();
         Assert.NotNull(options);
         Assert.Equal(
-            AccountingProcessingPolicy.DocumentTypes.Order(StringComparer.Ordinal),
+            // The shared catalog also labels inventory movements. A transfer
+            // and its dispatch move stock without creating an accounting job.
+            AccountingProcessingPolicy.DocumentTypes.Concat([InventoryDocumentTypes.Transfer,InventoryDocumentTypes.TransferDispatch]).Order(StringComparer.Ordinal),
             options.Select(option => option.Code).Order(StringComparer.Ordinal));
+        Assert.False(AccountingProcessingPolicy.Supports(InventoryDocumentTypes.Transfer));
+        Assert.False(AccountingProcessingPolicy.Supports(InventoryDocumentTypes.TransferDispatch));
     }
 
     [Theory]

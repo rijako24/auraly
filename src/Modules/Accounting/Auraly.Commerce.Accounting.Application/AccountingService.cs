@@ -20,6 +20,7 @@ public interface IAccountingStore
     Task<AccountingAccountOptionPage> AccountOptionsAsync(AccountingUserIdentity user, AccountingAccountOptionQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<BankAccountView>> ListBankAccountsAsync(AccountingUserIdentity user, bool includeInactive, CancellationToken cancellationToken);
+    Task<BankAccountOptionPage> PageBankAccountOptionsAsync(AccountingUserIdentity user,int page,int pageSize,string? search,CancellationToken cancellationToken);
     Task<IReadOnlyList<BankAccountView>> ListActiveBankAccountsForTenantAsync(Guid tenantId, CancellationToken cancellationToken);
     Task<bool> IsAccountingEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
     Task<BankAccountView> SaveBankAccountAsync(AccountingUserIdentity user, SaveBankAccountRequest request, CancellationToken cancellationToken);
@@ -483,6 +484,14 @@ public sealed partial class AccountingService(
         return store.ListBankAccountsAsync(user, includeInactive, cancellationToken);
     }
 
+    public Task<BankAccountOptionPage> PageBankAccountOptionsAsync(AccountingUserIdentity user,int page,int pageSize,string? search,CancellationToken cancellationToken=default)
+    {
+        Demand(user,AccountingPermissionCodes.Read);
+        if(page<1 || pageSize is <1 or >50 || ((long)page-1)*pageSize>int.MaxValue || search?.Length>160)
+            throw new AccountingValidationException("La página o búsqueda de cuentas bancarias no es válida.");
+        return store.PageBankAccountOptionsAsync(user,page,pageSize,string.IsNullOrWhiteSpace(search)?null:search.Trim(),cancellationToken);
+    }
+
     public async Task<PosAccountingSettlementConfiguration> GetPosSettlementConfigurationAsync(
         Guid tenantId, CancellationToken cancellationToken = default)
     {
@@ -518,6 +527,7 @@ public sealed partial class AccountingService(
         AccountingUserIdentity user, AccountingCostCenterQuery query, CancellationToken cancellationToken = default)
     {
         if (!user.Permissions.Contains(AccountingPermissionCodes.Read) &&
+            !user.Permissions.Contains(Auraly.Commerce.Payroll.Contracts.PayrollPermissionCodes.Manage) &&
             !user.Permissions.Contains(Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCreate) &&
             !user.Permissions.Contains(AccountingPermissionCodes.ManualCreate) &&
             !user.Permissions.Contains(ExpensePermissionCodes.Create) &&

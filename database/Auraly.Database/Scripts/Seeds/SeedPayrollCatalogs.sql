@@ -43,6 +43,7 @@ INSERT @Options VALUES
 ('71300000-0000-0000-0000-000000000005',N'payroll-risk-class',N'V',N'Clase V',NULL,N'0.06960',50),
 ('71400000-0000-0000-0000-000000000001',N'payroll-worker-type',N'01',N'Dependiente',NULL,NULL,10),
 ('71500000-0000-0000-0000-000000000001',N'payroll-worker-subtype',N'00',N'No aplica subtipo',NULL,NULL,10),
+('71500000-0000-0000-0000-000000000002',N'payroll-worker-subtype',N'01',N'Dependiente pensionado por vejez activo',N'No causa aportes obligatorios a pensión por su condición de pensionado por vejez.',N'PensionExempt',20),
 ('71600000-0000-0000-0000-000000000001',N'payroll-payment-method',N'Transfer',N'Transferencia bancaria',NULL,N'Bank',10),
 ('71600000-0000-0000-0000-000000000002',N'payroll-payment-method',N'Cash',N'Efectivo',NULL,N'Cash',20),
 ('71610000-0000-0000-0000-000000000001',N'payroll-bank-account-type',N'Savings',N'Cuenta de ahorros',NULL,N'Ahorros',10),

@@ -11,6 +11,13 @@ AS RETURN
     CROSS JOIN (VALUES(N'PosPaymentMethod'),(N'CustomerPaymentMethod'),(N'SupplierPaymentMethod')) usage(SourceType)
     CROSS APPLY accounting.PaymentPostingCategory(usage.SourceType,@MethodCode) category
     CROSS APPLY accounting.PostingAccountEligibility(@TenantId,category.Category,account.AccountId) readiness
+    OUTER APPLY(
+      SELECT COUNT(DISTINCT form.BankAccountId) BankCount,
+        CONVERT(uniqueidentifier,MAX(CONVERT(nvarchar(36),form.BankAccountId))) BankAccountId
+      FROM reference.PaymentMethods form
+      JOIN reference.Options type ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method' AND type.Code=N'Transfer'
+      WHERE form.TenantId=@TenantId AND form.AccountId=@AccountId AND form.IsActive=1 AND form.BankAccountId IS NOT NULL
+    ) transfer
     WHERE account.TenantId=@TenantId AND account.AccountId=@AccountId
       AND account.FinancialFunction=CASE
         WHEN @MethodCode=N'Cash' THEN N'Cash'
@@ -21,7 +28,11 @@ AS RETURN
         WHEN @MethodCode IN(N'DebitCard',N'CreditCard') THEN N'CardClearing' END
       AND (account.FinancialFunction NOT IN(N'Bank',N'CreditCardLiability') OR EXISTS(
         SELECT 1 FROM accounting.BankAccounts bank WHERE bank.TenantId=@TenantId
-          AND bank.BankAccountId=account.BankAccountId AND bank.IsActive=1))
+          AND bank.BankAccountId=CASE WHEN @MethodCode=N'Transfer' THEN transfer.BankAccountId ELSE account.BankAccountId END AND bank.IsActive=1))
+      AND (@MethodCode<>N'Transfer' OR (
+        transfer.BankCount=1 AND (account.BankAccountId IS NULL OR account.BankAccountId=transfer.BankAccountId)
+        AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntryLines line
+          WHERE line.AccountId=@AccountId AND line.BankAccountId IS NOT NULL AND line.BankAccountId<>transfer.BankAccountId)))
       AND (account.PaymentMethodOptionId IS NULL OR EXISTS(
         SELECT 1 FROM reference.Options type WHERE type.OptionId=account.PaymentMethodOptionId
           AND type.CatalogCode=N'payment-method' AND type.Code=@MethodCode AND type.IsActive=1))

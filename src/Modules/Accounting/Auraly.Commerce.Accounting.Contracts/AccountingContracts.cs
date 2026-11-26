@@ -122,6 +122,9 @@ public sealed record SaveBankAccountRequest(
     bool IsActive,
     string? RowVersion);
 
+public sealed record BankAccountOption(Guid BankAccountId,string DisplayName,string BankName,string AccountNumber,bool IsActive);
+public sealed record BankAccountOptionPage(IReadOnlyList<BankAccountOption> Items,int Page,int PageSize,int TotalCount,int TotalPages);
+
 public sealed record BankAccountView(
     Guid BankAccountId,
     Guid? AccountingAccountId,

@@ -9,7 +9,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections,
     IPosSynchronizationOutboxDispatcher synchronization) : IPaymentMethodStore
 {
-    private const string Columns = "PaymentMethodId,Code,Name,PaymentTypeId,MethodCode,TypeLabel,AccountId,AccountCode,AccountName,BankAccountId,UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,IsActive,SortOrder,Version,RowVersion,UseForVouchers";
+    private const string Columns = "PaymentMethodId,Code,Name,PaymentTypeId,MethodCode,TypeLabel,AccountId,AccountCode,AccountName,BankAccountId,UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,IsActive,SortOrder,Version,RowVersion,UseForVouchers,BankAccountName";
 
     public async Task<PaymentMethodCatalogSnapshot> GetSnapshotAsync(Guid tenantId, CancellationToken cancellationToken)
     {
@@ -114,13 +114,28 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
               THROW 51221,N'Una forma utilizada conserva su tipo de pago. Crea otra forma para un tipo distinto.',1;
             SELECT @Type=Code FROM reference.Options WITH(HOLDLOCK)
               WHERE OptionId=@TypeId AND CatalogCode=N'payment-method' AND (@Active=0 OR IsActive=1);
-            IF @Type IS NULL OR NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WITH(HOLDLOCK)
+            IF @Type IS NULL OR NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
               WHERE TenantId=@Tenant AND AccountId=@Account
                 AND (@Active=0 OR IsActive=1 AND AllowsPosting=1 AND FinancialFunction IS NOT NULL))
               THROW 51220,N'El tipo o auxiliar de la forma de pago no está disponible.',1;
+            IF (@Type<>N'Transfer' AND @Bank IS NOT NULL) OR (@Bank IS NOT NULL AND NOT EXISTS(
+              SELECT 1 FROM accounting.BankAccounts WITH(HOLDLOCK) WHERE TenantId=@Tenant AND BankAccountId=@Bank AND (@Active=0 OR IsActive=1)))
+              OR (@Type=N'Transfer' AND @Active=1 AND @Bank IS NULL)
+              THROW 51220,N'Selecciona una cuenta bancaria activa de esta empresa para la transferencia.',1;
             IF (@Type=N'Credit' AND (@Receipts=1 OR @Suppliers=1 OR @Payroll=1 OR @VoucherUsage=1))
               OR (@Payroll=1 AND @Type NOT IN(N'Cash',N'Transfer'))
               THROW 51220,N'El tipo no admite los usos seleccionados.',1;
+            IF @RowVersion IS NULL
+              INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,BankAccountId,
+                UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers,IsActive,SortOrder,Version,CreatedAt,UpdatedAt)
+              VALUES(@Tenant,@Id,@Code,@Name,@TypeId,@Account,@Bank,@Sales,@Receipts,@Suppliers,@Payroll,@VoucherUsage,@Active,@Sort,1,SYSUTCDATETIME(),SYSUTCDATETIME());
+            ELSE BEGIN
+              UPDATE reference.PaymentMethods SET Name=@Name,PaymentTypeId=@TypeId,AccountId=@Account,BankAccountId=@Bank,
+                UseForSales=@Sales,UseForReceipts=@Receipts,UseForSupplierPayments=@Suppliers,
+                UseForPayroll=@Payroll,UseForVouchers=@VoucherUsage,IsActive=@Active,SortOrder=@Sort,Version=Version+1,UpdatedAt=SYSUTCDATETIME()
+              WHERE TenantId=@Tenant AND PaymentMethodId=@Id AND Code=@Code AND RowVersion=@RowVersion;
+              IF @@ROWCOUNT<>1 THROW 51221,N'La forma cambió o su código no coincide. Recarga antes de guardar.',1;
+            END;
             IF @Active=1 AND EXISTS(SELECT 1 FROM (VALUES
                 (N'PosPaymentMethod',@Sales),(N'CustomerPaymentMethod',@Receipts),(N'SupplierPaymentMethod',@Suppliers),
                 (N'CustomerPaymentMethod',@Payroll)) usage(SourceType,Enabled)
@@ -132,17 +147,6 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
               SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@Tenant,@Type,@Account) readiness
               WHERE readiness.SourceType IN(N'CustomerPaymentMethod',N'SupplierPaymentMethod'))
               THROW 51220,N'El auxiliar no admite entradas ni salidas de dinero en comprobantes.',1;
-            IF @RowVersion IS NULL
-              INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,
-                UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers,IsActive,SortOrder,Version,CreatedAt,UpdatedAt)
-              VALUES(@Tenant,@Id,@Code,@Name,@TypeId,@Account,@Sales,@Receipts,@Suppliers,@Payroll,@VoucherUsage,@Active,@Sort,1,SYSUTCDATETIME(),SYSUTCDATETIME());
-            ELSE BEGIN
-              UPDATE reference.PaymentMethods SET Name=@Name,PaymentTypeId=@TypeId,AccountId=@Account,
-                UseForSales=@Sales,UseForReceipts=@Receipts,UseForSupplierPayments=@Suppliers,
-                UseForPayroll=@Payroll,UseForVouchers=@VoucherUsage,IsActive=@Active,SortOrder=@Sort,Version=Version+1,UpdatedAt=SYSUTCDATETIME()
-              WHERE TenantId=@Tenant AND PaymentMethodId=@Id AND Code=@Code AND RowVersion=@RowVersion;
-              IF @@ROWCOUNT<>1 THROW 51221,N'La forma cambió o su código no coincide. Recarga antes de guardar.',1;
-            END;
             DECLARE @Businesses TABLE(BusinessId uniqueidentifier PRIMARY KEY);
             INSERT @Businesses SELECT BusinessId FROM dbo.Businesses WHERE TenantId=@Tenant;
             INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
@@ -160,6 +164,7 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         command.Parameters.AddWithValue("@Name", request.Name);
         command.Parameters.AddWithValue("@TypeId", request.PaymentTypeId);
         command.Parameters.AddWithValue("@Account", request.AccountId);
+        command.Parameters.Add("@Bank",SqlDbType.UniqueIdentifier).Value=(object?)request.BankAccountId??DBNull.Value;
         command.Parameters.AddWithValue("@Sales", request.UseForSales);
         command.Parameters.AddWithValue("@Receipts", request.UseForReceipts);
         command.Parameters.AddWithValue("@Suppliers", request.UseForSupplierPayments);
@@ -196,5 +201,6 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),reader.GetGuid(6),
         reader.GetString(7),reader.GetString(8),reader.IsDBNull(9)?null:reader.GetGuid(9),
         reader.GetBoolean(10),reader.GetBoolean(11),reader.GetBoolean(12),reader.GetBoolean(13),
-        reader.GetBoolean(14),reader.GetInt32(15),reader.GetInt32(16),(byte[])reader[17],reader.GetBoolean(18));
+        reader.GetBoolean(14),reader.GetInt32(15),reader.GetInt32(16),(byte[])reader[17],reader.GetBoolean(18))
+        {BankAccountName=reader.IsDBNull(19)?null:reader.GetString(19)};
 }

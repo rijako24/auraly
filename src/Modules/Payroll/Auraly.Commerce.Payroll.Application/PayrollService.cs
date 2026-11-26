@@ -21,12 +21,15 @@ public sealed record PayrollEmployeeCalculationSource(decimal MaximumContractDay
 
 public interface IPayrollStore
 {
-    Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,CancellationToken ct);
+    Task<PayrollCalculatedEmployeePage> PageCalculatedEmployeesAsync(PayrollUserIdentity user,int page,int pageSize,
+        DateOnly from,DateOnly to,string? search,CancellationToken ct);
+    Task<PayrollRuleSetPage> PageProfileRuleSetsAsync(PayrollUserIdentity user,Guid profileId,int page,int pageSize,CancellationToken ct);
+    Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,string sortBy,bool descending,CancellationToken ct);
     Task<PayrollProfileView> GetProfileAsync(PayrollUserIdentity user,Guid id,CancellationToken ct);
     Task<PayrollProfileView> SaveProfileAsync(PayrollUserIdentity user,SavePayrollProfileRequest request,CancellationToken ct);
     Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user, CancellationToken ct);
     Task<PayrollEmploymentPage> PageEmploymentsAsync(PayrollUserIdentity user, int page,
-        int pageSize, string? search, bool? isActive, Guid? employmentId, CancellationToken ct);
+        int pageSize, string? search, bool? isActive, Guid? employmentId, CancellationToken ct,Guid? partyId=null);
     Task<PayrollEmploymentView> SaveEmploymentAsync(PayrollUserIdentity user,
         SavePayrollEmploymentRequest request, CancellationToken ct);
     Task<PayrollConceptView> SaveConceptAsync(PayrollUserIdentity user,
@@ -53,9 +56,12 @@ public interface IPayrollStore
     Task<PayrollRunView> CreateRunAsync(PayrollUserIdentity user,
         CreatePayrollRunRequest request, CancellationToken ct);
     Task<PayrollRunView> GetRunAsync(PayrollUserIdentity user, Guid runId,
-        CancellationToken ct);
-    Task<IReadOnlyList<PayrollRunSummary>> ListRunsAsync(PayrollUserIdentity user,
-        CancellationToken ct);
+        CancellationToken ct,Guid? employmentId=null);
+    Task<PayrollHistoryPage<PayrollDeductionAgreementSummary>> PageAgreementsAsync(PayrollUserIdentity user,int page,int pageSize,Guid? employmentId,Guid? conceptId,bool? active,string? search,CancellationToken ct);
+    Task<PayrollHistoryPage<PayrollPaymentBatchView>> PagePaymentsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct);
+    Task<PayrollHistoryPage<ElectronicPayrollPeriodView>> PageElectronicPeriodsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct);
+    Task<PayrollHistoryPage<ElectronicPayrollDocumentView>> PageElectronicDocumentsAsync(PayrollUserIdentity user,Guid periodId,int page,int pageSize,CancellationToken ct);
+    Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search, CancellationToken ct);
     Task<PayrollRunEmploymentPage> PageRunEmploymentsAsync(PayrollUserIdentity user,
         Guid runId, int page, int pageSize, string? search, CancellationToken ct,
         PayrollRunEmploymentFilter? filter = null);
@@ -78,12 +84,32 @@ public sealed class PayrollService(
     AccountingProcessingCoordinator accounting,
     FiscalProcessingCoordinator fiscalProcessing)
 {
-    public Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,CancellationToken ct=default)
+    public Task<PayrollCalculatedEmployeePage> PageCalculatedEmployeesAsync(PayrollUserIdentity user,int page,int pageSize,
+        DateOnly from,DateOnly to,string? search,CancellationToken ct=default)
     {
         Demand(user,PayrollPermissionCodes.Read);
-        if(page<1 || pageSize is <1 or >100 || ((long)page-1)*pageSize>int.MaxValue || search?.Length>160)
+        if(page<1 || pageSize is <1 or >50 || ((long)page-1)*pageSize>int.MaxValue || to<from || search?.Length>160)
+            throw new PayrollValidationException("Revisa las fechas, la búsqueda y la página de trabajadores liquidados.");
+        return store.PageCalculatedEmployeesAsync(user,page,pageSize,from,to,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct);
+    }
+    public Task<PayrollRuleSetPage> PageProfileRuleSetsAsync(PayrollUserIdentity user,Guid profileId,int page,int pageSize,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);
+        if(profileId==Guid.Empty || page<1 || pageSize is <1 or >50 || ((long)page-1)*pageSize>int.MaxValue)
+            throw new PayrollValidationException("Indica un perfil y una página válidos para sus vigencias.");
+        return store.PageProfileRuleSetsAsync(user,profileId,page,pageSize,ct);
+    }
+    public Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,CancellationToken ct=default,
+        string? sortBy=null,string? sortDirection=null)
+    {
+        Demand(user,PayrollPermissionCodes.Read);
+        if(page<1 || pageSize is <1 or >50 || ((long)page-1)*pageSize>int.MaxValue || search?.Length>160)
             throw new PayrollValidationException("Indica una página y búsqueda válidas para los perfiles.");
-        return store.PageProfilesAsync(user,page,pageSize,string.IsNullOrWhiteSpace(search)?null:search.Trim(),isActive,ct);
+        sortBy??="name";
+        sortDirection??="asc";
+        if(sortBy is not ("code" or "name" or "status") || sortDirection is not ("asc" or "desc"))
+            throw new PayrollValidationException("Selecciona un orden válido para los perfiles.");
+        return store.PageProfilesAsync(user,page,pageSize,string.IsNullOrWhiteSpace(search)?null:search.Trim(),isActive,sortBy,sortDirection=="desc",ct);
     }
     public Task<PayrollProfileView> GetProfileAsync(PayrollUserIdentity user,Guid id,CancellationToken ct=default)
     {
@@ -99,7 +125,15 @@ public sealed class PayrollService(
                 value.BeneficiaryPartyId==Guid.Empty || value.DebitAccountId is null && value.CreditAccountId is null && value.BeneficiaryPartyId is null) ||
             request.Mappings.Select(value=>value.MappingId).Distinct().Count()!=request.Mappings.Count)
             throw new PayrollValidationException("Revisa el código, el nombre y hasta 500 asignaciones contables con vigencias e identificadores distintos.");
-        return store.SaveProfileAsync(user,request with{Code=request.Code.Trim().ToUpperInvariant(),Name=request.Name.Trim()},ct);
+        var initial=request.Configuration;
+        if(initial is not null)
+        {
+            if(initial.RowVersion is not null || request.RowVersion is null && initial.RuleSetId!=request.RuleSetId
+                || request.RowVersion is not null && initial.RuleSetId==request.RuleSetId)
+                throw new PayrollValidationException("La configuración modificada del perfil debe guardar una nueva vigencia.");
+            initial=NormalizeRuleSet(initial with{Code=request.RowVersion is null?$"PROFILE-{request.ProfileId:N}":initial.Code,Name=request.Name});
+        }
+        return store.SaveProfileAsync(user,request with{Code=request.Code.Trim().ToUpperInvariant(),Name=request.Name.Trim(),Configuration=initial},ct);
     }
     public Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user,
         CancellationToken ct = default)
@@ -116,11 +150,24 @@ public sealed class PayrollService(
             request.BusinessId != user.BusinessId || request.MonthlySalary <= 0 ||
             request.EndDate < request.StartDate)
             throw new PayrollValidationException("Los datos de la relación laboral no son válidos.");
+        var configuration=request.Configuration;
+        if(configuration?.Details is { } details)
+        {
+            if(details.PlannedEndDate<request.StartDate || details.TrialReviewDate<request.StartDate ||
+                details.SupervisorPartyId==Guid.Empty || details.SupervisorPartyId==request.PartyId ||
+                details.VacationDaysUsed<0 || details.VacationDaysUsed>99999.9999m ||
+                details.VacationDaysUsed is { } days && (decimal.Round(days,4)!=days || details.VacationCutoffDate is null))
+                throw new PayrollValidationException("Revisa las fechas del contrato, el jefe y los días de vacaciones con su fecha de corte.");
+            configuration=configuration with{Details=details with{
+                JobTitle=Optional(details.JobTitle,160),WorkSite=Optional(details.WorkSite,160),
+                WithdrawalReason=Optional(details.WithdrawalReason,250),ArlPilaCode=Optional(details.ArlPilaCode,32)}};
+        }
         return store.SaveEmploymentAsync(user, request with
         {
             ContractNumber = Text(request.ContractNumber, 64, "Número de contrato"),
             BankAccountReference = Optional(request.BankAccountReference, 200),
-            BankAccountNumber = Optional(request.BankAccountNumber, 64)
+            BankAccountNumber = Optional(request.BankAccountNumber, 64),
+            Configuration=configuration
         }, ct);
     }
 
@@ -141,11 +188,19 @@ public sealed class PayrollService(
         SavePayrollRuleSetRequest request, CancellationToken ct = default)
     {
         Demand(user, PayrollPermissionCodes.Configure);
+        return store.SaveRuleSetAsync(user,NormalizeRuleSet(request),ct);
+    }
+
+    private static SavePayrollRuleSetRequest NormalizeRuleSet(SavePayrollRuleSetRequest request)
+    {
         if (request.RuleSetId == Guid.Empty || request.EffectiveTo < request.EffectiveFrom ||
-            request.Parameters.Count == 0 || request.Parameters.Select(x => x.Code)
+            request.Parameters is null || request.Parameters.Count is 0 or >500 || request.Parameters.Any(parameter=>parameter is null) || request.Parameters.Select(x => x.Code)
                 .Distinct(StringComparer.Ordinal).Count() != request.Parameters.Count)
             throw new PayrollValidationException("El conjunto de reglas no es válido.");
-        return store.SaveRuleSetAsync(user, request with
+        if(request.Parameters.Any(parameter=>decimal.Round(parameter.NumericValue,8)!=parameter.NumericValue ||
+            parameter.NumericValue is >99999999999.99999999m or <-99999999999.99999999m))
+            throw new PayrollValidationException("Los parámetros admiten hasta ocho decimales y deben respetar el importe máximo de la configuración.");
+        return request with
         {
             CountryCode = Code(request.CountryCode, 2),
             Code = Code(request.Code, 64),
@@ -157,7 +212,7 @@ public sealed class PayrollService(
                 UnitCode = Text(parameter.UnitCode, 32, "Unidad"),
                 Description = Optional(parameter.Description, 300)
             }).ToArray()
-        }, ct);
+        };
     }
 
     public Task<PayrollRuleSetView> ApproveRuleSetAsync(PayrollUserIdentity user,
@@ -171,13 +226,13 @@ public sealed class PayrollService(
 
     public Task<PayrollEmploymentPage> PageEmploymentsAsync(PayrollUserIdentity user,
         int page, int pageSize, string? search, bool? isActive, Guid? employmentId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,Guid? partyId=null)
     {
         Demand(user, PayrollPermissionCodes.Read);
-        if (page < 1 || pageSize is < 1 or > 100)
+        if(page<1||pageSize is <1 or >50||page>int.MaxValue/pageSize||search?.Length>160||employmentId==Guid.Empty||partyId==Guid.Empty)
             throw new PayrollValidationException("La paginación de trabajadores no es válida.");
         return store.PageEmploymentsAsync(user, page, pageSize,
-            string.IsNullOrWhiteSpace(search) ? null : search.Trim(), isActive, employmentId, ct);
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(), isActive, employmentId, ct,partyId);
     }
 
     public Task<PayrollRuleSetView> RetireRuleSetAsync(PayrollUserIdentity user,
@@ -296,18 +351,46 @@ public sealed class PayrollService(
     }
 
     public Task<PayrollRunView> GetRunAsync(PayrollUserIdentity user, Guid runId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,Guid? employmentId=null)
     {
         Demand(user, PayrollPermissionCodes.Read);
         if (runId == Guid.Empty) throw new PayrollValidationException("La liquidación es obligatoria.");
-        return store.GetRunAsync(user, runId, ct);
+        if(employmentId==Guid.Empty)throw new PayrollValidationException("Indica un contrato válido.");
+        return store.GetRunAsync(user, runId, ct,employmentId);
     }
 
-    public Task<IReadOnlyList<PayrollRunSummary>> ListRunsAsync(PayrollUserIdentity user,
-        CancellationToken ct = default)
+    public Task<PayrollHistoryPage<PayrollDeductionAgreementSummary>> PageAgreementsAsync(PayrollUserIdentity user,int page,int pageSize,Guid? employmentId,Guid? conceptId,bool? active,string? search,CancellationToken ct=default)
     {
-        Demand(user, PayrollPermissionCodes.Read);
-        return store.ListRunsAsync(user, ct);
+        Demand(user,PayrollPermissionCodes.Read);ValidateHistoryPage(page,pageSize);
+        if(employmentId==Guid.Empty||conceptId==Guid.Empty||search?.Length>160)throw new PayrollValidationException("Revisa los filtros de las autorizaciones.");
+        return store.PageAgreementsAsync(user,page,pageSize,employmentId,conceptId,active,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct);
+    }
+    public Task<PayrollHistoryPage<PayrollPaymentBatchView>> PagePaymentsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);ValidateHistoryPage(page,pageSize);return store.PagePaymentsAsync(user,page,pageSize,ct);
+    }
+    public Task<PayrollHistoryPage<ElectronicPayrollPeriodView>> PageElectronicPeriodsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);ValidateHistoryPage(page,pageSize);return store.PageElectronicPeriodsAsync(user,page,pageSize,ct);
+    }
+    public Task<PayrollHistoryPage<ElectronicPayrollDocumentView>> PageElectronicDocumentsAsync(PayrollUserIdentity user,Guid periodId,int page,int pageSize,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);ValidateHistoryPage(page,pageSize);
+        if(periodId==Guid.Empty)throw new PayrollValidationException("Selecciona un período electrónico.");
+        return store.PageElectronicDocumentsAsync(user,periodId,page,pageSize,ct);
+    }
+    private static void ValidateHistoryPage(int page,int pageSize)
+    {
+        if(page<1||pageSize is <1 or >50||page>int.MaxValue/pageSize)throw new PayrollValidationException("La página debe tener entre 1 y 50 registros.");
+    }
+
+    public Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);
+        if(page<1||pageSize is <1 or >50||page>int.MaxValue/pageSize||search?.Length>160
+            ||status is not(null or "Draft" or "Calculated" or "Approved" or "Voided")||kind is not(null or "Regular" or "Adjustment"))
+            throw new PayrollValidationException("Revisa los filtros y una página de hasta 50 liquidaciones.");
+        return store.PageRunsAsync(user,page,pageSize,status,kind,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct);
     }
 
     public Task<PayrollRunEmploymentPage> PageRunEmploymentsAsync(PayrollUserIdentity user,

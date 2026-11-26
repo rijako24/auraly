@@ -237,6 +237,21 @@ try {
         throw 'El paquete API no contiene el driver PDF para Linux.'
     }
 
+    $consoleProject = Join-Path $repoRoot 'src/Console/Auraly.Console/Auraly.Console.csproj'
+    $consoleMetadata = & dotnet (Join-Path $repoRoot 'src/Console/Auraly.Console/bin/Release/net8.0/Auraly.Console.dll') reporting-projection-version
+    if ($LASTEXITCODE -or "$consoleMetadata" -notmatch '^[1-9][0-9]*$') {
+        throw 'No se pudo leer la versión canónica de reporting del binario del release.'
+    }
+    $reportingProjectionVersion = [int]$consoleMetadata
+    $reportingPublish = Join-Path $publishPath 'reporting-maintenance'
+    & dotnet publish $consoleProject -c Release --no-restore -o $reportingPublish `
+        -p:PlaywrightPlatform=linux-x64 -p:ContinuousIntegrationBuild=true -p:Deterministic=true "-p:PathMap=$repoRoot=/_/src"
+    if ($LASTEXITCODE) { throw 'Falló la publicación de la consola canónica de reporting.' }
+    foreach ($settingsName in @('appsettings.json','appSettings.json')) {
+        $settingsPath = Join-Path $reportingPublish $settingsName
+        if (Test-Path -LiteralPath $settingsPath) { Remove-Item -LiteralPath $settingsPath }
+    }
+
     & dotnet build (Join-Path $repoRoot 'database\Auraly.Database\Auraly.Database.sqlproj') `
         -c Release --no-restore
     if ($LASTEXITCODE) { throw 'La compilacion de base de datos fallo.' }
@@ -294,6 +309,9 @@ try {
     New-DeterministicZip `
         -SourceDirectory $apiPublish `
         -DestinationPath (Join-Path $releasePath "auraly-api-$Version.zip")
+    New-DeterministicZip `
+        -SourceDirectory $reportingPublish `
+        -DestinationPath (Join-Path $releasePath "auraly-reporting-maintenance-$Version.zip")
 
     Copy-Item -LiteralPath `
         (Join-Path $repoRoot 'database\Auraly.Database\bin\Release\Auraly.Database.dacpac') `
@@ -313,6 +331,7 @@ try {
         product = 'AURALY'
         version = $Version
         commit = $commit
+        reportingProjectionVersion = $reportingProjectionVersion
         dirty = [bool]$gitStatus
         validation = [ordered]@{
             scope = if ($targetedValidation) { 'Targeted' } else { 'Full' }

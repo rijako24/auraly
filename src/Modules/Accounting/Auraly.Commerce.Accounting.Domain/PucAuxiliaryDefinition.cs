@@ -17,7 +17,7 @@ public static class PucAuxiliaryDefinition
         if (!allowsPosting && function != "General") return "Las agrupaciones no ejecutan funciones financieras.";
         if (RequiresParty(function) && !requiresParty) return "Esta función financiera requiere tercero en todas sus partidas.";
         if (function == "Bank" && requiresParty) return "El auxiliar bancario no debe exigir tercero en todas sus partidas.";
-        if (function is "Bank" or "CreditCardLiability" && !hasBank)
+        if (function == "CreditCardLiability" && !hasBank)
             return "Esta función requiere identificar la cuenta bancaria.";
         if (function is not ("Bank" or "CreditCardLiability" or "CardClearing") && hasBank)
             return "Esta función no admite una dimensión bancaria.";

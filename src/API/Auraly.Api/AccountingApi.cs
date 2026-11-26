@@ -96,6 +96,8 @@ public static class AccountingApi
                 ? await ExecuteAsync(() => service.AccountOptionsAsync(context.User.ToAccountingIdentity(),
                     new(page ?? 1, pageSize ?? 25, search, IncludeStructural: true, IncludeInactive: true), token), Results.Ok)
                 : await ExecuteAsync(() => service.ListAccountsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/bank-account-options",async (HttpContext context,int? page,int? pageSize,string? search,AccountingService service,CancellationToken token)=>
+            await ExecuteAsync(()=>service.PageBankAccountOptionsAsync(context.User.ToAccountingIdentity(),page??1,pageSize??20,search,token),Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/bank-accounts", async (HttpContext context, bool? includeInactive, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListBankAccountsAsync(context.User.ToAccountingIdentity(), includeInactive == true, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/pos/v1/accounting/settlement-configuration", async (HttpContext context, AccountingService service, Auraly.Application.Catalog.PaymentMethodService forms, CancellationToken token) =>

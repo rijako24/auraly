@@ -189,6 +189,7 @@ GO
 :r .\Migrations\20261021_IndexManualVoucherParties.sql
 :r .\Migrations\20261021_ProtectUsedAccountConfiguration.sql
 :r .\Migrations\20261023_BankAuxiliariesAndAcceptedAccounts.sql
+:r .\Migrations\20261126_LinkTransferPaymentBanks.sql
 :r .\Migrations\20261023_ManualPaymentSites.sql
 :r .\Migrations\20261027_LinkPostedPortfolioOpenings.sql
 :r .\Migrations\20261115_LinkHistoricalCustomerCredits.sql

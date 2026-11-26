@@ -1212,6 +1212,26 @@ Las diferencias de captura no crean excepciones a las reglas de dominio:
   transferencia. En tarjetas el banco permanece como propiedad del auxiliar PUC
   elegido y congelado; no se envía como destino de transferencia. La traducción
   manual conserva el mismo validador común de evidencia y medios.
+- La selección bancaria de una forma de transferencia pertenece explícitamente
+  a `reference.PaymentMethods.BankAccountId`; su auxiliar se captura en el mismo
+  formulario. El maestro de cuentas bancarias no solicita auxiliar. El selector
+  consulta páginas de hasta 50 bancos activos del tenant en un comando, sólo al
+  abrirlo; editar reutiliza el nombre devuelto por el catálogo de formas.
+  `PaymentMethodAccountReadiness` valida el banco y el auxiliar conjuntamente.
+  Un auxiliar de banco conserva una sola identidad bancaria: no se mezcla con
+  otra forma, asociación PUC o asiento que pruebe un banco diferente.
+  `SqlAccountingPostingProcessor` congela la identidad aplicada en la partida
+  del asiento, en la misma transacción y comando por lote. `BankBookEntries`
+  consulta esa columna indexada; las líneas históricas nulas conservan su
+  lectura anterior, sin asignarles un banco inventado. Editar una forma no
+  redirige asientos anteriores. No hay otro writer ni tabla de movimientos.
+  El cutover copia únicamente asociaciones explícitas existentes a las formas
+  de transferencia vacías. No modifica cuentas, partidas ni importes históricos.
+  Servidor y UI se publican juntos; volver sólo a una API anterior no es seguro
+  para formas nuevas cuyo auxiliar no tenga la asociación bancaria antigua.
+  Una reversión requiere detener ese comando y corregir la versión, conservando
+  los datos. La aceptación exige venta, cartera, egreso, cierre, despacho, pago
+  de nómina, replay, aislamiento y lectura bancaria con la forma configurada.
 - Pagos vinculados a una caja utilizan su sesión autorizada y generan un solo
   movimiento por medio. Un movimiento administrativo sin sesión admitido por el
   contrato no se imputa a una caja arbitraria. POS conserva sus controles de
@@ -4724,6 +4744,11 @@ física de WorkSessions: éstos conservan su alcance por sede, sesión, efectivo
 sus categorías propias; el concepto de esta captura prepara una contrapartida
 o anticipo para recibo/egreso/comprobante con cualquiera de sus formas. No crea
 otro documento, flujo de pago, cálculo o writer financiero.
+
+El alta y la edición en Maestros abren un modal, con cuenta, naturaleza y usos
+en su cuerpo desplazable y acciones siempre visibles en móvil. Guardar reutiliza
+la página autoritativa del comando; cancelar no escribe ni vuelve a consultar
+el listado. El cambio de presentación no modifica efectos financieros.
 
 Esta primera extensión permite auxiliares de función General, CustomerAdvance
 y SupplierAdvance con naturaleza compatible. La función del auxiliar conserva

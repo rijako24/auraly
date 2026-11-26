@@ -34,6 +34,18 @@ public sealed class PayrollReportingServiceTests
         Assert.Equal(user.BusinessId, store.User?.BusinessId);
     }
 
+    [Fact]
+    public async Task Individual_receipt_preserves_the_result_identity_and_rejects_an_empty_identity()
+    {
+        var store=new RecordingStore();var service=new PayrollReportingService(store);
+        var user=User(new HashSet<string>{PayrollPermissionCodes.Read});var resultId=Guid.NewGuid();
+        await service.RunAsync(user,"payroll-receipt",new(2026,1,1),new(2026,1,31),null,default,resultId);
+        Assert.Equal(resultId,store.EmployeeResultId);Assert.Equal(1,store.CallCount);
+        await Assert.ThrowsAsync<PayrollValidationException>(()=>service.RunAsync(user,"payroll-receipt",
+            new(2026,1,1),new(2026,1,31),null,default,Guid.Empty));
+        Assert.Equal(1,store.CallCount);
+    }
+
     [Theory]
     [InlineData("", "2026-01-01", "2026-01-31")]
     [InlineData("payroll-summary", "2026-02-01", "2026-01-31")]
@@ -58,6 +70,7 @@ public sealed class PayrollReportingServiceTests
         public int CallCount { get; private set; }
         public string? Code { get; private set; }
         public PayrollUserIdentity? User { get; private set; }
+        public Guid? EmployeeResultId {get;private set;}
 
         public Task<IReadOnlyList<PayrollReportDefinitionView>> ListDefinitionsAsync(
             PayrollUserIdentity user, CancellationToken ct)
@@ -67,11 +80,12 @@ public sealed class PayrollReportingServiceTests
         }
 
         public Task<PayrollReportResult> RunAsync(PayrollUserIdentity user, string code,
-            DateOnly from, DateOnly to, Guid? partyId, CancellationToken ct)
+            DateOnly from, DateOnly to, Guid? partyId, CancellationToken ct,Guid? employeeResultId=null)
         {
             CallCount++;
             Code = code;
             User = user;
+            EmployeeResultId=employeeResultId;
             return Task.FromResult(new PayrollReportResult(
                 new(code, code, string.Empty, PayrollReportDataset.PayrollSummary, [], 1),
                 from, to, []));

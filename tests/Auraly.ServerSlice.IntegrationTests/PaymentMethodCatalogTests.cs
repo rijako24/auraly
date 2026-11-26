@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Catalog;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +13,44 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Legacy_bank_catalog_bootstraps_the_explicit_transfer_binding_once_without_money_effects()
+    {
+        using var client=fixture.CreateAdminClient(AccountingPermissionCodes.Read,AccountingPermissionCodes.Configure,CatalogPermissionCodes.Read,CatalogPermissionCodes.Update);
+        var types=(await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/bank-account-type"))!;
+        var bankId=Guid.NewGuid();
+        using(var response=await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId}",
+            new SaveBankAccountRequest(bankId,null,types.Single(row=>row.Code=="Checking").Id,"Banco histórico explícito",bankId.ToString("N"),"Cuenta histórica",false,true,null)))
+            Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        var account=await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,"1196","Asset","Bank","Debit",bankId);
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var counts=new SqlCommand("""
+            SELECT (SELECT COUNT_BIG(*) FROM dbo.AccountingEntries),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingEntryLines),
+              (SELECT COUNT_BIG(*) FROM dbo.CustomerPayments),(SELECT COUNT_BIG(*) FROM dbo.SupplierPayments);
+            """,connection);
+        async Task<long[]> ReadCounts()
+        {
+            await using var reader=await counts.ExecuteReaderAsync();await reader.ReadAsync();
+            return Enumerable.Range(0,reader.FieldCount).Select(reader.GetInt64).ToArray();
+        }
+        var before=await ReadCounts();
+        for(var pass=0;pass<2;pass++)
+        {
+            await fixture.ApplyMigrationAsync("20261109_PaymentMethodCatalog.sql",connection);
+            await using var check=new SqlCommand("""
+                SELECT form.BankAccountId,form.IsActive,form.UseForSales,form.UseForReceipts,form.UseForSupplierPayments
+                FROM reference.PaymentMethods form JOIN reference.Options type ON type.OptionId=form.PaymentTypeId
+                WHERE form.TenantId=@Tenant AND form.AccountId=@Account AND type.Code=N'Transfer';
+                """,connection);
+            check.Parameters.AddWithValue("@Tenant",fixture.TenantId);check.Parameters.AddWithValue("@Account",account.AccountId);
+            await using var reader=await check.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
+            Assert.Equal(bankId,reader.GetGuid(0));for(var field=1;field<5;field++)Assert.True(reader.GetBoolean(field));
+            Assert.False(await reader.ReadAsync());
+        }
+        Assert.Equal(before,await ReadCounts());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

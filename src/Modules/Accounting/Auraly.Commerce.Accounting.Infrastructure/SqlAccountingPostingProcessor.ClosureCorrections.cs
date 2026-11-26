@@ -24,10 +24,10 @@ public sealed partial class SqlAccountingPostingProcessor
               AccountCode nvarchar(32),AccountName nvarchar(200),BankAccountId uniqueidentifier);
             INSERT @Resolved
             SELECT input.CorrectionId,form.PaymentMethodId,type.Code,form.Version,form.Code,form.Name,
-              account.AccountId,account.Code,account.Name,CASE WHEN type.Code=N'Transfer' THEN account.BankAccountId END
+              account.AccountId,account.Code,account.Name,CASE WHEN type.Code=N'Transfer' THEN form.BankAccountId END
             FROM OPENJSON(@Rows) WITH(CorrectionId uniqueidentifier,PaymentMethodId uniqueidentifier,
               TenderMethodCode nvarchar(32),MovementType nvarchar(32),SourceDocumentType nvarchar(64)) input
-            JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
+            JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.TenantId=@Tenant AND form.PaymentMethodId=input.PaymentMethodId
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId
               AND type.CatalogCode=N'payment-method' AND type.Code=input.TenderMethodCode AND type.IsActive=1
             JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.TenantId=@Tenant AND account.AccountId=form.AccountId

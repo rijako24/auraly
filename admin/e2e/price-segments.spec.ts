@@ -166,6 +166,17 @@ test("canales administra precios por cantidad, modos calculados e informes", asy
   await expect(detailDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
   await expectMobileDialogFits(page, detailDialog);
   await page.setViewportSize({ width: 390, height: 844 });
+  const scale=detailDialog.getByRole("row").filter({hasText:"Aceite vegetal 3000 ml"}).first();
+  await scale.scrollIntoViewIfNeeded();
+  await expect(scale.getByRole("cell").filter({hasText:"29.500"})).toBeInViewport();
+  await expect(scale.getByRole("checkbox")).toBeInViewport();
+  expect(await scale.evaluate(element=>{
+    const bounds=element.getBoundingClientRect();
+    return [...element.querySelectorAll("td")].every(cell=>{
+      const field=cell.getBoundingClientRect();return field.left>=bounds.left&&field.right<=bounds.right+1;
+    });
+  })).toBe(true);
+  await detailDialog.screenshot({path:test.info().outputPath("precios-escalas-mobile.png")});
   await detailDialog.getByRole("button", { name: "Editar canal" }).scrollIntoViewIfNeeded();
   await expect(detailDialog.getByRole("button", { name: "Editar canal" })).toBeInViewport();
   await page.setViewportSize({ width: 1366, height: 768 });

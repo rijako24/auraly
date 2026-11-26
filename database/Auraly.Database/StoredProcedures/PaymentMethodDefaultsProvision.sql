@@ -11,7 +11,7 @@ BEGIN
     DECLARE @Created TABLE(TenantId uniqueidentifier,PaymentMethodId uniqueidentifier,
         PRIMARY KEY(TenantId,PaymentMethodId));
 
-    INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,
+    INSERT reference.PaymentMethods(TenantId,PaymentMethodId,Code,Name,PaymentTypeId,AccountId,BankAccountId,
         UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers,
         IsActive,SortOrder,Version,CreatedAt,UpdatedAt)
     OUTPUT inserted.TenantId,inserted.PaymentMethodId INTO @Created
@@ -21,9 +21,9 @@ BEGIN
         CASE WHEN EXISTS(SELECT 1 FROM reference.PaymentMethods currentCode WITH(UPDLOCK,HOLDLOCK)
             WHERE currentCode.TenantId=tenant.TenantId AND currentCode.Code=type.Code)
           THEN CONCAT(LEFT(type.Code,31),N'-',REPLACE(CONVERT(nvarchar(36),NEWID()),N'-',N''))
-          ELSE type.Code END,type.Label,type.OptionId,account.AccountId,
+          ELSE type.Code END,type.Label,type.OptionId,account.AccountId,CASE WHEN type.Code=N'Transfer' THEN account.BankAccountId END,
         template.UseForSales,template.UseForReceipts,template.UseForSupplierPayments,
-        template.UseForPayroll,template.UseForVouchers,0,template.SortOrder,1,@Now,@Now
+        template.UseForPayroll,template.UseForVouchers,1,template.SortOrder,1,@Now,@Now
     FROM dbo.Tenants tenant
     JOIN dbo.AccountingConfigurationProfiles profile ON profile.IsDefault=1 AND profile.IsActive=1
     JOIN dbo.AccountingConfigurationProfilePaymentMethods template ON template.ProfileCode=profile.ProfileCode
@@ -39,11 +39,11 @@ BEGIN
 
     -- A generic bank account has no real bank identity yet. Keep that form
     -- inactive until the administrator completes it; never bypass readiness.
-    UPDATE form SET IsActive=1
+    UPDATE form SET IsActive=0
     FROM reference.PaymentMethods form
     JOIN @Created created ON created.TenantId=form.TenantId AND created.PaymentMethodId=form.PaymentMethodId
     JOIN reference.PaymentMethodDetails ready ON ready.TenantId=form.TenantId
-        AND ready.PaymentMethodId=form.PaymentMethodId AND ready.IsReady=1;
+        AND ready.PaymentMethodId=form.PaymentMethodId AND ready.IsReady=0;
 
     -- Provisioning uses the same Configuration stream as administrative
     -- saves. Reprovisioning without new forms produces no extra notice.

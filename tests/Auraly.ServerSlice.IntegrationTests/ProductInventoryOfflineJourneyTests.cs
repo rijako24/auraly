@@ -41,7 +41,9 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
             false,
             [new ProductBarcodeInput(barcode, true)],
             [],
-            [new ProductPriceInput(12_500m, "COP", 10_000m, 20m)],
+            // This journey specifies a fixed gross sale price; its margin is
+            // derived by the catalog rather than selecting margin-driven price.
+            [new ProductPriceInput(12_500m, "COP", 10_000m, 20m, InputMode: "SalePrice")],
             [new SupplierCostInput(fixture.SupplierId, "900999001", "Proveedor E2E", null, 10_000m)],
             null,
             fixture.TaxProfileId);

@@ -16,6 +16,53 @@ public sealed class SalesReportingSliceCollection : ICollectionFixture<ServerSli
 [Trait("EngineCertification", "Reporting")]
 public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Reporting_replay_waits_for_its_job_without_retaining_the_checkpoint_read_lock()
+    {
+        var sale=fixture.CreateUniqueValidRequest();
+        using(var upload=fixture.CreateUploadMessage(sale))
+        using(var response=await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        using var scope=fixture.CreateScope();
+        var processor=scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>();
+        await processor.ProcessAsync(sale.DocumentId,"SalesInvoice",fixture.BusinessId,1,default);
+        await using var connection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();Assert.StartsWith("AuralyServerSlice_",connection.Database);
+        await using var owner=(Microsoft.Data.SqlClient.SqlTransaction)await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        await using var hold=new Microsoft.Data.SqlClient.SqlCommand("""
+            SELECT Status FROM reporting.SalesReportingJobs WITH(UPDLOCK,HOLDLOCK)
+            WHERE SourceDocumentId=@Document AND SourceDocumentType=N'SalesInvoice' AND BusinessId=@Business AND SourceVersion=1;
+            """,connection,owner);
+        hold.Parameters.AddWithValue("@Document",sale.DocumentId);hold.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        Assert.Equal("Projected",await hold.ExecuteScalarAsync());
+        var started=new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var observer=new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+            commandFilter:command=>command.CommandText.Contains("SELECT COALESCE(r.SourcePayloadJson",StringComparison.Ordinal)
+                && command.Parameters.Contains("@DocumentId") && (Guid)command.Parameters["@DocumentId"].Value==sale.DocumentId,
+            beforeExecute:command=>started.TrySetResult(command.Connection!.ServerProcessId));
+        var replay=processor.ProcessAsync(sale.DocumentId,"SalesInvoice",fixture.BusinessId,1,default);
+        try
+        {
+            var session=await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await using var monitor=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);await monitor.OpenAsync();
+            await using var wait=new Microsoft.Data.SqlClient.SqlCommand("SELECT COUNT(*) FROM sys.dm_exec_requests WHERE session_id=@Session AND wait_type LIKE N'LCK_M_%';",monitor);
+            wait.Parameters.AddWithValue("@Session",session);
+            var blocked=false;
+            for(var attempt=0;attempt<100;attempt++)
+            {
+                if((int)(await wait.ExecuteScalarAsync())!>0){blocked=true;break;}
+                await Task.Delay(20);
+            }
+            Assert.True(blocked,"El replay debe esperar el trabajo retenido por la primera transacción.");
+            hold.CommandText="UPDATE reporting.SalesReportingCheckpoints SET LastProjectedAt=LastProjectedAt WHERE BusinessId=@Business;";
+            hold.CommandTimeout=3;Assert.Equal(1,await hold.ExecuteNonQueryAsync());
+        }
+        finally{if(owner.Connection is not null)await owner.RollbackAsync();}
+        await replay.WaitAsync(TimeSpan.FromSeconds(5));
+        hold.Transaction=null;hold.CommandText="SELECT AttemptCount FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Document AND BusinessId=@Business;";
+        Assert.Equal(1,await hold.ExecuteScalarAsync());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

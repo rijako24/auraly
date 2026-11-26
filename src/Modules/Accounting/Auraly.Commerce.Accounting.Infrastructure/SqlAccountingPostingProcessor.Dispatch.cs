@@ -91,20 +91,20 @@ public sealed partial class SqlAccountingPostingProcessor
               Amount decimal(19,4));
             INSERT @Resolved
             SELECT input.PaymentId,input.SourceDocumentId,form.PaymentMethodId,type.Code,form.Version,form.Code,form.Name,
-              account.AccountId,account.Code,account.Name,account.BankAccountId,input.Amount
+              account.AccountId,account.Code,account.Name,form.BankAccountId,input.Amount
             FROM @Requested input
             JOIN dbo.DispatchSourceDocuments document ON document.SourceDocumentId=input.SourceDocumentId AND document.DispatchId=@Dispatch
             JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=document.DispatchId AND dispatch.TenantId=@Tenant AND dispatch.BusinessId=@Business
             JOIN dbo.DispatchDeliveryPayments payment ON payment.DispatchDeliveryPaymentId=input.PaymentId
               AND payment.DispatchSourceDocumentId=document.DispatchSourceDocumentId AND payment.Amount=input.Amount
-            JOIN reference.PaymentMethods form WITH(HOLDLOCK) ON form.PaymentMethodId=input.PaymentMethodId AND form.TenantId=@Tenant
+            JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.PaymentMethodId=input.PaymentMethodId AND form.TenantId=@Tenant
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.Code=input.MethodCode
               AND type.CatalogCode=N'payment-method' AND type.IsActive=1
             JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts)) ON account.AccountId=form.AccountId AND account.TenantId=@Tenant
             CROSS APPLY accounting.PaymentMethodAccountReadiness(@Tenant,type.Code,form.AccountId) ready
             WHERE form.IsActive=1 AND form.UseForReceipts=1 AND ready.SourceType=N'CustomerPaymentMethod';
             DECLARE @DifferenceAccount uniqueidentifier;
-            SELECT @DifferenceAccount=form.AccountId FROM reference.PaymentMethods form WITH(HOLDLOCK)
+            SELECT @DifferenceAccount=form.AccountId FROM reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK)
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method'
               AND type.Code=N'Cash' AND type.IsActive=1
             JOIN dbo.AccountingAccounts account WITH(UPDLOCK,HOLDLOCK,INDEX(PK_AccountingAccounts))

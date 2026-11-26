@@ -324,6 +324,102 @@ function Invoke-ReviewedPreDacpacMigration {
     }
 }
 
+function Complete-ReportingReleaseUpgrade {
+    param([Parameter(Mandatory)][string]$AccessToken)
+    # The release runner invokes the existing Console before restarting writers.
+    # No App Service runtime, new SQL principal, password or remote job is needed.
+    $version=[int]$manifest.reportingProjectionVersion
+    $connection=[Data.SqlClient.SqlConnection]::new(
+        "Server=tcp:$($configuration.SqlServer).database.windows.net,1433;Initial Catalog=$($configuration.Database);Encrypt=True;TrustServerCertificate=False;Connect Timeout=60;")
+    $connection.AccessToken=$AccessToken
+    $runtimePath=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('auraly-reporting-release-'+[guid]::NewGuid().ToString('N'))))
+    $scopes=[Collections.Generic.List[object]]::new()
+    try {
+        $connection.Open()
+        $query=$connection.CreateCommand();$query.CommandTimeout=120
+        $query.CommandText=@'
+SELECT TOP(101) b.TenantId,b.BusinessId
+FROM dbo.Businesses b
+WHERE (EXISTS(SELECT 1 FROM reporting.SalesReportingJobs j WHERE j.BusinessId=b.BusinessId)
+    OR EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints c WHERE c.BusinessId=b.BusinessId))
+  AND (NOT EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints c
+         WHERE c.BusinessId=b.BusinessId AND c.ProjectionVersion=@Version AND c.RebuildInProgress=0 AND c.LastError IS NULL)
+    OR EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints c WHERE c.BusinessId=b.BusinessId AND c.RebuildInProgress=1))
+ORDER BY b.BusinessId;
+'@
+        $null=$query.Parameters.AddWithValue('@Version',$version)
+        try {$reader=$query.ExecuteReader();try {while($reader.Read()){$scopes.Add(@{TenantId=$reader.GetGuid(0);BusinessId=$reader.GetGuid(1)})}}finally {$reader.Dispose()}}finally {$query.Dispose()}
+        if($scopes.Count -eq 0){Write-Information 'Reporting ya satisface la versión del release.' -InformationAction Continue;return}
+        if($scopes.Count -gt 100){throw 'La actualización supera las 100 sedes de la ventana revisada; no se habilitaron los escritores.'}
+        $artifact=@($manifest.artifacts|Where-Object name -eq "auraly-reporting-maintenance-$ReleaseVersion.zip")
+        if($artifact.Count -ne 1){throw 'Falta la consola inmutable de reporting del release.'}
+        $archive=Join-Path $releasePath $artifact[0].name
+        if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $artifact[0].sha256){throw 'La consola no coincide con el hash del release.'}
+        $null=[IO.Directory]::CreateDirectory($runtimePath)
+        if(-not $IsWindows){
+            & chmod 700 $runtimePath
+            Assert-LastExitCode 'No se pudo proteger el directorio privado de mantenimiento'
+        }
+        [IO.Compression.ZipFile]::ExtractToDirectory($archive,$runtimePath)
+        $console=Join-Path $runtimePath 'Auraly.Console.dll'
+        if(-not(Test-Path -LiteralPath $console)){throw 'El artefacto no contiene la consola canónica.'}
+        # The deadline is global for the bounded set of independent rebuilds.
+        $deadline=[DateTimeOffset]::UtcNow.AddHours(2)
+        foreach($scope in $scopes){
+            if([DateTimeOffset]::UtcNow -ge $deadline){throw 'La reconstrucción excedió dos horas; los escritores permanecen detenidos.'}
+            Write-Information "Reconstruyendo reporting de la sede $($scope.BusinessId) con los escritores detenidos." -InformationAction Continue
+            $start=[Diagnostics.ProcessStartInfo]::new('dotnet')
+            $start.WorkingDirectory=$runtimePath;$start.UseShellExecute=$false;$start.CreateNoWindow=$true
+            $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+            foreach($argument in @($console,'rebuild-sales-reporting',$scope.TenantId.ToString('D'),$scope.BusinessId.ToString('D'))){$start.ArgumentList.Add($argument)}
+            $start.Environment['ConnectionStrings__DefaultConnection']="Server=tcp:$($configuration.SqlServer).database.windows.net,1433;Database=$($configuration.Database);Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Default;Connect Timeout=30;Application Name=AuralyReleaseReporting;"
+            $start.Environment['AZURE_TOKEN_CREDENTIALS']='AzureCliCredential'
+            foreach($irrelevantSecret in @('AURALY_BOOTSTRAP_ADMIN_PASSWORD_HASH','CJ_WHATSAPP_ACCESS_TOKEN','CJ_WHATSAPP_FUNCTION_KEY','CJ_WHATSAPP_VERIFY_TOKEN')){$null=$start.Environment.Remove($irrelevantSecret)}
+            $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+            $started=$false
+            try {
+                $started=$process.Start()
+                if(-not $started){throw 'No se pudo iniciar la consola canónica del release.'}
+                $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+                $remaining=[int][Math]::Max(1,($deadline-[DateTimeOffset]::UtcNow).TotalMilliseconds)
+                if(-not $process.WaitForExit($remaining)){$process.Kill($true);$process.WaitForExit();throw 'La reconstrucción excedió dos horas; los escritores permanecen detenidos.'}
+                $output=$stdout.GetAwaiter().GetResult();$errors=$stderr.GetAwaiter().GetResult()
+                if($process.ExitCode -ne 0){throw ('Falló la consola canónica de reporting: '+((($output+"`n"+$errors) -split "`n"|Select-Object -Last 40) -join "`n"))}
+                Write-Information $output -InformationAction Continue
+            }finally {
+                try {
+                    if($started -and -not $process.HasExited){
+                        try {$process.Kill($true)}catch [InvalidOperationException]{if(-not $process.HasExited){throw}}
+                        $process.WaitForExit()
+                    }
+                }finally {$process.Dispose()}
+            }
+        }
+        # Verification uses a fresh identity/connection after a potentially long
+        # replay. SqlClient's Default auth obtains fresh CLI tokens for the child.
+        $connection.Close()
+        $identity=Invoke-AzJson @('account','get-access-token','--resource','https://database.windows.net/','--output','json')
+        $connection.AccessToken=$identity.accessToken;$connection.Open()
+        $verify=$connection.CreateCommand();$verify.CommandTimeout=60
+        $verify.CommandText=@'
+SELECT COUNT(*) FROM OPENJSON(@Scopes) WITH(BusinessId uniqueidentifier '$') selected
+WHERE NOT EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints c WHERE c.BusinessId=selected.BusinessId
+  AND c.ProjectionVersion=@Version AND c.RebuildInProgress=0 AND c.LastError IS NULL)
+ OR EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints c WHERE c.BusinessId=selected.BusinessId AND c.RebuildInProgress=1);
+'@
+        $null=$verify.Parameters.AddWithValue('@Scopes',(ConvertTo-Json -InputObject @($scopes|ForEach-Object{$_.BusinessId.ToString('D')}) -Compress))
+        $null=$verify.Parameters.AddWithValue('@Version',$version)
+        try {if([int]$verify.ExecuteScalar() -ne 0){throw 'Reporting no quedó completo en todas las sedes del corte.'}}finally {$verify.Dispose()}
+    }finally {
+        $connection.Dispose()
+        if(Test-Path -LiteralPath $runtimePath){
+            $temporaryRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+            if(-not $runtimePath.StartsWith($temporaryRoot,[StringComparison]::OrdinalIgnoreCase) -or (Split-Path $runtimePath -Leaf) -notmatch '^auraly-reporting-release-[a-f0-9]{32}$'){throw 'Ruta privada de mantenimiento inválida.'}
+            Remove-Item -LiteralPath $runtimePath -Recurse -Force
+        }
+    }
+}
+
 function Test-Release {
     return & (Join-Path $PSScriptRoot 'Test-AuralyReleaseArtifacts.ps1') -ReleaseRoot $releasePath -ReleaseVersion $ReleaseVersion
 }
@@ -491,6 +587,7 @@ function Publish-Database {
 
         & $resolvedSqlPackagePath '/Action:Publish' @commonArguments
         Assert-LastExitCode 'La publicacion del DACPAC fallo'
+        Complete-ReportingReleaseUpgrade -AccessToken $accessToken
 
         $verificationConnection = [System.Data.SqlClient.SqlConnection]::new(
             "Server=tcp:$($configuration.SqlServer).database.windows.net,1433;" +

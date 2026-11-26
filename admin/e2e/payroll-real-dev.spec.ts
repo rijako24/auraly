@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { realAccountingWorkspace, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
-import type { PayrollEmployment, PayrollEmploymentPage, PayrollOptions, PayrollProfile, PayrollRun } from "../src/services/api/payroll";
+import type { PayrollEmployment, PayrollEmploymentPage, PayrollOptions, PayrollProfile, PayrollRun, PayrollRunPage, PayrollProfilePage, PayrollRuleSet } from "../src/services/api/payroll";
 import type { AccountingEntry } from "../src/services/api/accounting";
 
 test.use({ actionTimeout: 30_000 });
@@ -13,13 +13,13 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: context.timeZone }).format(new Date());
   const path = "/api/commerce/v1/payroll";
   const options = await scopedJson<PayrollOptions>("GET", `${path}/options`);
-  const existingRuns = await scopedJson<Array<{ runKind: string; periodStart: string; periodEnd: string }>>("GET", `${path}/runs`);
+  const existingRuns = (await scopedJson<PayrollRunPage>("GET", `${path}/runs?page=1&pageSize=50&kind=Regular`)).items;
   const periods = Array.from({ length: 12 }, (_, offset) => {
     const month = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1 + offset, 1);
     return { start: new Date(month).toISOString().slice(0, 10),
       end: new Date(Date.UTC(new Date(month).getUTCFullYear(), new Date(month).getUTCMonth() + 1, 0)).toISOString().slice(0, 10) };
   });
-  const period = periods.find(candidate => !existingRuns.some(run => run.runKind === "Regular" && run.periodStart === candidate.start && run.periodEnd === candidate.end));
+  const period = periods.find(candidate => candidate.start>=today && !existingRuns.some(run => run.runKind === "Regular" && run.periodStart === candidate.start && run.periodEnd === candidate.end));
   expect(period, "Se necesita un período regular libre en el entorno de pruebas.").toBeTruthy();
   const periodStart = period!.start;
   const accountingPeriods = await scopedJson<Array<{ startsOn: string; endsOn: string; status: string }>>("GET", "/api/commerce/v1/accounting/periods");
@@ -28,17 +28,26 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
       startsOn: periodStart, endsOn: period!.end, name: `Período QA nómina ${periodStart}` });
   }
   const contracts = (await scopedJson<PayrollEmploymentPage>("GET", `${path}/employments?page=1&pageSize=50`)).items;
-  const rules = options.ruleSets.find(rule => rule.status === "Approved");
+  const baseProfileId=contracts.find(value=>value.configuration?.values.accountingProfileId)?.configuration?.values.accountingProfileId
+    ??(await scopedJson<PayrollProfilePage>("GET",`${path}/profiles?page=1&pageSize=1&isActive=true`)).items[0]?.profileId;
+  expect(baseProfileId,"DEV necesita un perfil de prueba configurado.").toBeTruthy();
+  const rules=(await scopedJson<{items:PayrollRuleSet[]}>("GET",`${path}/profiles/${baseProfileId}/rule-sets?page=1&pageSize=20`)).items.find(rule=>rule.status==="Approved");
   expect(rules).toBeTruthy();
   const tag = `QA-${randomUUID().slice(0, 8)}`;
 
   await page.goto("/dashboard/payroll?section=configuration");
   await page.getByRole("button", { name: "Nuevo perfil", exact: true }).click();
-  const profileCard = page.getByRole("heading", { name: "Perfiles contables", exact: true }).locator("..").locator("..");
+  const profileCard = page.getByRole("dialog", { name: "Nuevo perfil de nómina", exact: true });
   await profileCard.getByRole("textbox", { name: "Código", exact: true }).fill(tag);
   await profileCard.getByRole("textbox", { name: "Nombre", exact: true }).fill(`Perfil ${tag}`);
-  await profileCard.getByRole("combobox", { name: "Porcentajes y topes del parámetro" }).click();
-  await page.getByRole("option").filter({ hasText: rules!.code }).click();
+  await profileCard.getByLabel("Fuente normativa",{exact:true}).fill(rules!.sourceReference);
+  for(const definition of options.catalogs["payroll-rule-parameter"]){
+    const parameter=rules!.parameters.find(value=>value.code===definition.code);
+    expect(parameter,`El perfil base necesita el parámetro ${definition.label}`).toBeTruthy();
+    const unit=definition.metadataCode==="Rate"?"%":definition.metadataCode==="COP"?"COP":definition.metadataCode==="Days"?"Días":definition.metadataCode==="Multiple"?"Veces":"Valor";
+    const value=definition.metadataCode==="Rate"?Number((parameter!.numericValue*100).toFixed(6)):parameter!.numericValue;
+    await profileCard.getByLabel(`${definition.label} · ${unit}`,{exact:true}).fill(String(value));
+  }
   const savingProfile = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/payroll/profiles/"));
   await profileCard.getByRole("button", { name: "Guardar perfil", exact: true }).click();
   const profileResponse = await savingProfile;
@@ -154,7 +163,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   const paying = page.getByRole("dialog", { name: "Confirmar lote de pago", exact: true });
   await paying.getByRole("combobox", { name: "Liquidación", exact: true }).click();
   const total = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(run.netPayable);
-  await page.getByRole("option", { name: `${run.periodStart} — ${run.periodEnd} · Neto liquidado ${total}`, exact: true }).click();
+  await page.getByRole("option").filter({hasText:`${run.periodStart} — ${run.periodEnd}`}).filter({hasText:`Neto liquidado ${total}`}).click();
   const refreshingPending = page.waitForResponse(response => response.request().method() === "GET" && response.url().includes(`/payroll/runs/${run.payrollRunId}`));
   await paying.getByRole("button", { name: "Actualizar pendientes", exact: true }).click();
   expect((await refreshingPending).ok()).toBe(true);

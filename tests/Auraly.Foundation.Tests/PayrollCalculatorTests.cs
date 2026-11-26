@@ -5,6 +5,21 @@ namespace Auraly.Foundation.Tests;
 public sealed class PayrollCalculatorTests
 {
     [Fact]
+    public void Old_age_pensioner_keeps_health_risk_and_benefits_without_pension_contributions()
+    {
+        var calculator=new PayrollCalculator();var input=Input(3_000_000m);
+        var ordinary=calculator.Calculate(input);
+        var pensioner=calculator.Calculate(input with{PaysPensionContributions=false});
+        Assert.DoesNotContain(pensioner.Lines,line=>line.ConceptCode is "PENSION_EMPLOYEE" or "PENSION_EMPLOYER");
+        Assert.Equal(ordinary.Earnings,pensioner.Earnings);Assert.Equal(ordinary.Provisions,pensioner.Provisions);
+        Assert.Equal(ordinary.NetPayable+120_000m,pensioner.NetPayable);
+        foreach(var code in new[]{"HEALTH_EMPLOYEE","HEALTH_EMPLOYER","ARL"})
+            Assert.Equal(ordinary.Lines.Single(line=>line.ConceptCode==code).Amount,
+                pensioner.Lines.Single(line=>line.ConceptCode==code).Amount);
+        Assert.NotEqual(ordinary.CalculationHash,pensioner.CalculationHash);
+    }
+
+    [Fact]
     public void Fixed_amount_novelties_keep_zero_quantity_and_their_value_and_origin()
     {
         var novelty=new PayrollNoveltyInput(Guid.NewGuid(),Concept("FIXED",PayrollLineNature.Earning),
@@ -46,6 +61,7 @@ public sealed class PayrollCalculatorTests
         Assert.Equal(30m, result.WorkedDays);
         Assert.NotEmpty(result.CalculationHash);
         Assert.Contains(result.Lines, line => line.ConceptCode == "BASIC" && line.Amount == 3_000_000m);
+        Assert.Equal(PayrollSystemConceptRoles.BasicSalary,result.Lines.Single(line=>line.ConceptCode=="BASIC").SystemRoleCode);
         Assert.Contains(result.Lines, line => line.ConceptCode == "HEALTH_EMPLOYEE" && line.Amount == 120_000m);
         Assert.Contains(result.Lines, line => line.ConceptCode == "ARL" && line.Amount == 15_660m);
     }

@@ -8,7 +8,10 @@ public sealed record PaymentMethodView(Guid PaymentMethodId, string Code, string
     Guid PaymentTypeId, string MethodCode, string TypeLabel, Guid AccountId,
     string AccountCode, string AccountName, Guid? BankAccountId,
     bool UseForSales, bool UseForReceipts, bool UseForSupplierPayments, bool UseForPayroll,
-    bool IsActive, int SortOrder, int Version, byte[] RowVersion, bool UseForVouchers = false);
+    bool IsActive, int SortOrder, int Version, byte[] RowVersion, bool UseForVouchers = false)
+{
+    public string? BankAccountName {get;init;}
+}
 
 public sealed record PaymentMethodPage(IReadOnlyList<PaymentMethodView> Items,
     int Page, int PageSize, int TotalCount);
@@ -23,7 +26,7 @@ public sealed record PaymentMethodCatalogSnapshot(int ContractVersion, IReadOnly
 public sealed record SavePaymentMethodRequest(Guid PaymentMethodId, string Code, string Name,
     Guid PaymentTypeId, Guid AccountId, bool UseForSales, bool UseForReceipts,
     bool UseForSupplierPayments, bool UseForPayroll, bool IsActive, int SortOrder,
-    byte[]? RowVersion = null, bool? UseForVouchers = null);
+    byte[]? RowVersion = null, bool? UseForVouchers = null,Guid? BankAccountId=null);
 
 public interface IPaymentMethodStore
 {

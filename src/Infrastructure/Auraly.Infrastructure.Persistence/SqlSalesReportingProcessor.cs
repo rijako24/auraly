@@ -194,7 +194,10 @@ public sealed partial class SqlSalesReportingProcessor(
         CancellationToken cancellationToken,bool rebuilding)
     {
         var sql=(rebuilding?"":TransactionLockSql+"\n"+"""
-            IF EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId AND RebuildInProgress=1)
+            -- The shared reporting applock already excludes the rebuild session.
+            -- Release this read lock before taking the job: retaining a serializable
+            -- range here deadlocks a replay against that job's checkpoint update.
+            IF EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints WITH(READCOMMITTEDLOCK) WHERE BusinessId=@BusinessId AND RebuildInProgress=1)
               THROW 51619,N'La reconstrucción explícita de reporting debe completarse.',1;
             """)+"\n"+"""
             SELECT COALESCE(r.SourcePayloadJson,p.PayloadJson),r.Status,r.SourcePayloadHash,b.TenantId

@@ -79,7 +79,7 @@ internal static class SqlPaymentMethodResolver
     {
         if (tenders.All(tender => tender.PaymentMethodId is null)) return tenders;
         await using var command = new SqlCommand("""
-            SELECT form.PaymentMethodId,form.Code,form.Name,type.Code,form.Version,account.BankAccountId
+            SELECT form.PaymentMethodId,form.Code,form.Name,type.Code,form.Version,form.BankAccountId
             FROM OPENJSON(@Ids) WITH(Id uniqueidentifier '$') input
             JOIN reference.PaymentMethods form WITH(UPDLOCK,HOLDLOCK) ON form.PaymentMethodId=input.Id AND form.TenantId=@Tenant
             JOIN reference.Options type WITH(HOLDLOCK) ON type.OptionId=form.PaymentTypeId AND type.CatalogCode=N'payment-method' AND type.IsActive=1

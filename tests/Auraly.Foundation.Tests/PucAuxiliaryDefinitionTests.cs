@@ -4,6 +4,12 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class PucAuxiliaryDefinitionTests
 {
+    [Fact]
+    public void Bank_auxiliary_can_take_its_bank_from_the_transfer_form_while_credit_card_liability_requires_its_issuer()
+    {
+        Assert.Null(PucAuxiliaryDefinition.Validate("Bank","Asset","Debit",true,false,false,"Transfer"));
+        Assert.NotNull(PucAuxiliaryDefinition.Validate("CreditCardLiability","Liability","Credit",true,false,false,"CreditCard"));
+    }
     [Theory]
     [InlineData("Asset", "Debit", true, false, null, true)]
     [InlineData("Liability", "Debit", true, false, null, false)]

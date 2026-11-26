@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Download, Printer, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,9 +19,10 @@ type Props = {
   fileName?: string;
   documentDownloads?: boolean;
   searchable?: boolean;
+  groupedHeaders?: boolean;
 };
 
-export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false, searchable = true }: Props) {
+export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false, searchable = true, groupedHeaders = false }: Props) {
   const [search, setSearch] = useState("");
   const [exporting, setExporting] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -45,7 +46,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
     try {
       const { exportReportPdf, exportReportExcel } = await import("@/lib/report-export");
       await (format === "pdf" ? exportReportPdf : exportReportExcel)({ title, brandName: [brandName, brandIdentification].filter(Boolean).join(" · "),
-        description, fileName: fileName ?? title, rows: filtered, columns });
+        description, fileName: fileName ?? title, rows: filtered, columns, groupedHeaders, keepRowsTogether: groupedHeaders });
     } catch (error) { setExportError(error instanceof Error ? error.message : "No se pudo exportar."); }
     finally { setExporting(null); }
   }
@@ -61,12 +62,12 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
 
   return <div className="flex min-h-[calc(100dvh-9rem)] flex-col overflow-hidden rounded-2xl border bg-background">
         <header className="flex flex-wrap items-center gap-4 border-b px-5 py-4"><Button type="button" size="sm" variant="ghost" onClick={onClose}><ArrowLeft className="mr-2 h-4 w-4"/>Volver</Button><TenantBrand displayName={brandName} logoUrl={branding.data?.logoUrl}/><div><h1 className="text-lg font-semibold">{title}</h1><p className="text-sm text-muted-foreground">{description ?? `${recordCount.toLocaleString("es-CO")} registros`}</p></div></header>
-        <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center">
+        <div className={`${groupedHeaders?"grid grid-cols-2":"flex flex-col"} gap-3 border-b bg-muted/30 p-4 sm:flex sm:flex-row sm:items-center`}>
           {searchable ? <label className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar dentro del reporte" />
-          </label> : <p className="min-w-0 flex-1 text-sm text-muted-foreground">Se imprime y exporta el informe completo con los filtros aplicados.</p>}
-          <span className="text-sm tabular-nums text-muted-foreground">{recordCount.toLocaleString("es-CO")} filas</span>
+          </label> : <p className={`min-w-0 flex-1 text-sm text-muted-foreground ${groupedHeaders?"hidden sm:block":""}`}>Se imprime y exporta el informe completo con los filtros aplicados.</p>}
+          <span className={`text-sm tabular-nums text-muted-foreground ${groupedHeaders?"hidden sm:block":""}`}>{recordCount.toLocaleString("es-CO")} filas</span>
           <Button variant="outline" disabled={!!exporting} onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{documentDownloads ? "Imprimir" : "Imprimir / PDF"}</Button>
           {documentDownloads && <><Button variant="outline" disabled={!!exporting} onClick={() => void exportFile("pdf")}>Descargar PDF</Button>
           <Button variant="outline" disabled={!!exporting} onClick={() => void exportFile("xlsx")}>Exportar Excel</Button></>}
@@ -75,7 +76,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
         {exporting && <p role="status" className="px-5 py-2">Preparando {exporting === "pdf" ? "PDF" : "Excel"}…</p>}
         {exportError && <p role="alert" className="px-5 py-2 text-destructive">{exportError}</p>}
         <section id="auraly-report-print-area" className="min-h-0 flex-1 overflow-auto bg-white p-5 text-slate-950">
-          <header className="mb-6 border-b-2 border-teal-700 pb-4">
+          <header className={`mb-6 border-b-2 border-teal-700 pb-4 ${groupedHeaders?"hidden sm:block print:block":""}`}>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/>
@@ -91,12 +92,12 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
               </dl>
             </div>
           </header>
-          <table className="w-full min-w-max border-collapse text-xs sm:text-sm">
-            <thead className="sticky top-0 bg-slate-100 print:static">
+          <table style={groupedHeaders?{"--report-value-columns":Math.max(1,columns.length-1)} as CSSProperties:undefined} className={`w-full border-collapse text-xs sm:text-sm ${groupedHeaders?"block table-fixed break-words sm:table print:table":"min-w-max"}`}>
+            <thead className={`sticky top-0 bg-slate-100 print:static ${groupedHeaders?"hidden sm:table-header-group print:table-header-group":""}`}>
               <tr>{columns.map((column) => <th key={column.key} className={`border px-3 py-2 ${column.align === "right" ? "text-right" : "text-left"}`}>{column.label}</th>)}</tr>
             </thead>
-            <tbody>{filtered.map((row, index) => row.__group ? <tr key={String(row.id ?? index)}><td colSpan={columns.length} className="border border-teal-200 bg-teal-50 px-3 py-2 font-bold text-teal-950">{String(row.__group)}</td></tr> : <tr key={String(row.id ?? index)} className="even:bg-slate-50">
-              {columns.map((column) => <td key={column.key} className={`border px-3 py-2 ${column.align === "right" ? "text-right tabular-nums" : "text-left"}`}>{reportCellText(column, row)}</td>)}
+            <tbody className={groupedHeaders?"block sm:table-row-group print:table-row-group":undefined}>{filtered.map((row, index) => row.__group ? <tr key={String(row.id ?? index)} className={groupedHeaders?"block sm:table-row print:table-row":undefined}><td colSpan={columns.length} className={`border border-teal-200 px-3 py-2 ${groupedHeaders?"block sm:table-cell print:table-cell":""} ${!groupedHeaders||row.__groupLevel===1?"bg-teal-50 font-bold text-teal-950":"bg-white text-slate-700"}`}>{String(row.__group)}</td></tr> : <tr key={String(row.id ?? index)} className={`even:bg-slate-50 ${groupedHeaders?"grid grid-cols-[repeat(var(--report-value-columns),minmax(0,1fr))] sm:table-row print:table-row":""}`}>
+              {columns.map((column, columnIndex) => <td key={column.key} className={`border px-2 py-2 sm:px-3 ${groupedHeaders?`block min-w-0 sm:table-cell print:table-cell ${columnIndex===0?"col-span-full":""}`:""} ${column.align === "right" ? "whitespace-nowrap text-right tabular-nums" : "text-left"}`}>{groupedHeaders&&columnIndex>0&&<span className="mb-1 block text-[10px] font-medium text-slate-500 sm:hidden print:hidden">{column.label}</span>}{reportCellText(column, row)}</td>)}
             </tr>)}</tbody>
           </table>
           {!filtered.length && <p className="py-16 text-center text-sm text-slate-500">No hay filas que coincidan con el filtro.</p>}

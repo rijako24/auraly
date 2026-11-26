@@ -2179,6 +2179,25 @@ public sealed partial class SqlAccountingStore(
         return await ReadBankAccountsAsync(connection, null, user.TenantId, includeInactive, null, cancellationToken);
     }
 
+    public async Task<BankAccountOptionPage> PageBankAccountOptionsAsync(AccountingUserIdentity user,int page,int pageSize,string? search,CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            SELECT COUNT(*) FROM accounting.BankAccounts WHERE TenantId=@Tenant AND IsActive=1
+              AND (@Search IS NULL OR DisplayName LIKE N'%'+@Search+N'%' OR BankName LIKE N'%'+@Search+N'%' OR AccountNumber LIKE N'%'+@Search+N'%');
+            SELECT BankAccountId,DisplayName,BankName,AccountNumber,IsActive FROM accounting.BankAccounts
+            WHERE TenantId=@Tenant AND IsActive=1
+              AND (@Search IS NULL OR DisplayName LIKE N'%'+@Search+N'%' OR BankName LIKE N'%'+@Search+N'%' OR AccountNumber LIKE N'%'+@Search+N'%')
+            ORDER BY IsPrimary DESC,DisplayName,BankAccountId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;
+            """,connection);
+        command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value);
+        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@Size",pageSize);
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);await reader.ReadAsync(cancellationToken);var count=reader.GetInt32(0);
+        await reader.NextResultAsync(cancellationToken);var rows=new List<BankAccountOption>();
+        while(await reader.ReadAsync(cancellationToken))rows.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4)));
+        return new(rows,page,pageSize,count,(int)Math.Ceiling(count/(double)pageSize));
+    }
+
     private static async Task<IReadOnlyList<BankAccountView>> ReadBankAccountsAsync(
         SqlConnection connection, SqlTransaction? transaction, Guid tenantId, bool includeInactive,
         Guid? bankAccountId, CancellationToken cancellationToken)

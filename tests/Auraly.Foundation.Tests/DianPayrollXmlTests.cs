@@ -37,6 +37,24 @@ public sealed class DianPayrollXmlTests
     }
 
     [Fact]
+    public void Pension_exempt_worker_keeps_health_and_zero_pension_in_official_schema()
+    {
+        var payroll=CreatePayroll();
+        payroll=payroll with{WorkerSubtypeCode="01",DeductionsTotal=132_000m,NetTotal=1_168_000m,
+            Concepts=payroll.Concepts.Where(line=>line.DianConceptCode!="PensionDeduction").ToArray()};
+        var result=new DianPayrollXmlBuilder().Build(payroll);
+        var validation=new DianPayrollSchemaValidator().Validate(result.Document.Xml);
+        Assert.True(validation.IsValid,string.Join(Environment.NewLine,validation.Errors));
+        var document=XDocument.Parse(Encoding.UTF8.GetString(result.Document.Xml));
+        XNamespace ns="dian:gov:co:facturaelectronica:NominaIndividual";
+        Assert.Equal("01",document.Root!.Element(ns+"Trabajador")!.Attribute("SubTipoTrabajador")!.Value);
+        var deductions=document.Root.Element(ns+"Deducciones")!;
+        Assert.Equal("52000.00",deductions.Element(ns+"Salud")!.Attribute("Deduccion")!.Value);
+        Assert.Equal("0.00",deductions.Element(ns+"FondoPension")!.Attribute("Deduccion")!.Value);
+        Assert.Equal("1168000.00",document.Root.Element(ns+"ComprobanteTotal")!.Value);
+    }
+
+    [Fact]
     public void Payroll_contains_required_totals_and_security_codes()
     {
         var result = new DianPayrollXmlBuilder().Build(CreatePayroll());

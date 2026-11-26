@@ -5,9 +5,14 @@ RETURNS TABLE
 AS RETURN
 (
     SELECT line.EntryId,line.LineNumber,CONVERT(bit,1) HasBankAttribution
+    FROM dbo.AccountingEntryLines line JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+    WHERE line.BankAccountId=@BankAccountId AND entry.TenantId=@TenantId
+    UNION ALL
+    SELECT line.EntryId,line.LineNumber,CONVERT(bit,1) HasBankAttribution
     FROM accounting.BankBookAccounts(@TenantId,@BankAccountId) account
     JOIN dbo.AccountingEntryLines line ON line.AccountId=account.AccountId
     JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId AND entry.TenantId=@TenantId
+    WHERE line.BankAccountId IS NULL
     UNION ALL
     SELECT line.EntryId,line.LineNumber,CONVERT(bit,CASE WHEN attribution.BankCount=1 THEN 1 ELSE 0 END)
     FROM accounting.BankAccounts bank
@@ -25,7 +30,7 @@ AS RETURN
       JOIN accounting.BankAccounts owner ON owner.BankAccountId=value.BankAccountId AND owner.TenantId=@TenantId
       WHERE value.AccountId=line.AccountId
     ) attribution
-    WHERE bank.TenantId=@TenantId AND bank.BankAccountId=@BankAccountId
+    WHERE line.BankAccountId IS NULL AND bank.TenantId=@TenantId AND bank.BankAccountId=@BankAccountId
       AND bank.HistoricalAccountingAccountId IS NOT NULL
       AND (attribution.BankCount<>1 OR attribution.BankId=CONVERT(nvarchar(36),@BankAccountId))
 );
