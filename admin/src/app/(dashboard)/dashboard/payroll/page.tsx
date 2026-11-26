@@ -325,12 +325,14 @@ function RunsSection({options,selected,open,onOpenChange,loading,error,onRetry,c
       </CardContent></Card>
       <Dialog open={open} onOpenChange={next=>{if(!locked)onOpenChange(next);}}><DialogContent showClose={!locked} className="flex h-[min(92dvh,60rem)] max-h-[92dvh] max-w-6xl flex-col gap-0 overflow-visible p-0">
         <DialogHeader className="shrink-0 border-b px-5 py-4 text-left"><DialogTitle>Detalle de liquidación</DialogTitle><DialogDescription>{selected?`${selected.periodStart} — ${selected.periodEnd} · ${statusLabel(options,selected.status)}`:"Consulta los trabajadores, conceptos y totales del período."}</DialogDescription></DialogHeader>
-        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 sm:p-6">
-          <div className="flex justify-end"><Button variant="outline" disabled={locked||loading} onClick={onRetry}><RefreshCw className="mr-2 size-4"/>Actualizar liquidación</Button></div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {selected?.payFrequencyName&&<p className="text-sm font-medium">Periodicidad: {selected.payFrequencyName}</p>}
+            <Button className="ml-auto" variant="outline" disabled={locked||loading} onClick={onRetry}><RefreshCw className="mr-2 size-4"/>Actualizar liquidación</Button>
+          </div>
           {loading&&<p role="status">Cargando detalle…</p>}
           {error&&<div role="alert" className="space-y-3"><p>No fue posible abrir la liquidación.</p><Button variant="outline" onClick={onRetry}>Reintentar detalle</Button></div>}
           {selected&&<>
-            {selected.payFrequencyName&&<p className="text-sm font-medium">Periodicidad: {selected.payFrequencyName}</p>}
             {selected.status!=="Draft"&&<div className="grid gap-4 sm:grid-cols-3"><Metric label="Devengado" value={selected.totalEarnings}/><Metric label="Deducciones" value={selected.totalDeductions}/><Metric label="Neto" value={selected.netPayable}/></div>}
             {canApprove&&selected.status==="Calculated"&&<Button disabled={locked||selectionBlocksApproval} onClick={()=>void approve()}><CheckCircle2 className="mr-2 h-4 w-4"/>{busy==="approve"?"Aprobando…":"Aprobar y contabilizar"}</Button>}
             {canCalculate&&["Draft","Calculated"].includes(selected.status)&&<PayrollRunSelection key={selected.payrollRunId} run={selected} disabled={busy!==null||calculationDisabled} calculating={calculating} onCalculate={onCalculate} onBlocksApproval={setSelectionBlocksApproval}/>}

@@ -957,6 +957,10 @@ for(const width of [1366,390])test(`novedades lista borradores y filtra liquidac
   await page.getByRole("button",{name:"Preparar liquidación",exact:true}).click();
   await expect(page).toHaveURL(/section=runs/);
   const detail=page.getByRole("dialog",{name:"Detalle de liquidación",exact:true});await expect(detail.getByText("Periodicidad: Mensual",{exact:true})).toBeVisible();
+  const frequency=await detail.getByText("Periodicidad: Mensual",{exact:true}).boundingBox();
+  const refresh=await detail.getByRole("button",{name:"Actualizar liquidación",exact:true}).boundingBox();
+  expect(Math.abs(frequency!.y+frequency!.height/2-refresh!.y-refresh!.height/2)).toBeLessThanOrEqual(1);
+  await page.screenshot({path:info.outputPath(`compact-run-detail-${width}.png`)});
   await detail.getByRole("button",{name:"Cerrar ventana",exact:true}).click();
   await page.getByRole("tab",{name:"Novedades",exact:true}).click();
   await choose(page,"Estado de liquidación","Calculada");

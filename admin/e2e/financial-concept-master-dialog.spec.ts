@@ -40,6 +40,8 @@ for(const width of [1366,390])test(`conceptos financieros crea, edita y cancela 
   await page.getByRole("button",{name:"Nuevo concepto",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:/^(Nuevo|Editar) concepto financiero$/});
   await expect(dialog).toBeVisible();
+  await expect.poll(()=>dialog.getByLabel("Código",{exact:true}).evaluate(input=>
+    input.getBoundingClientRect().top-input.parentElement!.getBoundingClientRect().top)).toBeGreaterThanOrEqual(20);
   await dialog.getByLabel("Código",{exact:true}).fill("ANTICIPO");
   await dialog.getByLabel("Nombre",{exact:true}).fill("Anticipo recibido del cliente");
   await dialog.getByRole("combobox",{name:"Seleccionar cuenta contable"}).click();
