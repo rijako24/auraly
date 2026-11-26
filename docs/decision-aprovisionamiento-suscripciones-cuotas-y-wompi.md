@@ -112,7 +112,11 @@ La plantilla `ADMINISTRATIVE` sí incluye la gestión operativa de cuentas y rol
 del tenant: consultar, crear, actualizar, activar o desactivar usuarios; asignar y
 retirar roles; consultar, crear, editar o desactivar roles; configurar sus permisos;
 y vincular la cuenta con su tercero. No recibe `tenant.profile.*`, `tenants.*` ni
-permisos de plataforma por defecto. La delegación de roles conserva la validación
+permisos de plataforma por defecto. El alta canónica de tenants aplica la misma
+exclusión. El seed reconcilia también las asignaciones
+existentes: retira `platform.*` de Administrativo al volver a publicarse, conserva
+sus permisos operativos y no cambia los de otros perfiles (corrección aprobada
+el 26-11-2026). La delegación de roles conserva la validación
 autoritativa del backend y no permite escalar más allá de los permisos efectivos
 del actor.
 

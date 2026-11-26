@@ -148,6 +148,7 @@ public sealed class SqlTenantProvisioningStore(
                 SELECT NEWID(),@AdministrativeRoleId,PermissionId,@Now
                 FROM dbo.Permissions
                 WHERE (Resource NOT LIKE N'tenants.%'
+                  AND Resource NOT LIKE N'platform.%'
                   AND Resource NOT LIKE N'tenant.profile.%'
                   AND Resource NOT LIKE N'roles.%'
                   AND Resource NOT LIKE N'users.%'

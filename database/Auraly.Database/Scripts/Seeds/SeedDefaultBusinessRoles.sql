@@ -92,6 +92,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'inventory.conversions.confirm',N'inventory.damages.confirm',N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
       permissionValue.Resource NOT LIKE N'tenants.%'
+      AND permissionValue.Resource NOT LIKE N'platform.%'
       AND permissionValue.Resource NOT LIKE N'tenant.profile.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
@@ -151,6 +152,7 @@ WHERE roleValue.IsActive=1
       N'inventory.conversions.confirm',N'inventory.damages.confirm',N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
       permissionValue.Resource NOT LIKE N'tenants.%'
+      AND permissionValue.Resource NOT LIKE N'platform.%'
       AND permissionValue.Resource NOT LIKE N'tenant.profile.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'

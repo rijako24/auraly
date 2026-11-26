@@ -359,6 +359,58 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Administrative_seed_removes_platform_grants_and_preserves_operational_permissions_on_replay()
+    {
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        var script=await File.ReadAllTextAsync(Path.Combine(ServerSliceFixture.FindRepositoryRoot(),"database","Auraly.Database","Scripts","Seeds","SeedDefaultBusinessRoles.sql"));
+        // The fixture creates its test tenant after post-deploy with only an Integration user role.
+        // Establish the canonical default-role baseline before injecting permission drift.
+        await using(var baseline=new SqlCommand(script,connection))await baseline.ExecuteNonQueryAsync();
+        // Reproduce existing drift across tenants, using real platform permissions.
+        await using(var drift=new SqlCommand("""
+            INSERT dbo.RolePermissions(RoleId,PermissionId)
+            SELECT role.RoleId,permission.PermissionId FROM dbo.AppRoles role CROSS JOIN dbo.Permissions permission
+            WHERE role.NormalizedName=N'ADMINISTRATIVE'
+              AND permission.Resource IN(N'platform.permissions.assign',N'platform.fiscal_certificates.expiry.read')
+              AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions present WHERE present.RoleId=role.RoleId AND present.PermissionId=permission.PermissionId);
+            SELECT COUNT(*) FROM dbo.RolePermissions assigned JOIN dbo.AppRoles role ON role.RoleId=assigned.RoleId
+            JOIN dbo.Permissions permission ON permission.PermissionId=assigned.PermissionId
+            WHERE role.NormalizedName=N'ADMINISTRATIVE' AND permission.Resource LIKE N'platform.%';
+            """,connection))Assert.True(Convert.ToInt32(await drift.ExecuteScalarAsync())>=2);
+        async Task<byte[]> Permissions(bool administrative)
+        {
+            await using var command=new SqlCommand("""
+                SELECT HASHBYTES('SHA2_256',COALESCE(STRING_AGG(CONVERT(nvarchar(max),
+                    CONCAT(CONVERT(nvarchar(36),role.RoleId),N':',permission.Resource)),N'|')
+                    WITHIN GROUP(ORDER BY role.RoleId,permission.Resource),N''))
+                FROM dbo.RolePermissions assigned JOIN dbo.AppRoles role ON role.RoleId=assigned.RoleId JOIN dbo.Permissions permission ON permission.PermissionId=assigned.PermissionId
+                WHERE (@Administrative=1 AND role.NormalizedName=N'ADMINISTRATIVE' AND permission.Resource NOT LIKE N'platform.%')
+                   OR (@Administrative=0 AND role.NormalizedName<>N'ADMINISTRATIVE')
+                ;
+                """,connection);command.Parameters.AddWithValue("@Administrative",administrative);
+            return (byte[])(await command.ExecuteScalarAsync())!;
+        }
+        var operational=await Permissions(true);var otherRoles=await Permissions(false);
+        for(var attempt=0;attempt<2;attempt++)
+        {
+            await using(var seed=new SqlCommand(script,connection))await seed.ExecuteNonQueryAsync();
+            await using(var forbidden=new SqlCommand("""
+                SELECT COUNT(*) FROM dbo.RolePermissions assigned JOIN dbo.AppRoles role ON role.RoleId=assigned.RoleId
+                JOIN dbo.Permissions permission ON permission.PermissionId=assigned.PermissionId
+                WHERE role.NormalizedName=N'ADMINISTRATIVE' AND permission.Resource LIKE N'platform.%';
+                """,connection))Assert.Equal(0,Convert.ToInt32(await forbidden.ExecuteScalarAsync()));
+            Assert.Equal(operational,await Permissions(true));Assert.Equal(otherRoles,await Permissions(false));
+            await using var operationalCheck=new SqlCommand("""
+                SELECT COUNT(DISTINCT permission.Resource) FROM dbo.RolePermissions assigned
+                JOIN dbo.AppRoles role ON role.RoleId=assigned.RoleId JOIN dbo.Permissions permission ON permission.PermissionId=assigned.PermissionId
+                WHERE role.TenantId=@Tenant AND role.NormalizedName=N'ADMINISTRATIVE'
+                  AND permission.Resource IN(N'accounting.read',N'accounting.configure',N'catalog.update',N'payroll.configure',N'users.create');
+                """,connection);operationalCheck.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+            Assert.Equal(5,Convert.ToInt32(await operationalCheck.ExecuteScalarAsync()));
+        }
+    }
+
+    [Fact]
     public async Task Provision_and_accept_invitation_creates_a_complete_usable_tenant()
     {
         var geography = await ReadGeographyAsync();
@@ -401,6 +453,18 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal("Configuring", await ReadAccountingStatusAsync(result.TenantId));
         Assert.Equal(6, state.Roles);
+        await using(var roleConnection=new SqlConnection(fixture.ConnectionString))
+        {
+            await roleConnection.OpenAsync();
+            await using var forbiddenRoles=new SqlCommand("""
+                SELECT COUNT(*) FROM dbo.RolePermissions assigned JOIN dbo.AppRoles role ON role.RoleId=assigned.RoleId
+                JOIN dbo.Permissions permission ON permission.PermissionId=assigned.PermissionId
+                WHERE role.TenantId=@Tenant AND role.NormalizedName IN(N'ADMINISTRATOR',N'ADMINISTRATIVE')
+                  AND permission.Resource LIKE N'platform.%';
+                """,roleConnection);forbiddenRoles.Parameters.AddWithValue("@Tenant",result.TenantId);
+            Assert.Equal(0,Convert.ToInt32(await forbiddenRoles.ExecuteScalarAsync()));
+        }
+
         foreach(var role in new[]{"ADMINISTRATOR","ADMINISTRATIVE"})
             Assert.True(await RoleHasPermissionAsync(result.TenantId,role,CommercePermissionCodes.SalesCorrectPaymentMethods));
         foreach(var role in new[]{"CASHIER","SUPERVISOR","ACCOUNTANT","SELLER"})
