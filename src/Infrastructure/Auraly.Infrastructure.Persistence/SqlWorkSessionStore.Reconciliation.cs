@@ -737,26 +737,42 @@ public sealed partial class SqlWorkSessionStore
             -- The same frozen cash detail feeds the summary and the page. A CTE
             -- over OPENJSON can be re-expanded for each enriched row; persist
             -- these transient keys once and join the selected page by identity.
-            SELECT raw.[key] SnapshotIndex,raw.value RowJson INTO #ClosureCashRows
-            FROM (SELECT * FROM #ClosureContext WHERE @SelectedVerificationKeys IS NULL OR EXISTS(
-                SELECT 1 FROM #SelectedVerificationSources WHERE VerificationKey NOT LIKE N'Sale:%'
-                  AND VerificationKey NOT LIKE N'CreditSale:%')) context
-            CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements') raw
-            WHERE (@SelectedVerificationKeys IS NULL OR EXISTS(SELECT 1 FROM #SelectedVerificationSources selected
-                WHERE selected.SourceId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.workSessionMovementId'))
-                  OR selected.SourceId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.documentId'))))
-              AND NOT EXISTS(SELECT 1 FROM #ManualTreasury manual
-              WHERE manual.MovementId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.workSessionMovementId')));
-            SELECT detail.DocumentId,detail.ReasonName,detail.Notes,detail.Direction,detail.DocumentNumber,
-              detail.Amount,detail.Reference,detail.OccurredAt,detail.WorkSessionMovementId,detail.MovementType,
+            CREATE TABLE #ClosureCashRows(SnapshotIndex nvarchar(4000),DocumentId uniqueidentifier,
+              ReasonName nvarchar(200),Notes nvarchar(500),Direction nvarchar(8),DocumentNumber nvarchar(100),
+              Amount decimal(19,4),Reference nvarchar(500),OccurredAt datetimeoffset,
+              WorkSessionMovementId uniqueidentifier,MovementType nvarchar(32));
+            -- Accepted manual movements already provide these facts. When all
+            -- selected keys belong to them, parsing the frozen cash array can
+            -- only produce duplicates that the anti-join below would discard.
+            -- Skip that work before OPENJSON, rather than correlating the full
+            -- closure array with every selected correction.
+            IF @SelectedVerificationKeys IS NULL OR EXISTS(
+              SELECT 1 FROM #SelectedVerificationSources selected
+              WHERE selected.VerificationKey NOT LIKE N'Sale:%'
+                AND selected.VerificationKey NOT LIKE N'CreditSale:%'
+                AND NOT EXISTS(SELECT 1 FROM #ManualTreasury manual WHERE manual.MovementId=selected.SourceId))
+            BEGIN
+              INSERT #ClosureCashRows(SnapshotIndex,DocumentId,ReasonName,Notes,Direction,DocumentNumber,
+                Amount,Reference,OccurredAt,WorkSessionMovementId,MovementType)
+              SELECT raw.[key],detail.DocumentId,detail.ReasonName,detail.Notes,detail.Direction,
+                detail.DocumentNumber,detail.Amount,detail.Reference,detail.OccurredAt,
+                detail.WorkSessionMovementId,detail.MovementType
+              FROM #ClosureContext context
+              CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements') raw
+              CROSS APPLY OPENJSON(raw.value) WITH(DocumentId uniqueidentifier '$.documentId',ReasonName nvarchar(200) '$.reasonName',
+                Notes nvarchar(500) '$.notes',Direction nvarchar(8) '$.direction',DocumentNumber nvarchar(100) '$.documentNumber',
+                Amount decimal(19,4) '$.amount',Reference nvarchar(500) '$.reference',OccurredAt datetimeoffset '$.occurredAt',
+                WorkSessionMovementId uniqueidentifier '$.workSessionMovementId',MovementType nvarchar(32) '$.movementType') detail;
+            END;
+            SELECT raw.DocumentId,raw.ReasonName,raw.Notes,raw.Direction,raw.DocumentNumber,
+              raw.Amount,raw.Reference,raw.OccurredAt,raw.WorkSessionMovementId,raw.MovementType,
               raw.SnapshotIndex,
               context.TemplateVersion
             INTO #ClosureCashMovements
             FROM #ClosureCashRows raw CROSS JOIN #ClosureContext context
-            CROSS APPLY OPENJSON(raw.RowJson) WITH(DocumentId uniqueidentifier '$.documentId',ReasonName nvarchar(200) '$.reasonName',
-              Notes nvarchar(500) '$.notes',Direction nvarchar(8) '$.direction',DocumentNumber nvarchar(100) '$.documentNumber',
-              Amount decimal(19,4) '$.amount',Reference nvarchar(500) '$.reference',OccurredAt datetimeoffset '$.occurredAt',
-              WorkSessionMovementId uniqueidentifier '$.workSessionMovementId',MovementType nvarchar(32) '$.movementType') detail;
+            WHERE (@SelectedVerificationKeys IS NULL OR EXISTS(SELECT 1 FROM #SelectedVerificationSources selected
+                WHERE selected.SourceId=raw.WorkSessionMovementId OR selected.SourceId=raw.DocumentId))
+              AND NOT EXISTS(SELECT 1 FROM #ManualTreasury manual WHERE manual.MovementId=raw.WorkSessionMovementId);
             CREATE INDEX IX_ClosureCashMovements ON #ClosureCashMovements(WorkSessionMovementId,DocumentId);
             SELECT DocumentId,WorkSessionMovementId,MAX(ReasonName) ReasonName,MAX(Notes) Notes,MAX(TemplateVersion) TemplateVersion
             INTO #CashMovementDescriptions FROM #ClosureCashMovements GROUP BY DocumentId,WorkSessionMovementId;

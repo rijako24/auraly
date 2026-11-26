@@ -653,6 +653,61 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
     }
 
     [Fact]
+    public async Task Mixed_closure_corrections_keep_manual_and_frozen_cash_facts_without_duplication()
+    {
+        using var client=fixture.CreateAdminClient(AccountingPermissionCodes.Read,AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate,WorkSessionPermissionCodes.ManageCash,WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Close,WorkSessionPermissionCodes.ReadCashDifferences);
+        using(var defaults=await client.PutAsync("/api/commerce/v1/accounting/defaults",null)) defaults.EnsureSuccessStatusCode();
+        using(var activate=await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
+            new ActivateAccountingRequest(new(2026,1,1),"COP","ZeroDeclared"))) activate.EnsureSuccessStatusCode();
+        var cash=await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture,client);
+        var expense=await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,
+            "5193","Expense","General","Debit");
+        var session=await fixture.OpenWebWorkSessionAsync();
+        using var scope=fixture.CreateScope();
+        var accounting=scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var actor=new AccountingUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,
+            new HashSet<string>{AccountingPermissionCodes.Read,AccountingPermissionCodes.ManualCreate,AccountingPermissionCodes.ManualSend,WorkSessionPermissionCodes.ManageCash});
+        var voucher=new SaveVoucherDraftRequest(Guid.NewGuid(),AccountingManualDocumentTypes.ManualVoucher,
+            new(2026,8,3,12,0,0,TimeSpan.Zero),"MANUAL_VOUCHER","Salida manual para cierre mixto",null,
+            [new(expense.AccountId,null,null,"Gasto",20m,0m,LineId:Guid.NewGuid()),
+             new(cash.AccountId,null,null,"Salida",0m,20m,LineId:Guid.NewGuid())],null,null,
+            MainPartyId:fixture.SupplierPartyId,PayloadVersion:4,VoucherTypeCode:"Disbursement",WorkSessionId:session);
+        var draft=await accounting.SaveVoucherDraftAsync(actor,voucher);
+        await accounting.SendVoucherDraftAsync(actor,draft.DocumentId,new(draft.RowVersion));
+        await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>().ProcessAsync(
+            draft.DocumentId,AccountingManualDocumentTypes.ManualVoucher,fixture.BusinessId,default);
+        var reasons=(await client.GetFromJsonAsync<CashMovementReasonView[]>(
+            $"/api/commerce/v1/work-sessions/cash-reasons?businessId={fixture.BusinessId:D}&direction=In"))!;
+        var nativeId=Guid.NewGuid();
+        using(var request=new HttpRequestMessage(HttpMethod.Post,$"/api/commerce/v1/work-sessions/{session:D}/cash-movements")
+        {Content=JsonContent.Create(new ConfirmCashMovementRequest(nativeId,fixture.BusinessId,session,
+            Assert.Single(reasons,value=>value.Code=="OTHER_INCOME").ReasonId,35m,DateTimeOffset.UtcNow,"Ingreso mixto",null,null))})
+        {
+            request.Headers.Add("Idempotency-Key",Guid.NewGuid().ToString("N"));
+            using var accepted=await client.SendAsync(request);accepted.EnsureSuccessStatusCode();
+        }
+        var sessions=scope.ServiceProvider.GetRequiredService<WorkSessionService>();
+        var reviewer=new WorkSessionIdentity(fixture.UserId,fixture.TenantId,new HashSet<string>{
+            WorkSessionPermissionCodes.Read,WorkSessionPermissionCodes.Close,WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures,Auraly.Contracts.Authorization.CommercePermissionCodes.SalesCorrectPaymentMethods},fixture.BusinessId);
+        var closure=await sessions.CloseAsync(reviewer,session,Guid.NewGuid().ToString("N"),new(15m,null));
+        var page=await sessions.ListClosurePaymentVerificationPageAsync(reviewer,closure.WorkSessionClosureId,null,null,1,100);
+        var manual=Assert.Single(page.Items,value=>value.SourceDocumentType=="ManualAccountingVoucher");
+        var native=Assert.Single(page.Items,value=>value.SourceDocumentType=="CashMovement" && value.Reference=="Ingreso mixto");
+        Assert.Equal(-20m,manual.Amount);Assert.Equal(35m,native.Amount);
+        WorkSessionPaymentCorrection Correction(WorkSessionPaymentVerificationItem item)=>
+            new(item.VerificationKey,"Cash",item.Amount,"Comprobar evidencia sin cambiar cuentas","Cash",Reference:"MIXTO");
+        // Both single-source paths and their combination use the same validator.
+        foreach(var corrections in new[]{new[]{Correction(manual)},new[]{Correction(native)},new[]{Correction(manual),Correction(native)}})
+            await sessions.ValidatePaymentCorrectionsAsync(reviewer,closure.WorkSessionClosureId,corrections);
+        var unchanged=await sessions.ListClosurePaymentVerificationPageAsync(reviewer,closure.WorkSessionClosureId,null,null,1,100);
+        Assert.Equal(page.TotalItems,unchanged.TotalItems);
+        Assert.Equal(page.Items.Select(value=>(value.VerificationKey,value.Amount)),unchanged.Items.Select(value=>(value.VerificationKey,value.Amount)));
+    }
+
+    [Fact]
     public async Task Native_supplier_payment_accepts_and_posts_one_and_one_hundred_positions_with_constant_round_trips()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Configure, AccountingPermissionCodes.Activate);

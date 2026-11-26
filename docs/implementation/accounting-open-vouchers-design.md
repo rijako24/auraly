@@ -6056,3 +6056,14 @@ artefactos fiscales originales conservan sus hashes. Estos resultados están en
 `migrated-functional-history-comparison.json` y
 `migrated-functional-history-detail-proof.json`. No resuelven los pendientes
 fiscales históricos ni autorizan operaciones productivas.
+
+El lector compartido de verificación de cierres materializa una sola vez las
+columnas tipadas del efectivo congelado antes de cruzarlas con las claves de
+corrección. Evita reevaluar `JSON_VALUE` para cada combinación de movimiento
+y corrección. Si todas las claves seleccionadas pertenecen a tesorería manual
+aceptada, omite ese JSON: sus duplicados ya se excluyen por MovementId y la
+fuente manual conserva la autoridad. Una selección mixta mantiene los dos
+orígenes y la misma exclusión, sin modificar el cierre ni sus movimientos.
+La validación conserva dos comandos SQL, las fuentes, permisos, bloqueos y
+writer existentes. El gate mantiene veinte muestras, 10.500 movimientos y
+correcciones de una y cincuenta filas; no se aumenta su límite de dos segundos.
