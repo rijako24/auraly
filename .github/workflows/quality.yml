@@ -20,6 +20,10 @@ on:
         description: Filtro explícito de las pruebas seleccionadas
         required: true
         type: string
+      expected_deployed_commit:
+        description: Commit DEV esperado para las pruebas que verifican la identidad instalada
+        required: false
+        type: string
 
 jobs:
   backend:
@@ -139,6 +143,7 @@ jobs:
           AURALY_E2E_BUSINESS_ID: a0a10000-0000-0000-0000-000000000001
           AURALY_E2E_USERNAME: codex.pos.dev
           AURALY_E2E_PASSWORD: ${{ secrets.AURALY_DEV_E2E_QA_PASSWORD }}
+          AURALY_E2E_EXPECTED_COMMIT: ${{ inputs.expected_deployed_commit }}
           DEV_BROWSER_TEST_FILTER: ${{ inputs.integration_test_filter }}
         run: |
           if [ -z "$AURALY_E2E_PASSWORD" ] || [ -z "$DEV_BROWSER_TEST_FILTER" ]; then echo 'Falta la credencial QA o el filtro explícito.'; exit 1; fi

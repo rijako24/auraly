@@ -34,6 +34,10 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   const rules=(await scopedJson<{items:PayrollRuleSet[]}>("GET",`${path}/profiles/${baseProfileId}/rule-sets?page=1&pageSize=20`)).items.find(rule=>rule.status==="Approved");
   expect(rules).toBeTruthy();
   const tag = `QA-${randomUUID().slice(0, 8)}`;
+  const centerId=randomUUID();
+  await scopedJson("POST","/api/commerce/v1/accounting/cost-centers",{
+    costCenterId:centerId,tenantId:process.env.AURALY_E2E_TENANT_ID,code:tag,name:`Centro ${tag}`,parentCostCenterId:null,isDefault:false,
+  });
 
   await page.goto("/dashboard/payroll?section=configuration");
   await page.getByRole("button", { name: "Nuevo perfil", exact: true }).click();
@@ -93,7 +97,8 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
       ...template, employmentId: identity.partyId, partyId: identity.partyId, employeeId: employeeRole.employeeId,
       contractNumber: `${tag}-${method}`, startDate: periodStart, endDate: null, rowVersion: null, appliesTransportAllowance: true,
       configuration: { accountingProfileId: profile.profileId, healthPartyId: institutions[0], pensionPartyId: institutions[1],
-        severancePartyId: institutions[2], riskPartyId: institutions[3], compensationPartyId: institutions[4], costCenterId: null },
+        severancePartyId: institutions[2], riskPartyId: institutions[3], compensationPartyId: institutions[4], costCenterId: centerId,
+        details:{...template.configuration?.values.details,workSite:method==="Cash"?`Zona_%[A]~ ${tag}`:`Zona ${tag}`} },
     }));
   }
 
@@ -119,7 +124,24 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await page.getByRole("button", { name: new RegExp(`^${run.periodStart} — ${run.periodEnd} Borrador`) }).click();
   const selection = page.getByRole("region", { name: "Trabajadores de la liquidación", exact: true });
   await selection.getByRole("button", { name: "Ninguno", exact: true }).click();
-  for (const employee of employees) await selection.getByRole("checkbox", { name: `Incluir ${employee.employeeName}, contrato ${employee.contractNumber}`, exact: true }).check();
+  await selection.getByRole("combobox",{name:"Filtrar trabajadores por centro de costo",exact:true}).click();
+  await page.getByPlaceholder("Buscar centro por código o nombre…").fill(tag);
+  await page.getByRole("option",{name:`${tag} · Centro ${tag}`,exact:true}).click();
+  await expect(selection.getByRole("checkbox")).toHaveCount(2);
+  await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("_%[A]~");
+  await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+  await expect(selection.getByRole("checkbox")).toHaveCount(1);
+  await selection.getByRole("checkbox",{name:`Incluir ${employees[0].employeeName}, contrato ${employees[0].contractNumber}`,exact:true}).check();
+  await page.setViewportSize({width:390,height:844});
+  await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
+  await page.screenshot({path:"../work/release-preparation-current/dev-native-payroll-mobile-selection.png",fullPage:true});
+  await page.setViewportSize({width:1366,height:768});
+  await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("");
+  await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+  await expect(selection.getByRole("checkbox")).toHaveCount(2);
+  await expect(selection.getByRole("checkbox",{name:`Incluir ${employees[0].employeeName}, contrato ${employees[0].contractNumber}`,exact:true})).toBeChecked();
+  await selection.getByRole("checkbox",{name:`Incluir ${employees[1].employeeName}, contrato ${employees[1].contractNumber}`,exact:true}).check();
   const calculating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
   await selection.getByRole("button", { name: "Calcular nómina", exact: true }).click();
   const calculationResponse = await calculating;

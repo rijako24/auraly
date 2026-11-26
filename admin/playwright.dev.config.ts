@@ -15,6 +15,7 @@ export default defineConfig(base, {
     "portfolio-payment-entry-real.spec.ts",
     "pos-browser-regression.spec.ts",
     "pricing-publication-real-dev.spec.ts",
+    "reporting-projection-real-dev.spec.ts",
     "sales-modes-real.spec.ts",
   ],
   use: {
