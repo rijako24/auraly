@@ -169,6 +169,11 @@ jobs:
           cache: npm
           cache-dependency-path: admin/package-lock.json
 
+      - name: Verify isolated SQL test instance before compiling
+        if: inputs.environment == 'dev'
+        shell: pwsh
+        run: ./infrastructure/azure/Start-AuralyLocalDbTests.ps1
+
       - name: Install SQLPackage 170 for release tests
         if: inputs.environment == 'dev'
         shell: pwsh

@@ -38,6 +38,9 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
+      - name: Verify isolated SQL test instance before compiling
+        shell: pwsh
+        run: ./infrastructure/azure/Start-AuralyLocalDbTests.ps1
       - name: Install SQLPackage 170 for integration tests
         shell: pwsh
         run: |

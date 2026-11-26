@@ -682,6 +682,12 @@ Offline agrega caída de red, duplicados, reinicio, deltas, conflictos, outbox, 
 
 ### 9.5 Base de datos
 
+Los jobs Windows de calidad y empaquetado verifican la instancia LocalDB
+aislada antes de compilar. Comparten `Start-AuralyLocalDbTests.ps1`: inicia la
+instancia, comprueba la conexión y la versión mínima UTF-8, y ante fallo muestra
+su registro de arranque. No elimina ni recrea instancias y no cambia datos de
+aplicación ni sustituye las pruebas de migración.
+
 CI prueba:
 
 - DACPAC sobre base vacía;
