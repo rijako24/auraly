@@ -775,6 +775,10 @@ for(const width of [390,1366,1920])test(`bandeja de novedades pagina antes de ab
   await page.goto("/dashboard/payroll?section=novelties");
   const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
   await expect(list.getByRole("article")).toHaveCount(20);expect(details).toHaveLength(0);
+  await expect.poll(()=>page.getByRole("tab",{name:"Novedades",exact:true}).evaluate(element=>{
+    const tab=element.getBoundingClientRect(),viewport=element.parentElement!.parentElement!.getBoundingClientRect();
+    return tab.left>=viewport.left&&tab.right<=viewport.right;
+  })).toBe(true);
   await list.getByRole("button",{name:"Siguiente trabajadores"}).click();
   await expect(list.getByRole("button",{name:"Trabajador 20",exact:true})).toBeVisible();
   expect(new URL(pages.at(-1)!).searchParams.get("page")).toBe("2");
@@ -785,6 +789,34 @@ for(const width of [390,1366,1920])test(`bandeja de novedades pagina antes de ab
   await expect(list.getByRole("button",{name:"Trabajador 20",exact:true})).toBeVisible();expect(pages).toHaveLength(2);
   const bounds=await list.boundingBox();expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(width);
   await page.screenshot({path:`test-results/payroll-novelty-page-${width}.png`,fullPage:true});
+});
+
+test("novedades conserva visibles los históricos sin identidad y permite abrir los resultados completos",async({page,baseURL})=>{
+  await page.setViewportSize({width:390,height:844});
+  const state=await setup(page,baseURL!);
+  state.runs.push({payrollRunId:"complete-run",businessId,ruleSetId:null,runKind:"Regular",originalPayrollRunId:null,
+    periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",status:"Calculated",employeeCount:1,
+    totalEarnings:1000000,totalDeductions:0,netPayable:1000000,totalEmployerContributions:0,totalProvisions:0,calculationVersion:1,rowVersion:version,payableEmployees:[],
+    employees:[{payrollRunEmployeeId:"complete-worker",employmentId:"complete-contract",partyId:"complete-party",employeeName:"Elena Histórica",workedDays:30,earnings:1000000,deductions:0,netPayable:1000000,employerContributions:0,provisions:0,lines:[]}]});
+  await page.route("**/api/commerce/v1/payroll/calculated-employees?*",async route=>{
+    const common={rowVersion:version,identification:null,contractNumber:null,periodStart:"2026-08-01",periodEnd:"2026-08-31",status:"Calculated",workedDays:30,earnings:1000000,deductions:0,netPayable:1000000};
+    await route.fulfill({json:{items:[{...common,payrollRunEmployeeId:"missing",payrollRunId:"legacy",employmentId:"legacy",partyId:"legacy",employeeName:null},
+      {...common,payrollRunEmployeeId:"complete-worker",payrollRunId:"complete-run",employmentId:"complete-contract",partyId:"complete-party",employeeName:"Elena Histórica"}],page:1,pageSize:20,totalCount:2}});
+  });
+  await page.goto("/dashboard/payroll?section=novelties");
+  const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
+  await expect(list.getByRole("article")).toHaveCount(2);
+  const historical=list.getByRole("article").filter({hasText:"Identidad histórica no disponible"});
+  await expect(historical.getByText("Identidad histórica no disponible",{exact:true})).toBeVisible();
+  await expect(historical.getByRole("button",{name:"Identidad histórica no disponible",exact:true})).toHaveCount(0);
+  for(const button of await historical.getByRole("button").all())await expect(button).toBeDisabled();
+  await expect(page.getByText("Iniciando Auraly",{exact:true})).toBeHidden();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath("missing-historical-identity-mobile.png"),fullPage:true});
+  expect(state.reads.filter(read=>read.path.includes("/payroll/runs/"))).toHaveLength(0);
+  await list.getByRole("button",{name:"Elena Histórica",exact:true}).click();
+  await expect(page.getByRole("region",{name:"Liquidación de Elena Histórica",exact:true})).toBeVisible();
+  expect(state.reads.filter(read=>read.path.includes("/payroll/runs/"))).toHaveLength(1);
 });
 
 test("desprendibles conservan el resultado, separan valores y exportan el mismo lote",async({page,baseURL},testInfo)=>{

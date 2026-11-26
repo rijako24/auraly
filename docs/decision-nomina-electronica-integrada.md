@@ -1728,6 +1728,16 @@ Su pago previsto no se presenta como realizado: fecha efectiva y «Neto pagado»
 requieren `PaymentBatchPostingStatus.IsPaid`. La apertura utiliza el modal y los
 exportadores compartidos, con tabla adaptable en móvil, sin otro renderer.
 
+Una fila anterior que no conserva el nombre en su snapshot devuelve identidad
+histórica ausente, sin inventarla ni consultarla en el tercero vigente. La
+bandeja mantiene visibles sus importes y período, indica esa ausencia y bloquea
+detalle, recálculo individual y desprendible de esa fila incompleta; no impide
+consultar los demás resultados de la misma página. El lector conserva un comando
+para conteo y página y registra la anomalía sin nombres ni identificación personal.
+No reescribe resultados aprobados ni añade estados o procesos de reparación.
+En pantallas angostas, la franja de secciones mantiene visible la pestaña activa
+al abrirla o cambiar entre anchos de escritorio y móvil, sin consultar recursos.
+
 Guardar conceptos y condiciones del empleador actualiza el propietario de
 `options` con la respuesta del comando, sin reconstruir el workspace. Las
 consultas de nómina no refrescan datos por foco o reconexión de la ventana:

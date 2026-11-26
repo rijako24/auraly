@@ -40,26 +40,17 @@ async function finishCash(page: Page, context: Context, amount: number) {
   return documentId;
 }
 
-for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y recupera, modifica y factura pedidos reales`, async ({ page, browser }) => {
+for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y recupera, modifica y factura pedidos reales`, async ({ page }) => {
   test.skip(process.env.AURALY_E2E_TARGET !== "dev", "Usa exclusivamente las sedes aprobadas de AURALY DEV.");
   test.setTimeout(420_000);
   const businessId = mode === "Store" ? "2b8de478-3bce-4f28-b66d-3e53e5dc2c36" : "b24a3ab4-a226-4dab-bc0c-4d634e34c3fb";
-  // Independent browser storage keeps setup credentials and branch selection
-  // out of the cashier journey; each page has a single context initializer.
-  const adminPage = await browser.newPage({ baseURL: test.info().project.use.baseURL, serviceWorkers: "block" });
-  const admin = await realAccountingContext(adminPage);
-  const roles = await admin.scopedJson<{ items: Array<{ roleId: string; name: string; isActive: boolean }> }>("GET", "/api/roles?page=1&pageSize=50");
-  const role = roles.items.find(r => r.isActive && ["Administrador", "Administrator", "ADMIN"].includes(r.name));
-  expect(role, "Reutiliza el rol existente; no crea permisos ni modifica roles de otros usuarios.").toBeTruthy();
+  // The guarded QA actor already has access to the three explicit DEV sites.
+  // A sales regression neither provisions users nor changes their roles/quota.
+  const context = await realAccountingContext(page, businessId);
+  const actor = await page.evaluate(()=>JSON.parse(localStorage.getItem("auth-state")!).state.user as {userId:string});
   const suffix = randomUUID().slice(0, 8);
-  const credentials = { tenantKey: process.env.AURALY_E2E_TENANT_KEY!, username: `qa.mode.${suffix}`, password: `T!${randomUUID()}a9` };
-  const actor = await admin.scopedJson<{ userId: string }>("POST", "/api/users", {
-    username: credentials.username, email: `${credentials.username}@example.test`, password: credentials.password,
-    firstName: "QA", lastName: mode, phoneNumber: null, roles: [{ roleId: role!.roleId, businessId }],
-  });
   const documents: string[] = [];
   try {
-    const context = await realAccountingContext(page, businessId, credentials);
     console.info(`${mode}: acceso real del usuario de prueba confirmado`);
     const api = "/api/commerce/v1";
     const workspace = (await context.scopedJson<Array<{ businessId: string; warehouseId: string; pointOfSaleMode: string }>>("GET", `${api}/pos/workspace/options`))
@@ -223,7 +214,5 @@ for (const mode of ["Store", "RestaurantBar"] as const) test(`${mode}: factura y
     await page.screenshot({ path: test.info().outputPath("sales-mode-final.png"), fullPage: true });
   } finally {
     writeFileSync(test.info().outputPath("sales-mode-attempt.json"), JSON.stringify({ mode, businessId, actorId: actor.userId, documents, productionWrites: 0 }, null, 2));
-    try { await admin.scopedJson("POST", `/api/users/${actor.userId}/deactivate`, {}); }
-    finally { credentials.password = ""; await adminPage.close(); }
   }
 });

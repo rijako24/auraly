@@ -152,7 +152,19 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await test.info().attach("native-payroll-fixture", { body: JSON.stringify({ profileId: profile.profileId,
     payrollRunId: run.payrollRunId, employmentIds: employees.map(employee => employee.employmentId), periodStart }), contentType: "application/json" });
   await page.getByRole("tab", { name: "Novedades", exact: true }).click();
-  await page.getByRole("region", { name: "Trabajadores liquidados", exact: true }).getByRole("button", { name: employees[0].employeeName, exact: true }).click();
+  const calculatedWorkers=page.getByRole("region", { name: "Trabajadores liquidados", exact: true });
+  // The available QA period can belong to a later year. Apply the visible
+  // date and worker filters instead of assuming the current-year first page.
+  for(const [label,day,initialMonth] of [["Desde",run.periodStart,1],["Hasta",run.periodEnd,12]] as const){
+    await calculatedWorkers.getByRole("button",{name:label,exact:true}).click();
+    const months=(Number(day.slice(0,4))-Number(today.slice(0,4)))*12+Number(day.slice(5,7))-initialMonth;
+    for(let index=0;index<Math.abs(months);index++)await page.getByRole("button",{name:months>=0?"Mes siguiente":"Mes anterior",exact:true}).click();
+    const dateLabel=new Intl.DateTimeFormat("es-CO",{dateStyle:"long",timeZone:"UTC"}).format(new Date(`${day}T12:00:00Z`));
+    await page.getByRole("button",{name:dateLabel,exact:true}).click();
+  }
+  await calculatedWorkers.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);
+  await calculatedWorkers.getByRole("button",{name:"Buscar",exact:true}).click();
+  await calculatedWorkers.getByRole("button", { name: employees[0].employeeName, exact: true }).click();
   const transport = options.concepts.find(concept => concept.systemRoleCode === "TransportAllowance")!;
   expect(transport).toBeTruthy();
   await page.getByRole("button", { name: `Editar días de ${transport.name}`, exact: true }).click();

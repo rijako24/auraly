@@ -2118,7 +2118,7 @@ public sealed partial class SqlPayrollStore(
             """;
         await using var command=new SqlCommand("SELECT COUNT(*) "+selection+";"+"""
             SELECT run.PayrollRunId,employee.EmploymentId,employee.PartyId,
-              JSON_VALUE(employee.EmployeeSnapshotJson,'$.EmployeeName'),JSON_VALUE(employee.EmployeeSnapshotJson,'$.Identification'),
+              NULLIF(LTRIM(RTRIM(JSON_VALUE(employee.EmployeeSnapshotJson,'$.EmployeeName'))),N''),JSON_VALUE(employee.EmployeeSnapshotJson,'$.Identification'),
               JSON_VALUE(employee.EmployeeSnapshotJson,'$.ContractNumber'),run.PeriodStart,run.PeriodEnd,run.Status,
               employee.WorkedDays,employee.Earnings,employee.Deductions,employee.NetPayable,employee.PayrollRunEmployeeId,run.RowVersion
             """+"\n"+selection+" ORDER BY run.PeriodEnd DESC,4,run.PayrollRunId,employee.EmploymentId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;",connection);
@@ -2128,9 +2128,11 @@ public sealed partial class SqlPayrollStore(
         command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@Size",pageSize);
         await using var reader=await command.ExecuteReaderAsync(ct);await reader.ReadAsync(ct);var count=reader.GetInt32(0);
         await reader.NextResultAsync(ct);var rows=new List<PayrollCalculatedEmployeeRow>();
-        while(await reader.ReadAsync(ct))rows.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetString(3),
+        while(await reader.ReadAsync(ct))rows.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),NullableString(reader,3),
             NullableString(reader,4),NullableString(reader,5),DateOnly.FromDateTime(reader.GetDateTime(6)),DateOnly.FromDateTime(reader.GetDateTime(7)),
             reader.GetString(8),reader.GetDecimal(9),reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.GetGuid(13),(byte[])reader[14]));
+        if(rows.Any(row=>row.EmployeeName is null))
+            logger.LogWarning("PayrollMissingHistoricalIdentity: tenant {TenantId}, business {BusinessId}, page {Page} contains {Count} results without a frozen employee name.",user.TenantId,user.BusinessId,page,rows.Count(row=>row.EmployeeName is null));
         return new(rows,page,pageSize,count);
     }
 

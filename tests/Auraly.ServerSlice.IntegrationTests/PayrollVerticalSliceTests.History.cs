@@ -44,7 +44,9 @@ public sealed partial class PayrollVerticalSliceTests
                     EOMONTH(DATEADD(month,n,'20800101')),N'Approved',1,1,0,0,0,1,@User,SYSUTCDATETIME() FROM #Rows;
                 INSERT payroll.RunEmployees(PayrollRunEmployeeId,TenantId,PayrollRunId,EmploymentId,PartyId,EmployeeSnapshotJson,RuleSnapshotJson,
                   WorkedDays,Earnings,Deductions,EmployerContributions,Provisions,NetPayable,CalculationHash)
-                  SELECT WorkerId,@Tenant,RunId,@Employment,@Party,N'{}',N'{}',30,1,0,0,0,1,HASHBYTES('SHA2_256',N'fixture') FROM #Rows;
+                  SELECT WorkerId,@Tenant,RunId,@Employment,@Party,
+                    CASE WHEN n=500 THEN N'{"EmployeeName":"Nombre histórico conservado"}' ELSE N'{}' END,
+                    N'{}',30,1,0,0,0,1,HASHBYTES('SHA2_256',N'fixture') FROM #Rows;
                 INSERT payroll.PaymentBatches(PaymentBatchId,TenantId,BusinessId,PaymentDate,PaymentMethodOptionId,ReferenceNumber,Status,TotalAmount,CreatedBy,CreatedAt)
                   SELECT BatchId,@Tenant,@Business,EOMONTH(DATEADD(month,n,'20800101')),@Cash,CONCAT(N'QA-',n),N'Confirmed',1,@User,SYSUTCDATETIME() FROM #Rows;
                 INSERT payroll.PaymentLines(PaymentLineId,PaymentBatchId,PayrollRunEmployeeId,Amount)
@@ -99,6 +101,9 @@ public sealed partial class PayrollVerticalSliceTests
         await Measure("pagos",async page=>{var value=await service.PagePaymentsAsync(user,page,20);return(value.Items,value.TotalCount);},row=>row.PaymentBatchId);
         await Measure("períodos",async page=>{var value=await service.PageElectronicPeriodsAsync(user,page,20);Assert.Empty(value.Items[0].Documents);return(value.Items,value.TotalCount);},row=>row.ElectronicPeriodId);
         await Measure("documentos",async page=>{var value=await service.PageElectronicDocumentsAsync(user,period,page,20);Assert.All(value.Items,row=>Assert.Equal("Nombre Congelado",row.EmployeeName));return(value.Items,value.TotalCount);},row=>row.ElectronicPayrollDocumentId);
+        await Measure("trabajadores calculados históricos",async page=>{var value=await service.PageCalculatedEmployeesAsync(user,page,20,new(2080,1,1),new(2200,1,1),null);Assert.Equal(page==1?1:0,value.Items.Count(row=>row.EmployeeName=="Nombre histórico conservado"));Assert.All(value.Items.Where(row=>row.EmployeeName!="Nombre histórico conservado"),row=>Assert.Null(row.EmployeeName));return(value.Items,value.TotalCount);},row=>row.PayrollRunEmployeeId);
+        Assert.Equal(0,(await service.PageCalculatedEmployeesAsync(user with{TenantId=Guid.NewGuid()},1,20,new(2080,1,1),new(2200,1,1),null)).TotalCount);
+        Assert.Equal(0,(await service.PageCalculatedEmployeesAsync(user with{BusinessId=Guid.NewGuid()},1,20,new(2080,1,1),new(2200,1,1),null)).TotalCount);
         Assert.Equal(500,(await service.PageElectronicPeriodsAsync(user,1,20)).Items[0].DocumentCount);
         Assert.Equal(0,(await service.PageRunsAsync(user with{TenantId=Guid.NewGuid()},1,20,null,null,null)).TotalCount);
         Assert.Equal(0,(await service.PagePaymentsAsync(user with{BusinessId=Guid.NewGuid()},1,20)).TotalCount);

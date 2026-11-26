@@ -79,7 +79,7 @@ public sealed record PayrollCatalogOption(
 public sealed record PayrollRuleSetPage(IReadOnlyList<PayrollRuleSetView> Items,int Page,int PageSize,int TotalCount);
 
 public sealed record PayrollCalculatedEmployeeRow(Guid PayrollRunId,Guid EmploymentId,Guid PartyId,
-    string EmployeeName,string? Identification,string? ContractNumber,DateOnly PeriodStart,DateOnly PeriodEnd,
+    string? EmployeeName,string? Identification,string? ContractNumber,DateOnly PeriodStart,DateOnly PeriodEnd,
     string Status,decimal WorkedDays,decimal Earnings,decimal Deductions,decimal NetPayable,Guid PayrollRunEmployeeId,byte[] RowVersion);
 public sealed record PayrollCalculatedEmployeePage(IReadOnlyList<PayrollCalculatedEmployeeRow> Items,
     int Page,int PageSize,int TotalCount);

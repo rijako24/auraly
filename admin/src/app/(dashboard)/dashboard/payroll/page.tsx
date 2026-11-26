@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { BarChart3, Calculator, CheckCircle2, ExternalLink, FilePlus2, FileText, Landmark, ListChecks, Loader2, Pencil, RefreshCw, Settings2, Trash2, Users, Wallet } from "lucide-react";
@@ -49,6 +50,9 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     const queryClient = useQueryClient();
     const [selectedId, setSelectedId] = useState<string | null>(null), [section, setSection] = useState<Section>("runs");
     const [navigationReady,setNavigationReady]=useState(false);
+    const selectedTab=useRef<HTMLButtonElement>(null);
+    const narrowTabs=useMediaQuery("(max-width: 1023px)");
+    useEffect(()=>{selectedTab.current?.scrollIntoView({block:"nearest",inline:"nearest"});},[section,narrowTabs]);
     const [selectedWorkerId,setSelectedWorkerId]=useState<string|null>(null);
     const [creatingPayment, setCreatingPayment] = useState(false),[paying,setPaying]=useState(false);
     const detailVisible = section === "runs" || section === "novelties" && Boolean(selectedWorkerId) || creatingPayment;
@@ -211,7 +215,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     <Tabs value={section} onValueChange={value => { if(value!=="novelties"){setSelectedWorkerId(null);closeNoveltyEditor();} if(value === "novelties" && selected?.status === "Draft")setSelectedId(null); setSection(value as Section); const url = new URL(window.location.href); url.searchParams.set("section", value); url.searchParams.delete("partyId"); window.history.replaceState(null, "", url); }} className="space-y-5">
     <div className="flex min-w-0 gap-2"><div className="min-w-0 flex-1 overflow-x-auto rounded-2xl border bg-card p-1"><TabsList aria-label="Secciones de nómina" className="h-auto w-max justify-start gap-1 bg-transparent p-0">{([
       ["runs", "Liquidaciones", Calculator], ["employments", "Trabajadores", Users], ["novelties", "Novedades", ListChecks], ["payments", "Pagos", Wallet], ["electronic", "Electrónica DIAN", FileText], ["reports", "Reportes", BarChart3], ["configuration", "Configuración", Settings2]
-    ] as const).map(([value, label, Icon]) => <TabsTrigger key={value} value={value} className="shrink-0 rounded-xl px-4 py-2.5 font-semibold data-[state=active]:bg-slate-950 data-[state=active]:text-white data-[state=active]:shadow"><Icon className="mr-2 h-4 w-4"/>{label}</TabsTrigger>)}</TabsList></div><Button aria-label="Actualizar nómina" variant="outline" className="h-12 rounded-2xl" disabled={loading || calculationPending} onClick={() => void load()}><RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"}/></Button></div>
+    ] as const).map(([value, label, Icon]) => <TabsTrigger key={value} ref={value===section?selectedTab:undefined} value={value} className="shrink-0 rounded-xl px-4 py-2.5 font-semibold data-[state=active]:bg-slate-950 data-[state=active]:text-white data-[state=active]:shadow"><Icon className="mr-2 h-4 w-4"/>{label}</TabsTrigger>)}</TabsList></div><Button aria-label="Actualizar nómina" variant="outline" className="h-12 rounded-2xl" disabled={loading || calculationPending} onClick={() => void load()}><RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"}/></Button></div>
     {workspace.isPending ? <div aria-label="Cargando nómina" className="grid gap-5 lg:grid-cols-2"><Skeleton className="h-72 rounded-3xl"/><Skeleton className="h-72 rounded-3xl"/></div> : workspace.isError ? <Card className="rounded-3xl"><CardContent className="space-y-3 p-6" role="alert"><p>{message(workspace.error, "No fue posible cargar la nómina.")}</p><Button variant="outline" onClick={() => void load()}>Reintentar</Button></CardContent></Card> : <TabsContent value={section} className="mt-0">
     {detail.isError && section === "runs" && <div role="alert" className="mb-4 rounded-2xl border border-destructive/30 p-4 text-sm">{message(detail.error, "No fue posible abrir la liquidación.")} <Button variant="outline" size="sm" onClick={() => void detail.refetch()}>Reintentar detalle</Button></div>}
     {detail.isFetching && section === "runs" && <p role="status" className="mb-3 text-sm text-muted-foreground">Cargando detalle…</p>}

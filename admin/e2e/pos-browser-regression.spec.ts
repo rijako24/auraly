@@ -75,7 +75,7 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
   const addedProduct = page.waitForResponse(response => response.request().method() === "POST" && /\/pos\/drafts\/[^/]+\/items$/.test(new URL(response.url()).pathname));
   await scanner.press("Enter");
   const added = await addedProduct;
-  expect(added.ok(), await added.text()).toBe(true);
+  expect(added.ok(), `Agregar producto devolvió HTTP ${added.status()}`).toBe(true);
   await expect(page.getByRole("spinbutton", { name: /Cantidad de/ })).toHaveCount(1, { timeout: 20_000 });
   await expect(scanner).toBeEnabled();
   await scanner.press("ArrowDown");
