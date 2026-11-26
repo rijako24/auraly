@@ -402,14 +402,18 @@ partir del nombre, número contable o auxiliar. El catálogo de formas y los
 motores de aceptación, contabilización y conciliación existentes conservan sus
 responsabilidades; no se crea otro escritor financiero.
 
-El corte de esquema, contratos, UI y consumidores aún debe implementarse y
-verificarse coordinadamente. La migración debe copiar los vínculos existentes
-verificados sin cambiar saldos, asientos, referencias bancarias aplicadas ni
-documentos terminados. La conciliación histórica conserva la atribución probada
-en el asiento/trabajo original; nunca la reconstruye desde una forma editable
-actual. No se retira el vínculo anterior mientras un consumidor activo dependa
-de él. Este apartado documenta el diseño aprobado, no afirma que el cutover ya
-esté aplicado ni autoriza un despliegue a producción.
+La selección explícita está implementada en `reference.PaymentMethods.BankAccountId`:
+el maestro bancario no exige auxiliar y la forma Transferencia conserva banco y
+auxiliar. Un auxiliar de función Bank puede crearse sin vínculo al maestro ni a
+un medio; esa configuración se completa en la forma de pago. La migración
+`20261126_LinkTransferPaymentBanks.sql` copia únicamente la asociación explícita
+anterior cuando la forma aún no tiene banco; no elige bancos por defecto ni
+modifica saldos, asientos o documentos terminados.
+
+La conciliación histórica conserva la atribución probada en el asiento/trabajo
+original; nunca la reconstruye desde una forma editable actual. Las referencias
+anteriores conservadas para historia no vuelven a ser el selector de las nuevas
+transferencias. Esta constatación del código no autoriza un despliegue a producción.
 
 ## Ampliación 2026-10-20: banco con varios auxiliares y medio
 

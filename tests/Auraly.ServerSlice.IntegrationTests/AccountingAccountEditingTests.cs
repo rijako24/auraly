@@ -556,8 +556,11 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
             request with { AccountId = Guid.NewGuid(), Code = "1105983", Semantics = properties with { ParentAccountId = auxiliary.AccountId } }));
         await Assert.ThrowsAsync<AccountingValidationException>(() => service.CreateAccountAsync(identity,
             request with { AccountId = Guid.NewGuid(), Code = "1105984", Semantics = properties with { FinancialFunction = "Payable" } }));
-        await Assert.ThrowsAsync<AccountingValidationException>(() => service.CreateAccountAsync(identity,
-            request with { AccountId = Guid.NewGuid(), Code = "1105985", Semantics = properties with { FinancialFunction = "Bank" } }));
+        var bankAuxiliary = await service.CreateAccountAsync(identity,
+            request with { AccountId = Guid.NewGuid(), Code = "1105985", Semantics = properties with { FinancialFunction = "Bank" } });
+        Assert.Equal("Bank", bankAuxiliary.Semantics!.FinancialFunction);
+        Assert.Null(bankAuxiliary.Semantics.BankAccountId);
+        Assert.Null(bankAuxiliary.Semantics.PaymentMethodOptionId);
         await Assert.ThrowsAsync<AccountingForbiddenException>(() => service.CreateAccountAsync(
             identity with { Permissions = new HashSet<string> { AccountingPermissionCodes.Read } }, request));
         var edited = await service.UpdateAccountAsync(identity, auxiliary.AccountId,
