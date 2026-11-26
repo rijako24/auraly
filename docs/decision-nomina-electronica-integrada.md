@@ -1766,6 +1766,8 @@ con una configuración retirada ni reactiva la versión retirada.
 El modal de crear y editar contratos conserva el encabezado fijo y un cuerpo
 desplazable propio. Los catálogos emergentes permanecen fuera de ese cuerpo:
 abrir, seleccionar o cerrar un combo inferior no desplaza el contrato al inicio.
+El contenedor exterior permite que el menú se extienda hasta el límite de la
+pantalla, sin recortarlo por el borde del modal cuando el catálogo tiene filas.
 La verificación de interfaz cubre escritorio y móvil, incluidos los catálogos
 con una opción previa y su reapertura desde caché; no añade lecturas ni cambia
 los propietarios de carga de los selectores.

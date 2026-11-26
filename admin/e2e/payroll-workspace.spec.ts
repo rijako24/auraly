@@ -194,6 +194,7 @@ for(const width of [1366,390])test(`contrato conserva el scroll al abrir y cerra
   // This isolated form test blocks service workers; preserve register's browser contract.
   await page.addInitScript(()=>{Object.defineProperty(navigator.serviceWorker,"register",{value:async()=>({update:async()=>{}})});});
   await setup(page,baseURL!);
+  await page.route("**/api/commerce/v1/payroll/profiles?**",route=>route.fulfill({json:{items:Array.from({length:10},(_,index)=>({profileId:`profile-${index}`,code:`P${index}`,name:`Perfil de prueba ${index}`,isActive:true,mappings:[]})),page:1,pageSize:10,totalCount:10,totalPages:1}}));
   await page.route("**/api/commerce/v1/accounting/cost-centers?**",route=>route.fulfill({json:{items:[],page:1,pageSize:10,totalCount:0,totalPages:0}}));
   const errors:string[]=[];page.on("pageerror",error=>{errors.push(error.message);console.error(error.stack);});
   await page.goto("/dashboard/payroll");
@@ -212,12 +213,24 @@ for(const width of [1366,390])test(`contrato conserva el scroll al abrir y cerra
     const before=await scroller!.evaluate(element=>element.scrollTop);
     await trigger.click();
     const list=page.getByRole("listbox").last();await expect(list).toBeVisible();
+    await expect(list.getByText("Buscando…",{exact:true})).toBeHidden();
     await expect.poll(()=>list.evaluate(element=>element.closest("[data-state='open']")?.getAnimations().some(animation=>animation.playState==="running")??false)).toBe(false);
     const after=await scroller!.evaluate(element=>element.scrollTop);
     const bounds=await list.boundingBox();
+    expect(await list.evaluate(element=>{
+      const bounds=element.getBoundingClientRect();
+      for(let parent=element.parentElement;parent&&parent!==document.body;parent=parent.parentElement){
+        const style=getComputedStyle(parent),clip=parent.getBoundingClientRect();
+        if(["hidden","clip","auto","scroll"].includes(style.overflowY)&&(bounds.top<clip.top-1||bounds.bottom>clip.bottom+1))return false;
+      }
+      return true;
+    }),`${name} no debe recortarse por un contenedor del modal`).toBe(true);
     observations.push({name,before,after,bounds});
     console.info("Contract dropdown",JSON.stringify(observations.at(-1)));
     await page.screenshot({path:info.outputPath(`contract-${name.replaceAll(" ","-")}-${width}.png`)});
+    if(name==="Perfil de nómina"){
+      const lastOption=list.getByRole("option").last();await lastOption.scrollIntoViewIfNeeded();await expect(lastOption).toBeInViewport();
+    }
     expect(Math.abs(after-before),`${name} debe conservar la posición del contrato`).toBeLessThanOrEqual(3);
     expect(bounds!.y).toBeGreaterThanOrEqual(0);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(width===390?844:768);
     await page.keyboard.press("Escape");await expect(list).toBeHidden();
