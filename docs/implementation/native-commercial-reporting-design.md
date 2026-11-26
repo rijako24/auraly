@@ -250,6 +250,10 @@ para reconstruir el pasado. Si falta evidencia, falla la migración completa;
 no inventa ceros ni cambia fuentes inmutables, hashes, movimientos o saldos.
 El esquema exige costo reconocido no nulo y el writer lo inserta dentro de
 la transacción operativa. Una línea ausente impide proyectar la factura.
+La misma migración cambia la columna a `NOT NULL` después de comprobar todos
+sus valores y antes de planificar el DACPAC. Completar sólo los datos no basta:
+DacFx bloquea por precaución ese cambio si la tabla tiene filas. No se habilitan
+valores artificiales ni se desactiva su protección contra pérdida de datos.
 Después del corte se reconstruye por el comando canónico de Reporting.
 El contrato de esta valoración es la versión 6. El lector existente rechaza
 checkpoints o hechos de versiones anteriores hasta completar ese rebuild;

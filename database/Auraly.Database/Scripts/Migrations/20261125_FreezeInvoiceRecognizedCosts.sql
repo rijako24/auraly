@@ -112,5 +112,11 @@ EXEC sys.sp_executesql N'
 
     IF EXISTS(SELECT 1 FROM dbo.SalesDocumentLines WHERE RecognizedCostAmount IS NULL)
       THROW 51624,N''Hay líneas de factura sin un propietario o costo histórico verificable.'',1;
+
+    -- Complete the reviewed nullability cutover before DacFx builds its plan.
+    -- Its generic data-loss guard rejects any populated nullable-to-required
+    -- column, even after every historical value has been recovered.
+    IF COLUMNPROPERTY(OBJECT_ID(N''dbo.SalesDocumentLines''),N''RecognizedCostAmount'',''AllowsNull'')=1
+      ALTER TABLE dbo.SalesDocumentLines ALTER COLUMN RecognizedCostAmount decimal(19,4) NOT NULL;
 ';
 COMMIT;

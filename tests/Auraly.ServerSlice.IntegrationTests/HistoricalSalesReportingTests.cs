@@ -184,6 +184,8 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
                 for (var replay = 0; replay < 2; replay++)
                 {
                     await fixture.ApplyMigrationAsync("20261125_FreezeInvoiceRecognizedCosts.sql", connection, transaction);
+                    await using var nullable = new SqlCommand("SELECT is_nullable FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.SalesDocumentLines') AND name=N'RecognizedCostAmount';",connection,transaction);
+                    Assert.False(Assert.IsType<bool>(await nullable.ExecuteScalarAsync()));
                     await using var verify = new SqlCommand("SELECT RecognizedCostAmount FROM dbo.SalesDocumentLines WHERE DocumentId=@Document;", connection, transaction);
                     verify.Parameters.AddWithValue("@Document", sale.DocumentId);
                     Assert.Equal(expected, Assert.IsType<decimal>(await verify.ExecuteScalarAsync()));
@@ -228,6 +230,8 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
             for (var replay=0;replay<2;replay++)
             {
                 await fixture.ApplyMigrationAsync("20261125_FreezeInvoiceRecognizedCosts.sql",connection,transaction);
+                await using var nullable = new SqlCommand("SELECT is_nullable FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.SalesDocumentLines') AND name=N'RecognizedCostAmount';",connection,transaction);
+                Assert.False(Assert.IsType<bool>(await nullable.ExecuteScalarAsync()));
                 await using var verify = new SqlCommand("""
                     SELECT COUNT(*) FROM dbo.SalesDocumentLines line
                     JOIN dbo.InventoryMovements movement ON movement.DocumentId=line.DocumentId
