@@ -1072,6 +1072,16 @@ Se verifica por conjunto que todos los checkpoints estén completos en la versi�
 publicada. Un fallo conserva detenidos los escritores: no reactiva un binario
 anterior contra el esquema nuevo ni presenta una operación incompleta como lista.
 
+El ensayo manual `reporting-copy-rehearsal.yml` llama esa misma función del
+despliegue contra la copia aislada de Megafruver en DEV, nunca contra la API
+compartida ni una base viva. Compila la consola canónica con dependencias
+bloqueadas, compara huellas de trece conjuntos financieros/fiscales/de inventario
+antes y después y repite el hook para comprobar su no-op. Sólo conserva hashes,
+tiempos y resultado; no publica datos de origen ni credenciales. La identidad
+temporal de la copia tiene lectura y escritura únicamente en Reporting; su
+aprovisionamiento y retiro se verifican al operar el ensayo. El runner crea y
+retira su propia regla SQL limitada a una IP, incluso cuando falla la prueba.
+
 ## Fuera de alcance
 
 Metas, comisiones, geocercas, seguimiento GPS y predicciones quedan fuera de

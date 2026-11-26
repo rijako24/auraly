@@ -1,0 +1,46 @@
+name: Reporting copy release rehearsal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: reporting-isolated-copy-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 145
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build the existing canonical maintenance Console
+        shell: pwsh
+        run: |
+          dotnet restore src/Console/Auraly.Console/Auraly.Console.csproj --locked-mode
+          if ($LASTEXITCODE) { throw 'Falló la restauración bloqueada.' }
+          dotnet publish src/Console/Auraly.Console/Auraly.Console.csproj --no-restore -c Release --self-contained false -o "$env:RUNNER_TEMP/console"
+          if ($LASTEXITCODE) { throw 'Falló la compilación de la consola.' }
+      - name: Rehearse release cutover only against the isolated DEV copy
+        shell: pwsh
+        run: ./infrastructure/azure/Test-AuralyReportingCopyUpgrade.ps1 -ConsolePath "$env:RUNNER_TEMP/console" -EvidencePath "$env:RUNNER_TEMP/reporting-copy-proof.json"
+      - name: Retain the result without source data or credentials
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: reporting-copy-proof
+          path: ${{ runner.temp }}/reporting-copy-proof.json
+          retention-days: 7
+          if-no-files-found: ignore
