@@ -185,7 +185,7 @@ public sealed record PayrollProfileView(Guid ProfileId,string Code,string Name,G
     public PayrollRuleSetView? CreatedRuleSet { get; init; }
 }
 public sealed record PayrollProfilePage(IReadOnlyList<PayrollProfileView> Items,int Page,int PageSize,int TotalCount,int TotalPages);
-public sealed record SavePayrollProfileRequest(Guid ProfileId,string Code,string Name,Guid RuleSetId,
+public sealed record SavePayrollProfileRequest(Guid ProfileId,string? Code,string Name,Guid RuleSetId,
     bool IsActive,byte[]? RowVersion,IReadOnlyList<PayrollProfileMapping> Mappings)
 {
     public SavePayrollRuleSetRequest? Configuration { get; init; }
@@ -469,6 +469,8 @@ public sealed record PayrollWorkedDaysChange(Guid EmploymentId, decimal WorkedDa
 
 public sealed record PayrollConceptWorkedDaysView(Guid ConceptId, decimal BaseDays, decimal WorkedDays);
 
+public sealed record PayrollRunHistoryFilter(Guid? RunId=null,DateOnly? PaymentFrom=null,DateOnly? PaymentTo=null,string? WorkerSearch=null);
+
 public sealed record PayrollRunEmploymentFilter(
     string? ContractNumber = null, string SortBy = "employeeName", string SortDirection = "asc",
     Guid? CostCenterId = null, string? WorkSite = null);
@@ -520,6 +522,8 @@ public sealed record PayrollRunView(
 {
     public IReadOnlyList<PayrollPayableEmployee> PayableEmployees { get; init; } = [];
     public int EmployeeCount { get; init; }
+    public Guid PayFrequencyOptionId { get; init; }
+    public string? PayFrequencyName { get; init; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool IsPartialCalculation { get; init; }
 }
@@ -539,7 +543,11 @@ public sealed record PayrollRunSummary(
     decimal TotalEarnings,
     decimal TotalDeductions,
     decimal NetPayable,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public Guid PayFrequencyOptionId { get; init; }
+    public string? PayFrequencyName { get; init; }
+}
 
 public sealed record PayrollRunEmployeeView(
     Guid PayrollRunEmployeeId,

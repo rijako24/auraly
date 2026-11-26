@@ -22,7 +22,7 @@ public sealed record PayrollEmployeeCalculationSource(decimal MaximumContractDay
 public interface IPayrollStore
 {
     Task<PayrollCalculatedEmployeePage> PageCalculatedEmployeesAsync(PayrollUserIdentity user,int page,int pageSize,
-        DateOnly from,DateOnly to,string? search,CancellationToken ct);
+        DateOnly from,DateOnly to,string? search,CancellationToken ct,Guid? runId=null);
     Task<PayrollRuleSetPage> PageProfileRuleSetsAsync(PayrollUserIdentity user,Guid profileId,int page,int pageSize,CancellationToken ct);
     Task<PayrollProfilePage> PageProfilesAsync(PayrollUserIdentity user,int page,int pageSize,string? search,bool? isActive,string sortBy,bool descending,CancellationToken ct);
     Task<PayrollProfileView> GetProfileAsync(PayrollUserIdentity user,Guid id,CancellationToken ct);
@@ -61,7 +61,7 @@ public interface IPayrollStore
     Task<PayrollHistoryPage<PayrollPaymentBatchView>> PagePaymentsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct);
     Task<PayrollHistoryPage<ElectronicPayrollPeriodView>> PageElectronicPeriodsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct);
     Task<PayrollHistoryPage<ElectronicPayrollDocumentView>> PageElectronicDocumentsAsync(PayrollUserIdentity user,Guid periodId,int page,int pageSize,CancellationToken ct);
-    Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search, CancellationToken ct);
+    Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search, CancellationToken ct,PayrollRunHistoryFilter? filter=null);
     Task<PayrollRunEmploymentPage> PageRunEmploymentsAsync(PayrollUserIdentity user,
         Guid runId, int page, int pageSize, string? search, CancellationToken ct,
         PayrollRunEmploymentFilter? filter = null);
@@ -85,12 +85,12 @@ public sealed class PayrollService(
     FiscalProcessingCoordinator fiscalProcessing)
 {
     public Task<PayrollCalculatedEmployeePage> PageCalculatedEmployeesAsync(PayrollUserIdentity user,int page,int pageSize,
-        DateOnly from,DateOnly to,string? search,CancellationToken ct=default)
+        DateOnly from,DateOnly to,string? search,CancellationToken ct=default,Guid? runId=null)
     {
         Demand(user,PayrollPermissionCodes.Read);
-        if(page<1 || pageSize is <1 or >50 || ((long)page-1)*pageSize>int.MaxValue || to<from || search?.Length>160)
+        if(page<1 || pageSize is <1 or >50 || ((long)page-1)*pageSize>int.MaxValue || to<from || search?.Length>160 || runId==Guid.Empty)
             throw new PayrollValidationException("Revisa las fechas, la búsqueda y la página de trabajadores liquidados.");
-        return store.PageCalculatedEmployeesAsync(user,page,pageSize,from,to,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct);
+        return store.PageCalculatedEmployeesAsync(user,page,pageSize,from,to,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct,runId);
     }
     public Task<PayrollRuleSetPage> PageProfileRuleSetsAsync(PayrollUserIdentity user,Guid profileId,int page,int pageSize,CancellationToken ct=default)
     {
@@ -119,12 +119,13 @@ public sealed class PayrollService(
     public Task<PayrollProfileView> SaveProfileAsync(PayrollUserIdentity user,SavePayrollProfileRequest request,CancellationToken ct=default)
     {
         Demand(user,PayrollPermissionCodes.Configure);
-        if(request.ProfileId==Guid.Empty || request.RuleSetId==Guid.Empty || string.IsNullOrWhiteSpace(request.Code) || request.Code.Trim().Length>32 ||
+        var code=string.IsNullOrWhiteSpace(request.Code)?null:request.Code.Trim().ToUpperInvariant();
+        if(request.ProfileId==Guid.Empty || request.RuleSetId==Guid.Empty || (code?.Length??0)>32 ||
             string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length>160 || request.Mappings is null || request.Mappings.Count>500 ||
             request.Mappings.Any(value=>value is null || value.MappingId==Guid.Empty || value.EffectiveTo<value.EffectiveFrom ||
                 value.BeneficiaryPartyId==Guid.Empty || value.DebitAccountId is null && value.CreditAccountId is null && value.BeneficiaryPartyId is null) ||
             request.Mappings.Select(value=>value.MappingId).Distinct().Count()!=request.Mappings.Count)
-            throw new PayrollValidationException("Revisa el código, el nombre y hasta 500 asignaciones contables con vigencias e identificadores distintos.");
+            throw new PayrollValidationException("Revisa el nombre y hasta 500 asignaciones contables con vigencias e identificadores distintos.");
         var initial=request.Configuration;
         if(initial is not null)
         {
@@ -133,7 +134,7 @@ public sealed class PayrollService(
                 throw new PayrollValidationException("La configuración modificada del perfil debe guardar una nueva vigencia.");
             initial=NormalizeRuleSet(initial with{Code=request.RowVersion is null?$"PROFILE-{request.ProfileId:N}":initial.Code,Name=request.Name});
         }
-        return store.SaveProfileAsync(user,request with{Code=request.Code.Trim().ToUpperInvariant(),Name=request.Name.Trim(),Configuration=initial},ct);
+        return store.SaveProfileAsync(user,request with{Code=code,Name=request.Name.Trim(),Configuration=initial},ct);
     }
     public Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user,
         CancellationToken ct = default)
@@ -384,13 +385,16 @@ public sealed class PayrollService(
         if(page<1||pageSize is <1 or >50||page>int.MaxValue/pageSize)throw new PayrollValidationException("La página debe tener entre 1 y 50 registros.");
     }
 
-    public Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search,CancellationToken ct=default)
+    public Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search,CancellationToken ct=default,PayrollRunHistoryFilter? filter=null)
     {
         Demand(user,PayrollPermissionCodes.Read);
+        filter ??= new();
         if(page<1||pageSize is <1 or >50||page>int.MaxValue/pageSize||search?.Length>160
+            ||filter.RunId==Guid.Empty || filter.WorkerSearch?.Length>160 || filter.PaymentTo<filter.PaymentFrom
             ||status is not(null or "Draft" or "Calculated" or "Approved" or "Voided")||kind is not(null or "Regular" or "Adjustment"))
             throw new PayrollValidationException("Revisa los filtros y una página de hasta 50 liquidaciones.");
-        return store.PageRunsAsync(user,page,pageSize,status,kind,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct);
+        return store.PageRunsAsync(user,page,pageSize,status,kind,string.IsNullOrWhiteSpace(search)?null:search.Trim(),ct,
+            filter with { WorkerSearch=string.IsNullOrWhiteSpace(filter.WorkerSearch)?null:filter.WorkerSearch.Trim() });
     }
 
     public Task<PayrollRunEmploymentPage> PageRunEmploymentsAsync(PayrollUserIdentity user,

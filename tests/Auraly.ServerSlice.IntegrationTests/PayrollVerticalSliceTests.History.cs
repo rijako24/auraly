@@ -104,6 +104,38 @@ public sealed partial class PayrollVerticalSliceTests
         await Measure("trabajadores calculados históricos",async page=>{var value=await service.PageCalculatedEmployeesAsync(user,page,20,new(2080,1,1),new(2200,1,1),null);Assert.Equal(page==1?1:0,value.Items.Count(row=>row.EmployeeName=="Nombre histórico conservado"));Assert.All(value.Items.Where(row=>row.EmployeeName!="Nombre histórico conservado"),row=>Assert.Null(row.EmployeeName));return(value.Items,value.TotalCount);},row=>row.PayrollRunEmployeeId);
         Assert.Equal(0,(await service.PageCalculatedEmployeesAsync(user with{TenantId=Guid.NewGuid()},1,20,new(2080,1,1),new(2200,1,1),null)).TotalCount);
         Assert.Equal(0,(await service.PageCalculatedEmployeesAsync(user with{BusinessId=Guid.NewGuid()},1,20,new(2080,1,1),new(2200,1,1),null)).TotalCount);
+        // The same canonical page supports novelty history filters, including drafts.
+        var historical=(await service.PageRunsAsync(user,1,20,"Approved",null,null,filter:new(WorkerSearch:"Nombre histórico"))).Items.Single();
+        Assert.Equal(Option(PayrollCatalogCodes.PayFrequency,"Monthly"),historical.PayFrequencyOptionId);
+        Assert.False(string.IsNullOrWhiteSpace(historical.PayFrequencyName));
+        var filtered=await service.PageRunsAsync(user,1,20,"Approved",null,null,filter:new(historical.PayrollRunId,historical.PaymentDate,historical.PaymentDate,"Nombre histórico"));
+        Assert.Equal(1,filtered.TotalCount);Assert.Equal(historical.PayrollRunId,Assert.Single(filtered.Items).PayrollRunId);
+        Assert.Empty((await service.PageRunsAsync(user,1,20,null,null,null,filter:new(PaymentFrom:historical.PaymentDate.AddDays(1),WorkerSearch:"Nombre histórico"))).Items);
+        Assert.Empty((await service.PageRunsAsync(user,1,20,"Draft",null,null,filter:new(historical.PayrollRunId))).Items);
+        Assert.Empty((await service.PageRunsAsync(user,1,20,null,null,null,filter:new(WorkerSearch:"%"))).Items);
+        var filterTimings=new List<double>();
+        for(var sample=0;sample<20;sample++)
+        {
+            using var counter=new InventoryBalanceProcessingTests.CommandCounter(database);
+            var clock=Stopwatch.StartNew();
+            var result=await service.PageRunsAsync(user,sample%2+1,20,null,null,null,filter:new(WorkerSearch:"Nombre histórico"));
+            filterTimings.Add(clock.Elapsed.TotalMilliseconds);Assert.Equal(1,counter.Count);Assert.Equal(1,result.TotalCount);
+            Assert.Equal(sample%2==0?1:0,result.Items.Count);
+        }
+        Assert.True(filterTimings.Order().ElementAt(18)<1000,"El filtro de novedades excedió 1 s.");samples["filtro de trabajador en liquidaciones"]=filterTimings;
+        var employeesPage=await service.PageCalculatedEmployeesAsync(user,1,20,new(2080,1,1),new(2200,1,1),null,runId:historical.PayrollRunId);
+        Assert.Equal(1,employeesPage.TotalCount);Assert.Equal(historical.PayrollRunId,Assert.Single(employeesPage.Items).PayrollRunId);
+        Assert.Empty((await service.PageCalculatedEmployeesAsync(user with{BusinessId=Guid.NewGuid()},1,20,new(2080,1,1),new(2200,1,1),null,runId:historical.PayrollRunId)).Items);
+        var creator=user with{Permissions=new HashSet<string>{PayrollPermissionCodes.Read,PayrollPermissionCodes.Calculate}};
+        var draft=await service.CreateRunAsync(creator,new(Guid.NewGuid(),business,Option(PayrollCatalogCodes.PayFrequency,"Monthly"),"Regular",null,new(2027,1,1),new(2027,1,31),new(2027,1,31)));
+        Assert.Equal(historical.PayFrequencyOptionId,draft.PayFrequencyOptionId);Assert.Equal(historical.PayFrequencyName,draft.PayFrequencyName);
+        using(var counter=new InventoryBalanceProcessingTests.CommandCounter(database))
+        {
+            var draftPage=await service.PageRunsAsync(user,1,20,"Draft",null,null,filter:new(PaymentFrom:new(2027,1,1),PaymentTo:new(2027,1,31),WorkerSearch:"Histórico sintético"));
+            Assert.Equal(1,counter.Count);Assert.Equal(draft.PayrollRunId,Assert.Single(draftPage.Items).PayrollRunId);
+        }
+        Assert.Empty((await service.PageRunsAsync(user with{TenantId=Guid.NewGuid()},1,20,null,null,null,filter:new(draft.PayrollRunId))).Items);
+        await Assert.ThrowsAsync<PayrollValidationException>(()=>service.PageRunsAsync(user,1,20,null,null,null,filter:new(PaymentFrom:new(2027,2,1),PaymentTo:new(2027,1,1))));
         Assert.Equal(500,(await service.PageElectronicPeriodsAsync(user,1,20)).Items[0].DocumentCount);
         Assert.Equal(0,(await service.PageRunsAsync(user with{TenantId=Guid.NewGuid()},1,20,null,null,null)).TotalCount);
         Assert.Equal(0,(await service.PagePaymentsAsync(user with{BusinessId=Guid.NewGuid()},1,20)).TotalCount);

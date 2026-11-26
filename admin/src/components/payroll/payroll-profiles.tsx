@@ -36,7 +36,7 @@ export function PayrollProfiles({ options, canConfigure, canReadAccounting }: {
   const [parameters,setParameters]=useState<Record<string,string>>({}),[source,setSource]=useState(""),[effectiveFrom,setEffectiveFrom]=useState(today);
   const definitions=options.catalogs["payroll-rule-parameter"]??[];
   const initialComplete=definitions.length>0&&source.trim().length>0&&effectiveFrom&&definitions.every(item=>parameters[item.code]!==undefined&&parameters[item.code]!==""&&Number.isFinite(Number(parameters[item.code])));
-  const [sort,setSort]=useState<{by:"code"|"name"|"status";direction:"asc"|"desc"}>({by:"name",direction:"asc"});
+  const [sort,setSort]=useState<{by:"name"|"status";direction:"asc"|"desc"}>({by:"name",direction:"asc"});
   const busy=operation!==null;
   const key=["payroll-profiles",tenant];
   const list=useQuery({queryKey:["payroll-profile-page",tenant,page,search,active,sort],
@@ -65,7 +65,7 @@ export function PayrollProfiles({ options, canConfigure, canReadAccounting }: {
     setOperation("save");
     try {
       const saved=await payrollApi.saveProfile({...form,configuration:form.rowVersion&&!configurationChanged?null:{
-        ruleSetId:form.rowVersion?crypto.randomUUID():form.ruleSetId,countryCode:baseConfiguration?.countryCode??"CO",code:baseConfiguration?.code??form.code,name:form.name,effectiveFrom,effectiveTo:null,sourceReference:source,
+        ruleSetId:form.rowVersion?crypto.randomUUID():form.ruleSetId,countryCode:baseConfiguration?.countryCode??"CO",code:baseConfiguration?.code??"",name:form.name,effectiveFrom,effectiveTo:null,sourceReference:source,
         parameters:definitions.map(item=>({code:item.code,numericValue:Number(parameters[item.code]),unitCode:item.metadataCode??"Value",description:item.description})),rowVersion:null,
       }});
       if(saved.createdRuleSet)await client.invalidateQueries({queryKey:["payroll-profile-versions",tenant,form.profileId],refetchType:"none"});
@@ -88,26 +88,25 @@ export function PayrollProfiles({ options, canConfigure, canReadAccounting }: {
     <CardDescription>Cuentas y porcentajes por perfil, con sus vigencias. Cada contrato conserva su perfil al liquidar.</CardDescription>
   </CardHeader><CardContent className="space-y-4">
     <div className="flex flex-wrap items-center gap-3"><form className="flex w-full min-w-0 gap-2 sm:w-auto sm:flex-1" onSubmit={event=>{event.preventDefault();setSearch(draftSearch.trim());setPage(1);}}>
-      <Input className="min-w-0 flex-1" aria-label="Buscar perfil de nómina" maxLength={160} placeholder="Código o nombre" value={draftSearch} disabled={busy} onChange={event=>setDraftSearch(event.target.value)}/>
+      <Input className="min-w-0 flex-1" aria-label="Buscar perfil de nómina" maxLength={160} placeholder="Nombre del perfil" value={draftSearch} disabled={busy} onChange={event=>setDraftSearch(event.target.value)}/>
       <Button type="submit" variant="outline" disabled={busy||list.isFetching}>Buscar</Button></form>
       <Select value={active} disabled={busy} onValueChange={value=>{setActive(value);setPage(1);}}><SelectTrigger aria-label="Estado del perfil" className="w-40"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="active">Activos</SelectItem><SelectItem value="inactive">Inactivos</SelectItem></SelectContent></Select>
       {canConfigure&&<Button type="button" variant="outline" disabled={busy} onClick={()=>{setBaseConfiguration(null);setConfigurationChanged(false);setParameters({});setSource("");setEffectiveFrom(today);setForm({profileId:crypto.randomUUID(),code:"",name:"",ruleSetId:crypto.randomUUID(),isActive:true,rowVersion:null,mappings:[]});}}><Plus className="mr-2 size-4"/>Nuevo perfil</Button>}
     </div>
     {list.isPending?<p role="status">Cargando perfiles…</p>:list.isError?<div role="alert"><p>No fue posible consultar los perfiles.</p><Button variant="outline" onClick={()=>void list.refetch()}>Reintentar perfiles</Button></div>:<>
-      <div className="max-w-full overflow-x-auto"><table className="w-full text-sm"><thead><tr>{heading("code","Código")}{heading("name","Nombre")}{heading("status","Estado")}<th><span className="sr-only">Abrir perfil</span></th></tr></thead><tbody>{list.data?.items.map(row=><tr key={row.profileId} className="border-t"><td className="max-w-28 break-words p-2">{row.code}</td><td className="break-words p-2">{row.name}</td><td className="p-2">{row.isActive?"Activo":"Inactivo"}</td><td className="p-2"><Button variant="ghost" size="icon" aria-label={`Abrir perfil ${row.name}`} disabled={busy} onClick={()=>void select(row.profileId)}><Pencil className="size-4"/></Button></td></tr>)}</tbody></table></div>
+      <div className="max-w-full overflow-x-auto"><table className="w-full text-sm"><thead><tr>{heading("name","Nombre")}{heading("status","Estado")}<th><span className="sr-only">Abrir perfil</span></th></tr></thead><tbody>{list.data?.items.map(row=><tr key={row.profileId} className="border-t"><td className="break-words p-2">{row.name}</td><td className="p-2">{row.isActive?"Activo":"Inactivo"}</td><td className="p-2"><Button variant="ghost" size="icon" aria-label={`Abrir perfil ${row.name}`} disabled={busy} onClick={()=>void select(row.profileId)}><Pencil className="size-4"/></Button></td></tr>)}</tbody></table></div>
       {list.data?.items.length===0&&<p className="text-sm text-muted-foreground">No hay perfiles con estos filtros.</p>}
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{list.data?.totalCount??0} perfiles · Página {page}</span><div className="flex gap-2"><Button variant="outline" size="sm" disabled={busy||list.isFetching||page===1} onClick={()=>setPage(page-1)}>Anterior perfiles</Button><Button variant="outline" size="sm" disabled={busy||list.isFetching||page>=(list.data?.totalPages??0)} onClick={()=>setPage(page+1)}>Siguiente perfiles</Button></div></div>
     </>}
     {operation==="read"&&<p role="status" className="text-sm text-muted-foreground">Consultando perfil…</p>}
     {operation==="refresh"&&<p role="status" className="text-sm text-muted-foreground">Actualizando lista de perfiles…</p>}
     <Dialog open={form!==null} onOpenChange={open=>{if(!open&&!busy)setForm(null);}}>
-    <DialogContent showClose={!busy} className="flex h-[min(92dvh,52rem)] max-h-[92dvh] w-[calc(100%_-_1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+    <DialogContent showClose={!busy} className="flex h-[min(92dvh,52rem)] max-h-[92dvh] w-[calc(100%_-_1rem)] max-w-4xl flex-col gap-0 overflow-visible p-0">
       <DialogHeader className="shrink-0 border-b p-5 text-left"><DialogTitle>{form?.rowVersion?"Editar perfil de nómina":"Nuevo perfil de nómina"}</DialogTitle><DialogDescription>Configura las cuentas por concepto y los porcentajes con sus vigencias.</DialogDescription></DialogHeader>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
     {form&&<fieldset disabled={busy||!canConfigure} className="min-w-0 space-y-4">
       <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
-        <label className="min-w-0 space-y-2"><span className="text-sm">Código</span><Input maxLength={32} value={form.code} onChange={event=>setForm({...form,code:event.target.value.toUpperCase()})}/></label>
-        <label className="min-w-0 space-y-2"><span className="text-sm">Nombre</span><Input maxLength={160} value={form.name} onChange={event=>setForm({...form,name:event.target.value})}/></label>
+        <label className="min-w-0 space-y-2 md:col-span-2"><span className="text-sm">Nombre</span><Input maxLength={160} value={form.name} onChange={event=>setForm({...form,name:event.target.value})}/></label>
         <label className="flex items-center gap-2"><Checkbox disabled={busy||!canConfigure} checked={form.isActive} onCheckedChange={checked=>setForm({...form,isActive:checked===true})}/>Perfil activo</label>
       </div>
       <section className="space-y-4 rounded-xl border p-4"><h3 className="font-semibold">Configuración del perfil</h3>
@@ -147,7 +146,7 @@ export function PayrollProfiles({ options, canConfigure, canReadAccounting }: {
     </>}</details>}
     </div>
     <DialogFooter className="shrink-0 border-t bg-muted/20 p-4"><Button variant="outline" disabled={busy} onClick={()=>setForm(null)}>Cerrar perfil</Button>
-      {canConfigure&&form&&<Button type="button" disabled={busy||!form.code.trim()||!form.name.trim()||!form.ruleSetId||(!form.rowVersion||configurationChanged)&&!initialComplete} onClick={()=>void save()}>{operation==="save"?"Guardando perfil…":operation==="refresh"?"Actualizando lista…":"Guardar perfil"}</Button>}
+      {canConfigure&&form&&<Button type="button" disabled={busy||!form.name.trim()||!form.ruleSetId||(!form.rowVersion||configurationChanged)&&!initialComplete} onClick={()=>void save()}>{operation==="save"?"Guardando perfil…":operation==="refresh"?"Actualizando lista…":"Guardar perfil"}</Button>}
     </DialogFooter></DialogContent></Dialog>
   </CardContent></Card>;
 }

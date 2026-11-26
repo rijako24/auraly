@@ -13,14 +13,16 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed partial class PayrollVerticalSliceTests
 {
-    [Fact]
-    public async Task New_profile_saves_its_parameters_atomically_without_selecting_another_configuration()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("EXISTING")]
+    public async Task New_profile_saves_its_parameters_atomically_without_selecting_another_configuration(string? codePrefix)
     {
         using var client=fixture.CreateAdminClient(PayrollPermissionCodes.Read,PayrollPermissionCodes.Configure);
         SavePayrollProfileRequest Request()
         {
             var id=Guid.NewGuid();var ruleId=Guid.NewGuid();
-            return new(id,"INLINE"+id.ToString("N")[..12],"Perfil con porcentajes propios",ruleId,true,null,[])
+            return new(id,codePrefix is null?null:codePrefix+id.ToString("N")[..12],"Perfil con porcentajes propios",ruleId,true,null,[])
             {
                 Configuration=new(ruleId,"CO","IGNORED","Nombre sustituido por el del perfil",new(2026,1,1),null,
                     "Parámetros sintéticos, no tarifas legales",Rules().Select(row=>new SavePayrollRuleParameterRequest(row.Key,row.Value,"Value",null)).ToArray(),null)
@@ -34,10 +36,11 @@ public sealed partial class PayrollVerticalSliceTests
             Assert.Equal(6,commands.Count);
         }
         Assert.NotNull(saved.CreatedRuleSet);Assert.Equal("Approved",saved.CreatedRuleSet.Status);
+        Assert.Equal(request.Code?.ToUpperInvariant()??saved.ProfileId.ToString("N").ToUpperInvariant(),saved.Code);
         Assert.Equal($"PROFILE-{saved.ProfileId:N}".ToUpperInvariant(),saved.CreatedRuleSet.Code);Assert.Equal(saved.Name,saved.CreatedRuleSet.Name);
         Assert.Equal(Rules().Count,saved.CreatedRuleSet.Parameters.Count);
         Assert.Equal(saved.RuleSetId,saved.CreatedRuleSet.RuleSetId);
-        var nextId=Guid.NewGuid();var changed=request with{RowVersion=saved.RowVersion,Name="Perfil editado en la misma ficha",
+        var nextId=Guid.NewGuid();var changed=request with{Code=null,RowVersion=saved.RowVersion,Name="Perfil editado en la misma ficha",
             Configuration=request.Configuration! with{RuleSetId=nextId,Code="OTHER-SERIES",CountryCode="PE",EffectiveFrom=new(2027,1,1),
                 Parameters=request.Configuration!.Parameters.Select(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate?row with{NumericValue=.05m}:row).ToArray()}};
         PayrollProfileView updated;
@@ -48,6 +51,7 @@ public sealed partial class PayrollVerticalSliceTests
             Assert.Equal(7,commands.Count);
         }
         Assert.Equal(saved.RuleSetId,updated.RuleSetId);Assert.Equal(nextId,updated.CreatedRuleSet!.RuleSetId);
+        Assert.Equal(saved.Code,updated.Code);
         Assert.Equal(saved.CreatedRuleSet.Code,updated.CreatedRuleSet.Code);Assert.Equal("CO",updated.CreatedRuleSet.CountryCode);
         Assert.Equal(.05m,updated.CreatedRuleSet.Parameters.Single(row=>row.Code==PayrollRuleParameterCodes.EmployeeHealthRate).NumericValue);
         var history=await GetAsync<PayrollRuleSetPage>(client,$"/api/commerce/v1/payroll/profiles/{saved.ProfileId}/rule-sets?page=1&pageSize=1");

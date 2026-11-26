@@ -66,10 +66,10 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await expect(page.getByRole("button",{name:"Recalcular",exact:true})).toBeDisabled();
     failPage=false;await page.getByRole("button",{name:"Reintentar trabajadores",exact:true}).click();
     const selection=page.getByRole("region",{name:"Trabajadores de la liquidación",exact:true});
-    await expect(selection.getByRole("checkbox")).toHaveCount(50);
+    await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(50);
     const bounds=await selection.evaluate(element=>element.getBoundingClientRect().toJSON());
     expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(viewport.width);
-    for(const name of ["Buscar","Todos","Ninguno","Siguiente trabajadores"]){
+    for(const name of ["Buscar","Siguiente trabajadores"]){
         const control=await selection.getByRole("button",{name,exact:true}).evaluate(element=>element.getBoundingClientRect().toJSON());
         expect(control.left).toBeGreaterThanOrEqual(0);expect(control.right).toBeLessThanOrEqual(viewport.width);
     }
@@ -77,7 +77,8 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
         const table=await selection.getByRole("table").evaluate(element=>({viewport:element.parentElement!.clientWidth,content:element.parentElement!.scrollWidth}));
         expect(table.content).toBeGreaterThan(table.viewport);
     }
-    await selection.getByRole("button",{name:"Ninguno",exact:true}).click();
+    await expect(selection.getByRole("checkbox",{name:"Incluir todos los trabajadores elegibles",exact:true})).toBeChecked();
+    await selection.getByRole("checkbox",{name:"Incluir todos los trabajadores elegibles",exact:true}).uncheck();
     await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeDisabled();
     const first=selection.getByRole("checkbox",{name:"Incluir Trabajador 00, contrato C-0",exact:true});
     await first.focus();await page.keyboard.press("Space");await expect(first).toBeChecked();await expect(first).toBeFocused();
@@ -111,10 +112,10 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await expect(selection.getByRole("checkbox",{name:"Incluir Trabajador 50, contrato C-50",exact:true})).toBeChecked();
     expect(selectionReads).toBe(readsBeforeCalculation);
     await selection.getByRole("button",{name:"Ordenar por Trabajador",exact:true}).click();
-    await expect(selection.getByRole("checkbox").first()).toHaveAccessibleName("Incluir Trabajador 50, contrato C-50");
+    await expect(selection.locator("tbody").getByRole("checkbox").first()).toHaveAccessibleName("Incluir Trabajador 50, contrato C-50");
     await selection.getByRole("textbox",{name:"Filtrar contrato",exact:true}).fill("C-0");
-    await selection.getByRole("button",{name:"Filtrar contrato",exact:true}).click();
-    await expect(selection.getByRole("checkbox")).toHaveCount(1);
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(1);
     await expect(first).toBeChecked();
     await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("Trabajador 50");
     await selection.getByRole("button",{name:"Buscar",exact:true}).click();
@@ -123,26 +124,26 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("");
     await selection.getByRole("button",{name:"Buscar",exact:true}).click();
     await selection.getByRole("textbox",{name:"Filtrar contrato",exact:true}).fill("");
-    await selection.getByRole("button",{name:"Filtrar contrato",exact:true}).click();
-    await expect(selection.getByRole("checkbox")).toHaveCount(50);
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(50);
     expect(centerReads).toBe(0);
     const beforeCenter=selectionReads;
     await selection.getByRole("combobox",{name:"Filtrar trabajadores por centro de costo",exact:true}).click();
     await page.getByRole("option",{name:/CC · Centro de selección/}).click();
-    await expect(selection.getByRole("checkbox")).toHaveCount(2);
+    await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(2);
     expect(centerReads).toBe(1);expect(selectionReads).toBe(beforeCenter+1);
     const beforeSite=selectionReads;
     await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("_%[A]~");
     expect(selectionReads).toBe(beforeSite);
     await selection.getByRole("button",{name:"Buscar",exact:true}).click();
-    await expect(selection.getByRole("checkbox")).toHaveCount(1);await expect(first).toBeChecked();
+    await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(1);await expect(first).toBeChecked();
     expect(selectionReads).toBe(beforeSite+1);
     expect(centerReads).toBe(1);
     await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
     await page.screenshot({path:testInfo.outputPath(`seleccion-filtros-${viewport.width}.png`)});
     await first.uncheck();
     run={...run,rowVersion:"AAAAAAAAAAM="};
-    await page.getByRole("button",{name:"Actualizar nómina",exact:true}).click();
+    await page.getByRole("button",{name:"Actualizar liquidación",exact:true}).click();
     await expect(selection.getByText("La liquidación cambió. Descarta la selección anterior antes de continuar.",{exact:true})).toBeVisible();
     await expect(first).not.toBeChecked();
     await expect(selection.getByRole("button",{name:"Recalcular",exact:true})).toBeDisabled();

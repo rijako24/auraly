@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { realAccountingWorkspace, realPartyRequest, waitForRealPosting } from "./support/real-accounting-workspace";
-import type { PayrollEmployment, PayrollEmploymentPage, PayrollOptions, PayrollProfile, PayrollRun, PayrollRunPage, PayrollProfilePage, PayrollRuleSet } from "../src/services/api/payroll";
+import type { PayrollEmployment, PayrollEmploymentPage, PayrollOptions, PayrollProfile, PayrollRun, PayrollRunPage, PayrollProfilePage, PayrollRuleSet, PayrollNovelty } from "../src/services/api/payroll";
 import type { AccountingEntry } from "../src/services/api/accounting";
 
 test.use({ actionTimeout: 30_000 });
@@ -42,7 +42,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await page.goto("/dashboard/payroll?section=configuration");
   await page.getByRole("button", { name: "Nuevo perfil", exact: true }).click();
   const profileCard = page.getByRole("dialog", { name: "Nuevo perfil de nómina", exact: true });
-  await profileCard.getByRole("textbox", { name: "Código", exact: true }).fill(tag);
+  await expect(profileCard.getByRole("textbox", { name: "Código", exact: true })).toHaveCount(0);
   await profileCard.getByRole("textbox", { name: "Nombre", exact: true }).fill(`Perfil ${tag}`);
   await profileCard.getByLabel("Fuente normativa",{exact:true}).fill(rules!.sourceReference);
   for(const definition of options.catalogs["payroll-rule-parameter"]){
@@ -57,6 +57,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   const profileResponse = await savingProfile;
   expect(profileResponse.ok(), await profileResponse.text()).toBe(true);
   let profile = await profileResponse.json() as PayrollProfile;
+  expect(profile.code).toBe(profile.profileId.replaceAll("-", "").toUpperCase());
 
   // Seven independent synthetic masters; geography is read once for the batch.
   const prototype = await realPartyRequest(context, `Entidad ${tag}`);
@@ -123,14 +124,15 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   expect(run.periodStart).toBe(periodStart);
   await page.getByRole("button", { name: new RegExp(`^${run.periodStart} — ${run.periodEnd} Borrador`) }).click();
   const selection = page.getByRole("region", { name: "Trabajadores de la liquidación", exact: true });
-  await selection.getByRole("button", { name: "Ninguno", exact: true }).click();
+  await expect(selection.getByRole("checkbox", { name: "Incluir todos los trabajadores elegibles", exact: true })).toBeChecked();
+  await selection.getByRole("checkbox", { name: "Incluir todos los trabajadores elegibles", exact: true }).uncheck();
   await selection.getByRole("combobox",{name:"Filtrar trabajadores por centro de costo",exact:true}).click();
   await page.getByPlaceholder("Buscar centro por código o nombre…").fill(tag);
   await page.getByRole("option",{name:`${tag} · Centro ${tag}`,exact:true}).click();
-  await expect(selection.getByRole("checkbox")).toHaveCount(2);
+  await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(2);
   await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("_%[A]~");
   await selection.getByRole("button",{name:"Buscar",exact:true}).click();
-  await expect(selection.getByRole("checkbox")).toHaveCount(1);
+  await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(1);
   await selection.getByRole("checkbox",{name:`Incluir ${employees[0].employeeName}, contrato ${employees[0].contractNumber}`,exact:true}).check();
   await page.setViewportSize({width:390,height:844});
   await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
@@ -139,7 +141,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await page.setViewportSize({width:1366,height:768});
   await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("");
   await selection.getByRole("button",{name:"Buscar",exact:true}).click();
-  await expect(selection.getByRole("checkbox")).toHaveCount(2);
+  await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(2);
   await expect(selection.getByRole("checkbox",{name:`Incluir ${employees[0].employeeName}, contrato ${employees[0].contractNumber}`,exact:true})).toBeChecked();
   await selection.getByRole("checkbox",{name:`Incluir ${employees[1].employeeName}, contrato ${employees[1].contractNumber}`,exact:true}).check();
   const calculating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
@@ -151,20 +153,16 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   expect(run.employees.every(employee => employee.baseWorkedDays === 30)).toBe(true);
   await test.info().attach("native-payroll-fixture", { body: JSON.stringify({ profileId: profile.profileId,
     payrollRunId: run.payrollRunId, employmentIds: employees.map(employee => employee.employmentId), periodStart }), contentType: "application/json" });
+  await page.getByRole("dialog",{name:"Detalle de liquidación",exact:true}).getByRole("button",{name:"Cerrar ventana",exact:true}).click();
   await page.getByRole("tab", { name: "Novedades", exact: true }).click();
   const calculatedWorkers=page.getByRole("region", { name: "Trabajadores liquidados", exact: true });
-  // The available QA period can belong to a later year. Apply the visible
-  // date and worker filters instead of assuming the current-year first page.
-  for(const [label,day,initialMonth] of [["Desde",run.periodStart,1],["Hasta",run.periodEnd,12]] as const){
-    await calculatedWorkers.getByRole("button",{name:label,exact:true}).click();
-    const months=(Number(day.slice(0,4))-Number(today.slice(0,4)))*12+Number(day.slice(5,7))-initialMonth;
-    for(let index=0;index<Math.abs(months);index++)await page.getByRole("button",{name:months>=0?"Mes siguiente":"Mes anterior",exact:true}).click();
-    const dateLabel=new Intl.DateTimeFormat("es-CO",{dateStyle:"long",timeZone:"UTC"}).format(new Date(`${day}T12:00:00Z`));
-    await page.getByRole("button",{name:dateLabel,exact:true}).click();
-  }
+  const history=page.getByRole("region",{name:"Liquidaciones para novedades",exact:true});
+  await history.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
+  await page.getByPlaceholder("Buscar período (AAAA-MM-DD)…",{exact:true}).fill(run.periodStart);
+  await page.getByRole("option").filter({hasText:`${run.periodStart} — ${run.periodEnd}`}).click();
   await calculatedWorkers.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);
   await calculatedWorkers.getByRole("button",{name:"Buscar",exact:true}).click();
-  await calculatedWorkers.getByRole("button", { name: employees[0].employeeName, exact: true }).click();
+  await calculatedWorkers.getByRole("button", { name: `Ver trabajador ${employees[0].employeeName}`, exact: true }).click();
   const transport = options.concepts.find(concept => concept.systemRoleCode === "TransportAllowance")!;
   expect(transport).toBeTruthy();
   await page.getByRole("button", { name: `Editar días de ${transport.name}`, exact: true }).click();
@@ -177,11 +175,45 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   const worker = run.employees.find(employee => employee.employmentId === employees[0].employmentId)!;
   expect(worker.lines.find(line => line.conceptId === transport.conceptId)!.quantity).toBe(25);
   expect(worker.baseWorkedDays).toBe(30);
+  const bonus=options.concepts.find(concept=>concept.isActive&&concept.natureCode==="Earning"&&!concept.systemRoleCode&&!concept.requiresDeductionAgreement&&concept.calculationMethodCode==="FixedAmount");
+  expect(bonus,"DEV requiere un concepto sintético de bonificación para el ensayo.").toBeTruthy();
+  await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+  let noveltyForm=page.getByRole("region",{name:"Edición de novedad",exact:true});
+  await noveltyForm.getByRole("combobox",{name:"Concepto",exact:true}).click();
+  await page.getByRole("option",{name:`${bonus!.code} · ${bonus!.name}`,exact:true}).click();
+  await noveltyForm.getByRole("combobox",{name:"Tipo de novedad",exact:true}).click();
+  const amountType=options.catalogs["payroll-novelty-type"].find(option=>option.code==="Amount")!;
+  await page.getByRole("option",{name:amountType.label,exact:true}).click();
+  await noveltyForm.getByLabel("Valor total",{exact:true}).fill("10000");
+  await noveltyForm.getByLabel("Notas",{exact:true}).fill(`Novedad ${tag}`);
+  const addingNovelty=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith("/payroll/novelties"));
+  const calculatingNovelty=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
+  await noveltyForm.getByRole("button",{name:"Registrar novedad",exact:true}).click();
+  const addedResponse=await addingNovelty;expect(addedResponse.ok(),await addedResponse.text()).toBe(true);
+  const novelty=await addedResponse.json() as PayrollNovelty;expect((await calculatingNovelty).ok()).toBe(true);
+  await page.getByRole("button",{name:"Editar novedad",exact:true}).click();
+  noveltyForm=page.getByRole("region",{name:"Edición de novedad",exact:true});await noveltyForm.getByLabel("Valor total",{exact:true}).fill("15000");
+  const editingNovelty=page.waitForResponse(response=>response.request().method()==="PUT"&&response.url().endsWith(`/novelties/${novelty.noveltyId}`));
+  const recalculatingNovelty=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
+  await noveltyForm.getByRole("button",{name:"Guardar novedad",exact:true}).click();expect((await editingNovelty).ok()).toBe(true);expect((await recalculatingNovelty).ok()).toBe(true);
+  run=await scopedJson<PayrollRun>("GET",`${path}/runs/${run.payrollRunId}`);
+  expect(run.employees.find(worker=>worker.employmentId===employees[0].employmentId)!.novelties!.find(item=>item.noveltyId===novelty.noveltyId)!.totalAmount).toBe(15000);
+  await page.reload();
+  const reloadedHistory=page.getByRole("region",{name:"Liquidaciones para novedades",exact:true});
+  await reloadedHistory.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();await page.getByPlaceholder("Buscar período (AAAA-MM-DD)…",{exact:true}).fill(run.periodStart);
+  await page.getByRole("option").filter({hasText:`${run.periodStart} — ${run.periodEnd}`}).click();
+  const reloadedWorkers=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
+  await reloadedWorkers.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);await reloadedWorkers.getByRole("button",{name:"Buscar",exact:true}).click();
+  await reloadedWorkers.getByRole("button",{name:`Ver trabajador ${employees[0].employeeName}`,exact:true}).click();
+  await page.getByRole("button",{name:"Editar novedad",exact:true}).click();
+  await expect(page.getByRole("region",{name:"Edición de novedad",exact:true}).getByLabel("Valor total",{exact:true})).toHaveValue("15 000");
+  await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.screenshot({ path: "../work/release-preparation-current/dev-native-payroll-mobile-days.png", fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("tab", { name: "Liquidaciones", exact: true }).click();
+  await page.getByRole("button").filter({hasText:`${run.periodStart} — ${run.periodEnd}`}).click();
   const approving = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/approve`));
   await page.getByRole("button", { name: "Aprobar y contabilizar", exact: true }).click();
   const approved = await approving;
@@ -192,6 +224,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   expect(entry.debitTotal).toBeGreaterThan(0);
   console.info("Perfil contractual, selección, días por concepto y causación real verificados.");
   await page.screenshot({ path: "../work/release-preparation-current/dev-native-payroll-posted.png", fullPage: true });
+  await page.getByRole("dialog",{name:"Detalle de liquidación",exact:true}).getByRole("button",{name:"Cerrar ventana",exact:true}).click();
   await page.getByRole("tab", { name: "Pagos", exact: true }).click();
   await page.getByRole("button", { name: "Confirmar pago", exact: true }).click();
   const paying = page.getByRole("dialog", { name: "Confirmar lote de pago", exact: true });

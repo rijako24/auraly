@@ -64,7 +64,7 @@ export function PayrollEmploymentConfigurationFields({ value, initial, onChange,
         disabled={disabled} ariaLabel="Perfil de nómina" leadingOptions={[{value:"_general",label:"Sin perfil (pendiente de configurar)"}]}
         selectedOption={value.accountingProfileId?{value:value.accountingProfileId,label:labels.accountingProfileId??"Perfil seleccionado"}:null}
         loadPage={(search,page,pageSize)=>payrollApi.profiles({search,page,pageSize,isActive:true})}
-        getOption={item=>item.isActive?{value:item.profileId,label:`${item.code} · ${item.name}`}:null}
+        getOption={item=>item.isActive?{value:item.profileId,label:item.name}:null}
         onChange={(id,option)=>{onChange({...value,accountingProfileId:id==="_general"?null:id});setLabels(current=>({...current,accountingProfileId:option.label}));}}/>
     </label>
     <label className="space-y-2"><span className="text-sm">Centro de costo contractual</span>

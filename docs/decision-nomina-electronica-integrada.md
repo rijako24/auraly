@@ -1666,8 +1666,12 @@ no declara implementado ni probado lo que sigue pendiente.
   Las vigencias se consultan por página sólo al abrir el perfil y su historial
   es de consulta. El usuario confirmó que esta configuración aún no está en uso
   productivo y no requiere preservar la interfaz anterior.
-- Novedades abre una bandeja paginada de trabajadores y períodos ya calculados,
-  con filtros y acciones explícitas de detalle, recálculo y desprendible. El detalle
+- Novedades abre la lista paginada de liquidaciones, incluidos borradores, y luego
+  los trabajadores de una sola liquidación. Filtra por estado, trabajador y fecha
+  programada de pago; el selector de período consulta al abrirse. Los borradores
+  conducen al detalle para calcular primero; las calculadas permiten modificar
+  novedades y las aprobadas sólo consultar. Los filtros se aplican antes de contar
+  y paginar en el lector canónico; no se cargan detalles de otros períodos. El detalle
   conserva el mismo cálculo, días por concepto y las operaciones de guardar,
   editar y retirar; incorpora centro, observación y evidencia de la línea y la
   autorización de descuento en esa captura. Aprobados quedan en consulta y
@@ -1708,7 +1712,7 @@ los filtros y la ordenación del servidor, sin recargar el workspace ni selector
 Los presupuestos de cálculo y las barreras contables/fiscales de 13.7 permanecen.
 La selección también filtra por el centro explícito del contrato y su sitio de
 trabajo, combinados con búsqueda, contrato y orden antes de contar y paginar.
-Los conteos de elegibles/seleccionados y Todos/Ninguno conservan su alcance de
+Los conteos de elegibles/seleccionados y la casilla Incluir todos conservan su alcance de
 liquidación completa; no cambian al acotar lo visible. El centro consume el
 selector canónico al abrirlo; el sitio es el texto contractual, con caracteres
 de búsqueda escapados. El lector mantiene un comando por página con 501
@@ -1771,3 +1775,28 @@ pantalla, sin recortarlo por el borde del modal cuando el catálogo tiene filas.
 La verificación de interfaz cubre escritorio y móvil, incluidos los catálogos
 con una opción previa y su reapertura desde caché; no añade lecturas ni cambia
 los propietarios de carga de los selectores.
+
+### Ajustes de captura y navegación (2026-11-26)
+
+Liquidaciones abre cada detalle en un modal con encabezado fijo y cuerpo desplazable.
+El listado identifica los borradores como pendientes de cálculo, sin presentar cero
+trabajadores como si fuera un resultado calculado. La periodicidad queda visible tanto
+en el resumen como en el detalle. La elegibilidad conserva fechas, actividad y la misma
+periodicidad del contrato; no se mezclan contratos mensuales y quincenales. Antes del
+primer cálculo todos los elegibles están incluidos; reabrir conserva la selección guardada.
+La casilla del encabezado aplica al conjunto elegible, no sólo a la página visible.
+
+El perfil genera su código interno al crearse; editar sin código conserva el existente.
+No cambia las vigencias, las cuentas por perfil ni la base general de integración contable.
+Autorizaciones tiene pestaña propia y paginada. Una autorización no descuenta por sí sola:
+se vincula a la novedad y el calculador valida su vigencia y autoridad. Evidencia abre una
+URL HTTP(S) explícita; no representa carga ni verificación automática de un archivo.
+
+La bandeja de trabajadores usa el nombre como texto y un botón de ver que cubre la fila,
+con resalte al pasar el mouse y acceso por teclado/táctil. Las acciones de recálculo y
+desprendible son botones independientes y no abren accidentalmente el detalle.
+Actualizar el detalle conserva la selección local mientras consulta la versión actual;
+si cambió, exige descartar esa selección antes de recalcular. No desmonta el formulario
+por el indicador de carga. Un cálculo completo marca obsoletas las páginas filtradas
+cuyo conjunto de trabajadores o estado pudo cambiar; la próxima apertura vuelve a
+consultar sólo esa página. Un recálculo individual reutiliza la respuesta sin otro GET.

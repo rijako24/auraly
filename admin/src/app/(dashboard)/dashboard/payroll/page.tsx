@@ -26,17 +26,18 @@ import { PayrollEmploymentConfigurationFields, PayrollEmploymentDetailsFields, e
 import { AccountSelect } from "@/components/accounting/account-select";
 import { CostCenterSelect } from "@/components/accounting/cost-center-select";
 import { PayrollProfiles } from "@/components/payroll/payroll-profiles";
+import { PayrollRunSelect } from "@/components/payroll/payroll-run-select";
 import { PayrollRunSelection } from "@/components/payroll/payroll-run-selection";
 import { PayrollEmploymentSelect } from "@/components/payroll/payroll-employment-select";
 import { accountingApi, type AccountingCategoryDefinition, type AccountingMapping } from "@/services/api/accounting";
-import { payrollApi, type CalculatePayrollRun, type PayrollRunEmploymentPage, type PayrollCatalogOption, type PayrollConcept, type PayrollDeductionAgreement, type PayrollEmployment, type PayrollEmploymentPage, type PayrollOptions, type PayrollNovelty, type PayrollReportDefinition, type PayrollRun, type PayrollRunSummary, type PayrollRunPage, type PayrollPaymentBatch, type PayrollHistoryPage, type ElectronicPayrollPeriod, type SaveConcept, type SaveDeductionAgreement, type SaveEmployment, type SavePayrollNovelty } from "@/services/api/payroll";
+import { payrollApi, type CalculatePayrollRun, type PayrollRunEmploymentPage, type PayrollCatalogOption, type PayrollConcept, type PayrollDeductionAgreement, type PayrollEmployment, type PayrollEmploymentPage, type PayrollOptions, type PayrollNovelty, type PayrollReportDefinition, type PayrollRun, type PayrollRunPage, type PayrollPaymentBatch, type PayrollHistoryPage, type ElectronicPayrollPeriod, type SaveConcept, type SaveDeductionAgreement, type SaveEmployment, type SavePayrollNovelty } from "@/services/api/payroll";
 import { useTenantCommercialSubscription } from "@/hooks/use-tenants";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useBusinessDates } from "@/hooks/use-business-dates";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-type Section = "runs" | "employments" | "novelties" | "payments" | "electronic" | "reports" | "configuration";
+type Section = "runs" | "employments" | "novelties" | "authorizations" | "payments" | "electronic" | "reports" | "configuration";
 export default function PayrollPage() {
     const businessId = useBusinessContextStore(state => state.selectedBusinessId);
     const tenantId = useTenantContextStore(state => state.selectedTenantId);
@@ -55,7 +56,8 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     useEffect(()=>{selectedTab.current?.scrollIntoView({block:"nearest",inline:"nearest"});},[section,narrowTabs]);
     const [selectedWorkerId,setSelectedWorkerId]=useState<string|null>(null);
     const [creatingPayment, setCreatingPayment] = useState(false),[paying,setPaying]=useState(false);
-    const detailVisible = section === "runs" || section === "novelties" && Boolean(selectedWorkerId) || creatingPayment;
+    const [runDialogOpen,setRunDialogOpen]=useState(false);
+    const detailVisible = section === "runs" && runDialogOpen || section === "novelties" && Boolean(selectedWorkerId) || creatingPayment;
     const workspace = useQuery({ queryKey: ["payroll-workspace", tenantId, businessId], queryFn: async () => {
         return {options:await payrollApi.options()};
     },enabled:navigationReady,staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false });
@@ -139,6 +141,12 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     }
     async function load() { await Promise.all([reloadWorkspaceAndRun(),...(["payroll-agreements","payroll-payments","payroll-electronic-periods","payroll-electronic-documents"].map(key=>queryClient.invalidateQueries({queryKey:[key,tenantId,businessId]}))), queryClient.invalidateQueries({ queryKey: ["payroll-employments", tenantId, businessId] }), queryClient.invalidateQueries({ queryKey: ["payroll-run-employments", tenantId, businessId] }),queryClient.invalidateQueries({queryKey:["payroll-calculated-employees",tenantId,businessId],refetchType:section==="novelties"&&!selectedWorkerId?"active":"none"})]); }
     async function selectRun(id: string) { closeNoveltyEditor(); setSelectedId(id); }
+    function changeSection(value:Section){
+      if(value!=="novelties"){setSelectedWorkerId(null);closeNoveltyEditor();}
+      if(value==="novelties"&&selected?.status==="Draft")setSelectedId(null);
+      setSection(value);const url=new URL(window.location.href);url.searchParams.set("section",value);url.searchParams.delete("partyId");window.history.replaceState(null,"",url);
+    }
+
     function conceptSaved(result:PayrollConcept){
       queryClient.setQueryData<{options:PayrollOptions}>(["payroll-workspace",tenantId,businessId],current=>current?{
         ...current,options:{...current.options,concepts:[...current.options.concepts.filter(item=>item.conceptId!==result.conceptId),result]
@@ -191,6 +199,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
       queryClient.setQueriesData<import("@/services/api/payroll").PayrollCalculatedEmployeePage>({queryKey:["payroll-calculated-employees",tenantId,businessId]},current=>current?{
         ...current,items:current.items.map(row=>{const worker=result.payrollRunId===row.payrollRunId?result.employees.find(item=>item.employmentId===row.employmentId):null;
           return result.payrollRunId===row.payrollRunId?{...row,rowVersion:result.rowVersion,status:result.status,...(worker?{payrollRunEmployeeId:worker.payrollRunEmployeeId,workedDays:worker.workedDays,earnings:worker.earnings,deductions:worker.deductions,netPayable:worker.netPayable}:{})}:row;})}:current);
+      if(!result.isPartialCalculation)void queryClient.invalidateQueries({queryKey:["payroll-calculated-employees",tenantId,businessId],refetchType:"none"});
       const selected=new Set(updated.employees.map(employee=>employee.employmentId));
       queryClient.setQueriesData<PayrollRunEmploymentPage>({queryKey:["payroll-run-employments",tenantId,businessId,result.payrollRunId]},current=>current?{
         ...current,rowVersion:result.rowVersion,selectedCount:selected.size,
@@ -201,8 +210,9 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
           ...row,status:result.status,employeeCount:result.employeeCount,totalEarnings:result.totalEarnings,
           totalDeductions:result.totalDeductions,netPayable:result.netPayable,rowVersion:result.rowVersion}:row)
       }:current);
+      if(!result.isPartialCalculation)void queryClient.invalidateQueries({queryKey:["payroll-runs",tenantId,businessId,"novelties"],refetchType:"none"});
     }
-    useEffect(() => { const query = new URLSearchParams(window.location.search), requested = query.get("section") as Section | null, partyId = query.get("partyId"); if (requested && ["runs", "employments", "novelties", "payments", "electronic", "reports", "configuration"].includes(requested))
+    useEffect(() => { const query = new URLSearchParams(window.location.search), requested = query.get("section") as Section | null, partyId = query.get("partyId"); if (requested && ["runs", "employments", "novelties", "authorizations", "payments", "electronic", "reports", "configuration"].includes(requested))
         setSection(requested); if (partyId) {
         setPreselectedPartyId(partyId);
         setSection("employments");
@@ -212,21 +222,21 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     <header className="overflow-hidden rounded-3xl bg-gradient-to-r from-slate-950 via-cyan-950 to-teal-700 p-6 text-white shadow-lg"><div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.2em] text-cyan-200">Nómina Auraly</p><h1 className="mt-2 text-3xl font-black">Nómina clara y conectada</h1><p className="mt-2 max-w-2xl text-sm text-cyan-50/80">Liquida, registra los pagos y envía la nómina electrónica. Todo conectado con tu contabilidad.</p></div>
     {section === "runs" && permissions.has("payroll.calculate") && <Button className="h-12 bg-white text-slate-950 hover:bg-cyan-50" disabled={!options || workspace.isError} onClick={() => setCreatingRun(true)}><FilePlus2 className="mr-2 h-4 w-4"/>Nueva liquidación</Button>}
     {section === "employments" && permissions.has("payroll.manage") && <Button className="h-12 bg-white text-slate-950 hover:bg-cyan-50" disabled={!options || workspace.isError} onClick={() => setCreatingEmployment(true)}><Users className="mr-2 h-4 w-4"/>Nuevo contrato</Button>}</div></header>
-    <Tabs value={section} onValueChange={value => { if(value!=="novelties"){setSelectedWorkerId(null);closeNoveltyEditor();} if(value === "novelties" && selected?.status === "Draft")setSelectedId(null); setSection(value as Section); const url = new URL(window.location.href); url.searchParams.set("section", value); url.searchParams.delete("partyId"); window.history.replaceState(null, "", url); }} className="space-y-5">
+    <Tabs value={section} onValueChange={value=>changeSection(value as Section)} className="space-y-5">
     <div className="flex min-w-0 gap-2"><div className="min-w-0 flex-1 overflow-x-auto rounded-2xl border bg-card p-1"><TabsList aria-label="Secciones de nómina" className="h-auto w-max justify-start gap-1 bg-transparent p-0">{([
-      ["runs", "Liquidaciones", Calculator], ["employments", "Trabajadores", Users], ["novelties", "Novedades", ListChecks], ["payments", "Pagos", Wallet], ["electronic", "Electrónica DIAN", FileText], ["reports", "Reportes", BarChart3], ["configuration", "Configuración", Settings2]
+      ["runs", "Liquidaciones", Calculator], ["employments", "Trabajadores", Users], ["novelties", "Novedades", ListChecks], ["authorizations", "Autorizaciones", FileText], ["payments", "Pagos", Wallet], ["electronic", "Electrónica DIAN", FileText], ["reports", "Reportes", BarChart3], ["configuration", "Configuración", Settings2]
     ] as const).map(([value, label, Icon]) => <TabsTrigger key={value} ref={value===section?selectedTab:undefined} value={value} className="shrink-0 rounded-xl px-4 py-2.5 font-semibold data-[state=active]:bg-slate-950 data-[state=active]:text-white data-[state=active]:shadow"><Icon className="mr-2 h-4 w-4"/>{label}</TabsTrigger>)}</TabsList></div><Button aria-label="Actualizar nómina" variant="outline" className="h-12 rounded-2xl" disabled={loading || calculationPending} onClick={() => void load()}><RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"}/></Button></div>
     {workspace.isPending ? <div aria-label="Cargando nómina" className="grid gap-5 lg:grid-cols-2"><Skeleton className="h-72 rounded-3xl"/><Skeleton className="h-72 rounded-3xl"/></div> : workspace.isError ? <Card className="rounded-3xl"><CardContent className="space-y-3 p-6" role="alert"><p>{message(workspace.error, "No fue posible cargar la nómina.")}</p><Button variant="outline" onClick={() => void load()}>Reintentar</Button></CardContent></Card> : <TabsContent value={section} className="mt-0">
-    {detail.isError && section === "runs" && <div role="alert" className="mb-4 rounded-2xl border border-destructive/30 p-4 text-sm">{message(detail.error, "No fue posible abrir la liquidación.")} <Button variant="outline" size="sm" onClick={() => void detail.refetch()}>Reintentar detalle</Button></div>}
-    {detail.isFetching && section === "runs" && <p role="status" className="mb-3 text-sm text-muted-foreground">Cargando detalle…</p>}
+
+
     {section === "runs" && (
-      <RunsSection options={options} selected={selected} canCalculate={permissions.has("payroll.calculate")} calculationDisabled={detail.isFetching || detail.isError} calculating={calculationPending} canApprove={permissions.has("payroll.approve") && !detail.isFetching && !detail.isError} onSelect={selectRun} onCalculate={calculateRun} onChanged={async()=>{const result=await detail.refetch();if(result.isError)throw new Error("La aprobación se guardó. No fue posible actualizar su detalle; pulsa Actualizar nómina.");if(result.data)runCalculated(result.data);await queryClient.invalidateQueries({queryKey:["payroll-run-select",tenantId,businessId],refetchType:"none"});}}/>
+      <RunsSection options={options} selected={selected} open={runDialogOpen} onOpenChange={setRunDialogOpen} loading={detail.isFetching} error={detail.isError} onRetry={()=>void Promise.all([detail.refetch(),queryClient.invalidateQueries({queryKey:["payroll-run-employments",tenantId,businessId,selectedId]})])} canCalculate={permissions.has("payroll.calculate")} calculationDisabled={detail.isFetching || detail.isError} calculating={calculationPending} canApprove={permissions.has("payroll.approve") && !detail.isFetching && !detail.isError} onSelect={async id=>{setRunDialogOpen(true);await selectRun(id);}} onCalculate={calculateRun} onChanged={async()=>{const result=await detail.refetch();if(result.isError)throw new Error("La aprobación se guardó. No fue posible actualizar su detalle; pulsa Actualizar nómina.");if(result.data)runCalculated(result.data);await queryClient.invalidateQueries({queryKey:["payroll-run-select",tenantId,businessId],refetchType:"none"});}}/>
     )}
     {section === "employments" && (
       <EmploymentsSection canManage={permissions.has("payroll.manage")} onEdit={setEditingEmployment} onSaved={employmentSaved}/>
     )}
     {section === "novelties" && <div className="space-y-5">
-      <PayrollRunNovelties run={workerScope?selected:null} employmentId={selectedWorkerId} loading={detailVisible&&detail.isFetching}
+      <PayrollRunNovelties statuses={options?catalog(options,"payroll-workflow-status"):[]} onPrepareRun={id=>{changeSection("runs");setRunDialogOpen(true);void selectRun(id);}} run={workerScope?selected:null} employmentId={selectedWorkerId} loading={detailVisible&&detail.isFetching}
         onOpen={(runId,employmentId)=>{closeNoveltyEditor();setSelectedId(runId);setSelectedWorkerId(employmentId);}}
         onBack={()=>{closeNoveltyEditor();setSelectedWorkerId(null);}}
         error={Boolean(workerScope)&&detail.isError} canCalculate={permissions.has("payroll.calculate")} calculating={calculationPending}
@@ -243,8 +253,9 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
           setNoveltyEditorState({initial:null,preset:{employmentId:worker.employmentId,employeeName:worker.employeeName,startDate:selected.periodStart,endDate:selected.periodEnd}});
         }}/>
 
-      <DeductionAgreementsSection canManage={permissions.has("payroll.manage")} onAgreement={() => setCreatingAgreement(true)} onEditAgreement={setEditingAgreement} onAgreementSaved={agreementSaved}/>
+
     </div>}
+    {section === "authorizations" && <DeductionAgreementsSection canManage={permissions.has("payroll.manage")} onAgreement={() => setCreatingAgreement(true)} onEditAgreement={setEditingAgreement} onAgreementSaved={agreementSaved}/>}
     {section === "payments" && (
       <PaymentsSection canPay={permissions.has("payroll.pay")} onCreate={() => setCreatingPayment(true)}/>
     )}
@@ -282,37 +293,54 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     }}/>}</DialogContent></Dialog>
   </div>;
 }
-function RunsSection({ options, selected, canCalculate, calculationDisabled, calculating, canApprove, onSelect, onCalculate, onChanged }: {
-    options: PayrollOptions | null;
-    selected: PayrollRun | null;
-    canCalculate: boolean;
-    calculationDisabled: boolean;
-    calculating: boolean;
-    canApprove: boolean;
-    onSelect: (id: string) => Promise<void>;
-    onCalculate:(id:string,request:CalculatePayrollRun)=>Promise<PayrollRun>;
-    onChanged: () => Promise<void>;
+function RunsSection({options,selected,open,onOpenChange,loading,error,onRetry,canCalculate,calculationDisabled,calculating,canApprove,onSelect,onCalculate,onChanged}:{
+    options:PayrollOptions|null;selected:PayrollRun|null;open:boolean;onOpenChange:(open:boolean)=>void;
+    loading:boolean;error:boolean;onRetry:()=>void;canCalculate:boolean;calculationDisabled:boolean;calculating:boolean;
+    canApprove:boolean;onSelect:(id:string)=>Promise<void>;onCalculate:(id:string,request:CalculatePayrollRun)=>Promise<PayrollRun>;onChanged:()=>Promise<void>;
 }) {
     const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId);
-    const [page,setPage]=useState(1);
+    const [page,setPage]=useState(1),[busy,setBusy]=useState<string|null>(null),[selectionBlocksApproval,setSelectionBlocksApproval]=useState(false);
     const list=useQuery({queryKey:["payroll-runs",tenant,business,page],queryFn:()=>payrollApi.runs({page,pageSize:20}),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
-    const runs=list.data?.items??[];
-    const [busy, setBusy] = useState<string | null>(null);
-    const [selectionBlocksApproval, setSelectionBlocksApproval] = useState(false);
-    async function approve() { if (!selected || calculating || selectionBlocksApproval)
-        return; setBusy("approve"); try {
-        await payrollApi.approveRun(selected.payrollRunId, selected.rowVersion, `payroll-approve-${selected.payrollRunId}`);
-        toast.success("Nómina aprobada y enviada al motor contable.");
-        await onSelect(selected.payrollRunId);
-        await onChanged();
+    async function approve(){
+      if(!selected||calculating||selectionBlocksApproval)return;
+      setBusy("approve");
+      try{await payrollApi.approveRun(selected.payrollRunId,selected.rowVersion,`payroll-approve-${selected.payrollRunId}`);toast.success("Nómina aprobada y enviada al motor contable.");await onSelect(selected.payrollRunId);await onChanged();}
+      catch(error){toast.error(message(error,"No fue posible aprobar."));}
+      finally{setBusy(null);}
     }
-    catch (error) {
-        toast.error(message(error, "No fue posible aprobar."));
-    }
-    finally {
-        setBusy(null);
-    } }
-    return <div className="grid min-w-0 grid-cols-1 gap-5 2xl:grid-cols-[minmax(260px,.65fr)_minmax(0,1.8fr)]"><Card className="min-w-0 rounded-3xl"><CardHeader><CardTitle>Liquidaciones</CardTitle><CardDescription>Selecciona un período para revisar, calcular o aprobar su nómina.</CardDescription></CardHeader><CardContent className="max-h-96 space-y-2 overflow-y-auto">{list.isFetching&&<p role="status">Cargando liquidaciones…</p>}{list.isError&&<div role="alert">No fue posible consultar las liquidaciones. <Button onClick={()=>void list.refetch()}>Reintentar liquidaciones</Button></div>}{runs.map(run => <button type="button" key={run.payrollRunId} disabled={busy!==null||calculating} onClick={() => void onSelect(run.payrollRunId)} className={`w-full rounded-2xl border p-4 text-left transition-colors ${selected?.payrollRunId === run.payrollRunId ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}><span className="flex items-center justify-between gap-3"><b>{run.periodStart} — {run.periodEnd}</b><small>{statusLabel(options, run.status)}</small></span><span className="mt-2 grid grid-cols-3 text-sm text-muted-foreground"><span>{run.employeeCount} trabajadores</span><span className="text-right">Deducciones {money.format(run.totalDeductions)}</span><strong className="text-right text-foreground">Neto {money.format(run.netPayable)}</strong></span></button>)}{!list.isFetching&&!list.isError&&runs.length === 0 && <Empty text="Todavía no hay liquidaciones."/>}<div className="flex flex-wrap justify-between gap-2 text-sm"><span>{list.data?.totalCount??0} liquidaciones · Página {page}</span><Button variant="outline" disabled={page===1||list.isFetching} onClick={()=>setPage(value=>value-1)}>Anterior liquidaciones</Button><Button variant="outline" disabled={page>=(list.data?.totalPages??0)||list.isFetching} onClick={()=>setPage(value=>value+1)}>Siguiente liquidaciones</Button></div></CardContent></Card><Card className="min-w-0 rounded-3xl"><CardHeader><CardTitle>Detalle</CardTitle><CardDescription>{selected ? `${selected.periodStart} — ${selected.periodEnd}` : "Selecciona una liquidación"}</CardDescription></CardHeader><CardContent>{!selected ? <Empty text="El detalle mostrará trabajadores, conceptos y totales."/> : <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-3"><Metric label="Devengado" value={selected.totalEarnings}/><Metric label="Deducciones" value={selected.totalDeductions}/><Metric label="Neto" value={selected.netPayable}/></div><div className="flex flex-wrap gap-2">{canApprove && selected.status === "Calculated" && <Button disabled={busy !== null || calculating || selectionBlocksApproval} onClick={() => void approve()}><CheckCircle2 className="mr-2 h-4 w-4"/>{busy === "approve" ? "Aprobando…" : "Aprobar y contabilizar"}</Button>}</div>{canCalculate && ["Draft", "Calculated"].includes(selected.status) && <PayrollRunSelection key={selected.payrollRunId} run={selected} disabled={busy !== null || calculationDisabled} calculating={calculating} onCalculate={onCalculate} onBlocksApproval={setSelectionBlocksApproval}/>} {selected.employees.map(employee => <details key={employee.payrollRunEmployeeId} className="rounded-2xl border p-4"><summary className="cursor-pointer font-semibold">{employee.employeeName}<span className="float-right">{money.format(employee.netPayable)}</span></summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead><tr className="text-left text-muted-foreground"><th>Concepto</th><th>Naturaleza</th><th className="text-right">Base</th><th className="text-right">Valor</th></tr></thead><tbody>{employee.lines.map(line => <tr key={line.lineNumber} className="border-t"><td className="py-2">{line.conceptCode} · {line.conceptName}</td><td>{catalogLabel(options, "payroll-concept-nature", line.natureCode)}</td><td className="text-right">{line.baseAmount === null ? "—" : money.format(line.baseAmount)}</td><td className="text-right font-medium">{money.format(line.amount)}</td></tr>)}</tbody></table></div></details>)}</div>}</CardContent></Card></div>;
+    const locked=busy!==null||calculating;
+    return <>
+      <Card className="min-w-0 rounded-3xl"><CardHeader><CardTitle>Liquidaciones</CardTitle><CardDescription>Abre un período para seleccionar trabajadores, calcular o aprobar su nómina.</CardDescription></CardHeader>
+      <CardContent className="space-y-3">
+        {list.isFetching&&<p role="status">Cargando liquidaciones…</p>}
+        {list.isError&&<div role="alert">No fue posible consultar las liquidaciones. <Button onClick={()=>void list.refetch()}>Reintentar liquidaciones</Button></div>}
+        {list.data?.items.map(run=><button type="button" key={run.payrollRunId} disabled={locked} onClick={()=>void onSelect(run.payrollRunId)} className="w-full rounded-2xl border p-4 text-left transition-colors hover:bg-muted/40">
+          <span className="flex flex-wrap items-center justify-between gap-3"><b>{run.periodStart} — {run.periodEnd}</b><span className="text-sm">{statusLabel(options,run.status)}</span></span>
+          <span className="mt-3 flex flex-wrap items-center gap-x-8 gap-y-2 text-sm text-muted-foreground">
+            {run.payFrequencyName&&<span>{run.payFrequencyName}</span>}{run.status==="Draft"?<span>Pendiente de cálculo</span>:<><span>{run.employeeCount} trabajadores</span><span>Deducciones {money.format(run.totalDeductions)}</span><strong className="text-foreground">Neto {money.format(run.netPayable)}</strong></>}
+          </span>
+        </button>)}
+        {!list.isFetching&&!list.isError&&list.data?.items.length===0&&<Empty text="Todavía no hay liquidaciones."/>}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{list.data?.totalCount??0} liquidaciones · Página {page}</span><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={page===1||list.isFetching} onClick={()=>setPage(value=>value-1)}>Anterior liquidaciones</Button><Button variant="outline" disabled={page>=(list.data?.totalPages??0)||list.isFetching} onClick={()=>setPage(value=>value+1)}>Siguiente liquidaciones</Button></div></div>
+      </CardContent></Card>
+      <Dialog open={open} onOpenChange={next=>{if(!locked)onOpenChange(next);}}><DialogContent showClose={!locked} className="flex h-[min(92dvh,60rem)] max-h-[92dvh] max-w-6xl flex-col gap-0 overflow-visible p-0">
+        <DialogHeader className="shrink-0 border-b px-5 py-4 text-left"><DialogTitle>Detalle de liquidación</DialogTitle><DialogDescription>{selected?`${selected.periodStart} — ${selected.periodEnd} · ${statusLabel(options,selected.status)}`:"Consulta los trabajadores, conceptos y totales del período."}</DialogDescription></DialogHeader>
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 sm:p-6">
+          <div className="flex justify-end"><Button variant="outline" disabled={locked||loading} onClick={onRetry}><RefreshCw className="mr-2 size-4"/>Actualizar liquidación</Button></div>
+          {loading&&<p role="status">Cargando detalle…</p>}
+          {error&&<div role="alert" className="space-y-3"><p>No fue posible abrir la liquidación.</p><Button variant="outline" onClick={onRetry}>Reintentar detalle</Button></div>}
+          {selected&&<>
+            {selected.payFrequencyName&&<p className="text-sm font-medium">Periodicidad: {selected.payFrequencyName}</p>}
+            {selected.status!=="Draft"&&<div className="grid gap-4 sm:grid-cols-3"><Metric label="Devengado" value={selected.totalEarnings}/><Metric label="Deducciones" value={selected.totalDeductions}/><Metric label="Neto" value={selected.netPayable}/></div>}
+            {canApprove&&selected.status==="Calculated"&&<Button disabled={locked||selectionBlocksApproval} onClick={()=>void approve()}><CheckCircle2 className="mr-2 h-4 w-4"/>{busy==="approve"?"Aprobando…":"Aprobar y contabilizar"}</Button>}
+            {canCalculate&&["Draft","Calculated"].includes(selected.status)&&<PayrollRunSelection key={selected.payrollRunId} run={selected} disabled={busy!==null||calculationDisabled} calculating={calculating} onCalculate={onCalculate} onBlocksApproval={setSelectionBlocksApproval}/>}
+            {selected.employees.map(employee=><details key={employee.payrollRunEmployeeId} className="rounded-2xl border p-4"><summary className="cursor-pointer font-semibold"><span className="inline-flex w-full flex-wrap justify-between gap-3">{employee.employeeName}<span>{money.format(employee.netPayable)}</span></span></summary>
+              <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead><tr className="text-left text-muted-foreground"><th>Concepto</th><th>Naturaleza</th><th className="text-right">Base</th><th className="text-right">Valor</th></tr></thead><tbody>{employee.lines.map(line=><tr key={line.lineNumber} className="border-t"><td className="py-3">{line.conceptCode} · {line.conceptName}</td><td>{catalogLabel(options,"payroll-concept-nature",line.natureCode)}</td><td className="text-right">{line.baseAmount===null?"—":money.format(line.baseAmount)}</td><td className="text-right font-medium">{money.format(line.amount)}</td></tr>)}</tbody></table></div>
+            </details>)}
+          </>}
+        </div>
+      </DialogContent></Dialog>
+    </>;
 }
 function EmploymentsSection({ canManage, onEdit, onSaved }: {
     canManage: boolean;
@@ -327,15 +355,32 @@ function EmploymentsSection({ canManage, onEdit, onSaved }: {
     async function deactivate(item: PayrollEmployment) { if (!window.confirm(`¿Desactivar el contrato ${item.contractNumber}?`)) return; try { const result=await payrollApi.saveEmployment({ ...item, configuration:item.configuration?.values, isActive: false }); toast.success("Contrato desactivado."); await onSaved(result,item); } catch (error) { toast.error(message(error, "No fue posible desactivar el contrato.")); } }
     return <Card className="rounded-3xl"><CardHeader><CardTitle>Relaciones laborales</CardTitle><CardDescription>Administra los contratos y datos de pago de tus trabajadores.</CardDescription></CardHeader><CardContent className="space-y-3"><div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[820px] text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-left">Trabajador</th><th className="text-left">Contrato</th><th className="text-left">Vigencia</th><th className="text-left">Cuenta de pago</th><th className="text-right">Salario</th><th className="pr-3 text-right">Acciones</th></tr></thead><tbody>{items.map(item => <tr key={item.employmentId} className="border-t"><td className="p-3 font-medium">{item.employeeName}</td><td>{item.contractNumber}</td><td>{item.startDate} — {item.endDate ?? "vigente"}</td><td>{item.bankAccountNumber ? `•••• ${item.bankAccountNumber.slice(-4)}` : "Sin configurar"}</td><td className="text-right">{money.format(item.monthlySalary)}</td><td className="pr-3 text-right"><span className="inline-flex">{canManage && <Button size="sm" variant="ghost" onClick={() => onEdit(item)}><Pencil className="mr-2 h-4 w-4"/>Editar</Button>}{canManage && item.isActive && <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void deactivate(item)}><Trash2 className="mr-2 h-4 w-4"/>Desactivar</Button>}</span></td></tr>)}</tbody></table>{query.isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando trabajadores…</p>}{query.isError && <p className="p-4 text-sm text-destructive">No fue posible cargar los contratos. <Button size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></p>}{!query.isLoading && !query.isError && !items.length && <Empty text="Crea el primer contrato laboral."/>}</div><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">{query.data?.totalCount ?? 0} contratos</span><span className="flex gap-2"><Button size="sm" variant="outline" disabled={page <= 1 || query.isFetching} onClick={() => setPage(value => value - 1)}>Anterior</Button><Button size="sm" variant="outline" disabled={!query.data || page * query.data.pageSize >= query.data.totalCount || query.isFetching} onClick={() => setPage(value => value + 1)}>Siguiente</Button></span></div></CardContent></Card>;
 }
-function DeductionAgreementsSection({ canManage, onAgreement, onEditAgreement, onAgreementSaved }: {
-    canManage: boolean;
-    onAgreement: () => void;
-    onEditAgreement: (value: PayrollDeductionAgreement) => void;
-    onAgreementSaved:(item:PayrollDeductionAgreement)=>void;
+function DeductionAgreementsSection({canManage,onAgreement,onEditAgreement,onAgreementSaved}:{
+  canManage:boolean;onAgreement:()=>void;onEditAgreement:(value:PayrollDeductionAgreement)=>void;onAgreementSaved:(item:PayrollDeductionAgreement)=>void;
 }) {
- const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId),[page,setPage]=useState(1);
- const list=useQuery({queryKey:["payroll-agreements",tenant,business,page],queryFn:()=>payrollApi.agreements({page,pageSize:20}),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
- async function deactivate(item: PayrollDeductionAgreement) { try { onAgreementSaved(await payrollApi.saveDeductionAgreement({ ...item, isActive: false })); toast.success("Descuento desactivado."); } catch (error) { toast.error(message(error, "No fue posible desactivar el descuento.")); } } function evidence(url: string) { try { const parsed = new URL(url); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(); window.open(parsed.toString(), '_blank', 'noopener,noreferrer'); } catch { toast.error("La evidencia no tiene una URL válida."); } } return <Card className="rounded-3xl"><CardHeader><span className="flex items-center justify-between gap-3"><span><CardTitle>Autorizaciones de descuento</CardTitle><CardDescription>Acuerdos, libranzas, embargos y otros conceptos con soporte.</CardDescription></span>{canManage && <Button size="sm" onClick={onAgreement}>Agregar</Button>}</span></CardHeader><CardContent className="space-y-2">{list.isFetching&&<p role="status">Cargando autorizaciones…</p>}{list.isError&&<p role="alert">No fue posible cargar las autorizaciones. <Button onClick={()=>void list.refetch()}>Reintentar autorizaciones</Button></p>}{list.data?.items.map(item => <div key={item.deductionAgreementId} className="rounded-xl border p-3 text-sm"><span className="flex justify-between gap-3"><b>{item.employeeName}</b><span>{item.isActive ? "Activo" : "Inactivo"}</span></span><p>{item.conceptName} · {item.authorityName}</p><p className="text-muted-foreground">Ref. {item.referenceNumber} · descontado {money.format(item.deductedToDate)}{item.authorizedTotal !== null ? ` de ${money.format(item.authorizedTotal)}` : ""}</p><div className="mt-2 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => evidence(item.evidenceUrl)}><ExternalLink className="mr-2 h-4 w-4"/>Ver evidencia</Button>{canManage && <Button size="sm" variant="ghost" onClick={() => onEditAgreement(item)}><Pencil className="mr-2 h-4 w-4"/>Editar</Button>}{canManage && item.isActive && <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void deactivate(item)}><Trash2 className="mr-2 h-4 w-4"/>Desactivar</Button>}</div></div>)}{!list.isFetching&&!list.isError&&!list.data?.items.length && <Empty text="No hay descuentos autorizados."/>}<PayrollHistoryNavigation name="autorizaciones" page={page} totalCount={list.data?.totalCount??0} busy={list.isFetching} onPage={setPage}/></CardContent></Card>; }
+  const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId),[page,setPage]=useState(1);
+  const list=useQuery({queryKey:["payroll-agreements",tenant,business,page],queryFn:()=>payrollApi.agreements({page,pageSize:20}),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
+  async function deactivate(item:PayrollDeductionAgreement){
+    try{onAgreementSaved(await payrollApi.saveDeductionAgreement({...item,isActive:false}));toast.success("Descuento desactivado.");}
+    catch(error){toast.error(message(error,"No fue posible desactivar el descuento."));}
+  }
+  function evidenceHref(value:string){try{const url=new URL(value);return ["http:","https:"].includes(url.protocol)?url.href:null;}catch{return null;}}
+  return <Card className="rounded-3xl"><CardHeader><span className="flex flex-wrap items-center justify-between gap-3"><span><CardTitle>Autorizaciones de descuento</CardTitle><CardDescription>Respaldan los descuentos que se aplican mediante novedades. Crear una autorización no genera un descuento por sí solo.</CardDescription></span>{canManage&&<Button size="sm" onClick={onAgreement}>Agregar autorización</Button>}</span></CardHeader>
+    <CardContent className="space-y-4">
+      {list.isFetching&&<p role="status">Cargando autorizaciones…</p>}
+      {list.isError&&<p role="alert">No fue posible cargar las autorizaciones. <Button onClick={()=>void list.refetch()}>Reintentar autorizaciones</Button></p>}
+      {list.data?.items.map(item=>{const href=evidenceHref(item.evidenceUrl);return <div key={item.deductionAgreementId} className="space-y-3 rounded-xl border p-4 text-sm">
+        <div className="flex flex-wrap justify-between gap-3"><b>{item.employeeName}</b><span>{item.isActive?"Activo":"Inactivo"}</span></div>
+        <p>{item.conceptName} · {item.authorityName}</p><p className="text-muted-foreground">Ref. {item.referenceNumber} · descontado {money.format(item.deductedToDate)}{item.authorizedTotal!==null?` de ${money.format(item.authorizedTotal)}`:""}</p>
+        <div className="flex flex-wrap gap-2">{href?<Button asChild size="sm" variant="outline"><a href={href} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 size-4"/>Ver evidencia</a></Button>:<p className="text-amber-800">El soporte no tiene un enlace web válido. Edítalo para poder abrirlo.</p>}
+          {canManage&&<Button size="sm" variant="ghost" onClick={()=>onEditAgreement(item)}><Pencil className="mr-2 size-4"/>Editar</Button>}
+          {canManage&&item.isActive&&<Button size="sm" variant="ghost" className="text-destructive" onClick={()=>void deactivate(item)}><Trash2 className="mr-2 size-4"/>Desactivar</Button>}
+        </div>
+      </div>;})}
+      {!list.isFetching&&!list.isError&&!list.data?.items.length&&<Empty text="No hay descuentos autorizados."/>}
+      <PayrollHistoryNavigation name="autorizaciones" page={page} totalCount={list.data?.totalCount??0} busy={list.isFetching} onPage={setPage}/>
+    </CardContent></Card>;
+}
 function PaymentsSection({ canPay, onCreate }: {
     canPay: boolean;
     onCreate: () => void;
@@ -431,15 +476,6 @@ function ConfigurationSection({ options, canConfigure, canReadAccounting, canCon
       <PayrollAccountingMappings options={options} canConfigure={canConfigureAccounting}/>
     )}
   </div>;
-}
-function PayrollRunSelect({value,label,regularOnly=false,disabled=false,onChange}:{value:string;label:string;regularOnly?:boolean;disabled?:boolean;onChange:(run:PayrollRunSummary)=>void}) {
-  const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId);
-  const [selected,setSelected]=useState<PayrollRunSummary|null>(null);
-  const option=(row:PayrollRunSummary)=>({value:row.payrollRunId,label:`${row.periodStart} — ${row.periodEnd}`,description:`Neto liquidado ${money.format(row.netPayable)}`});
-  return <PagedEntitySelect<PayrollRunSummary> queryKey={["payroll-run-select",tenant,business,regularOnly]} value={value} ariaLabel={label} disabled={disabled}
-    selectedOption={selected?.payrollRunId===value?option(selected):null} searchPlaceholder="Buscar período (AAAA-MM-DD)…" pageSize={20}
-    loadPage={(search,page,pageSize)=>payrollApi.runs({page,pageSize,search:search||undefined,status:"Approved",kind:regularOnly?"Regular":undefined})}
-    getOption={option} onChange={(_id,_option,row)=>{if(row){setSelected(row);onChange(row);}}}/>;
 }
 function RunForm({ businessId, options, onSaved }: {
     businessId: string;

@@ -104,21 +104,21 @@ public sealed partial class SqlPayrollStore
                   THROW 51707,N'El beneficiario del perfil aplica a SENA o ICBF y debe ser una entidad jurídica activa de esta empresa. Las demás afiliaciones pertenecen al contrato.',1;
                 IF EXISTS(SELECT 1 FROM payroll.AccountingProfiles WITH(UPDLOCK,HOLDLOCK) WHERE ProfileId=@Id AND TenantId=@Tenant)
                 BEGIN
-                  UPDATE payroll.AccountingProfiles SET Code=@Code,Name=@Name,RuleSetId=@Rules,IsActive=@Active,UpdatedBy=@Actor,UpdatedAt=@Now
+                  UPDATE payroll.AccountingProfiles SET Code=COALESCE(@Code,Code),Name=@Name,RuleSetId=@Rules,IsActive=@Active,UpdatedBy=@Actor,UpdatedAt=@Now
                     WHERE ProfileId=@Id AND TenantId=@Tenant AND RowVersion=@Version;
                   IF @@ROWCOUNT<>1 THROW 51708,N'El perfil cambió; recárgalo antes de guardar.',1;
                 END
                 ELSE BEGIN
                   IF @Version IS NOT NULL THROW 51708,N'El perfil ya no está disponible.',1;
                   INSERT payroll.AccountingProfiles(ProfileId,TenantId,Code,Name,RuleSetId,IsActive,UpdatedBy,UpdatedAt)
-                    VALUES(@Id,@Tenant,@Code,@Name,@Rules,@Active,@Actor,@Now);
+                    VALUES(@Id,@Tenant,COALESCE(@Code,UPPER(REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))),@Name,@Rules,@Active,@Actor,@Now);
                 END;
                 DELETE payroll.ProfileAccountMappings WHERE ProfileId=@Id AND TenantId=@Tenant;
                 INSERT payroll.ProfileAccountMappings(MappingId,TenantId,ProfileId,ConceptId,DebitAccountId,CreditAccountId,BeneficiaryPartyId,EffectiveFrom,EffectiveTo)
                   SELECT Id,@Tenant,@Id,ConceptId,DebitAccountId,CreditAccountId,BeneficiaryPartyId,EffectiveFrom,EffectiveTo FROM @Lines;
                 """,connection,transaction);
             command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Id",request.ProfileId);
-            command.Parameters.AddWithValue("@Code",request.Code);command.Parameters.AddWithValue("@Name",request.Name);
+            command.Parameters.Add("@Code",SqlDbType.NVarChar,32).Value=(object?)request.Code??DBNull.Value;command.Parameters.AddWithValue("@Name",request.Name);
             command.Parameters.AddWithValue("@Rules",request.RuleSetId);command.Parameters.AddWithValue("@Active",request.IsActive);
             command.Parameters.AddWithValue("@Actor",user.UserId);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
             command.Parameters.Add("@Version",SqlDbType.Binary,8).Value=(object?)request.RowVersion??DBNull.Value;

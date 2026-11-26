@@ -129,7 +129,7 @@ test("la bandeja filtra por el concepto de las partidas, incluso inactivo, media
 
 test("el maestro guarda la cuenta y naturaleza y reutiliza la página devuelta sin otro GET", async ({ page, baseURL }, testInfo) => {
   const scenario = financialVoucherScenario(), concept = definition();
-  scenario.user.permissions.push("catalog.update");
+  scenario.user.permissions.push("catalog.read","catalog.update");
   let reads = 0, writes = 0;
   await installFinancialVoucherContext(page, baseURL!, scenario);
   await page.route("**/api/**", async route => {
@@ -151,8 +151,8 @@ test("el maestro guarda la cuenta y naturaleza y reutiliza la página devuelta s
     }
     await route.fallback();
   });
-  await page.goto("/dashboard/settings/masters");
-  await page.getByRole("button", { name: /Conceptos financieros/ }).click();
+  await page.goto("/dashboard/accounting?section=concepts");
+  await expect(page.getByRole("heading",{name:"Conceptos contables",exact:true})).toBeVisible();
   await expect(page.getByText("No hay conceptos financieros para este filtro.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Nuevo concepto", exact: true }).click();
   await page.getByLabel("Código", { exact: true }).fill("ANT"); await page.getByLabel("Nombre", { exact: true }).fill("Anticipo elegido");
@@ -166,4 +166,13 @@ test("el maestro guarda la cuenta y naturaleza y reutiliza la página devuelta s
   await expect(page.getByText("Página 1 · 2 conceptos", { exact: true })).toBeVisible();
   expect(reads).toBe(1); expect(writes).toBe(1);
   await page.screenshot({ path: testInfo.outputPath("financial-concept-master.png"), fullPage: true });
+});
+
+
+test("conceptos contables exige permiso de catálogo y no consulta una ficha bloqueada",async({page,baseURL})=>{
+  const scenario=financialVoucherScenario();await installFinancialVoucherContext(page,baseURL!,scenario);
+  let reads=0;await page.route("**/financial-concepts**",route=>{reads++;return route.fulfill({json:{items:[],page:1,pageSize:20,totalCount:0}});});
+  await page.goto("/dashboard/accounting?section=concepts");
+  await expect(page.getByRole("button",{name:"Conceptos contables",exact:true})).toBeDisabled();
+  await expect(page.getByRole("alert").filter({hasText:"No tienes permiso para consultar los conceptos contables."})).toBeVisible();expect(reads).toBe(0);
 });

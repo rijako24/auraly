@@ -74,9 +74,9 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
         aria-label={`Ordenar por ${label}`} onClick={() => { setPage(1); setSorting(current => ({ by, direction: current.by === by && current.direction === "asc" ? "desc" : "asc" })); }}>
         {label}{sorting.by === by ? sorting.direction === "asc" ? " ↑" : " ↓" : ""}</Button>;
     const sortAria = (by: string) => sorting.by === by ? sorting.direction === "asc" ? "ascending" as const : "descending" as const : undefined;
-    return <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-3 rounded-2xl border p-4" aria-busy={busy}>
+    return <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-5 rounded-2xl border p-4 sm:p-5" aria-busy={busy}>
         <h3 className="font-semibold">Seleccionar trabajadores</h3>
-        <form className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim());setWorkSite(draftWorkSite.trim()); }}>
+        <form className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim());setWorkSite(draftWorkSite.trim());setContractNumber(draftContract.trim()); }}>
             <Input aria-label="Buscar trabajador de la liquidación" placeholder="Nombre, identificación o contrato" value={draftSearch}
                 className="min-w-0 flex-1"
                 maxLength={160} disabled={locked} onChange={event => setDraftSearch(event.target.value)}/>
@@ -85,36 +85,33 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
                 onChange={(id,row)=>{setPage(1);setCostCenterId(id);setCostCenterName(row?.name??null);}}/>
             <Input aria-label="Filtrar sitio de trabajo" placeholder="Sitio de trabajo" value={draftWorkSite} maxLength={200}
                 className="min-w-0 w-full" disabled={locked} onChange={event=>setDraftWorkSite(event.target.value)}/>
+            <Input aria-label="Filtrar contrato" placeholder="Contrato" value={draftContract} maxLength={64} disabled={locked}
+                className="min-w-0 w-full" onChange={event=>setDraftContract(event.target.value)}/>
             <Button type="submit" variant="outline" disabled={locked || query.isFetching}>Buscar</Button>
         </form>
         {query.isPending ? <p role="status">Cargando trabajadores…</p> : query.isError ? <div role="alert" className="space-y-2">
             <p>No fue posible cargar los trabajadores de la liquidación.</p>
             <Button variant="outline" disabled={locked} onClick={() => void query.refetch()}>Reintentar trabajadores</Button>
         </div> : data && <>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span>{count} seleccionados de {data.eligibleCount} elegibles</span>
-                <Button size="sm" variant="outline" disabled={locked || data.eligibleCount > 500 || stale} onClick={() => { setSelectionVersion(data.rowVersion); setSelectAll(true); setChanges({}); }}>Todos</Button>
-                <Button size="sm" variant="outline" disabled={locked || stale} onClick={() => { setSelectionVersion(data.rowVersion); setSelectAll(false); setChanges({}); }}>Ninguno</Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                <span className="font-medium">{count} seleccionados de {data.eligibleCount} elegibles</span>
+                {data.eligibleCount>500&&<Button size="sm" variant="outline" disabled={locked || stale} onClick={() => { setSelectionVersion(data.rowVersion); setSelectAll(false); setChanges({}); }}>Limpiar selección</Button>}
                 {dirty && <Button size="sm" variant="ghost" disabled={locked} onClick={() => { setSelectionVersion(null); setSelectAll(null); setChanges({}); }}>Descartar selección</Button>}
             </div>
-            <p className="text-xs text-muted-foreground">Todos y Ninguno aplican a todos los elegibles del período.</p>
             {data.eligibleCount > 500 && <p className="text-sm">Selecciona hasta 500 trabajadores por liquidación.</p>}
             {stale && <p role="alert" className="text-sm text-destructive">{data.rowVersion !== run.rowVersion
-                ? "La liquidación cambió. Usa Actualizar nómina antes de continuar."
+                ? "La liquidación cambió. Actualiza la liquidación antes de continuar."
                 : "La liquidación cambió. Descarta la selección anterior antes de continuar."}</p>}
             <div className="max-h-[32rem] max-w-full overflow-auto rounded-xl border"><table className="w-full min-w-[800px] whitespace-nowrap text-sm">
-                <thead className="sticky top-0 z-10 bg-card"><tr className="text-left"><th>Incluir</th>
+                <thead className="sticky top-0 z-10 bg-card [&_th]:px-3 [&_th]:py-3"><tr className="text-left"><th><label className="flex items-center gap-3"><Checkbox aria-label="Incluir todos los trabajadores elegibles" checked={count===data.eligibleCount&&count>0?true:count>0?"indeterminate":false}
+                    disabled={locked||stale||query.isFetching||data.eligibleCount===0||data.eligibleCount>500}
+                    onCheckedChange={value=>{setSelectionVersion(data.rowVersion);setSelectAll(value===true);setChanges({});}}/><span>Incluir todos</span></label></th>
                     <th aria-sort={sortAria("employeeName")}>{sortHeader("employeeName", "Trabajador")}</th>
                     <th aria-sort={sortAria("identification")}>{sortHeader("identification", "Identificación")}</th>
-                    <th aria-sort={sortAria("contractNumber")}>{sortHeader("contractNumber", "Contrato")}<form className="flex gap-1 pb-2"
-                        onSubmit={event => { event.preventDefault(); setPage(1); setContractNumber(draftContract.trim()); }}>
-                        <Input aria-label="Filtrar contrato" value={draftContract} maxLength={64} disabled={locked}
-                            className="h-8 w-32" onChange={event => setDraftContract(event.target.value)}/>
-                        <Button type="submit" size="sm" variant="outline" disabled={locked || query.isFetching}>Filtrar contrato</Button>
-                    </form></th>
+                    <th aria-sort={sortAria("contractNumber")}>{sortHeader("contractNumber", "Contrato")}</th>
                     <th aria-sort={sortAria("startDate")}>{sortHeader("startDate", "Inicio")}</th>
                     <th aria-sort={sortAria("endDate")}>{sortHeader("endDate", "Fin")}</th><th>Periodicidad</th></tr></thead>
-                <tbody>{data.items.map(item => {
+                <tbody className="[&_td]:px-3 [&_td]:py-3">{data.items.map(item => {
                     const selected = changes[item.employmentId]?.selected ?? selectAll ?? item.isSelected;
                     return <tr key={item.employmentId} className="border-t">
                         <td className="py-3"><Checkbox aria-label={`Incluir ${item.employeeName}, contrato ${item.contractNumber}`} checked={selected}

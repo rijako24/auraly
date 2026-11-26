@@ -2105,12 +2105,13 @@ public sealed partial class SqlPayrollStore(
     }
 
     public async Task<PayrollCalculatedEmployeePage> PageCalculatedEmployeesAsync(PayrollUserIdentity user,int page,int pageSize,
-        DateOnly from,DateOnly to,string? search,CancellationToken ct)
+        DateOnly from,DateOnly to,string? search,CancellationToken ct,Guid? runId=null)
     {
         await using var connection=connections.Create();await connection.OpenAsync(ct);
         const string selection="""
             FROM payroll.Runs run JOIN payroll.RunEmployees employee ON employee.PayrollRunId=run.PayrollRunId AND employee.TenantId=run.TenantId
             WHERE run.TenantId=@Tenant AND run.BusinessId=@Business AND run.Status IN(N'Calculated',N'Approved')
+              AND (@RunId IS NULL OR run.PayrollRunId=@RunId)
               AND run.PeriodEnd>=@From AND run.PeriodStart<=@To AND (@Search IS NULL
                 OR JSON_VALUE(employee.EmployeeSnapshotJson,'$.EmployeeName') LIKE N'%'+@Search+N'%'
                 OR JSON_VALUE(employee.EmployeeSnapshotJson,'$.Identification') LIKE N'%'+@Search+N'%'
@@ -2123,6 +2124,7 @@ public sealed partial class SqlPayrollStore(
               employee.WorkedDays,employee.Earnings,employee.Deductions,employee.NetPayable,employee.PayrollRunEmployeeId,run.RowVersion
             """+"\n"+selection+" ORDER BY run.PeriodEnd DESC,4,run.PayrollRunId,employee.EmploymentId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY;",connection);
         command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Business",user.BusinessId);
+        command.Parameters.Add("@RunId",SqlDbType.UniqueIdentifier).Value=(object?)runId??DBNull.Value;
         command.Parameters.AddWithValue("@From",from.ToDateTime(TimeOnly.MinValue));command.Parameters.AddWithValue("@To",to.ToDateTime(TimeOnly.MinValue));
         command.Parameters.Add("@Search",SqlDbType.NVarChar,160).Value=(object?)search??DBNull.Value;
         command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@Size",pageSize);
@@ -2162,8 +2164,8 @@ public sealed partial class SqlPayrollStore(
             SELECT r.PayrollRunId,r.BusinessId,r.RuleSetId,r.RunKind,r.OriginalPayrollRunId,
               r.PeriodStart,r.PeriodEnd,r.PaymentDate,r.Status,r.CalculationVersion,r.TotalEarnings,
               r.TotalDeductions,r.TotalEmployerContributions,r.TotalProvisions,r.NetPayable,r.RowVersion,
-              (SELECT COUNT(*) FROM payroll.RunEmployees countRows WHERE countRows.PayrollRunId=r.PayrollRunId AND countRows.TenantId=r.TenantId)
-            FROM payroll.Runs r WHERE r.PayrollRunId=@RunId AND r.TenantId=@TenantId AND r.BusinessId=@BusinessId;
+              (SELECT COUNT(*) FROM payroll.RunEmployees countRows WHERE countRows.PayrollRunId=r.PayrollRunId AND countRows.TenantId=r.TenantId),r.PayFrequencyOptionId,frequency.Label
+            FROM payroll.Runs r JOIN payroll.CatalogOptions frequency ON frequency.OptionId=r.PayFrequencyOptionId WHERE r.PayrollRunId=@RunId AND r.TenantId=@TenantId AND r.BusinessId=@BusinessId;
             SELECT e.PayrollRunEmployeeId,e.EmploymentId,e.PartyId,
               JSON_VALUE(e.EmployeeSnapshotJson,'$.EmployeeName'),
               e.WorkedDays,e.Earnings,e.Deductions,e.EmployerContributions,e.Provisions,e.NetPayable,
@@ -2208,6 +2210,7 @@ public sealed partial class SqlPayrollStore(
         var header = new RunHeader(reader.GetGuid(0), reader.GetGuid(1), reader.IsDBNull(2)?null:reader.GetGuid(2), reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetGuid(4), DateOnly.FromDateTime(reader.GetDateTime(5)), DateOnly.FromDateTime(reader.GetDateTime(6)),
             DateOnly.FromDateTime(reader.GetDateTime(7)), reader.GetString(8), reader.GetInt32(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13), reader.GetDecimal(14), (byte[])reader[15],reader.GetInt32(16));
+        var frequencyId=reader.GetGuid(17);var frequencyName=reader.GetString(18);
         await reader.NextResultAsync(ct);
         var employeeRows = new List<EmployeeRow>();
         while (await reader.ReadAsync(ct))
@@ -2237,7 +2240,7 @@ public sealed partial class SqlPayrollStore(
         employees=employees.Select(employee=>employee with {Novelties=noveltyLookup[employee.EmploymentId].ToArray()}).ToArray();
         return new(header.Id, header.BusinessId, header.RuleSetId, header.Kind, header.OriginalId, header.Start, header.End,
             header.Payment, header.Status, header.Version, header.Earnings, header.Deductions, header.Employer,
-            header.Provisions, header.Net, employees, header.RowVersion) {PayableEmployees=payable,EmployeeCount=header.EmployeeCount,IsPartialCalculation=employeeIds is not null};
+            header.Provisions, header.Net, employees, header.RowVersion) {PayableEmployees=payable,EmployeeCount=header.EmployeeCount,IsPartialCalculation=employeeIds is not null,PayFrequencyOptionId=frequencyId,PayFrequencyName=frequencyName};
     }
 
     private static async Task<IReadOnlyList<PayrollPayableEmployee>> ReadPayableEmployeesAsync(SqlDataReader reader,CancellationToken ct)
@@ -2251,34 +2254,51 @@ public sealed partial class SqlPayrollStore(
         return result;
     }
 
-    public async Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search,CancellationToken ct)
+    public async Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search,CancellationToken ct,PayrollRunHistoryFilter? filter=null)
     {
+        filter ??= new();
         await using var connection=connections.Create();await connection.OpenAsync(ct);
-        await using var command=new SqlCommand("""
-            SELECT COUNT(*) FROM payroll.Runs r WHERE r.TenantId=@Tenant AND r.BusinessId=@Business
+        const string selection="""
+            FROM payroll.Runs r WHERE r.TenantId=@Tenant AND r.BusinessId=@Business
               AND (@Status IS NULL OR r.Status=@Status) AND (@Kind IS NULL OR r.RunKind=@Kind)
-              AND (@Search IS NULL OR CONVERT(nvarchar(10),r.PeriodStart,23) LIKE N'%'+@Search+N'%'
-                OR CONVERT(nvarchar(10),r.PeriodEnd,23) LIKE N'%'+@Search+N'%');
-            WITH page AS (
-              SELECT r.* FROM payroll.Runs r WHERE r.TenantId=@Tenant AND r.BusinessId=@Business
-                AND (@Status IS NULL OR r.Status=@Status) AND (@Kind IS NULL OR r.RunKind=@Kind)
-                AND (@Search IS NULL OR CONVERT(nvarchar(10),r.PeriodStart,23) LIKE N'%'+@Search+N'%'
-                  OR CONVERT(nvarchar(10),r.PeriodEnd,23) LIKE N'%'+@Search+N'%')
+              AND (@RunId IS NULL OR r.PayrollRunId=@RunId)
+              AND (@PaymentFrom IS NULL OR r.PaymentDate>=@PaymentFrom) AND (@PaymentTo IS NULL OR r.PaymentDate<=@PaymentTo)
+              AND (@Search IS NULL OR CONVERT(nvarchar(10),r.PeriodStart,23) LIKE @Search ESCAPE N'~'
+                OR CONVERT(nvarchar(10),r.PeriodEnd,23) LIKE @Search ESCAPE N'~')
+              AND (@Worker IS NULL OR (r.Status=N'Draft' AND EXISTS(
+                SELECT 1 FROM payroll.EligibleRunEmployments(@Tenant,@Business,r.PayrollRunId) e
+                JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=@Tenant
+                WHERE e.IsSelected=1 AND (COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)) LIKE @Worker ESCAPE N'~'
+                  OR p.Identification LIKE @Worker ESCAPE N'~' OR e.ContractNumber LIKE @Worker ESCAPE N'~')))
+                OR (r.Status<>N'Draft' AND EXISTS(SELECT 1 FROM payroll.RunEmployees e
+                  WHERE e.PayrollRunId=r.PayrollRunId AND e.TenantId=r.TenantId
+                    AND (JSON_VALUE(e.EmployeeSnapshotJson,'$.EmployeeName') LIKE @Worker ESCAPE N'~'
+                      OR JSON_VALUE(e.EmployeeSnapshotJson,'$.Identification') LIKE @Worker ESCAPE N'~'
+                      OR JSON_VALUE(e.EmployeeSnapshotJson,'$.ContractNumber') LIKE @Worker ESCAPE N'~'))))
+            """;
+        await using var command=new SqlCommand("SELECT COUNT(*) "+selection+"; WITH page AS (SELECT r.* "+selection+"\n"+"""
               ORDER BY r.PeriodEnd DESC,r.CreatedAt DESC,r.PayrollRunId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY
             )
             SELECT r.PayrollRunId,r.RunKind,r.PeriodStart,r.PeriodEnd,r.PaymentDate,r.Status,
-              (SELECT COUNT(*) FROM payroll.RunEmployees e WHERE e.PayrollRunId=r.PayrollRunId),
-              r.TotalEarnings,r.TotalDeductions,r.NetPayable,r.RowVersion
-            FROM page r ORDER BY r.PeriodEnd DESC,r.CreatedAt DESC,r.PayrollRunId;
+              (SELECT COUNT(*) FROM payroll.RunEmployees e WHERE e.PayrollRunId=r.PayrollRunId AND e.TenantId=r.TenantId),
+              r.TotalEarnings,r.TotalDeductions,r.NetPayable,r.RowVersion,r.PayFrequencyOptionId,frequency.Label
+            FROM page r JOIN payroll.CatalogOptions frequency ON frequency.OptionId=r.PayFrequencyOptionId
+            ORDER BY r.PeriodEnd DESC,r.CreatedAt DESC,r.PayrollRunId;
             """,connection);
         command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Business",user.BusinessId);
-        command.Parameters.AddWithValue("@Status",(object?)status??DBNull.Value);command.Parameters.AddWithValue("@Kind",(object?)kind??DBNull.Value);
-        command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value);command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@Size",pageSize);
+        command.Parameters.Add("@Status",SqlDbType.NVarChar,32).Value=(object?)status??DBNull.Value;
+        command.Parameters.Add("@Kind",SqlDbType.NVarChar,32).Value=(object?)kind??DBNull.Value;
+        command.Parameters.Add("@RunId",SqlDbType.UniqueIdentifier).Value=(object?)filter.RunId??DBNull.Value;
+        command.Parameters.Add("@PaymentFrom",SqlDbType.Date).Value=(object?)filter.PaymentFrom?.ToDateTime(TimeOnly.MinValue)??DBNull.Value;
+        command.Parameters.Add("@PaymentTo",SqlDbType.Date).Value=(object?)filter.PaymentTo?.ToDateTime(TimeOnly.MinValue)??DBNull.Value;
+        command.Parameters.Add("@Search",SqlDbType.NVarChar,324).Value=(object?)RunSelectionPattern(search)??DBNull.Value;
+        command.Parameters.Add("@Worker",SqlDbType.NVarChar,324).Value=(object?)RunSelectionPattern(filter.WorkerSearch)??DBNull.Value;
+        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@Size",pageSize);
         await using var reader=await command.ExecuteReaderAsync(ct);await reader.ReadAsync(ct);var count=reader.GetInt32(0);
         await reader.NextResultAsync(ct);var values=new List<PayrollRunSummary>();
         while(await reader.ReadAsync(ct))values.Add(new(reader.GetGuid(0),reader.GetString(1),DateOnly.FromDateTime(reader.GetDateTime(2)),
             DateOnly.FromDateTime(reader.GetDateTime(3)),DateOnly.FromDateTime(reader.GetDateTime(4)),reader.GetString(5),reader.GetInt32(6),
-            reader.GetDecimal(7),reader.GetDecimal(8),reader.GetDecimal(9),(byte[])reader[10]));
+            reader.GetDecimal(7),reader.GetDecimal(8),reader.GetDecimal(9),(byte[])reader[10]){PayFrequencyOptionId=reader.GetGuid(11),PayFrequencyName=reader.GetString(12)});
         return new(values,page,pageSize,count,(int)Math.Ceiling(count/(double)pageSize));
     }
 

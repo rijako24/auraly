@@ -38,6 +38,11 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 100
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
     await page.goto("/dashboard/settings/masters");
+    const navigation=page.getByRole("navigation").filter({has:page.getByRole("button",{name:/^Ubicación/})});
+    await expect(navigation.getByRole("button").first()).toContainText("Ubicación");
+    await expect(navigation.getByRole("button").last()).toContainText("Formas de pago");
+    await expect(navigation.getByRole("button",{name:/Conceptos/})).toHaveCount(0);
+    expect(listReads).toBe(0);
     await page.getByRole("button", { name: /^Formas de pago/ }).click();
     await expect(page.getByText("No hay formas de pago para este filtro.")).toBeVisible();
     expect(typeReads).toBe(0);

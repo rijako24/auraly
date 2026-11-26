@@ -4745,10 +4745,17 @@ sus categorías propias; el concepto de esta captura prepara una contrapartida
 o anticipo para recibo/egreso/comprobante con cualquiera de sus formas. No crea
 otro documento, flujo de pago, cálculo o writer financiero.
 
-El alta y la edición en Maestros abren un modal, con cuenta, naturaleza y usos
+El alta y la edición en Contabilidad → Conceptos contables abren un modal, con cuenta, naturaleza y usos
 en su cuerpo desplazable y acciones siempre visibles en móvil. Guardar reutiliza
 la página autoritativa del comando; cancelar no escribe ni vuelve a consultar
 el listado. El cambio de presentación no modifica efectos financieros.
+
+Los conceptos contables se administran en Contabilidad → Conceptos contables (2026-11-26),
+con el mismo catálogo, permisos y writer. Se retiran de Maestros; Ubicación conserva la
+entrada inicial y Formas de pago queda al final. Los conceptos de nómina conservan su
+catálogo propio: no se mezclan con las definiciones contables de comprobantes. El filtro
+de trazabilidad y las referencias históricas conservan FinancialConceptId; no se vuelve a
+introducir el atajo de captura retirado de recibos y comprobantes manuales.
 
 Esta primera extensión permite auxiliares de función General, CustomerAdvance
 y SupplierAdvance con naturaleza compatible. La función del auxiliar conserva

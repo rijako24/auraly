@@ -13,13 +13,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription } from "@/components/ui/dialog";
 import { ReportViewer } from "@/components/reports/report-viewer";
+import { PayrollRunSelect } from "@/components/payroll/payroll-run-select";
+import { Select,SelectTrigger,SelectValue,SelectContent,SelectItem } from "@/components/ui/select";
 import { payrollReceiptColumns,payrollReceiptRows } from "@/lib/payroll-receipt";
 import type { ReportRow } from "@/lib/report-viewer";
-import { payrollApi, type CalculatePayrollRun, type PayrollCatalogOption, type PayrollNovelty, type PayrollCalculatedEmployeeRow, type PayrollRun, type PayrollRunEmployee } from "@/services/api/payroll";
+import { payrollApi, type CalculatePayrollRun, type PayrollCatalogOption, type PayrollNovelty, type PayrollCalculatedEmployeeRow, type PayrollRun, type PayrollRunSummary, type PayrollRunEmployee } from "@/services/api/payroll";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-export function PayrollRunNovelties({ run, employmentId, onOpen, onBack, loading, error, canCalculate, calculating, calculationErrors, natures, canManage, voiding, noveltyEditor, editorEmploymentId, onCloseEditor, onAddNovelty, onEditNovelty, onVoidNovelty, onRetry, onCalculate }: {
+export function PayrollRunNovelties({ statuses, onPrepareRun, run, employmentId, onOpen, onBack, loading, error, canCalculate, calculating, calculationErrors, natures, canManage, voiding, noveltyEditor, editorEmploymentId, onCloseEditor, onAddNovelty, onEditNovelty, onVoidNovelty, onRetry, onCalculate }: {
+    statuses:PayrollCatalogOption[];
+    onPrepareRun:(runId:string)=>void;
     employmentId:string|null;
     onOpen:(runId:string,employmentId:string)=>void;
     onBack:()=>void;
@@ -64,14 +68,21 @@ export function PayrollRunNovelties({ run, employmentId, onOpen, onBack, loading
     const today=useBusinessDates().today();
     const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId);
     const [page,setPage]=useState(1),[search,setSearch]=useState(""),[draft,setDraft]=useState("");
-    const [from,setFrom]=useState(`${today.slice(0,4)}-01-01`),[to,setTo]=useState(`${today.slice(0,4)}-12-31`);
-    const list=useQuery({queryKey:["payroll-calculated-employees",tenant,business,page,from,to,search],
-        queryFn:()=>payrollApi.calculatedEmployees({page,pageSize:20,from,to,search:search||undefined}),
-        enabled:!receipt&&!receiptLoading&&!employmentId&&Boolean(from&&to&&to>=from),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
+    const [from,setFrom]=useState(""),[to,setTo]=useState(""),[status,setStatus]=useState("_all");
+    const [liquidation,setLiquidation]=useState<PayrollRunSummary|null>(null),[runPage,setRunPage]=useState(1);
+    const validDates=!from||!to||to>=from;
+    const history=useQuery({queryKey:["payroll-runs",tenant,business,"novelties",runPage,from,to,status,search],
+        queryFn:()=>payrollApi.runs({page:runPage,pageSize:20,status:status==="_all"?undefined:status,paymentFrom:from||undefined,paymentTo:to||undefined,workerSearch:search||undefined}),
+        enabled:!liquidation&&!employmentId&&validDates,staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
+    const list=useQuery({queryKey:["payroll-calculated-employees",tenant,business,page,liquidation?.payrollRunId,search],
+        queryFn:()=>payrollApi.calculatedEmployees({page,pageSize:20,from:liquidation!.periodStart,to:liquidation!.periodEnd,runId:liquidation!.payrollRunId,search:search||undefined}),
+        enabled:!receipt&&!receiptLoading&&!employmentId&&Boolean(liquidation&&["Calculated","Approved"].includes(liquidation.status)),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
+    function chooseLiquidation(value:PayrollRunSummary){setLiquidation(value);setPage(1);}
+    const labelStatus=(value:string)=>statuses.find(option=>option.code===value)?.label??value;
     const selectedRun = run?.status !== "Draft" ? run : null;
     const worker = selectedRun?.employees.find(employee => employee.employmentId === employmentId);
     return <Card className="rounded-3xl"><CardHeader><CardTitle>Novedades de la liquidación</CardTitle>
-        <CardDescription>Primero liquida los trabajadores. Después revisa sus conceptos y días. Guardar, editar o retirar una novedad actualiza automáticamente su cálculo.</CardDescription>
+        <CardDescription>Selecciona una liquidación y después el trabajador. Las calculadas permiten editar novedades; las aprobadas son de consulta.</CardDescription>
     </CardHeader><CardContent className="space-y-4">
         {employmentId&&<Button variant="outline" disabled={calculating||voiding} onClick={()=>{onCloseEditor();onBack();}}>Volver a trabajadores</Button>}
         {loading && <p role="status">Cargando liquidación…</p>}
@@ -84,25 +95,43 @@ export function PayrollRunNovelties({ run, employmentId, onOpen, onBack, loading
                         noveltyEditor={editorEmploymentId===worker.employmentId?noveltyEditor:null}
                         onAddNovelty={onAddNovelty} onEditNovelty={onEditNovelty} onVoidNovelty={onVoidNovelty}/>
             </>}
-        {!employmentId&&<section aria-label="Trabajadores liquidados" className="space-y-4">
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2"><label className="space-y-1 text-sm">Desde<DatePicker today={today} value={from} onChange={value=>{setFrom(value);setPage(1);}}/></label>
-                <label className="space-y-1 text-sm">Hasta<DatePicker today={today} value={to} onChange={value=>{setTo(value);setPage(1);}}/></label></div>
+        {!employmentId&&!liquidation&&<section aria-label="Liquidaciones para novedades" className="space-y-4">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="space-y-1 text-sm">Liquidación<PayrollRunSelect value="" label="Buscar liquidación" approvedOnly={false} onChange={chooseLiquidation}/></label>
+                <label className="space-y-1 text-sm">Estado<Select value={status} onValueChange={value=>{setStatus(value);setRunPage(1);}}><SelectTrigger aria-label="Estado de liquidación"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="_all">Todos los estados</SelectItem>{statuses.filter(option=>option.isActive&&["Draft","Calculated","Approved","Voided"].includes(option.code)).map(option=><SelectItem key={option.optionId} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></label>
+                <label className="space-y-1 text-sm">Pago programado desde<DatePicker today={today} value={from} onChange={value=>{setFrom(value);setRunPage(1);}}/></label>
+                <label className="space-y-1 text-sm">Pago programado hasta<DatePicker today={today} value={to} onChange={value=>{setTo(value);setRunPage(1);}}/></label>
+            </div>
+            <form className="flex min-w-0 gap-2" onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setRunPage(1);}}><Input aria-label="Buscar trabajador en liquidaciones" className="min-w-0" value={draft} maxLength={160} placeholder="Trabajador, identificación o contrato" onChange={event=>setDraft(event.target.value)}/><Button variant="outline">Buscar</Button><Button type="button" variant="ghost" onClick={()=>{setFrom("");setTo("");setSearch("");setDraft("");setStatus("_all");setRunPage(1);}}>Limpiar</Button></form>
+            {!validDates&&<p role="alert">La fecha final debe ser igual o posterior a la inicial.</p>}
+            {history.isFetching?<p role="status">Cargando liquidaciones…</p>:history.isError?<div role="alert">No fue posible consultar las liquidaciones. <Button onClick={()=>void history.refetch()}>Reintentar liquidaciones</Button></div>:validDates&&<>
+                <div className="space-y-3">{history.data?.items.map(item=><button key={item.payrollRunId} type="button" className="w-full rounded-xl border p-4 text-left hover:bg-muted/40" onClick={()=>chooseLiquidation(item)}>
+                    <span className="flex flex-wrap justify-between gap-3"><strong>{item.periodStart} — {item.periodEnd}</strong><span className="text-sm">{labelStatus(item.status)}</span></span>
+                    <span className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-sm text-muted-foreground"><span>Pago programado: {item.paymentDate}</span>{item.payFrequencyName&&<span>{item.payFrequencyName}</span>}<span>{item.status==="Draft"?"Pendiente de cálculo":`${item.employeeCount} trabajadores`}</span></span>
+                </button>)}</div>
+                {history.data?.items.length===0&&<p>No hay liquidaciones con estos filtros.</p>}
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{history.data?.totalCount??0} liquidaciones · Página {runPage}</span><div className="flex gap-2"><Button variant="outline" disabled={runPage===1} onClick={()=>setRunPage(value=>value-1)}>Anterior liquidaciones</Button><Button variant="outline" disabled={runPage>=(history.data?.totalPages??0)} onClick={()=>setRunPage(value=>value+1)}>Siguiente liquidaciones</Button></div></div>
+            </>}
+        </section>}
+        {!employmentId&&liquidation&&<section aria-label="Trabajadores liquidados" className="space-y-4">
+            <Button variant="outline" disabled={calculating||voiding} onClick={()=>setLiquidation(null)}>Volver a liquidaciones</Button>
+            <div className="flex flex-wrap justify-between gap-3 rounded-xl border p-4"><strong>{liquidation.periodStart} — {liquidation.periodEnd}</strong><span>{labelStatus(liquidation.status)}</span></div>
+            {liquidation.status==="Draft"?<div className="space-y-3 rounded-xl border bg-muted/30 p-4"><p>Esta liquidación está en borrador. Calcula primero sus trabajadores para editar sus novedades.</p>{canCalculate&&<Button onClick={()=>onPrepareRun(liquidation.payrollRunId)}>Preparar liquidación</Button>}</div>:["Calculated","Approved"].includes(liquidation.status)?<>
             <form className="flex min-w-0 gap-2" onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setPage(1);}}><Input aria-label="Buscar trabajador liquidado" className="min-w-0" value={draft} maxLength={160} placeholder="Trabajador, identificación o contrato" onChange={event=>setDraft(event.target.value)}/><Button variant="outline">Buscar</Button></form>
-            {to<from&&<p role="alert">La fecha final debe ser igual o posterior a la inicial.</p>}
             {list.isFetching?<p role="status">Cargando trabajadores liquidados…</p>:list.isError?<div role="alert"><p>No fue posible consultar los trabajadores.</p><Button onClick={()=>void list.refetch()}>Reintentar trabajadores</Button></div>:<>
-                <div className="space-y-3">{list.data?.items.map(employee=><article key={`${employee.payrollRunId}:${employee.employmentId}`} className="grid min-w-0 gap-3 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <div className="min-w-0 sm:col-span-2">{employee.employeeName?<Button variant="link" className="h-auto max-w-full whitespace-normal p-0 text-left" disabled={calculating||voiding||receiptLoading} onClick={()=>onOpen(employee.payrollRunId,employee.employmentId)}>{employee.employeeName}</Button>:<p className="text-sm font-semibold">Identidad histórica no disponible</p>}<p className="break-words text-sm text-muted-foreground">{employee.identification??"—"} · Contrato {employee.contractNumber??"—"}</p>
-                      <div className="mt-2 flex gap-2">
-                        <Button size="icon" variant="outline" className="size-8" disabled={!employee.employeeName||calculating||voiding||receiptLoading} aria-label={`${employee.status==="Calculated"&&(canManage||canCalculate)?"Modificar":"Ver"} novedades de ${employee.employeeName??"identidad histórica no disponible"}`} title={employee.status==="Calculated"&&(canManage||canCalculate)?"Modificar novedades":"Ver novedades"} onClick={()=>onOpen(employee.payrollRunId,employee.employmentId)}>{employee.status==="Calculated"&&(canManage||canCalculate)?<Pencil className="size-4"/>:<Eye className="size-4"/>}</Button>
+                <div className="space-y-3">{list.data?.items.map(employee=><article key={`${employee.payrollRunId}:${employee.employmentId}`} className="relative isolate grid min-w-0 gap-3 rounded-xl border p-4 pr-16 sm:grid-cols-2 lg:grid-cols-4">
+                    <Button type="button" variant="ghost" className="absolute inset-0 z-0 h-full w-full rounded-xl hover:bg-primary/5" disabled={!employee.employeeName||calculating||voiding||receiptLoading} aria-label={`Ver trabajador ${employee.employeeName??"sin identidad histórica"}`} onClick={()=>onOpen(employee.payrollRunId,employee.employmentId)}><span aria-hidden="true" className="absolute right-4 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-lg border bg-background"><Eye className="size-4"/></span></Button>
+                    <div className="pointer-events-none relative z-10 min-w-0 sm:col-span-2"><h3 className="break-words text-sm font-semibold">{employee.employeeName??"Identidad histórica no disponible"}</h3><p className="break-words text-sm text-muted-foreground">{employee.identification??"—"} · Contrato {employee.contractNumber??"—"}</p>
+                      <div className="pointer-events-auto mt-2 flex w-fit gap-2">
                         {canCalculate&&employee.status==="Calculated"&&<Button size="icon" variant="outline" className="size-8" disabled={!employee.employeeName||calculating||voiding||receiptLoading} aria-label={`Recalcular a ${employee.employeeName??"identidad histórica no disponible"}`} title="Recalcular trabajador" onClick={()=>void recalculate(employee)}><Calculator className="size-4"/></Button>}
                         <Button size="icon" variant="outline" className="size-8" disabled={!employee.employeeName||calculating||voiding||receiptLoading} aria-label={`Desprendible de ${employee.employeeName??"identidad histórica no disponible"}`} title={employee.status==="Calculated"?"Desprendible preliminar":"Desprendible"} onClick={()=>void openReceipt(employee)}><FileText className="size-4"/></Button>
                       </div></div>
-                    <div className="text-sm"><p>{employee.periodStart} — {employee.periodEnd}</p><p className="text-muted-foreground">{employee.status==="Approved"?"Aprobada · Solo consulta":"Calculada"} · {employee.workedDays} días</p></div>
-                    <dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt>Devengado</dt><dd>{money.format(employee.earnings)}</dd></div><div className="flex justify-between gap-3"><dt>Deducido</dt><dd>{money.format(employee.deductions)}</dd></div><div className="flex justify-between gap-3 font-semibold"><dt>Neto</dt><dd>{money.format(employee.netPayable)}</dd></div></dl>
+                    <div className="pointer-events-none relative z-10 text-sm"><p>{employee.periodStart} — {employee.periodEnd}</p><p className="text-muted-foreground">{employee.status==="Approved"?"Aprobada · Solo consulta":"Calculada"} · {employee.workedDays} días</p></div>
+                    <dl className="pointer-events-none relative z-10 space-y-1 text-sm"><div className="flex justify-between gap-3"><dt>Devengado</dt><dd>{money.format(employee.earnings)}</dd></div><div className="flex justify-between gap-3"><dt>Deducido</dt><dd>{money.format(employee.deductions)}</dd></div><div className="flex justify-between gap-3 font-semibold"><dt>Neto</dt><dd>{money.format(employee.netPayable)}</dd></div></dl>
                 </article>)}</div>
                 {list.data?.items.length===0&&<p>No hay trabajadores liquidados en este período.</p>}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{list.data?.totalCount??0} resultados · Página {page}</span><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={page===1||calculating} onClick={()=>setPage(value=>value-1)}>Anterior trabajadores</Button><Button variant="outline" disabled={page*20>=(list.data?.totalCount??0)||calculating} onClick={()=>setPage(value=>value+1)}>Siguiente trabajadores</Button></div></div>
-            </>}
+            </>}</>:<p>Esta liquidación no admite cambios de novedades.</p>}
         </section>}
         {receiptLoading&&<p role="status">Preparando desprendible…</p>}
         <Dialog open={Boolean(receipt)} onOpenChange={open=>{if(!open)setReceipt(null);}}><DialogContent showClose={false} className="flex h-[95dvh] max-w-6xl flex-col overflow-hidden p-0"><DialogHeader className="sr-only"><DialogTitle>Desprendible laboral</DialogTitle><DialogDescription>Resultado congelado del trabajador y su período.</DialogDescription></DialogHeader><div className="min-h-0 flex-1 overflow-y-auto">{receipt&&<ReportViewer title="Desprendible laboral" description={receipt.description} rows={receipt.rows} columns={payrollReceiptColumns} fileName="desprendible-nomina" documentDownloads searchable={false} groupedHeaders onClose={()=>setReceipt(null)}/>}</div></DialogContent></Dialog>
