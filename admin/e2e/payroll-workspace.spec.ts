@@ -192,7 +192,7 @@ async function choose(page: Page, label: string, option: string) {
 for(const width of [1366,390])test(`contrato conserva el scroll al abrir y cerrar combos inferiores a ${width}`,async({page,baseURL},info)=>{
   await page.setViewportSize({width,height:width===390?844:768});
   // This isolated form test blocks service workers; preserve register's browser contract.
-  await page.addInitScript(()=>{navigator.serviceWorker.register=async()=>({update:async()=>{}} as ServiceWorkerRegistration);});
+  await page.addInitScript(()=>{Object.defineProperty(navigator.serviceWorker,"register",{value:async()=>({update:async()=>{}})});});
   await setup(page,baseURL!);
   await page.route("**/api/commerce/v1/accounting/cost-centers?**",route=>route.fulfill({json:{items:[],page:1,pageSize:10,totalCount:0,totalPages:0}}));
   const errors:string[]=[];page.on("pageerror",error=>{errors.push(error.message);console.error(error.stack);});
