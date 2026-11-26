@@ -488,6 +488,17 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
     public async Task Composition_cost_propagates_through_linked_presentations_without_adding_vat_twice(bool editWholeProduct)
     {
         var raw = Guid.NewGuid(); var finished = Guid.NewGuid(); var combo = Guid.NewGuid(); var presentation = Guid.NewGuid();
+        // Channels are shared with every active tenant business. Exercise that
+        // scope explicitly instead of depending on other tests creating a site.
+        await using (var scopeConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await scopeConnection.OpenAsync();
+            await using var site = new SqlCommand("""
+                INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+                VALUES(NEWID(),@Tenant,N'Sede del canal compuesto',N'',N'',N'',N'',N'',1,SYSDATETIMEOFFSET());
+                """,scopeConnection);
+            site.Parameters.AddWithValue("@Tenant",fixture.TenantId); await site.ExecuteNonQueryAsync();
+        }
         await SeedAsync(raw, finished, combo);
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -518,6 +529,7 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
         using var comboSaved = await catalog.PutAsJsonAsync($"/api/commerce/v1/products/{combo:D}/recipe",
             new PublishProductRecipeRequest(0, [new(presentation, 1m)], "Combo"));
         Assert.True(comboSaved.IsSuccessStatusCode, await comboSaved.Content.ReadAsStringAsync());
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var pricing = fixture.CreateAdminClient(PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
             PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
             "pricing.segments.read", "pricing.segments.manage");
@@ -527,7 +539,8 @@ public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixt
             new Auraly.Api.SavePriceSegmentRequest($"Combo y escalas {Guid.NewGuid():N}", "TieredProductPrice", null,
                 [new(combo, 0m, 1m, 50m, true, PriceInputModes.Margin),
                  new(combo, 7777m, 5m, null, false, PriceInputModes.SalePrice)]));
-        Assert.True(channelCreated.IsSuccessStatusCode, await channelCreated.Content.ReadAsStringAsync());
+        Assert.True(channelCreated.IsSuccessStatusCode,
+            $"HTTP {(int)channelCreated.StatusCode}: {await channelCreated.Content.ReadAsStringAsync()}");
         var channel = (await channelCreated.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
         async Task AssertChannelPrices(decimal synchronizedPrice)
         {
