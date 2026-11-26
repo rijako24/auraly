@@ -23,4 +23,8 @@ try {
         if ($major -lt 15) { throw 'Las pruebas requieren SQL Server 2019 o posterior para las intercalaciones UTF-8.' }
         Write-Output "SQL LocalDB disponible para pruebas aisladas; versión principal $major."
     } finally { $command.Dispose() }
+} catch {
+    $log = Join-Path $env:LOCALAPPDATA 'Microsoft/Microsoft SQL Server Local DB/Instances/MSSQLLocalDB/error.log'
+    if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 100 | Write-Output }
+    throw
 } finally { $connection.Dispose() }
