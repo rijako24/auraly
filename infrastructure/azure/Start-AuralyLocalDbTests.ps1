@@ -13,18 +13,12 @@ if ($startResult -ne 0) {
     throw "No arrancó SQL LocalDB del runner (código $startResult)."
 }
 & $tool info MSSQLLocalDB
-$connection = [Data.SqlClient.SqlConnection]::new('Server=(localdb)\MSSQLLocalDB;Database=master;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;Connect Timeout=30;Application Name=AuralyCiLocalDbPreflight;')
 try {
-    $connection.Open()
-    $command = $connection.CreateCommand()
-    try {
-        $command.CommandText = "SELECT CONVERT(int,SERVERPROPERTY('ProductMajorVersion'));"
-        $major = [int]$command.ExecuteScalar()
-        if ($major -lt 15) { throw 'Las pruebas requieren SQL Server 2019 o posterior para las intercalaciones UTF-8.' }
-        Write-Output "SQL LocalDB disponible para pruebas aisladas; versión principal $major."
-    } finally { $command.Dispose() }
+    $sqlcmd = (Get-Command sqlcmd.exe -ErrorAction Stop).Source
+    & $sqlcmd -S '(localdb)\MSSQLLocalDB' -E -C -d master -l 30 -b -Q "SET NOCOUNT ON; IF CONVERT(int,SERVERPROPERTY('ProductMajorVersion'))<15 THROW 51000,N'Las pruebas requieren SQL Server 2019 o posterior para UTF-8.',1; SELECT SERVERPROPERTY('ProductVersion') AS SqlTestVersion;"
+    if ($LASTEXITCODE -ne 0) { throw 'La conexión SQL de prueba no superó la verificación de versión.' }
 } catch {
     $log = Join-Path $env:LOCALAPPDATA 'Microsoft/Microsoft SQL Server Local DB/Instances/MSSQLLocalDB/error.log'
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 100 | Write-Output }
     throw
-} finally { $connection.Dispose() }
+}
