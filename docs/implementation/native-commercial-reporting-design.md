@@ -264,10 +264,13 @@ reprocesan ventas, contabilidad ni inventario para reconstruir la proyección.
 El ensayo encontró tres raíces históricas de habilitación con la marca booleana
 original `fiscalHabilitationOnly=true`. El handler ya las considera no comerciales,
 pero el backfill antiguo las había incluido en Reporting. La migración retira
-únicamente esos trabajos de Reporting después de verificar hash, identidad y
-ausencia de líneas, inventario, asientos y cartera. El backfill respeta la misma
-marca y no los reinserta. El rebuild canónico elimina sus proyecciones obsoletas;
-no borra ni reenvía documentos fiscales y no fabrica ventas ni costos para ellos.
+únicamente esos trabajos y sus hechos de Reporting después de verificar hash,
+identidad y ausencia de líneas, inventario, asientos y cartera. Si elimina una
+proyección, invalida el checkpoint de su sede hasta que el rebuild canónico
+reconstruya sus agregados. Dejar los hechos después de retirar su trabajo
+bloquearía la validación del manifiesto. Repetir la migración después del rebuild
+no vuelve a invalidar el checkpoint. El backfill respeta la misma marca y no los
+reinserta. No se borran ni reenvían documentos fiscales ni se fabrican ventas o costos.
 Una marca que contradiga efectos comerciales reales bloquea el corte.
 El publicador existente detiene API y Worker y verifica ambos estados antes de
 migrar el esquema; la exigencia de costo no nulo requiere ese corte coordinado.

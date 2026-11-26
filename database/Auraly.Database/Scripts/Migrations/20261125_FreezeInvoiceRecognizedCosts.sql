@@ -39,6 +39,34 @@ EXEC sys.sp_executesql N'
       ON source.DocumentId=report.SourceDocumentId AND source.DocumentType=report.SourceDocumentType
         AND source.BusinessId=report.BusinessId;
 
+    -- Retiring only the job leaves its old facts outside the rebuild manifest.
+    -- Remove only the already-verified noncommercial roots and invalidate their
+    -- aggregate checkpoint. The canonical rebuild restores totals, not sales.
+    SELECT source.* INTO #FiscalOnlyProjections FROM #FiscalOnlySources source
+    WHERE EXISTS(SELECT 1 FROM reporting.SalesReportDocuments fact WHERE fact.DocumentId=source.DocumentId
+        AND fact.DocumentType=source.DocumentType AND fact.BusinessId=source.BusinessId)
+      OR EXISTS(SELECT 1 FROM reporting.SalesReportLineFacts fact WHERE fact.SourceDocumentId=source.DocumentId
+        AND fact.SourceDocumentType=source.DocumentType AND fact.BusinessId=source.BusinessId)
+      OR EXISTS(SELECT 1 FROM reporting.SalesReportTaxFacts fact WHERE fact.SourceDocumentId=source.DocumentId
+        AND fact.SourceDocumentType=source.DocumentType AND fact.BusinessId=source.BusinessId)
+      OR EXISTS(SELECT 1 FROM reporting.SalesReportPaymentFacts fact WHERE fact.SourceDocumentId=source.DocumentId
+        AND fact.SourceDocumentType=source.DocumentType AND fact.BusinessId=source.BusinessId)
+      OR EXISTS(SELECT 1 FROM reporting.ServiceSalesReportLineFacts fact WHERE fact.SourceDocumentId=source.DocumentId
+        AND fact.SourceDocumentType=source.DocumentType AND fact.BusinessId=source.BusinessId);
+
+    UPDATE state SET RebuildInProgress=1 FROM reporting.SalesReportingCheckpoints state
+      WHERE EXISTS(SELECT 1 FROM #FiscalOnlyProjections source WHERE source.BusinessId=state.BusinessId);
+    DELETE fact FROM reporting.SalesReportPaymentFacts fact JOIN #FiscalOnlyProjections source
+      ON source.DocumentId=fact.SourceDocumentId AND source.DocumentType=fact.SourceDocumentType AND source.BusinessId=fact.BusinessId;
+    DELETE fact FROM reporting.SalesReportTaxFacts fact JOIN #FiscalOnlyProjections source
+      ON source.DocumentId=fact.SourceDocumentId AND source.DocumentType=fact.SourceDocumentType AND source.BusinessId=fact.BusinessId;
+    DELETE fact FROM reporting.SalesReportLineFacts fact JOIN #FiscalOnlyProjections source
+      ON source.DocumentId=fact.SourceDocumentId AND source.DocumentType=fact.SourceDocumentType AND source.BusinessId=fact.BusinessId;
+    DELETE fact FROM reporting.ServiceSalesReportLineFacts fact JOIN #FiscalOnlyProjections source
+      ON source.DocumentId=fact.SourceDocumentId AND source.DocumentType=fact.SourceDocumentType AND source.BusinessId=fact.BusinessId;
+    DELETE fact FROM reporting.SalesReportDocuments fact JOIN #FiscalOnlyProjections source
+      ON source.DocumentId=fact.DocumentId AND source.DocumentType=fact.DocumentType AND source.BusinessId=fact.BusinessId;
+
     IF OBJECT_ID(N''reporting.SalesReportLineFacts'',N''U'') IS NOT NULL
       AND EXISTS(SELECT 1 FROM reporting.SalesReportLineFacts fact
         JOIN reporting.SalesReportDocuments document ON document.DocumentId=fact.SourceDocumentId

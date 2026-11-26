@@ -75,6 +75,12 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
                   SELECT * INTO #FiscalFacts FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Original;
                   UPDATE #FiscalFacts SET FactId=NEWID(),SourceDocumentId=@Legacy,OriginalSaleDocumentId=@Legacy;
                   INSERT reporting.SalesReportLineFacts SELECT * FROM #FiscalFacts;
+                  SELECT * INTO #FiscalTaxes FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Original;
+                  UPDATE #FiscalTaxes SET SourceDocumentId=@Legacy,OriginalSaleDocumentId=@Legacy;
+                  INSERT reporting.SalesReportTaxFacts SELECT * FROM #FiscalTaxes;
+                  SELECT * INTO #FiscalPayments FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Original;
+                  UPDATE #FiscalPayments SET SourceDocumentId=@Legacy;
+                  INSERT reporting.SalesReportPaymentFacts SELECT * FROM #FiscalPayments;
                   INSERT reporting.SalesReportingJobs(SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,
                     SourcePayloadHash,SourceDocumentProcessingJobId,Status,AttemptCount,CreatedAt)
                   SELECT NEWID(),BusinessId,@Legacy,DocumentType,@Hash,@Job,N'Projected',1,AcceptedAt
@@ -102,9 +108,24 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
                 {
                     await fixture.ApplyMigrationAsync("20261125_FreezeInvoiceRecognizedCosts.sql",connection,transaction);
                     await fixture.ApplyMigrationAsync("BackfillEngineOwnedSourcesAndReportingJobs.sql",connection,transaction);
-                    await using var verify=new SqlCommand("SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Legacy;",connection,transaction);
+                    await using var verify=new SqlCommand("""
+                        SELECT (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Legacy)
+                          +(SELECT COUNT(*) FROM reporting.SalesReportDocuments WHERE DocumentId=@Legacy)
+                          +(SELECT COUNT(*) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Legacy)
+                          +(SELECT COUNT(*) FROM reporting.SalesReportTaxFacts WHERE SourceDocumentId=@Legacy)
+                          +(SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Legacy)
+                          +(SELECT COUNT(*) FROM reporting.ServiceSalesReportLineFacts WHERE SourceDocumentId=@Legacy);
+                        """,connection,transaction);
                     verify.Parameters.AddWithValue("@Legacy",legacy);
                     Assert.Equal(0,Convert.ToInt32(await verify.ExecuteScalarAsync()));
+                    verify.CommandText="SELECT RebuildInProgress FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@Business;";
+                    verify.Parameters.AddWithValue("@Business",fixture.BusinessId);
+                    Assert.Equal(replay==0,Assert.IsType<bool>(await verify.ExecuteScalarAsync()));
+                    if(replay==0)
+                    {
+                        verify.CommandText="UPDATE reporting.SalesReportingCheckpoints SET RebuildInProgress=0 WHERE BusinessId=@Business;";
+                        await verify.ExecuteNonQueryAsync();
+                    }
                 }
                 // A true flag with another tenant is not proof of fiscal-only
                 // ownership. Keep the source visible for canonical validation.
