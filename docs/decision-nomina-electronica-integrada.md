@@ -1762,3 +1762,10 @@ selecciona silenciosamente porcentajes aprobados anteriores. Guardar una nueva
 configuración conserva el ancla retirada de ese perfil como historia y publica
 su revisión nueva por la misma transacción. Esto no permite crear otro perfil
 con una configuración retirada ni reactiva la versión retirada.
+
+El modal de crear y editar contratos conserva el encabezado fijo y un cuerpo
+desplazable propio. Los catálogos emergentes permanecen fuera de ese cuerpo:
+abrir, seleccionar o cerrar un combo inferior no desplaza el contrato al inicio.
+La verificación de interfaz cubre escritorio y móvil, incluidos los catálogos
+con una opción previa y su reapertura desde caché; no añade lecturas ni cambia
+los propietarios de carga de los selectores.

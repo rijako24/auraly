@@ -189,6 +189,49 @@ async function choose(page: Page, label: string, option: string) {
   await page.getByRole("option", { name: option, exact: label !== "Empleado" && label !== "Trabajador" && label !== "Acuerdo de descuento (si aplica)" }).click();
 }
 
+for(const width of [1366,390])test(`contrato conserva el scroll al abrir y cerrar combos inferiores a ${width}`,async({page,baseURL},info)=>{
+  await page.setViewportSize({width,height:width===390?844:768});
+  // This isolated form test blocks service workers; preserve register's browser contract.
+  await page.addInitScript(()=>{navigator.serviceWorker.register=async()=>({update:async()=>{}} as ServiceWorkerRegistration);});
+  await setup(page,baseURL!);
+  await page.route("**/api/commerce/v1/accounting/cost-centers?**",route=>route.fulfill({json:{items:[],page:1,pageSize:10,totalCount:0,totalPages:0}}));
+  const errors:string[]=[];page.on("pageerror",error=>{errors.push(error.message);console.error(error.stack);});
+  await page.goto("/dashboard/payroll");
+  await page.getByRole("tab",{name:"Trabajadores",exact:true}).click();
+  await page.getByRole("button",{name:"Nuevo contrato",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Nueva relación laboral",exact:true});
+  const scroller=await dialog.locator("form").evaluateHandle(element=>{
+    for(let parent=element.parentElement;parent;parent=parent.parentElement)
+      if(["auto","scroll"].includes(getComputedStyle(parent).overflowY)&&parent.scrollHeight>parent.clientHeight)return parent;
+    throw new Error("El contrato necesita un contenedor de desplazamiento");
+  });
+  const observations=[];
+  for(const name of ["Medio de pago","Caja de compensación","Perfil de nómina","EPS","Centro de costo contractual"]){
+    const trigger=dialog.getByRole("combobox",{name,exact:true});
+    await trigger.scrollIntoViewIfNeeded();
+    const before=await scroller!.evaluate(element=>element.scrollTop);
+    await trigger.click();
+    const list=page.getByRole("listbox").last();await expect(list).toBeVisible();
+    await expect.poll(()=>list.evaluate(element=>element.closest("[data-state='open']")?.getAnimations().some(animation=>animation.playState==="running")??false)).toBe(false);
+    const after=await scroller!.evaluate(element=>element.scrollTop);
+    const bounds=await list.boundingBox();
+    observations.push({name,before,after,bounds});
+    console.info("Contract dropdown",JSON.stringify(observations.at(-1)));
+    await page.screenshot({path:info.outputPath(`contract-${name.replaceAll(" ","-")}-${width}.png`)});
+    expect(Math.abs(after-before),`${name} debe conservar la posición del contrato`).toBeLessThanOrEqual(3);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(width===390?844:768);
+    await page.keyboard.press("Escape");await expect(list).toBeHidden();
+    expect(Math.abs(await scroller!.evaluate(element=>element.scrollTop)-before)).toBeLessThanOrEqual(3);
+    await trigger.click();await expect(list).toBeVisible();
+    await page.getByRole("option").first().click();
+    await expect(list).toBeHidden();
+    await expect(trigger).toBeFocused();
+    expect(Math.abs(await scroller!.evaluate(element=>element.scrollTop)-before)).toBeLessThanOrEqual(3);
+  }
+  await info.attach("contract-dropdown-geometry",{body:JSON.stringify(observations),contentType:"application/json"});
+  expect(errors).toEqual([]);
+});
+
 async function createEmployment(page: Page) {
   await page.getByRole("button", { name: "Nuevo contrato" }).click();
   await choose(page, "Empleado", "Elena Prueba");

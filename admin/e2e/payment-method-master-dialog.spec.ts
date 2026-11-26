@@ -92,6 +92,15 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 100
     await expect(bankCombo).toContainText("Cuenta de recaudos");expect(bankReads).toBe(1);
     await dialog.getByRole("combobox",{name:"Seleccionar cuenta contable"}).click();
     await page.getByRole("option",{name:"130505 · Clientes nacionales",exact:true}).click();
+    const typeBounds=await dialog.getByRole("combobox",{name:"Tipo",exact:true}).boundingBox();
+    const accountBounds=await dialog.getByRole("combobox",{name:"Seleccionar cuenta contable"}).boundingBox();
+    const bankBounds=await bankCombo.boundingBox();
+    expect(bankBounds!.y).toBeGreaterThanOrEqual(accountBounds!.y+accountBounds!.height);
+    if(viewport.width>=640){
+      expect(Math.abs(typeBounds!.y-accountBounds!.y)).toBeLessThanOrEqual(2);
+      expect(Math.abs(typeBounds!.x-bankBounds!.x)).toBeLessThanOrEqual(2);
+      expect(bankBounds!.width).toBeGreaterThan(accountBounds!.width);
+    }
     await expect(save).toBeInViewport();
     await page.screenshot({path:info.outputPath(`transfer-form-${viewport.width}.png`)});
     await save.click();await expect(dialog).toBeHidden();
