@@ -418,10 +418,14 @@ public sealed partial class SqlPayablesStore(
               tender.PaymentMethodId,tender.PaymentMethodVersion,tender.PaymentMethodCode,tender.PaymentMethodName,tender.AccountId
             FROM dbo.SupplierPaymentTenders tender INNER JOIN @Page page ON page.PaymentId=tender.PaymentId
             ORDER BY tender.PaymentId,tender.LineNumber;
-            SELECT application.PaymentId,application.PayableId,payable.DocumentNumber,application.Amount
+            SELECT application.PaymentId,application.PayableId,payable.DocumentNumber,application.Amount,
+              COALESCE(fiscal.AuralyDocumentNumber,expense.DocumentNumber,receipt.DocumentNumber),fiscal.FiscalNumber
             FROM dbo.SupplierPaymentApplications application
             INNER JOIN @Page page ON page.PaymentId=application.PaymentId
-            INNER JOIN dbo.Payables payable ON payable.PayableId=application.PayableId
+            INNER JOIN dbo.Payables payable ON payable.PayableId=application.PayableId AND payable.BusinessId=@BusinessId
+            LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=payable.SourceDocumentId AND fiscal.BusinessId=@BusinessId
+            LEFT JOIN dbo.GoodsReceipts receipt ON payable.SourceDocumentType=N'GoodsReceipt' AND receipt.GoodsReceiptId=payable.SourceDocumentId AND receipt.BusinessId=@BusinessId
+            LEFT JOIN dbo.Expenses expense ON payable.SourceDocumentType=N'Expense' AND expense.ExpenseId=payable.SourceDocumentId AND expense.BusinessId=@BusinessId
             WHERE @PartySiteId IS NULL OR payable.PartySiteId=@PartySiteId
             ORDER BY application.PaymentId,application.LineNumber;
             SELECT applied.PaymentId,SUM(applied.Amount) NetAppliedAmount
@@ -463,7 +467,9 @@ public sealed partial class SqlPayablesStore(
             reader.IsDBNull(14)?null:reader.GetGuid(14)));
         await reader.NextResultAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) applications[reader.GetGuid(0)].Add(new(
-            reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
+            reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)) {
+                InternalDocumentNumber=reader.IsDBNull(4)?null:reader.GetString(4),
+                FiscalNumber=reader.IsDBNull(5)?null:reader.GetString(5) });
         var netApplied=new Dictionary<Guid,decimal>();
         await reader.NextResultAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) netApplied.Add(reader.GetGuid(0),reader.GetDecimal(1));

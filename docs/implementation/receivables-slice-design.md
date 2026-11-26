@@ -37,6 +37,12 @@ financiero es directo mediante `AccountingSourceDocuments` y
   importe se deriva del total menos aplicaciones; no existe otro saldo persistido.
 - `CustomerPaymentApplications`: distribución del recaudo entre obligaciones.
 
+El historial de recaudos devuelve el número interno y, cuando existe, el número
+electrónico de cada factura aplicada. Se resuelven por conjunto únicamente para
+las aplicaciones de la página elegida; desplegar una aplicación no consulta otra
+vez el historial. Las posiciones iniciales sin documento de venta conservan su
+referencia original sin inventar un número electrónico.
+
 Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relación canónica con `Businesses`. No se duplican datos de Party ni del documento fiscal.
 
 ## Sede de la factura y vistas de cartera

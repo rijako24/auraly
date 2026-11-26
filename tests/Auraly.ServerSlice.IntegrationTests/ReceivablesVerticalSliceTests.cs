@@ -879,6 +879,13 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
 
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.CustomerPayments WHERE PaymentId=@Id", payment.PaymentId));
+        var history = await client.GetFromJsonAsync<CustomerPaymentHistoryPage>(
+            $"/api/commerce/v1/receivable-payments?page=1&pageSize=5&customerId={customerId:D}&search={Uri.EscapeDataString(acceptance.DocumentNumber)}");
+        var historyApplication = Assert.Single(Assert.Single(history!.Items,
+            item => item.PaymentId == payment.PaymentId).Applications);
+        Assert.Equal(receivable.ReceivableId, historyApplication.ReceivableId);
+        Assert.Equal(checkout.Receipt.DocumentNumber, historyApplication.InternalDocumentNumber);
+        Assert.Equal(partialAmount, historyApplication.Amount);
         await fixture.AssertPaymentReplayRequiresItsSourceAsync(payment.PaymentId,
             () => SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey));
         using (var scope = fixture.CreateScope())

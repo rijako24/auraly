@@ -7,6 +7,11 @@ Fecha: 2 de agosto de 2026
 La rebanada extiende la obligación que ya crea una entrada de mercancía. No
 crea una segunda cartera ni copia la tesorería de Xion.
 
+El historial de pagos conserva la referencia de la factura del proveedor y
+expone también el número interno y el electrónico, cuando existen. Esos datos
+se leen por conjunto después de elegir la página de pagos, en la misma consulta
+de sus aplicaciones. Desplegar una factura aplicada no dispara otra lectura.
+
 El recorrido productivo es:
 
 ```text

@@ -206,7 +206,11 @@ public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentN
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     Guid? SourceGroupId = null,
     decimal? NetAppliedAmount = null);
-public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
+public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount)
+{
+    public string? InternalDocumentNumber { get; init; }
+    public string? FiscalNumber { get; init; }
+}
 public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,
     Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null, int DateRangeVersion = 1);

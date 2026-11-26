@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-for (const direction of ["receivables", "payables"] as const) {
-  test(`${direction} muestra una sola acción de anulación y oculta la acción con saldo revertido`, async ({ page, baseURL }) => {
+for (const direction of ["receivables", "payables"] as const) for (const width of [1440, 390]) {
+  test(`${direction} muestra números de factura y una sola anulación, ancho ${width}`, async ({ page, baseURL }) => {
+    await page.setViewportSize({ width, height: 900 });
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
     const paymentId = "33333333-3333-3333-3333-333333333333";
@@ -20,6 +21,7 @@ for (const direction of ["receivables", "payables"] as const) {
 
     const captures: string[] = [];
     let sessionCalls = 0;
+    let historyCalls = 0;
     let annulled = false;
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url());
@@ -32,14 +34,18 @@ for (const direction of ["receivables", "payables"] as const) {
       else if (path.endsWith("/reference-options/payment-method")) body = [{ id: "77777777-7777-7777-7777-777777777777", code: "Cash", label: "Efectivo", sortOrder: 1 }];
       else if (path.endsWith("/reference-options/accounting-manual-concept")) body = [{ id: "concept", code: "MANUAL_VOUCHER", label: "Comprobante manual" }];
       else if (path.endsWith("/reference-options/accounting-voucher-type")) body = [{ id: "accounting", code: "Accounting", label: "Comprobante contable" }];
-      else if (path.endsWith("/receivable-payments") || path.endsWith("/payable-payments")) body = {
+      else if (path.endsWith("/receivable-payments") || path.endsWith("/payable-payments")) {
+        historyCalls++;
+        body = {
         items: [{ paymentId, paidAt: "2026-10-28T12:00:00Z", documentNumber: "RCC-100",
           currencyCode: "COP", totalAmount: 10000, status: "Processed", netAppliedAmount: annulled ? 0 : 10000,
           appliedDocumentCount: 1, payments: [{ methodCode: "Cash" }],
-          applications: [{ receivableId: paymentId, payableId: paymentId, documentNumber: "FAC-1", amount: 10000 }],
+          applications: [{ receivableId: paymentId, payableId: paymentId, documentNumber: "FAC-1",
+            internalDocumentNumber: "VTA-100", fiscalNumber: "FE1234", amount: 10000 }],
           customerName: "Cliente A", supplierName: "Proveedor A" }],
         page: 1, pageSize: 20, totalCount: 1, totalPages: 1,
       };
+      }
       else if (path.endsWith("/payment-correction-capture")) {
         captures.push(url.searchParams.toString());
         const payable = direction === "payables";
@@ -67,6 +73,11 @@ for (const direction of ["receivables", "payables"] as const) {
     await page.goto(`/dashboard/${direction}`);
     await page.getByRole("tab", { name: direction === "receivables" ? "Recaudos" : "Pagos" }).click();
     const row = page.getByRole("row", { name: /RCC-100/ });
+    await row.locator("summary").click();
+    await expect(row.getByText("VTA-100", { exact: true })).toBeVisible();
+    await expect(row.getByText("DIAN FE1234", { exact: true })).toBeVisible();
+    await expect(row.getByText("Referencia: FAC-1", { exact: true })).toBeVisible();
+    expect(historyCalls).toBe(1);
     const action = direction === "receivables" ? "Anular recaudo" : "Anular pago";
     await expect(row.getByRole("button", { name: action })).toBeVisible();
     await expect(row.getByRole("button", { name: "Registrar devolución" })).toHaveCount(0);

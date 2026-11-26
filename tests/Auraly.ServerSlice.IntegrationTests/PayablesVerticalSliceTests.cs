@@ -304,6 +304,12 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
         var selectedPayment = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
             $"/api/commerce/v1/payable-payments?page=1&pageSize=5&supplierId={fixture.SupplierId:D}&search={Uri.EscapeDataString(paymentNumber)}");
         Assert.NotNull(selectedPayment);
+        var historyApplication = Assert.Single(Assert.Single(selectedPayment.Items,
+            item => item.PaymentId == payment.PaymentId).Applications);
+        Assert.Equal(payableNumber, historyApplication.DocumentNumber);
+        Assert.Equal(await ScalarAsync<string>(
+            "SELECT DocumentNumber FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", receipt.DocumentId),
+            historyApplication.InternalDocumentNumber);
         Assert.Equal(payment.PaidAt,Assert.Single(selectedPayment.Items,item=>item.PaymentId==payment.PaymentId).PaidAt);
         Assert.Contains(selectedPayment.Items, item => item.PaymentId == payment.PaymentId
             && item.AppliedDocumentCount == 1

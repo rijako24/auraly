@@ -127,7 +127,13 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
                         new(pageNumber, 25, prefix, roleId, From: from, PartySiteId: siteId, DateRangeVersion: 2), default);
                     Assert.Equal(filtered ? 100 : 10000, result.TotalCount);
                     Assert.Equal(25, result.Items.Count);
-                    Assert.All(result.Items, item => { Assert.Single(item.Payments); Assert.Single(item.Applications); Assert.Equal(1m, item.TotalAmount); });
+                    Assert.All(result.Items, item => {
+                        Assert.Single(item.Payments);
+                        var application = Assert.Single(item.Applications);
+                        Assert.Null(application.InternalDocumentNumber);
+                        Assert.Null(application.FiscalNumber);
+                        Assert.Equal(1m, item.TotalAmount);
+                    });
                     ids = result.Items.Select(item => item.PaymentId).ToArray();
                 }
                 else
@@ -137,7 +143,13 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
                     Assert.Equal(filtered ? 100 : 10000, result.TotalCount);
                     Assert.Equal(filtered ? 100m : 10000m, result.TotalAmount);
                     Assert.Equal(25, result.Items.Count);
-                    Assert.All(result.Items, item => { Assert.Single(item.Payments); Assert.Single(item.Applications); Assert.Equal(1m, item.TotalAmount); });
+                    Assert.All(result.Items, item => {
+                        Assert.Single(item.Payments);
+                        var application = Assert.Single(item.Applications);
+                        Assert.Null(application.InternalDocumentNumber);
+                        Assert.Null(application.FiscalNumber);
+                        Assert.Equal(1m, item.TotalAmount);
+                    });
                     ids = result.Items.Select(item => item.PaymentId).ToArray();
                 }
                 timer.Stop();
