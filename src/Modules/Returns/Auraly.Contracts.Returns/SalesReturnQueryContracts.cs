@@ -130,7 +130,7 @@ public sealed record SalesReturnListItem(
     decimal TotalAmount,
     string Status,
     string? FiscalStatus,
-    string ReasonCode);
+    string ReasonCode,string? OriginalFiscalNumber = null);
 
 public sealed record SalesReturnPage(
     IReadOnlyList<SalesReturnListItem> Items,
@@ -168,5 +168,6 @@ public sealed record SalesReturnDetail(
     OnlineSalesReceipt? Receipt = null,
     int PrintTemplateVersion = 1)
 {
+    public string? OriginalFiscalNumber { get; init; }
     public decimal RoundingAmount => TotalAmount - UntaxedAmount - TaxAmount;
 }

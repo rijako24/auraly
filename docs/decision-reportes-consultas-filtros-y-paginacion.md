@@ -1419,7 +1419,7 @@ El documento visible, impreso o exportado se divide en dos zonas:
 
 ### Encabezado
 
-- logo y nombre Auraly;
+- logo completo y nombre de la empresa seleccionada;
 - clasificación `Reporte corporativo`;
 - nombre inequívoco del reporte;
 - descripción del alcance y orden aplicado;
@@ -1439,6 +1439,15 @@ El documento visible, impreso o exportado se divide en dos zonas:
 - pie con nombre del reporte, sistema de origen y total de registros.
 
 El visor compartido es `ReportViewer`. Una pantalla entrega únicamente `title`, `description`, `fileName`, `rows` y `columns`; no recrea encabezados, exportadores ni estilos de impresión. Si el reporte debe contener todos los registros, su productor debe consultar todas las páginas del servidor o usar un endpoint de reporte dedicado. Nunca exporta silenciosamente solo la página visible.
+
+El visor presenta un único encabezado documental, dentro del área de impresión.
+`Volver`, búsqueda y acciones comparten la barra superior, sin repetir logo,
+empresa o título. El marco del logo es cuadrado y usa ajuste contenido para
+preservar proporciones sin recortar. PDF conserva el mismo ajuste en un área
+cuadrada. La marca reutiliza la preparación canónica de impresión del tenant;
+no se incorpora al confirmar operaciones ni se consulta por fila. Los nombres
+legales largos se ajustan en varias líneas. Estos reportes operativos no alteran
+las versiones congeladas de facturas o tirillas históricas.
 
 El reporte inicial de productos se denomina `Productos`, consulta todo el catálogo según el alcance activo y ordena alfabéticamente por descripción. Su detalle mínimo es:
 

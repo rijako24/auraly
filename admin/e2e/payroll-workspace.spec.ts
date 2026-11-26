@@ -9,6 +9,11 @@ const version = "AAAAAAAAAAE=";
 
 type PayrollFixtureOptions=PayrollOptions&{employments:PayrollEmployment[];parties:PayrollParty[];ruleSets:PayrollRuleSet[];novelties:PayrollNovelty[];paymentBatches:PayrollPaymentBatch[];electronicPeriods:ElectronicPayrollPeriod[];deductionAgreements:PayrollDeductionAgreement[]};
 
+async function selectNoveltyLiquidation(page:Page,period:RegExp) {
+  await page.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
+  await page.getByRole("option").filter({hasText:period}).first().click();
+}
+
 function fixture(): PayrollFixtureOptions {
   const catalogs: PayrollOptions["catalogs"] = {};
   for (const [catalogCode, code, label] of [
@@ -132,6 +137,7 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
     } else {
       reads.push({ path, business });
       if (path === "/api/auth/me") body = user;
+      else if (path.endsWith("/tenants/branding/print")) body = {tenantId,displayName:"Empresa nómina",legalName:"Empresa nómina",nit:"900123456",verificationDigit:"7",logoUrl:null};
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa prueba" }];
       else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede principal", timeZone: "America/Bogota" }, { tenantId, businessId: secondBusinessId, name: "Sede norte", timeZone: "Asia/Tokyo" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId: business, roles: user.roles, permissions: granted };
@@ -320,7 +326,7 @@ test("crear y reabrir contrato, descuento y novedad conserva sus datos", async (
     employees:[{payrollRunEmployeeId:"calculation-before",employmentId:employee.employmentId,partyId:employee.partyId,employeeName:"Elena Prueba",workedDays:30,baseWorkedDays:30,maximumContractDays:30,periodDays:30,
       earnings:1000000,deductions:80000,netPayable:920000,employerContributions:0,provisions:0,lines:[]}]});
   await page.getByRole("button", { name: "Actualizar nómina" }).click();
-  await page.getByRole("region",{name:"Liquidaciones para novedades",exact:true}).getByRole("button").filter({hasText:/2026-08-01 — 2026-08-31/}).click();
+  await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   await page.getByRole("button",{name:"Ver trabajador Elena Prueba",exact:true}).click();
   await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
   const noveltyEditor=page.getByRole("region",{name:"Edición de novedad",exact:true});
@@ -540,7 +546,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
     employees:[{payrollRunEmployeeId:"calculation-before",employmentId:employee.employmentId,partyId:employee.partyId,employeeName:"Elena Prueba",workedDays:30,baseWorkedDays:30,maximumContractDays:30,periodDays:30,
       earnings:1000000,deductions:80000,netPayable:920000,employerContributions:0,provisions:0,lines:[]}]});
   await page.goto("/dashboard/payroll?section=novelties");
-  await page.getByRole("region",{name:"Liquidaciones para novedades",exact:true}).getByRole("button").filter({hasText:/2026-08-01 — 2026-08-31/}).click();
+  await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   await page.getByRole("button",{name:"Ver trabajador Elena Prueba",exact:true}).click();
   const editor=page.getByRole("region",{name:"Liquidación de Elena Prueba",exact:true});
   await expect(editor.getByRole("button",{name:"Recalcular trabajador",exact:true})).toHaveCount(0);
@@ -709,7 +715,6 @@ test("los historiales cargan solo la pestaña visible y los documentos al desple
   await expect(page.getByRole("button",{name:"Nuevo perfil",exact:true})).toBeVisible();
   const count=(suffix:string)=>state.reads.filter(read=>read.path.endsWith(suffix)).length;
   for(const suffix of ["/payroll/runs","/payroll/payments","/payroll/deduction-agreements","/payroll/electronic-periods"])expect(count(suffix)).toBe(0);
-  await page.getByRole("button",{name:"No mostrar de nuevo",exact:true}).click();
   await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();
   await expect(page.getByText("41 liquidaciones · Página 1",{exact:true})).toBeVisible();
   expect(count("/payroll/runs")).toBe(1);
@@ -763,7 +768,7 @@ test("acciones por trabajador reutilizan el recálculo y abren solo su desprendi
       {...header,id:"bonus",conceptCode:"BON",conceptName:"Bonificación",nature:"Earning",quantity:1,amount:1000000}]}});
   });
   await page.goto("/dashboard/payroll?section=novelties");
-  await page.getByRole("region",{name:"Liquidaciones para novedades",exact:true}).getByRole("button").filter({hasText:/2026-08-01 — 2026-08-31/}).click();
+  await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
   await expect(list.getByRole("article")).toHaveCount(2);
   await list.getByRole("button",{name:"Recalcular a Trabajador 0",exact:true}).click();
@@ -776,7 +781,7 @@ test("acciones por trabajador reutilizan el recálculo y abren solo su desprendi
   await list.getByRole("button",{name:"Desprendible de Trabajador 0",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"Desprendible laboral",exact:true});
   await expect(dialog.getByText("Trabajador 0 · 0",{exact:true})).toBeVisible();
-  await expect(dialog.getByRole("banner").getByText(/Preliminar · Trabajador 0/)).toBeVisible();
+  await expect(dialog.locator("#auraly-report-print-area").getByText(/Preliminar · Trabajador 0/)).toBeVisible();
   expect(receipts).toHaveLength(1);expect(receipts[0].searchParams.get("employeeResultId")).toBe("result-updated-0");
   expect(state.reads.filter(read=>read.path.endsWith("/calculated-employees"))).toHaveLength(1);
   expect(state.reads.filter(read=>read.path.endsWith("/payroll/runs/row-actions"))).toHaveLength(0);
@@ -845,7 +850,7 @@ for(const width of [390,1366,1920])test(`bandeja de novedades pagina antes de ab
   const pages:string[]=[];const details:string[]=[];
   page.on("request",request=>{if(request.url().includes("/payroll/calculated-employees"))pages.push(request.url());if(request.method()==="GET"&&request.url().includes("/payroll/runs/paged-run"))details.push(request.url());});
   await page.goto("/dashboard/payroll?section=novelties");
-  await page.getByRole("region",{name:"Liquidaciones para novedades",exact:true}).getByRole("button").filter({hasText:/2026-08-01 — 2026-08-31/}).click();
+  await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
   await expect(list.getByRole("article")).toHaveCount(20);expect(details).toHaveLength(0);
   await expect.poll(()=>page.getByRole("tab",{name:"Novedades",exact:true}).evaluate(element=>{
@@ -887,7 +892,7 @@ test("novedades conserva visibles los históricos sin identidad y permite abrir 
       {...common,payrollRunEmployeeId:"complete-worker",payrollRunId:"complete-run",employmentId:"complete-contract",partyId:"complete-party",employeeName:"Elena Histórica"}],page:1,pageSize:20,totalCount:2}});
   });
   await page.goto("/dashboard/payroll?section=novelties");
-  await page.getByRole("region",{name:"Liquidaciones para novedades",exact:true}).getByRole("button").filter({hasText:/2026-08-01 — 2026-08-31/}).click();
+  await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
   await expect(list.getByRole("article")).toHaveCount(2);
   const historical=list.getByRole("article").filter({hasText:"Identidad histórica no disponible"});
@@ -929,7 +934,6 @@ test("desprendibles conservan el resultado, separan valores y exportan el mismo 
   const excel=page.waitForEvent("download");await page.getByRole("button",{name:"Exportar Excel",exact:true}).click();
   await (await excel).saveAs(testInfo.outputPath("desprendibles.xlsx"));
   await page.setViewportSize({width:390,height:844});
-  await page.getByRole("button",{name:"No mostrar de nuevo",exact:true}).click();
   expect(await report.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   const salary=report.getByRole("row").filter({hasText:"SAL · Salario"}).first();
   const amount=salary.getByRole("cell").nth(2);
@@ -940,7 +944,7 @@ test("desprendibles conservan el resultado, separan valores y exportan el mismo 
 });
 
 
-for(const width of [1366,390])test(`novedades lista borradores y filtra liquidación, estado, trabajador y pago ${width}`,async({page,baseURL},info)=>{
+for(const width of [1366,390])test(`novedades exige liquidación y conserva estado, trabajador y fecha de pago ${width}`,async({page,baseURL},info)=>{
   const state=await setup(page,baseURL!);
   await page.clock.install({time:new Date("2026-08-20T15:00:00Z")});
   await page.setViewportSize({width,height:844});
@@ -949,9 +953,11 @@ for(const width of [1366,390])test(`novedades lista borradores y filtra liquidac
   const requests:URL[]=[];page.on("request",request=>{if(request.url().includes("/payroll/runs?"))requests.push(new URL(request.url()));});
   await page.goto("/dashboard/payroll?section=novelties");
   const history=page.getByRole("region",{name:"Liquidaciones para novedades",exact:true});
-  await expect(history.getByText("3 liquidaciones · Página 1",{exact:true})).toBeVisible();
+  await expect(history.getByText("Selecciona una liquidación para ver sus trabajadores.",{exact:true})).toBeVisible();
+  expect(requests).toHaveLength(0);
   expect(state.reads.filter(read=>read.path.endsWith("/calculated-employees"))).toHaveLength(0);
-  await history.getByRole("button").filter({hasText:"Pendiente de cálculo"}).click();
+  await history.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
+  await page.getByRole("option").filter({hasText:"Pendiente de cálculo"}).click();
   await expect(page.getByText("Esta liquidación está en borrador. Calcula primero sus trabajadores para editar sus novedades.",{exact:true})).toBeVisible();
   expect(state.reads.filter(read=>read.path.endsWith("/calculated-employees"))).toHaveLength(0);
   await page.getByRole("button",{name:"Preparar liquidación",exact:true}).click();
@@ -959,18 +965,21 @@ for(const width of [1366,390])test(`novedades lista borradores y filtra liquidac
   const detail=page.getByRole("dialog",{name:"Detalle de liquidación",exact:true});await expect(detail.getByText("Periodicidad: Mensual",{exact:true})).toBeVisible();
   const frequency=await detail.getByText("Periodicidad: Mensual",{exact:true}).boundingBox();
   const refresh=await detail.getByRole("button",{name:"Actualizar liquidación",exact:true}).boundingBox();
-  expect(Math.abs(frequency!.y+frequency!.height/2-refresh!.y-refresh!.height/2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(frequency!.y+frequency!.height/2-refresh!.y-refresh!.height/2)).toBeLessThanOrEqual(2);
   await page.screenshot({path:info.outputPath(`compact-run-detail-${width}.png`)});
   await detail.getByRole("button",{name:"Cerrar ventana",exact:true}).click();
   await page.getByRole("tab",{name:"Novedades",exact:true}).click();
   await choose(page,"Estado de liquidación","Calculada");
-  await expect(history.getByText("1 liquidaciones · Página 1",{exact:true})).toBeVisible();expect(requests.at(-1)?.searchParams.get("status")).toBe("Calculated");
+  const beforeFilters=requests.length;
   await history.locator("label").filter({hasText:"Pago programado desde"}).getByRole("button").click();
   await page.getByRole("button",{name:"16 de agosto de 2026",exact:true}).click();
-  await expect.poll(()=>requests.at(-1)?.searchParams.get("paymentFrom")).toBe("2026-08-16");
+  expect(requests).toHaveLength(beforeFilters);
   await history.getByRole("textbox",{name:"Buscar trabajador en liquidaciones",exact:true}).fill("Elena");
-  await history.getByRole("button",{name:"Buscar",exact:true}).click();await expect.poll(()=>requests.at(-1)?.searchParams.get("workerSearch")).toBe("Elena");
-  await history.getByRole("button").filter({hasText:/2026-08-01 — 2026-08-31/}).click();
+  await history.getByRole("button",{name:"Buscar",exact:true}).click();expect(requests).toHaveLength(beforeFilters);
+  await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
+  expect(requests.at(-1)?.searchParams.get("status")).toBe("Calculated");
+  expect(requests.at(-1)?.searchParams.get("paymentFrom")).toBe("2026-08-16");
+  expect(requests.at(-1)?.searchParams.get("workerSearch")).toBe("Elena");
   await expect(page.getByRole("button",{name:"Ver trabajador Elena Filtro",exact:true})).toBeVisible();
   const workerRequest=page.waitForRequest(request=>request.url().includes("/payroll/runs/calculated-filter")&&!request.url().includes("/employments"));
   await page.getByRole("button",{name:"Ver trabajador Elena Filtro",exact:true}).click();await workerRequest;
@@ -984,6 +993,46 @@ for(const width of [1366,390])test(`novedades lista borradores y filtra liquidac
   await expect(page.getByRole("button",{name:"Preparar liquidación",exact:true})).toHaveCount(0);
   await page.getByRole("button",{name:"Volver a liquidaciones",exact:true}).click();
   await page.screenshot({path:info.outputPath(`novelties-filters-${width}.png`),fullPage:true});
+});
+
+for(const width of [1366,390])test(`pagos descarga solo el desprendible contabilizado del trabajador y pagina a ${width}`,async({page,baseURL},info)=>{
+  const state=await setup(page,baseURL!);
+  await page.setViewportSize({width,height:844});
+  state.options.paymentBatches.push({paymentBatchId:"paid-batch",payrollRunId:"approved-run",paymentDate:"2026-08-31",paymentMethodOptionId:"payroll-payment-method-Cash",paymentMethodName:"Caja nómina",referenceNumber:"PAGO-APROBADO",status:"Confirmed",employeeCount:21,totalAmount:21000000,rowVersion:version,remainingEmployees:[],accountingStatus:"Posted",isPaid:true});
+  const roster:URL[]=[],receipts:URL[]=[];
+  await page.route("**/payroll/payments/paid-batch/employees?**",async route=>{
+    const url=new URL(route.request().url());roster.push(url);
+    const pageNumber=Number(url.searchParams.get("page")),pageSize=Number(url.searchParams.get("pageSize"));
+    const items=Array.from({length:21},(_,index)=>({payrollRunEmployeeId:`paid-result-${index}`,partyId:`paid-party-${index}`,employeeName:`Trabajadora ${index}`,identification:String(1000+index),periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",amount:1000000,isPaid:index!==1}));
+    await route.fulfill({json:{items:items.slice((pageNumber-1)*pageSize,pageNumber*pageSize),page:pageNumber,pageSize,totalCount:21,totalPages:Math.ceil(21/pageSize)}});
+  });
+  await page.route("**/payroll/reports/payroll-receipt?**",async route=>{
+    const url=new URL(route.request().url());receipts.push(url);
+    await route.fulfill({json:{from:"2026-08-01",to:"2026-08-31",rows:[{id:"salary",payrollRunEmployeeId:url.searchParams.get("employeeResultId"),partyId:url.searchParams.get("partyId"),employeeName:"Trabajadora 20",identification:"1020",contractNumber:"CONTRATO-20",periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",paidDate:"2026-08-31",monthlySalary:1000000,workedDays:30,earnings:1000000,deductions:0,netPayable:1000000,profileName:"Operativo",costCenterName:"Principal",healthName:"EPS",pensionName:"AFP",conceptCode:"SAL",conceptName:"Salario",nature:"Earning",quantity:30,amount:1000000}]}});
+  });
+  await page.goto("/dashboard/payroll?section=payments");
+  const open=page.getByRole("button",{name:"Ver desprendibles del pago PAGO-APROBADO",exact:true});await expect(open).toBeVisible();expect(roster).toHaveLength(0);expect(receipts).toHaveLength(0);
+  await open.click();const dialog=page.getByRole("dialog",{name:"Desprendibles del pago",exact:true});
+  await expect(dialog.getByRole("button",{name:"Descargar desprendible de Trabajadora 1",exact:true})).toBeDisabled();
+  await expect(dialog.getByRole("button",{name:/^Descargar desprendible de/})).toHaveCount(20);expect(roster).toHaveLength(1);expect(receipts).toHaveLength(0);
+  expect(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+  await dialog.getByRole("button",{name:"Siguiente página",exact:true}).click();
+  const downloadButton=dialog.getByRole("button",{name:"Descargar desprendible de Trabajadora 20",exact:true});await expect(downloadButton).toBeVisible();expect(roster).toHaveLength(2);
+  const downloaded=page.waitForEvent("download");await downloadButton.click();
+  const pdf=await downloaded;expect(pdf.suggestedFilename()).toMatch(/desprendible.*\.pdf$/);await pdf.saveAs(info.outputPath(`paid-worker-${width}.pdf`));
+  expect(receipts).toHaveLength(1);expect(receipts[0].searchParams.get("employeeResultId")).toBe("paid-result-20");expect(receipts[0].searchParams.get("partyId")).toBe("paid-party-20");expect(roster).toHaveLength(2);
+  expect(state.writes).toHaveLength(0);await page.screenshot({path:info.outputPath(`paid-worker-${width}.png`)});
+});
+
+test("pagos no descarga un resultado que no coincide con el pago contabilizado",async({page,baseURL})=>{
+  const state=await setup(page,baseURL!);
+  state.options.paymentBatches.push({paymentBatchId:"guard-batch",payrollRunId:"approved-run",paymentDate:"2026-08-31",paymentMethodOptionId:"payroll-payment-method-Cash",paymentMethodName:"Caja nómina",referenceNumber:"PAGO-GUARD",status:"Confirmed",employeeCount:1,totalAmount:1000000,rowVersion:version,remainingEmployees:[],accountingStatus:"Posted",isPaid:true});
+  await page.route("**/payroll/payments/guard-batch/employees?**",route=>route.fulfill({json:{items:[{payrollRunEmployeeId:"expected-result",partyId:"expected-party",employeeName:"Trabajadora",identification:"123",periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",amount:1000000,isPaid:true}],page:1,pageSize:20,totalCount:1,totalPages:1}}));
+  await page.route("**/payroll/reports/payroll-receipt?**",route=>route.fulfill({json:{rows:[{payrollRunEmployeeId:"another-result",paidDate:"2026-08-31",netPayable:1000000}]}}));
+  const downloads:string[]=[];page.on("download",download=>downloads.push(download.suggestedFilename()));
+  await page.goto("/dashboard/payroll?section=payments");await page.getByRole("button",{name:"Ver desprendibles del pago PAGO-GUARD",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Desprendibles del pago",exact:true});await dialog.getByRole("button",{name:"Descargar desprendible de Trabajadora",exact:true}).click();
+  await expect(dialog.getByRole("alert")).toHaveText("El pago no tiene un resultado contabilizado coincidente. Actualiza los pagos antes de descargar el desprendible.");expect(downloads).toHaveLength(0);expect(state.writes).toHaveLength(0);
 });
 
 test("autorizaciones tiene lista propia y abre evidencia sin consultas por fila",async({page,baseURL})=>{

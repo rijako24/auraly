@@ -14,6 +14,22 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class InvoiceChargeConfigurationTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task History_filters_read_only_scoped_customers_and_users_without_granting_party_administration()
+    {
+        using var client = fixture.CreateAdminClient(InvoiceChargePermissions.Read);
+        foreach (var role in new[] { "Customer", "User" })
+        {
+            using var response = await client.GetAsync($"/api/commerce/v1/parties/role-options?role={role}&includeInactive=true&page=1&pageSize=10");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        foreach (var role in new[] { "Any", "Supplier", "Employee", "Carrier" })
+        {
+            using var response = await client.GetAsync($"/api/commerce/v1/parties/role-options?role={role}&page=1&pageSize=10");
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task Configuration_is_versioned_scoped_and_notifies_the_existing_configuration_stream()
     {
         using var client = fixture.CreateAdminClient(InvoiceChargePermissions.Read, InvoiceChargePermissions.Configure,

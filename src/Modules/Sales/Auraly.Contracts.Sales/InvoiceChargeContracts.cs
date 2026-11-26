@@ -60,6 +60,23 @@ public sealed record InvoiceChargeConfigurationOptions(IReadOnlyList<ExpenseConc
 public sealed record InvoiceChargeHistoryItem(Guid DocumentId, string DocumentNumber, DateTimeOffset IssuedAt,
     string CustomerName,
     Guid? WorkSessionId, AppliedInvoiceCharge Charge, string? ExpenseDocumentNumber,
-    string? ExpenseStatus, decimal? PayableBalance);
+    string? ExpenseStatus, decimal? PayableBalance)
+{
+    public string? FiscalNumber { get; init; }
+    public decimal InvoiceTotal { get; init; }
+    public string? ExpenseCreatedByName { get; init; }
+    public Guid? ExpenseId { get; init; }
+    public DateTimeOffset? ExpenseAcceptedAt { get; init; }
+    public DateTimeOffset? ExpenseIssuedAt { get; init; }
+    public string? ExpenseFiscalNumber { get; init; }
+    public decimal? ExpenseGrossAmount { get; init; }
+    public decimal? ExpenseWithholdingAmount { get; init; }
+    public decimal? ExpenseNetPayable { get; init; }
+    public DateTimeOffset? ExpenseDueDate { get; init; }
+}
 public sealed record InvoiceChargeHistoryPage(IReadOnlyList<InvoiceChargeHistoryItem> Items, int Page,
-    int PageSize, int TotalCount, decimal InvoicedTotal, decimal ExpenseTotal);
+    int PageSize, int TotalCount, decimal InvoicedTotal, decimal ExpenseTotal)
+{
+    public int TotalDocuments { get; init; }
+    public decimal GeneratedExpenseTotal { get; init; }
+}

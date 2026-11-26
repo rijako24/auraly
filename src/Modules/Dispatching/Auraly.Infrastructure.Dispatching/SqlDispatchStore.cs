@@ -102,14 +102,14 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         await using var command = new SqlCommand($"""
           SELECT COUNT(*) {source};
           WITH Selected AS (
-            SELECT s.DocumentId,s.DocumentType,s.DocumentNumber,s.IssuedAt,s.WarehouseId,w.Name WarehouseName,
+            SELECT s.DocumentId,s.DocumentType,s.DocumentNumber,s.FiscalNumber,s.IssuedAt,s.WarehouseId,w.Name WarehouseName,
               s.CustomerId,COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),CASE WHEN s.CustomerId IS NULL THEN N'Consumidor final' END,s.CustomerIdentification) CustomerName,
               p.PartyId,COALESCE(NULLIF(CONCAT(seller.FirstName,N' ',seller.LastName),N' '),N'Sin vendedor') SellerName,remaining.Total PayableAmount
             {source}
             ORDER BY s.IssuedAt DESC,s.DocumentNumber,s.DocumentId OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY
           )
           SELECT page.DocumentId,page.DocumentType,page.DocumentNumber,page.IssuedAt,page.WarehouseId,page.WarehouseName,
-            page.CustomerId,page.CustomerName,address.AddressLine,page.SellerName,lines.LineCount,lines.Quantity,page.PayableAmount
+            page.CustomerId,page.CustomerName,address.AddressLine,page.SellerName,lines.LineCount,lines.Quantity,page.PayableAmount,page.FiscalNumber
           FROM Selected page
           OUTER APPLY(SELECT TOP(1) site.AddressLine FROM dbo.PartySites site WHERE site.PartyId=page.PartyId AND site.IsActive=1 ORDER BY site.IsPrimary DESC,site.CreatedAt,site.PartySiteId) address
           CROSS APPLY(SELECT COUNT(*) LineCount,COALESCE(SUM(l.Quantity-COALESCE(returned.Quantity,0)),0) Quantity
@@ -143,7 +143,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         var items = new List<DispatchCandidateDocument>();
         while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
             reader.GetDateTimeOffset(3), reader.GetGuid(4), reader.GetString(5), NullableGuid(reader, 6), reader.GetString(7),
-            NullableString(reader, 8), reader.GetString(9), reader.GetInt32(10), reader.GetDecimal(11), reader.GetDecimal(12)));
+            NullableString(reader, 8), reader.GetString(9), reader.GetInt32(10), reader.GetDecimal(11), reader.GetDecimal(12)){FiscalNumber=NullableString(reader,13)});
         return new(items, query.Page, query.PageSize, total, total == 0 ? 0 : (int)Math.Ceiling(total / (decimal)query.PageSize));
     }
 
@@ -173,7 +173,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         await using(var command=new SqlCommand("""
             SELECT source.DispatchSourceDocumentId,source.SourceDocumentId,source.SourceDocumentType,source.DocumentNumberSnapshot,
               source.CustomerId,source.CustomerNameSnapshot,source.DeliveryAddressSnapshot,source.SellerNameSnapshot,source.DocumentTotalSnapshot,source.Status,
-              sale.WarehouseId,warehouse.Name
+              sale.WarehouseId,warehouse.Name,sale.FiscalNumber
             FROM dbo.DispatchSourceDocuments source
             JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId AND sale.BusinessId=@BusinessId
             JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=sale.WarehouseId AND warehouse.BusinessId=sale.BusinessId
@@ -181,7 +181,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
             """,connection))
         { command.Parameters.AddWithValue("@Id",dispatchId);command.Parameters.AddWithValue("@BusinessId",actor.BusinessId);command.Parameters.AddWithValue("@Skip",(query.DocumentPage-1)*query.DocumentPageSize);command.Parameters.AddWithValue("@Take",query.DocumentPageSize);
           await using var reader=await command.ExecuteReaderAsync(ct);
-          while(await reader.ReadAsync(ct)) documents.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetString(3),NullableGuid(reader,4),reader.GetString(5),NullableString(reader,6),reader.GetString(7),reader.GetDecimal(8),reader.GetString(9),reader.GetGuid(10),reader.GetString(11)));
+          while(await reader.ReadAsync(ct)) documents.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetString(3),NullableGuid(reader,4),reader.GetString(5),NullableString(reader,6),reader.GetString(7),reader.GetDecimal(8),reader.GetString(9),reader.GetGuid(10),reader.GetString(11)){FiscalNumber=NullableString(reader,12)});
         }
         var lines=new List<DispatchLineDetail>();
         await using(var command=new SqlCommand("SELECT DispatchLineId,DispatchSourceDocumentId,SourceLineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,AssignedQuantity,VerifiedQuantity,ShortageQuantity,Status,RowVersion FROM dbo.DispatchLines WHERE DispatchId=@Id ORDER BY DescriptionSnapshot,SourceLineNumber,DispatchLineId OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY",connection))
@@ -276,10 +276,11 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
     public async Task<DispatchReport> ReportAsync(DispatchActorIdentity actor, Guid id, bool prices, CancellationToken ct)
     {
       await using var connection=connections.Create();await connection.OpenAsync(ct);await using var command=new SqlCommand("""
-        SELECT d.DispatchNumber,d.ScheduledDate,d.Status,d.DriverName,d.VehiclePlate,sd.SourceDocumentType,sd.DocumentNumberSnapshot,sd.CustomerNameSnapshot,sd.DeliveryAddressSnapshot,sd.SellerNameSnapshot,l.ProductCodeSnapshot,l.DescriptionSnapshot,l.AssignedQuantity,l.VerifiedQuantity,l.ShortageQuantity,l.UnitPriceSnapshot,l.LineTotalSnapshot
+        SELECT d.DispatchNumber,d.ScheduledDate,d.Status,d.DriverName,d.VehiclePlate,sd.SourceDocumentType,sd.DocumentNumberSnapshot,sd.CustomerNameSnapshot,sd.DeliveryAddressSnapshot,sd.SellerNameSnapshot,l.ProductCodeSnapshot,l.DescriptionSnapshot,l.AssignedQuantity,l.VerifiedQuantity,l.ShortageQuantity,l.UnitPriceSnapshot,l.LineTotalSnapshot,sale.FiscalNumber
         FROM dbo.Dispatches d INNER JOIN dbo.DispatchSourceDocuments sd ON sd.DispatchId=d.DispatchId INNER JOIN dbo.DispatchLines l ON l.DispatchSourceDocumentId=sd.DispatchSourceDocumentId
+        JOIN dbo.SalesDocuments sale ON sale.DocumentId=sd.SourceDocumentId AND sale.BusinessId=d.BusinessId
         WHERE d.DispatchId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId AND (@ReadAll=1 OR @Settle=1 OR d.DriverUserId=@UserId) ORDER BY sd.CustomerNameSnapshot,sd.DocumentNumberSnapshot,l.DescriptionSnapshot
-      """,connection);Identity(command,actor,id);var rows=new List<DispatchReportRow>();await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))rows.Add(new(reader.GetString(0),DateOnly.FromDateTime(reader.GetDateTime(1)),reader.GetString(2),reader.GetString(3),NullableString(reader,4),reader.GetString(5),reader.GetString(6),reader.GetString(7),NullableString(reader,8),reader.GetString(9),reader.GetString(10),reader.GetString(11),reader.GetDecimal(12),reader.GetDecimal(13),reader.GetDecimal(14),prices?reader.GetDecimal(15):null,prices?reader.GetDecimal(16):null));if(rows.Count==0)throw new DispatchNotFoundException("El despacho no existe o no contiene documentos.");return new($"Manifiesto {rows[0].DispatchNumber}",DateTimeOffset.UtcNow,prices,rows);
+      """,connection);Identity(command,actor,id);var rows=new List<DispatchReportRow>();await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))rows.Add(new(reader.GetString(0),DateOnly.FromDateTime(reader.GetDateTime(1)),reader.GetString(2),reader.GetString(3),NullableString(reader,4),reader.GetString(5),reader.GetString(6),reader.GetString(7),NullableString(reader,8),reader.GetString(9),reader.GetString(10),reader.GetString(11),reader.GetDecimal(12),reader.GetDecimal(13),reader.GetDecimal(14),prices?reader.GetDecimal(15):null,prices?reader.GetDecimal(16):null){FiscalNumber=NullableString(reader,17)});if(rows.Count==0)throw new DispatchNotFoundException("El despacho no existe o no contiene documentos.");return new($"Manifiesto {rows[0].DispatchNumber}",DateTimeOffset.UtcNow,prices,rows);
     }
 
     private static async Task AttachAsync(SqlConnection connection,SqlTransaction tx,DispatchActorIdentity actor,Guid id,IReadOnlyCollection<Guid> ids,DateTimeOffset now,CancellationToken ct)

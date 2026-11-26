@@ -25,7 +25,7 @@ export function buildDispatchReportRows(rows: DispatchReportRow[], group: Dispat
     const result: ReportRow[] = [];
     for (const [documentNumber, documentRows] of groupBy(rows, row => row.documentNumber)) {
       const first = documentRows[0];
-      result.push({ id: `invoice-${documentNumber}`, __group: `Factura ${documentNumber} · ${first.customerName} · Vendedor ${first.sellerName}` });
+      result.push({ id: `invoice-${documentNumber}`, __group: `Factura ${documentNumber}${first.fiscalNumber?` · DIAN ${first.fiscalNumber}`:""} · ${first.customerName} · Vendedor ${first.sellerName}` });
       result.push(...documentRows.map((row, index) => ({ id: `${documentNumber}-${index}`, productCode: row.productCode, productName: row.productName, assignedQuantity: row.assignedQuantity, verifiedQuantity: row.verifiedQuantity, shortageQuantity: row.shortageQuantity, lineTotal: row.lineTotal })));
     }
     return result;

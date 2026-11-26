@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useState, type ReactNode } from "react";
 import { Pencil, Loader2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
@@ -40,7 +42,7 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
     finally { setBusy(null); }
   };
   return <section className="space-y-3" aria-label="Recaudos por forma de pago">
-    {data.documents.some(document=>document.payments.some(payment=>payment.applicationType==="KeepCurrent"))&&<div className="rounded-xl border bg-muted/30 p-4"><h4 className="font-semibold">Forma de pago conservada</h4><p className="mt-1 text-sm text-muted-foreground">Estos documentos conservan el pago registrado. No generan recaudo ni dinero en la sesión del transportador.</p><ul className="mt-2 space-y-1 text-sm">{data.documents.filter(document=>document.payments.some(payment=>payment.applicationType==="KeepCurrent")).map(document=><li key={document.dispatchSourceDocumentId}>{document.documentNumber} · {document.customerName}</li>)}</ul></div>}
+    {data.documents.some(document=>document.payments.some(payment=>payment.applicationType==="KeepCurrent"))&&<div className="rounded-xl border bg-muted/30 p-4"><h4 className="font-semibold">Forma de pago conservada</h4><p className="mt-1 text-sm text-muted-foreground">Estos documentos conservan el pago registrado. No generan recaudo ni dinero en la sesión del transportador.</p><ul className="mt-2 space-y-1 text-sm">{data.documents.filter(document=>document.payments.some(payment=>payment.applicationType==="KeepCurrent")).map(document=><li key={document.dispatchSourceDocumentId}><DocumentNumbers internalNumber={document.documentNumber} fiscalNumber={document.fiscalNumber}/> · {document.customerName}</li>)}</ul></div>}
     {(["Cash", "Card", "Transfer"] as const).map(group => {
       const rows = payments.filter(row => groupOf(row.payment.paymentMethod) === group);
       const total = rows.reduce((sum, row) => sum + row.payment.amount, 0);
@@ -61,7 +63,7 @@ export function DispatchPaymentGroups({ data, editable, cashContent, onChanged }
           {!rows.length && <p className="text-sm text-muted-foreground">No hay recaudos en este grupo.</p>}
           {rows.map(({ document, payment }) => <article key={payment.paymentId} className="space-y-3 rounded-xl border p-3">
             <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1 text-sm"><strong className="block">{document.documentNumber} · {document.customerName}</strong>
+              <div className="min-w-0 flex-1 text-sm"><DocumentNumbers internalNumber={document.documentNumber} fiscalNumber={document.fiscalNumber}/><strong className="block">{document.customerName}</strong>
                 <span className="block text-muted-foreground">{payment.formName ?? methodName(payment.paymentMethod)}</span>
                 {payment.reference && <small className="block">Referencia: {payment.reference}</small>}
                 {payment.cardFranchiseCode && <small className="block">{payment.cardFranchiseCode} · Aprobación {payment.approvalNumber}</small>}

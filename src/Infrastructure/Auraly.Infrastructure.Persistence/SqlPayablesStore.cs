@@ -275,8 +275,12 @@ public sealed partial class SqlPayablesStore(
               CASE WHEN page.SourceDocumentType=N'GoodsReceipt' AND discount.EligibleAmount>0
                 AND decided.PayableId IS NULL THEN discount.Anticipated END FinancialDiscountAnticipated,
               CASE WHEN pending.PurchaseReturnId IS NULL THEN CONVERT(bit,0) ELSE CONVERT(bit,1) END FinancialDiscountPendingReturn,
-              COALESCE(page.InvoiceIssuedAt,issue.IssuedAt),page.SourceDocumentType
+              COALESCE(page.InvoiceIssuedAt,issue.IssuedAt),page.SourceDocumentType,
+              COALESCE(fiscal.AuralyDocumentNumber,expense.DocumentNumber,receipt.DocumentNumber),fiscal.FiscalNumber
             FROM #Page page
+            LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=page.SourceDocumentId AND fiscal.BusinessId=@BusinessId
+            LEFT JOIN dbo.GoodsReceipts receipt ON page.SourceDocumentType=N'GoodsReceipt'
+              AND receipt.GoodsReceiptId=page.SourceDocumentId AND receipt.BusinessId=@BusinessId
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=page.PartySiteId AND site.PartyId=page.SupplierPartyId
             LEFT JOIN dbo.Expenses expense ON page.SourceDocumentType=N'Expense'
               AND expense.ExpenseId=page.SourceDocumentId AND expense.BusinessId=@BusinessId
@@ -317,7 +321,9 @@ public sealed partial class SqlPayablesStore(
                 var age=PortfolioAging.Calculate(item.OutstandingAmount,item.DueDate,referenceDate,zone);
                 DateTimeOffset? issuedAt=reader.IsDBNull(18)?null:reader.GetDateTimeOffset(18);
                 items.Add(item with {OverdueDays=age.OverdueDays,AgingBandCode=age.BandCode,
-                    IssuedAt=issuedAt,SourceDocumentType=reader.GetString(19),DueOn=age.DueOn,
+                    IssuedAt=issuedAt,SourceDocumentType=reader.GetString(19),
+                    InternalDocumentNumber=reader.IsDBNull(20)?null:reader.GetString(20),
+                    FiscalNumber=reader.IsDBNull(21)?null:reader.GetString(21),DueOn=age.DueOn,
                     IssuedOn=issuedAt is {} issued ? BusinessCalendar.DateAt(issued,zone) : null});
             }
         }
@@ -479,11 +485,15 @@ public sealed partial class SqlPayablesStore(
                    p.OutstandingAmount,p.DueDate,p.Status,concept.Name,expense.Description,
                    invoice.DocumentNumber,
                    CASE WHEN p.SourceDocumentType=N'GoodsReceipt' THEN p.SourceDocumentId
-                        ELSE p.ParentGoodsReceiptId END,p.PartySiteId,site.Name
+                        ELSE p.ParentGoodsReceiptId END,p.PartySiteId,site.Name,
+                   COALESCE(fiscal.AuralyDocumentNumber,expense.DocumentNumber,receipt.DocumentNumber),fiscal.FiscalNumber,invoice.FiscalNumber
             FROM dbo.Payables p
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=p.PartySiteId AND site.PartyId=s.PartyId
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
+            LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=p.SourceDocumentId AND fiscal.BusinessId=p.BusinessId
+            LEFT JOIN dbo.GoodsReceipts receipt ON p.SourceDocumentType=N'GoodsReceipt'
+              AND receipt.GoodsReceiptId=p.SourceDocumentId AND receipt.BusinessId=p.BusinessId
             LEFT JOIN dbo.Expenses expense ON p.SourceDocumentType=N'Expense'
               AND expense.ExpenseId=p.SourceDocumentId AND expense.BusinessId=p.BusinessId
             LEFT JOIN dbo.ExpenseConcepts concept ON concept.ExpenseConceptId=expense.ExpenseConceptId
@@ -509,6 +519,7 @@ public sealed partial class SqlPayablesStore(
         Guid? goodsReceiptId;
         Guid? partySiteId;
         string? partySiteName;
+        string? internalDocumentNumber,fiscalNumber,sourceInvoiceFiscalNumber;
         await using (var command = new SqlCommand(headerSql, connection))
         {
             command.Parameters.AddWithValue("@PayableId", payableId);
@@ -533,6 +544,9 @@ public sealed partial class SqlPayablesStore(
             goodsReceiptId = reader.IsDBNull(15) ? null : reader.GetGuid(15);
             partySiteId = reader.IsDBNull(16) ? null : reader.GetGuid(16);
             partySiteName = reader.IsDBNull(17) ? null : reader.GetString(17);
+            internalDocumentNumber=reader.IsDBNull(18)?null:reader.GetString(18);
+            fiscalNumber=reader.IsDBNull(19)?null:reader.GetString(19);
+            sourceInvoiceFiscalNumber=reader.IsDBNull(20)?null:reader.GetString(20);
         }
         var transactions = new List<PayableTransactionView>();
         await using (var command = new SqlCommand("""
@@ -559,7 +573,7 @@ public sealed partial class SqlPayablesStore(
             sourceDocumentId, sourceDocumentType, documentNumber, currency,
             original, outstanding, dueDate, status, transactions,
             conceptName, description, sourceInvoiceNumber, goodsReceiptId,
-            partySiteId, partySiteName);
+            partySiteId, partySiteName){InternalDocumentNumber=internalDocumentNumber,FiscalNumber=fiscalNumber,SourceInvoiceFiscalNumber=sourceInvoiceFiscalNumber};
     }
 
     public async Task<SupplierPaymentAcceptance> AcceptPaymentAsync(

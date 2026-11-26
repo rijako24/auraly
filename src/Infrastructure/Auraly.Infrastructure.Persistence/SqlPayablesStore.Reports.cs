@@ -188,8 +188,16 @@ public sealed partial class SqlPayablesStore
             SELECT SupplierId,SupplierName,Identification,PartySiteId,PartySiteName,
               CurrencyCode,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,
               OverdueAmount,PayableId,DocumentNumber,IssuedAt,DueDate,
-              NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount
-            FROM #Page ORDER BY {order};
+              NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount,
+              documentIdentity.InternalDocumentNumber,documentIdentity.FiscalNumber
+            FROM #Page page
+            OUTER APPLY(SELECT COALESCE(fiscal.AuralyDocumentNumber,expense.DocumentNumber,receipt.DocumentNumber) InternalDocumentNumber,fiscal.FiscalNumber
+              FROM dbo.Payables original
+              LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=original.SourceDocumentId AND fiscal.BusinessId=@BusinessId
+              LEFT JOIN dbo.Expenses expense ON original.SourceDocumentType=N'Expense' AND expense.ExpenseId=original.SourceDocumentId AND expense.BusinessId=@BusinessId
+              LEFT JOIN dbo.GoodsReceipts receipt ON original.SourceDocumentType=N'GoodsReceipt' AND receipt.GoodsReceiptId=original.SourceDocumentId AND receipt.BusinessId=@BusinessId
+              WHERE original.PayableId=page.PayableId AND original.BusinessId=@BusinessId) documentIdentity
+            ORDER BY {order};
             IF @IncludeApplications=1
             BEGIN
             -- Enrich receipt identities only after selecting this page's facts;
@@ -265,7 +273,9 @@ public sealed partial class SqlPayablesStore
             {
                 NotDueAmount = reader.GetDecimal(15), Overdue1To30Amount = reader.GetDecimal(16),
                 Overdue31To60Amount = reader.GetDecimal(17), Overdue61To90Amount = reader.GetDecimal(18),
-                OverdueOver90Amount = reader.GetDecimal(19)
+                OverdueOver90Amount = reader.GetDecimal(19),
+                InternalDocumentNumber=reader.IsDBNull(20)?null:reader.GetString(20),
+                FiscalNumber=reader.IsDBNull(21)?null:reader.GetString(21)
             });
         await reader.NextResultAsync(token);
         var applications = new Dictionary<Guid, List<PayablesReportApplication>>();

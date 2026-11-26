@@ -178,8 +178,11 @@ public sealed partial class SqlReceivablesStore(
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
               page.Status,page.CreatedAt,page.IsOverdue,page.PartySiteId,page.PartySiteName,
               COALESCE(paid.PaidAmount,0),page.PartyId,
-              COALESCE(page.InvoiceIssuedAt,issue.IssuedAt),page.SourceDocumentType
+              COALESCE(page.InvoiceIssuedAt,issue.IssuedAt),page.SourceDocumentType,COALESCE(sale.FiscalNumber,fiscal.FiscalNumber)
             FROM #Page page
+            LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=page.SourceDocumentId AND sale.BusinessId=@BusinessId
+            LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=page.SourceDocumentId
+              AND fiscal.SourceDocumentType=page.SourceDocumentType AND fiscal.BusinessId=@BusinessId
             LEFT JOIN dbo.AccountingSourceDocuments financialSource ON financialSource.SourceDocumentId=page.SourceDocumentId
               AND financialSource.SourceDocumentType=page.SourceDocumentType AND financialSource.BusinessId=@BusinessId
               AND financialSource.TenantId=@TenantId
@@ -203,7 +206,7 @@ public sealed partial class SqlReceivablesStore(
                 var age=PortfolioAging.Calculate(item.OutstandingAmount,item.DueDate,referenceDate,zone);
                 DateTimeOffset? issuedAt=reader.IsDBNull(15)?null:reader.GetDateTimeOffset(15);
                 items.Add(item with {OverdueDays=age.OverdueDays,AgingBandCode=age.BandCode,
-                    IssuedAt=issuedAt,SourceDocumentType=reader.GetString(16),DueOn=age.DueOn,
+                    IssuedAt=issuedAt,SourceDocumentType=reader.GetString(16),FiscalNumber=reader.IsDBNull(17)?null:reader.GetString(17),DueOn=age.DueOn,
                     IssuedOn=issuedAt is {} issued ? BusinessCalendar.DateAt(issued,zone) : null});
             }
         }
@@ -383,8 +386,11 @@ public sealed partial class SqlReceivablesStore(
             SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification),COALESCE(p.Identification,N''),
                    r.SourceDocumentId,r.SourceDocumentType,r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,
                    r.OutstandingAmount,r.DueDate,r.Status,r.PartySiteId,site.Name,r.PartyId,
-                   reconciliation.Note
+                   reconciliation.Note,COALESCE(sale.FiscalNumber,fiscal.FiscalNumber)
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
+            LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=r.SourceDocumentId AND sale.BusinessId=r.BusinessId
+            LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=r.SourceDocumentId
+              AND fiscal.SourceDocumentType=r.SourceDocumentType AND fiscal.BusinessId=r.BusinessId
             LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId INNER JOIN dbo.Parties p ON p.PartyId=COALESCE(c.PartyId,r.PartyId)
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId
             LEFT JOIN dbo.WorkSessionClosureReconciliations reconciliation
@@ -393,7 +399,7 @@ public sealed partial class SqlReceivablesStore(
             WHERE r.ReceivableId=@Id AND r.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """,connection);
         header.Parameters.AddWithValue("@Id",id); header.Parameters.AddWithValue("@BusinessId",user.BusinessId); header.Parameters.AddWithValue("@TenantId",user.TenantId);
-        Guid? customerId, partyId, partySiteId; Guid sourceId; string name, identification, sourceType, number, currency, status; string? partySiteName, sourceNote; decimal original,balance; DateTimeOffset due;
+        Guid? customerId, partyId, partySiteId; Guid sourceId; string name, identification, sourceType, number, currency, status; string? partySiteName, sourceNote, fiscalNumber; decimal original,balance; DateTimeOffset due;
         await using(var reader=await header.ExecuteReaderAsync(token))
         {
             if(!await reader.ReadAsync(token)) return null;
@@ -403,6 +409,7 @@ public sealed partial class SqlReceivablesStore(
             partySiteId=reader.IsDBNull(11)?null:reader.GetGuid(11); partySiteName=reader.IsDBNull(12)?null:reader.GetString(12);
             partyId=reader.IsDBNull(13)?null:reader.GetGuid(13);
             sourceNote=reader.IsDBNull(14)?null:reader.GetString(14);
+            fiscalNumber=reader.IsDBNull(15)?null:reader.GetString(15);
         }
         var movements=new List<ReceivableTransactionView>();
         await using var detail=new SqlCommand("""
@@ -419,7 +426,7 @@ public sealed partial class SqlReceivablesStore(
         detail.Parameters.AddWithValue("@TenantId",user.TenantId);
         await using(var reader=await detail.ExecuteReaderAsync(token))
             while(await reader.ReadAsync(token)) movements.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetDecimal(2),reader.GetGuid(3),reader.GetDateTimeOffset(4),reader.GetDecimal(5)));
-        return new(id,customerId,name,identification,sourceId,sourceType,number,currency,original,balance,due,status,movements,partySiteId,partySiteName,partyId,sourceNote);
+        return new(id,customerId,name,identification,sourceId,sourceType,number,currency,original,balance,due,status,movements,partySiteId,partySiteName,partyId,sourceNote){FiscalNumber=fiscalNumber};
     }
 
     public async Task<CustomerCreditProfile?> GetCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId, CancellationToken token)

@@ -4,6 +4,7 @@ import type { PaymentSettlementConfiguration } from "./accounting";
 export type PayableStatus = "Open" | "PartiallyPaid" | "Paid" | "Cancelled";
 
 export interface PayableListItem {
+  internalDocumentNumber?:string|null;fiscalNumber?:string|null;
   dueOn?: string | null; issuedOn?: string | null;
   sourceDocumentType?: string | null;
   payableId: string;
@@ -52,6 +53,7 @@ export interface PayableTransaction {
 }
 
 export interface PayableDetail {
+  internalDocumentNumber?:string|null;fiscalNumber?:string|null;sourceInvoiceFiscalNumber?:string|null;
   payableId: string;
   supplierId: string;
   supplierName: string;
@@ -103,6 +105,7 @@ export interface SupplierPaymentHistoryPage {
 }
 export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number;currencyTotals:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>}
 export interface PayablesReportItem {
+  internalDocumentNumber?:string|null;fiscalNumber?:string|null;
   supplierId: string; supplierName: string; identification: string;
   partySiteId: string | null; partySiteName: string | null; currencyCode: string;
   invoiceCount: number; originalAmount: number; paidAmount: number;

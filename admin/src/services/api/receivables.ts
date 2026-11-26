@@ -5,6 +5,7 @@ export type ReceivableStatus = "Open" | "PartiallyPaid" | "Paid" | "Cancelled";
 export type CustomerPaymentMethod = "Cash" | "Transfer" | "DebitCard" | "CreditCard";
 
 export interface ReceivableListItem {
+  fiscalNumber?:string|null;
   dueOn?: string | null; issuedOn?: string | null;
   sourceDocumentType?: string | null;
   receivableId: string;
@@ -43,6 +44,7 @@ export interface ReceivablePage {
 }
 
 export interface ReceivableDetail {
+  fiscalNumber?:string|null;
   receivableId: string;
   documentNumber: string;
   customerId: string | null;
@@ -98,6 +100,7 @@ export interface CustomerPaymentHistoryPage {
 export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalOriginal:number;totalPaid:number}
 export interface AvailableCreditAmounts { availableAdvances?: number; availableCredits?: number; netAmount?: number }
 export interface ReceivablesReportItem extends AvailableCreditAmounts {
+  fiscalNumber?:string|null;
   internalDocumentNumber?: string | null;
   isCreditBalance?: boolean;
   termDays?: number | null; ageDays?: number | null; daysPastDue?: number | null;

@@ -407,8 +407,6 @@ public sealed class OrderBatchService(
         if (!PaymentMethodEvidence.IsValidSet([new(request.PaymentMethodId, request.PaymentMethodVersion,
                 request.PaymentFormCode, request.PaymentFormName, request.AccountId)]))
             throw new OrderValidationException("La identidad de la forma de pago no es válida.");
-        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(request.OrderIds.First(),OrderCollectionPaymentPolicy.ForNewSale(request.OrderIds.First()));
-        if(paymentPurposeError is not null)throw new OrderValidationException(paymentPurposeError);
         if (request.PaymentMethodCode == "Transfer" &&
             string.IsNullOrWhiteSpace(request.PaymentReference))
             throw new OrderValidationException(

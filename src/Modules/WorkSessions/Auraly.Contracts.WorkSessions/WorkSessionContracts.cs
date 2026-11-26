@@ -319,7 +319,10 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? CorrectedPaymentMethodName = null,
     decimal? CollectibleAmount = null,
     Guid? AppliedCorrectionId = null,
-    string? CorrectionAccountingStatus = null);
+    string? CorrectionAccountingStatus = null)
+{
+    public string? FiscalNumber { get; init; }
+}
 
 public sealed record WorkSessionPaymentVerificationGroup(
     string PaymentMethodCode,

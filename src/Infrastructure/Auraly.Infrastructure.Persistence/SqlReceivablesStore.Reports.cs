@@ -353,10 +353,13 @@ public sealed partial class SqlReceivablesStore
               GroupInvoiceCount,GroupOriginal,GroupPaid,GroupOutstanding,GroupNotDue,
               Group1To30,Group31To60,Group61To90,GroupOver90,
               AvailableAdvances,AvailableCredits,IsCreditBalance,GroupAdvances,GroupCredits,
-              documentIdentity.InternalDocumentNumber
+              documentIdentity.InternalDocumentNumber,documentIdentity.FiscalNumber
             FROM PageDetails page
-            OUTER APPLY (SELECT CASE WHEN original.DocumentNumber<>page.DocumentNumber THEN original.DocumentNumber END InternalDocumentNumber
-              FROM dbo.Receivables original WHERE original.ReceivableId=page.ReceivableId AND original.BusinessId=@BusinessId) documentIdentity
+            OUTER APPLY (SELECT original.DocumentNumber InternalDocumentNumber,COALESCE(sale.FiscalNumber,fiscal.FiscalNumber) FiscalNumber
+              FROM dbo.Receivables original
+              LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=original.SourceDocumentId AND sale.BusinessId=@BusinessId
+              LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=original.SourceDocumentId AND fiscal.BusinessId=@BusinessId
+              WHERE original.ReceivableId=page.ReceivableId AND original.BusinessId=@BusinessId) documentIdentity
             JOIN #ReportGroups totals ON totals.GroupPartyId=page.PartyId
               AND totals.GroupCurrencyCode=page.CurrencyCode
               AND (totals.GroupSiteId=page.PartySiteId OR (totals.GroupSiteId IS NULL AND page.PartySiteId IS NULL))
@@ -482,6 +485,7 @@ public sealed partial class SqlReceivablesStore
             {
                 TermDays = age?.TermDays, AgeDays = age?.AgeDays, DaysPastDue = age?.DaysPastDue,
                 InternalDocumentNumber = reader.IsDBNull(41) ? null : reader.GetString(41),
+                FiscalNumber = reader.IsDBNull(42) ? null : reader.GetString(42),
                 LegalName = reader.IsDBNull(21) ? null : reader.GetString(21),
                 Address = reader.IsDBNull(22) ? null : reader.GetString(22),
                 City = reader.IsDBNull(23) ? null : reader.GetString(23),

@@ -228,6 +228,7 @@ export interface SaveGoodsReceiptDraftRequest {
 }
 
 export interface GoodsReceiptListItem {
+  fiscalNumber?:string|null;
   documentId: string;
   documentNumber: string | null;
   status: GoodsReceiptStatus;

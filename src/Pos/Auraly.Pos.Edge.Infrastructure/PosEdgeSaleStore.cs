@@ -1179,7 +1179,7 @@ public sealed class PosEdgeSaleStore
             SourceOrderId: command.SourceOrderId,
             Credit: command.Credit,
             CustomerPartySiteId: command.CustomerPartySiteId,
-            Charges: command.Charges is { Count: > 0 } ? command.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(command.SourceOrderId),SellerId:command.SellerId, CostCenterId:command.CostCenterId);
+            Charges: command.Charges is { Count: > 0 } ? command.Charges : null,SellerId:command.SellerId, CostCenterId:command.CostCenterId);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

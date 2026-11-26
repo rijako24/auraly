@@ -343,6 +343,38 @@ public sealed class PayrollPaymentGroupsTests(ServerSliceFixture fixture)
         var page=(await client.GetFromJsonAsync<PayrollHistoryPage<PayrollPaymentBatchView>>("/api/commerce/v1/payroll/payments?page=1&pageSize=50"))!;
         var batch=Assert.Single(page.Items,value=>value.PaymentBatchId==batchId);
         Assert.Equal(paid,batch.IsPaid);Assert.Equal(status,batch.AccountingStatus);
+        var employees=(await client.GetFromJsonAsync<PayrollHistoryPage<PayrollPaymentEmployeeView>>(
+            $"/api/commerce/v1/payroll/payments/{batchId}/employees?page=1&pageSize=1"))!;
+        Assert.Equal(batch.EmployeeCount,employees.TotalCount);
+        var first=Assert.Single(employees.Items);Assert.Equal(paid,first.IsPaid);
+        Assert.Equal(start,first.PeriodStart);Assert.Equal(end,first.PeriodEnd);Assert.Equal(batch.PaymentDate,first.PaymentDate);
+        Assert.True(first.Amount>0);Assert.NotNull(first.EmployeeName);
+        if(employees.TotalCount>1)
+        {
+            var next=(await client.GetFromJsonAsync<PayrollHistoryPage<PayrollPaymentEmployeeView>>(
+                $"/api/commerce/v1/payroll/payments/{batchId}/employees?page=2&pageSize=1"))!;
+            Assert.Equal(employees.TotalCount,next.TotalCount);
+            Assert.NotEqual(first.PayrollRunEmployeeId,Assert.Single(next.Items).PayrollRunEmployeeId);
+        }
+        using(var forbidden=fixture.CreateAdminClient())
+        using(var response=await forbidden.GetAsync($"/api/commerce/v1/payroll/payments/{batchId}/employees?page=1&pageSize=20"))
+            Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+        using(var scope=fixture.CreateScope())
+        {
+            var store=scope.ServiceProvider.GetRequiredService<IPayrollStore>();
+            var user=new PayrollUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,new HashSet<string>{PayrollPermissionCodes.Read});
+            using(var commands=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter:command=>command.CommandText.Contains("batch.PaymentBatchId=@BatchId",StringComparison.Ordinal)))
+            {
+                var timer=Stopwatch.StartNew();
+                var observed=await store.PagePaymentEmployeesAsync(user,batchId,1,20,CancellationToken.None);
+                Assert.Equal(employees.TotalCount,observed.TotalCount);
+                Assert.Equal(1,commands.Count);
+                Assert.True(timer.ElapsedMilliseconds<1000,$"La página de trabajadores tardó {timer.ElapsedMilliseconds} ms.");
+            }
+            Assert.Empty((await store.PagePaymentEmployeesAsync(user with{TenantId=Guid.NewGuid()},batchId,1,20,CancellationToken.None)).Items);
+            Assert.Empty((await store.PagePaymentEmployeesAsync(user with{BusinessId=Guid.NewGuid()},batchId,1,20,CancellationToken.None)).Items);
+        }
         var query=$"from={start:yyyy-MM-dd}&to={end:yyyy-MM-dd}&partyId={partyId:D}";
         var summary=(await client.GetFromJsonAsync<PayrollReportResult>($"/api/commerce/v1/payroll/reports/payroll-summary?{query}"))!;
         Assert.Equal(paid?"Pagado":"Pendiente",Assert.IsType<JsonElement>(Assert.Single(summary.Rows)["paymentStatus"]).GetString());

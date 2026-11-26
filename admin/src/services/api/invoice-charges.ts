@@ -22,12 +22,17 @@ export type InvoiceChargeOptions = { concepts: ExpenseConcept[]; taxProfiles: Ta
 
 export type InvoiceChargeHistoryPage = { items: Array<{ documentId: string; documentNumber: string;
   issuedAt: string; customerName: string; workSessionId: string | null; charge: AppliedInvoiceCharge; expenseDocumentNumber: string | null;
-  expenseStatus: string | null; payableBalance: number | null }>;
-  page: number; pageSize: number; totalCount: number; invoicedTotal: number; expenseTotal: number };
+  expenseStatus: string | null; payableBalance: number | null; fiscalNumber?: string|null;invoiceTotal:number;expenseCreatedByName?:string|null;
+  expenseId?:string|null;expenseAcceptedAt?:string|null;expenseIssuedAt?:string|null;expenseFiscalNumber?:string|null;expenseGrossAmount?:number|null;expenseWithholdingAmount?:number|null;expenseNetPayable?:number|null;expenseDueDate?:string|null }>;
+  page: number; pageSize: number; totalCount: number; totalDocuments: number; invoicedTotal: number; expenseTotal: number; generatedExpenseTotal:number };
+
+export type InvoiceChargeHistoryFilters = { from:string;to:string;search?:string;createdByUserId?:string;customerId?:string };
 
 export const invoiceChargesApi = {
-  history: (params: { from: string; to: string; page: number; pageSize: number; search?: string }) =>
-    apiClient.get<InvoiceChargeHistoryPage>("/commerce/v1/invoice-charges/history", params),
+  history: (params: InvoiceChargeHistoryFilters & {page:number;pageSize:number}, signal?:AbortSignal) =>
+    apiClient.get<InvoiceChargeHistoryPage>("/commerce/v1/invoice-charges/history", params, {signal}),
+  exportHistory: (params:InvoiceChargeHistoryFilters, signal?:AbortSignal) =>
+    apiClient.get<InvoiceChargeHistoryPage>("/commerce/v1/invoice-charges/history/export",params,{signal}),
   list: (params: { page: number; pageSize: number; search?: string; includeInactive?: boolean }) =>
     apiClient.get<InvoiceChargePage>("/commerce/v1/invoice-charges", params),
   options: () => apiClient.get<InvoiceChargeOptions>("/commerce/v1/invoice-charges/options"),

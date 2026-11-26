@@ -65,6 +65,7 @@ async function proxy(
 
   const body = await readBackendProxyBody(request, method);
   const reportRead = path.startsWith("commerce/v1/sales-reports/");
+  const installerDownload = path === "commerce/v1/pos/installer/download";
 
   try {
     const res = await fetch(url, {
@@ -72,6 +73,7 @@ async function proxy(
       headers,
       body,
       signal: reportRead ? request.signal : undefined,
+      redirect: installerDownload ? "manual" : "follow",
     });
 
     const responseHeaders = new Headers();
@@ -86,6 +88,10 @@ async function proxy(
     ]) {
       const value = res.headers.get(name);
       if (value) responseHeaders.set(name, value);
+    }
+    if (installerDownload) {
+      const location = res.headers.get("location");
+      if (location) responseHeaders.set("location", location);
     }
 
     return new NextResponse(res.body, {

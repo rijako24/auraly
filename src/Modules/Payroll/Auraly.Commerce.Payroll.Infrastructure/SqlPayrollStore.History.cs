@@ -81,6 +81,44 @@ public sealed partial class SqlPayrollStore
             {PaymentMethodId=reader.IsDBNull(10)?null:reader.GetGuid(10),AccountId=reader.IsDBNull(11)?null:reader.GetGuid(11),AccountingStatus=NullableString(reader,12),IsPaid=reader.GetBoolean(13)},ct);
     }
 
+    public async Task<PayrollHistoryPage<PayrollPaymentEmployeeView>> PagePaymentEmployeesAsync(PayrollUserIdentity user,Guid paymentBatchId,int page,int pageSize,CancellationToken ct)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(ct);
+        await using var command=new SqlCommand("""
+            SELECT COUNT(*) FROM payroll.PaymentLines line
+            JOIN payroll.PaymentBatches batch ON batch.PaymentBatchId=line.PaymentBatchId
+            JOIN payroll.RunEmployees employee ON employee.PayrollRunEmployeeId=line.PayrollRunEmployeeId
+            JOIN payroll.Runs run ON run.PayrollRunId=employee.PayrollRunId AND run.TenantId=batch.TenantId AND run.BusinessId=batch.BusinessId
+            WHERE batch.PaymentBatchId=@BatchId AND batch.TenantId=@TenantId AND batch.BusinessId=@BusinessId;
+            WITH page AS (
+              SELECT line.PaymentLineId FROM payroll.PaymentLines line
+              JOIN payroll.PaymentBatches batch ON batch.PaymentBatchId=line.PaymentBatchId
+              JOIN payroll.RunEmployees employee ON employee.PayrollRunEmployeeId=line.PayrollRunEmployeeId
+              JOIN payroll.Runs run ON run.PayrollRunId=employee.PayrollRunId AND run.TenantId=batch.TenantId AND run.BusinessId=batch.BusinessId
+              WHERE batch.PaymentBatchId=@BatchId AND batch.TenantId=@TenantId AND batch.BusinessId=@BusinessId
+              ORDER BY JSON_VALUE(employee.EmployeeSnapshotJson,'$.EmployeeName'),line.PaymentLineId
+              OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY)
+            SELECT employee.PayrollRunEmployeeId,employee.PartyId,
+              JSON_VALUE(employee.EmployeeSnapshotJson,'$.EmployeeName'),JSON_VALUE(employee.EmployeeSnapshotJson,'$.Identification'),
+              run.PeriodStart,run.PeriodEnd,batch.PaymentDate,line.Amount,posting.IsPaid
+            FROM page selected JOIN payroll.PaymentLines line ON line.PaymentLineId=selected.PaymentLineId
+            JOIN payroll.PaymentBatches batch ON batch.PaymentBatchId=line.PaymentBatchId
+            JOIN payroll.PaymentBatchPostingStatus posting ON posting.PaymentBatchId=batch.PaymentBatchId
+              AND posting.TenantId=batch.TenantId AND posting.BusinessId=batch.BusinessId
+            JOIN payroll.RunEmployees employee ON employee.PayrollRunEmployeeId=line.PayrollRunEmployeeId
+            JOIN payroll.Runs run ON run.PayrollRunId=employee.PayrollRunId
+              AND run.TenantId=batch.TenantId AND run.BusinessId=batch.BusinessId
+            WHERE batch.TenantId=@TenantId AND batch.BusinessId=@BusinessId
+            ORDER BY JSON_VALUE(employee.EmployeeSnapshotJson,'$.EmployeeName'),line.PaymentLineId;
+            """,connection);
+        AddHistoryPageParameters(command,user,page,pageSize);
+        command.Parameters.AddWithValue("@BatchId",paymentBatchId);
+        return await ReadHistoryPageAsync(command,page,pageSize,reader=>new PayrollPaymentEmployeeView(
+            reader.GetGuid(0),reader.GetGuid(1),NullableString(reader,2),NullableString(reader,3),
+            DateOnly.FromDateTime(reader.GetDateTime(4)),DateOnly.FromDateTime(reader.GetDateTime(5)),
+            DateOnly.FromDateTime(reader.GetDateTime(6)),reader.GetDecimal(7),reader.GetBoolean(8)),ct);
+    }
+
     public async Task<PayrollHistoryPage<ElectronicPayrollPeriodView>> PageElectronicPeriodsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct)
     {
         await using var connection=connections.Create();await connection.OpenAsync(ct);

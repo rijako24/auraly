@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -518,7 +520,7 @@ function VerificationRow({ item, status, disabled, informational = false, correc
         <strong className="break-words">{title}</strong>
         {isThirdPartyPayment
           ? <span className="break-words text-sm text-slate-700">{item.counterpartyName?.trim() || "Tercero no disponible"}</span>
-          : !isCashMovement && <span>{item.documentNumber}</span>}
+          : !isCashMovement && <DocumentNumbers internalNumber={item.documentNumber} fiscalNumber={item.fiscalNumber}/>}
         {item.cardFranchiseCode && <Badge variant="secondary">{item.cardFranchiseCode}</Badge>}
       </div>
       {isCashMovement && item.notes?.trim() && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{item.notes}</p>}

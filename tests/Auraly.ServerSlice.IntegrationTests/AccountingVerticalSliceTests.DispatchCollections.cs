@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.Dispatching;
 using Auraly.Application.Returns;
@@ -87,7 +87,7 @@ public sealed partial class AccountingVerticalSliceTests
         await fixture.SeedConfirmedOrdersForInvoiceAsync(issuer, issuerSession, order, secondOrder);
         using var cashier = fixture.CreateUserClient(issuer, "sales.create", "orders.read", "orders.recover", "orders.invoice");
         using var invoiceRequest = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/orders/invoice") {
-            Content = JsonContent.Create(new InvoiceOrdersRequest(issuerSession, fixture.WarehouseId, issuer, creditPortion>0||previouslyCollected?[secondOrder]:[order, secondOrder], originalMethod, null,
+            Content = JsonContent.Create(new InvoiceOrdersRequest(issuerSession, fixture.WarehouseId, issuer, [secondOrder], originalMethod, null,
                 DocumentType: documentType, PaymentMethodId: original.PaymentMethodId, PaymentMethodVersion: original.Version,
                 PaymentFormCode: original.Code, PaymentFormName: original.Name, AccountId: original.AccountId)) };
         invoiceRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
@@ -97,41 +97,38 @@ public sealed partial class AccountingVerticalSliceTests
         var otherEmission = Assert.Single(results, item => item.OrderId == secondOrder);
         Assert.True(otherEmission.Status == "Invoiced", System.Text.Json.JsonSerializer.Serialize(otherEmission));
         await AssertBalancedAsync(otherEmission.DocumentId!.Value);
-        Guid sale;
-        if(creditPortion>0||previouslyCollected)
+        // Exercise the immutable custody contract of documents already issued by
+        // older online/Edge emitters. Current order issuance uses Session and is
+        // covered by Order_invoiced_as_home_delivery_credit and OrderBatchInvoiceTests.
+        var originalCard=originalMethod is "DebitCard" or "CreditCard";
+        var originalFranchise=originalCard?(await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/card-franchise"))!.First().Code:null;
+        var(customer,site)=await CreateCustomerAsync();
+        var upload=WithUblSnapshot(fixture.CreateUniqueValidRequest() with{
+            SourceOrderId=previouslyCollected&&!keepCurrent?null:order,CollectionMode=previouslyCollected&&!keepCurrent?SaleCollectionMode.Session:SaleCollectionMode.Dispatch,CustomerId=customer,CustomerPartySiteId=site,
+            Credit=creditPortion==0?null:new PosSaleCreditContract(customer,creditPortion,new DateTimeOffset(2026,8,31,0,0,0,TimeSpan.FromHours(-5)),PartySiteId:site),
+            Payments=creditPortion==11900?[]:[new PosSalePaymentContract(1,originalMethod,11900-creditPortion,originalMethod=="Transfer"?"ORIGINAL-TRANSFER":null,PaymentMethodId:original.PaymentMethodId,
+                PaymentMethodVersion:original.Version,PaymentMethodCode:original.Code,PaymentMethodName:original.Name,AccountId:original.AccountId,BankAccountId:original.BankAccountId,
+                CardFranchiseCode:originalCard?originalFranchise:null,ApprovalNumber:originalCard?"ORIGINAL-APPROVAL":null)]});
+        var uploadConsecutive=upload.DocumentNumber.Consecutive;
+        if(creditPortion>0) upload=upload with{UblSnapshot=upload.UblSnapshot! with{PaymentFormCode="2",DueDate=new(2026,8,31)}};
+        if(documentType==PosSaleDocumentTypes.Receipt)
         {
-            var(customer,site)=await CreateCustomerAsync();
-            var upload=WithUblSnapshot(fixture.CreateUniqueValidRequest() with{
-                SourceOrderId=previouslyCollected&&!keepCurrent?null:order,CollectionMode=previouslyCollected&&!keepCurrent?SaleCollectionMode.Session:SaleCollectionMode.Dispatch,CustomerId=customer,CustomerPartySiteId=site,
-                Credit=creditPortion==0?null:new PosSaleCreditContract(customer,creditPortion,new DateTimeOffset(2026,8,31,0,0,0,TimeSpan.FromHours(-5)),PartySiteId:site),
-                Payments=creditPortion==11900?[]:[new PosSalePaymentContract(1,"Cash",11900-creditPortion,null,PaymentMethodId:original.PaymentMethodId,
-                    PaymentMethodVersion:original.Version,PaymentMethodCode:original.Code,PaymentMethodName:original.Name,AccountId:original.AccountId)]});
-            var uploadConsecutive=upload.DocumentNumber.Consecutive;
-            if(creditPortion>0) upload=upload with{UblSnapshot=upload.UblSnapshot! with{PaymentFormCode="2",DueDate=new(2026,8,31)}};
-            if(documentType==PosSaleDocumentTypes.Receipt)
-            {
-                var series=Guid.NewGuid();var code=$"RR{uploadConsecutive}";
-                await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
-                await using var seed=new SqlCommand("""
-                    INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-                    VALUES(@Id,@Business,@Device,N'SalesReceipt',N'CVI',@Code,8,1,99999999,1,1,SYSDATETIMEOFFSET());
-                    """,connection);
-                seed.Parameters.AddWithValue("@Id",series);seed.Parameters.AddWithValue("@Business",fixture.BusinessId);
-                seed.Parameters.AddWithValue("@Device",fixture.DeviceId);seed.Parameters.AddWithValue("@Code",code);await seed.ExecuteNonQueryAsync();
-                upload=upload with{DocumentNumber=new(series,PosSaleDocumentTypes.Receipt,"CVI",code,uploadConsecutive,8,$"CVI{code}-{uploadConsecutive:D8}"),
-                    CommercialSnapshot=upload.CommercialSnapshot with{DocumentType=PosSaleDocumentTypes.Receipt},FiscalSnapshot=null,UblSnapshot=null};
-            }
-            using var pos=fixture.CreateClient();using var message=fixture.CreateUploadMessage(upload);
-            using var response=await pos.SendAsync(message);
-            Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
-            sale=upload.DocumentId;
+            var series=Guid.NewGuid();var code=$"RR{uploadConsecutive}";
+            await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+            await using var seed=new SqlCommand("""
+                INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                VALUES(@Id,@Business,@Device,N'SalesReceipt',N'CVI',@Code,8,1,99999999,1,1,SYSDATETIMEOFFSET());
+                """,connection);
+            seed.Parameters.AddWithValue("@Id",series);seed.Parameters.AddWithValue("@Business",fixture.BusinessId);
+            seed.Parameters.AddWithValue("@Device",fixture.DeviceId);seed.Parameters.AddWithValue("@Code",code);await seed.ExecuteNonQueryAsync();
+            upload=upload with{DocumentNumber=new(series,PosSaleDocumentTypes.Receipt,"CVI",code,uploadConsecutive,8,$"CVI{code}-{uploadConsecutive:D8}"),
+                CommercialSnapshot=upload.CommercialSnapshot with{DocumentType=PosSaleDocumentTypes.Receipt},FiscalSnapshot=null,UblSnapshot=null};
         }
-        else
-        {
-            var emitted=Assert.Single(results,item=>item.OrderId==order);
-            Assert.Equal("Invoiced",emitted.Status);sale=emitted.DocumentId!.Value;
-        }
-        var gross=creditPortion>0||previouslyCollected?11900m:10000m;
+        using var pos=fixture.CreateClient();using var message=fixture.CreateUploadMessage(upload);
+        using var response=await pos.SendAsync(message);
+        Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        var sale=upload.DocumentId;
+        var gross=11900m;
         await AssertBalancedAsync(sale);
         if (verifyReporting && projectBeforeSettlement)
         {
@@ -450,9 +447,12 @@ public sealed partial class AccountingVerticalSliceTests
                 await logistics.ReleaseAsync(actor,otherDraft.DispatchId,
                     new(otherPrepared.RowVersion,Guid.NewGuid().ToString("N")),default);
                 var otherDocument=Assert.Single((await deliveries.GetAsync(actor,otherDraft.DispatchId,default)).Documents);
+                // This unrelated sale was issued by the current online path: its
+                // original session already received the payment. Delivery adds none.
+                Assert.Equal("Session",otherDocument.CollectionMode);
                 await deliveries.RecordAsync(actor,otherDraft.DispatchId,new(otherDocument.DispatchSourceDocumentId,
-                    "Delivered",null,null,null,null,DateTimeOffset.UtcNow,Guid.NewGuid().ToString("N"),
-                    [new("InvoicePayment","Cash",otherDocument.DocumentTotal,null,null,original.PaymentMethodId,original.Version)],[]),default);
+                    "Delivered",null,null,null,null,DateTimeOffset.UtcNow,Guid.NewGuid().ToString("N"),[],[]),default);
+                Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND ApplicationType=N'InvoicePayment'",otherDraft.DispatchId));
                 var unrelatedDispatchSession=await ScalarAsync<Guid>("SELECT WorkSessionId FROM dbo.WorkSessions WHERE DispatchId=@Id AND Kind=N'Dispatch' AND Status=N'Open'",otherDraft.DispatchId);
                 Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.WorkSessions session CROSS APPLY worksessions.OpenSessionForUser(session.TenantId,session.BusinessId,session.UserId,session.WorkSessionId) accepted WHERE session.WorkSessionId=@Id",unrelatedDispatchSession));
                 await Assert.ThrowsAsync<SalesReturnValidationException>(()=>returnsService.ConfirmAsync(returnUser,

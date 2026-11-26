@@ -12,7 +12,8 @@ namespace Auraly.Application.Sales;
 public interface IInvoiceChargeStore
 {
     Task<InvoiceChargeHistoryPage> HistoryAsync(InvoiceChargeActor actor, DateOnly from, DateOnly to,
-        int page, int pageSize, string? search, CancellationToken ct);
+        int page, int pageSize, string? search, CancellationToken ct,
+        Guid? createdByUserId = null, Guid? customerId = null, bool forExport = false);
     Task<InvoiceChargePage> ListAsync(InvoiceChargeActor actor, int page, int pageSize,
         string? search, bool includeInactive, CancellationToken ct, long? throughCursor = null);
     Task<InvoiceChargeDefinition> SaveAsync(InvoiceChargeActor actor,
@@ -57,15 +58,37 @@ public sealed class InvoiceChargeService(IInvoiceChargeStore store,
         return versions.Select(value => byVersion[value]).ToArray();
     }
 
+    public const int MaximumReportRows = 5_000;
+
     public Task<InvoiceChargeHistoryPage> HistoryAsync(InvoiceChargeActor actor, DateOnly from, DateOnly to,
-        int page, int pageSize, string? search, CancellationToken ct = default)
+        int page, int pageSize, string? search, CancellationToken ct = default,
+        Guid? createdByUserId = null, Guid? customerId = null)
+    {
+        ValidateHistory(actor, from, to, page, pageSize, search, createdByUserId, customerId);
+        return store.HistoryAsync(actor, from, to, page, pageSize,
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(), ct, createdByUserId, customerId);
+    }
+
+    public async Task<InvoiceChargeHistoryPage> ExportHistoryAsync(InvoiceChargeActor actor,
+        DateOnly from, DateOnly to, string? search, Guid? createdByUserId, Guid? customerId,
+        CancellationToken ct = default)
+    {
+        ValidateHistory(actor, from, to, 1, 100, search, createdByUserId, customerId);
+        var result = await store.HistoryAsync(actor, from, to, 1, 100,
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(), ct, createdByUserId, customerId, forExport: true);
+        if (result.TotalCount > MaximumReportRows)
+            throw new InvoiceChargeValidationException("El reporte supera 5.000 cargos. Reduce el rango de fechas o aplica filtros antes de generar el informe.");
+        return result;
+    }
+
+    private static void ValidateHistory(InvoiceChargeActor actor, DateOnly from, DateOnly to,
+        int page, int pageSize, string? search, Guid? createdByUserId, Guid? customerId)
     {
         Demand(actor, InvoiceChargePermissions.Read);
         if (from == default || to == DateOnly.MaxValue || to < from || to.DayNumber - from.DayNumber > 30 ||
-            page is < 1 or > 1000000 || pageSize is < 1 or > 100 || search?.Length > 120)
-            throw new InvoiceChargeValidationException("Consulta hasta 31 días, con una paginación válida.");
-        return store.HistoryAsync(actor, from, to, page, pageSize,
-            string.IsNullOrWhiteSpace(search) ? null : search.Trim(), ct);
+            page is < 1 or > 1000000 || pageSize is < 1 or > 100 || search?.Length > 120 ||
+            createdByUserId == Guid.Empty || customerId == Guid.Empty)
+            throw new InvoiceChargeValidationException("Consulta hasta 31 días, con filtros y paginación válidos.");
     }
 
     public Task<InvoiceChargePage> PosOptionsAsync(InvoiceChargeActor actor, int page, CancellationToken ct = default)

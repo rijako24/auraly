@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { DocumentNumbers } from "@/components/documents/document-numbers";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { Button } from "@/components/ui/button";
@@ -83,7 +84,7 @@ export function SalesReturnHistory({ active, businessId, runtime }: {
 
   const columns: ColumnDef<SalesReturnListItem>[] = [
     { accessorKey: "documentNumber", header: "Devolución" },
-    { accessorKey: "originalDocumentNumber", header: "Documento original" },
+    { accessorKey: "originalDocumentNumber", header: "Documento original", cell: ({ row }) => <DocumentNumbers internalNumber={row.original.originalDocumentNumber} fiscalNumber={row.original.originalFiscalNumber}/> },
     { accessorKey: "customerName", header: "Cliente" },
     { accessorKey: "returnedAt", header: "Fecha de devolución", cell: ({ row }) => formatDateTime(row.original.returnedAt) },
     { accessorKey: "totalAmount", header: "Total devuelto", cell: ({ row }) => formatCurrency(row.original.totalAmount) },
@@ -105,7 +106,7 @@ export function SalesReturnHistory({ active, businessId, runtime }: {
     {list.isError && <div role="alert" className="rounded-xl border p-4"><p>{list.error.message}</p><Button variant="outline" onClick={() => void list.refetch()}>Reintentar</Button></div>}
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={page} pageSize={pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} />
     <Dialog open={!!detail} onOpenChange={open => { if (!open) setDetail(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
-      <DialogHeader><DialogTitle>Devolución {detail?.documentNumber}</DialogTitle><DialogDescription>Documento original {detail?.originalDocumentNumber}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>Devolución {detail?.documentNumber}</DialogTitle><DialogDescription asChild><div>Documento original <DocumentNumbers internalNumber={detail?.originalDocumentNumber} fiscalNumber={detail?.originalFiscalNumber}/></div></DialogDescription></DialogHeader>
       {detail && <div className="space-y-4">
         <p>{detail.customerName} · {detail.customerIdentification}<br />{formatDateTime(detail.returnedAt)} · {detail.warehouseName}</p>
         <p><strong>Motivo:</strong> {detail.reasonDescription}</p>

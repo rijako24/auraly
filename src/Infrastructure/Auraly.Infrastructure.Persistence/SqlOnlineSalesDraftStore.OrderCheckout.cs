@@ -312,7 +312,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
                 Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
-                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed), CostCenterId:request.CostCenterId);
+                TableId: source.TableId, CostCenterId:request.CostCenterId);
         }
         else
         {
@@ -345,7 +345,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
                 Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
-                TableId: source.TableId,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(source.SourceOrderId,source.PaymentAlreadyConfirmed), CostCenterId:request.CostCenterId);
+                TableId: source.TableId, CostCenterId:request.CostCenterId);
         }
 
         if (upload.FiscalSnapshot is not null)

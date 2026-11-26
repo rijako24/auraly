@@ -2,6 +2,9 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Auraly.Desktop;
 using Xunit;
 
@@ -9,6 +12,54 @@ namespace Auraly.Desktop.Tests;
 
 public sealed class DesktopUpdateTests : IDisposable
 {
+    [Fact]
+    public async Task Download_redirect_does_not_forward_web_session_cookies_to_the_file_host()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var origin = new Uri($"http://127.0.0.1:{port}");
+        async Task<List<string>> ServeAsync()
+        {
+            var received = new List<string>();
+            for (var index = 0; index < 2; index++)
+            {
+                using var socket = await listener.AcceptTcpClientAsync(timeout.Token);
+                await using var stream = socket.GetStream();
+                using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
+                var headers = new StringBuilder();
+                while (await reader.ReadLineAsync(timeout.Token) is { Length: > 0 } line)
+                {
+                    if (headers.Length > 8192) throw new InvalidDataException("Test request headers exceed their limit.");
+                    headers.AppendLine(line);
+                }
+                received.Add(headers.ToString());
+                var response = index == 0
+                    ? $"HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/payload\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nMZ";
+                await stream.WriteAsync(Encoding.ASCII.GetBytes(response), timeout.Token);
+            }
+            return received;
+        }
+        var server = ServeAsync();
+        try
+        {
+            using var client = AuralyDesktopUpdater.CreateDownloadClient(origin,
+                [new Cookie("auth_token", "test-session", "/")]);
+            var bytes = await client.GetByteArrayAsync(new Uri(origin, "/installer"), timeout.Token);
+            Assert.Equal("MZ", Encoding.ASCII.GetString(bytes));
+            var requests = await server;
+            Assert.Contains("auth_token=test-session", requests[0]);
+            Assert.DoesNotContain("Cookie:", requests[1], StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            timeout.Cancel();
+            listener.Stop();
+        }
+    }
+
     private readonly string directory = Path.Combine(Path.GetTempPath(), "auraly-update-test-" + Guid.NewGuid().ToString("N"));
     private readonly DesktopConfiguration configuration = new("https://example.test", "0.1.0-rc9");
 

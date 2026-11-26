@@ -118,6 +118,8 @@ public static class PayrollApi
             Execute(()=>service.PageAgreementsAsync(context.User.Identity(),page??1,pageSize??20,employmentId,conceptId,active,search,ct)));
         group.MapGet("/payments",(HttpContext context,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
             Execute(()=>service.PagePaymentsAsync(context.User.Identity(),page??1,pageSize??20,ct)));
+        group.MapGet("/payments/{id:guid}/employees",(HttpContext context,Guid id,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
+            Execute(()=>service.PagePaymentEmployeesAsync(context.User.Identity(),id,page??1,pageSize??20,ct)));
         group.MapGet("/electronic-periods",(HttpContext context,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>
             Execute(()=>service.PageElectronicPeriodsAsync(context.User.Identity(),page??1,pageSize??20,ct)));
         group.MapGet("/electronic-periods/{id:guid}/documents",(HttpContext context,Guid id,int? page,int? pageSize,PayrollService service,CancellationToken ct)=>

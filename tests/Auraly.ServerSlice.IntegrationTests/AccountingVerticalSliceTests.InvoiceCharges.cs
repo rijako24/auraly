@@ -530,9 +530,31 @@ public sealed partial class AccountingVerticalSliceTests
         var history = (await historyResponse.Content.ReadFromJsonAsync<InvoiceChargeHistoryPage>())!;
         Assert.True(historyTimer.Elapsed < TimeSpan.FromSeconds(2), $"El historial de 30 facturas tardó {historyTimer.Elapsed.TotalMilliseconds:F0} ms.");
         Assert.Equal(20, history.TotalCount);
+        Assert.Equal(20, history.TotalDocuments);
         Assert.All(history.Items, item => Assert.Equal("Cliente contable", item.CustomerName));
+        Assert.All(history.Items,item=>{
+            Assert.Equal(item.Charge.AppliedChargeId,item.ExpenseId);
+            Assert.NotNull(item.ExpenseAcceptedAt);Assert.NotNull(item.ExpenseIssuedAt);
+            Assert.NotNull(item.ExpenseDocumentNumber);Assert.True(item.ExpenseGrossAmount>0);
+            Assert.NotNull(item.ExpenseDueDate);
+            Assert.Equal("Cajera Matriz",item.ExpenseCreatedByName);
+            Assert.Equal(issued.Single(sale=>sale.DocumentId==item.DocumentId).CommercialSnapshot.PayableAmount,item.InvoiceTotal);
+            Assert.Equal(item.ExpenseGrossAmount-item.ExpenseWithholdingAmount,item.ExpenseNetPayable);
+        });
+        var identity=history.Items[0];
+        await using(var identityConnection=new SqlConnection(fixture.ConnectionString))
+        {
+        await identityConnection.OpenAsync();
+        await using(var sourceIdentity=new SqlCommand("SELECT DocumentNumber,FiscalNumber FROM dbo.SalesDocuments WHERE DocumentId=@Id AND BusinessId=@Business",identityConnection))
+        {
+            sourceIdentity.Parameters.AddWithValue("@Id",identity.DocumentId);sourceIdentity.Parameters.AddWithValue("@Business",fixture.BusinessId);
+            await using var stored=await sourceIdentity.ExecuteReaderAsync();Assert.True(await stored.ReadAsync());
+            Assert.Equal(stored.GetString(0),identity.DocumentNumber);Assert.Equal(stored.IsDBNull(1)?null:stored.GetString(1),identity.FiscalNumber);
+        }
+        }
         Assert.Equal(expectedCharges.Sum(charge => charge.InvoicedAmount), history.InvoicedTotal);
         Assert.Equal(expectedCharges.Sum(charge => charge.ExpenseAmount), history.ExpenseTotal);
+        Assert.Equal(history.Items.Sum(item => item.ExpenseGrossAmount ?? 0), history.GeneratedExpenseTotal);
         Assert.Equal(0, history.Items.Single(item => item.Charge.AppliedChargeId == firstCharge.AppliedChargeId).PayableBalance);
         using var secondPageResponse = await admin.GetAsync(
             $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&page=2&pageSize=1&search={code}");
@@ -543,6 +565,59 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal(history.InvoicedTotal, secondPage.InvoicedTotal);
         Assert.Equal(history.ExpenseTotal, secondPage.ExpenseTotal);
         Assert.NotEqual(history.Items[0].Charge.AppliedChargeId, secondPage.Items[0].Charge.AppliedChargeId);
+
+        // A page is an invoice, including all of its charges, rather than a partial accordion.
+        var groupedCharges = new[] { 6500m, 8000m }.Select(value => InvoiceChargeApplication.Calculate(100000m,
+            new InvoiceChargeSelection(Guid.NewGuid(), exhausted, fixture.SupplierId, value))).ToArray();
+        var groupedSale = CreateChargeMatrixSale(sequence++, 100000m, groupedCharges[0], false,
+            customerId, siteId, bankAccountId) with { SoldByUserId = cashierId,
+            WorkSessionId = refundSessionId, Charges = groupedCharges };
+        using (var message = fixture.CreateUploadMessage(groupedSale))
+        using (var response = await pos.SendAsync(message))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        await AssertBalancedAsync(groupedSale.DocumentId);
+        foreach (var charge in groupedCharges) await AssertBalancedAsync(charge.AppliedChargeId);
+        var groupedPage = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>(
+            $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&pageSize=1&search={groupedSale.DocumentNumber.FullNumber}"))!;
+        Assert.Equal(1, groupedPage.TotalDocuments);
+        Assert.Equal(2, groupedPage.TotalCount);
+        Assert.Equal(groupedCharges.Select(value => value.AppliedChargeId).Order(),
+            groupedPage.Items.Select(value => value.Charge.AppliedChargeId).Order());
+        Assert.Equal(14500m, groupedPage.ExpenseTotal);
+        Assert.All(groupedPage.Items, item => Assert.Equal(groupedSale.DocumentId, item.DocumentId));
+        var beyond = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>(
+            $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&pageSize=1&page=2&search={groupedSale.DocumentNumber.FullNumber}"))!;
+        Assert.Empty(beyond.Items);
+        Assert.Equal(1, beyond.TotalDocuments);
+        Assert.Equal(groupedPage.ExpenseTotal, beyond.ExpenseTotal);
+        Assert.Equal(14500m, groupedPage.GeneratedExpenseTotal);
+        Assert.Equal(groupedPage.GeneratedExpenseTotal, beyond.GeneratedExpenseTotal);
+
+        var historyUrl = $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&search={groupedSale.DocumentNumber.FullNumber}";
+        var filtered = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>(
+            $"{historyUrl}&createdByUserId={cashierId}&customerId={customerId}"))!;
+        Assert.Equal(2, filtered.TotalCount);
+        foreach (var parameter in new[] { "createdByUserId", "customerId" })
+        {
+            var empty = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>($"{historyUrl}&{parameter}={Guid.NewGuid()}"))!;
+            Assert.Empty(empty.Items); Assert.Equal(0, empty.TotalCount);
+            Assert.Equal(0, empty.GeneratedExpenseTotal);
+        }
+        var expenseMatch = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>(
+            $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&search={groupedPage.Items[0].ExpenseDocumentNumber}"))!;
+        Assert.Equal(groupedPage.Items[0].ExpenseId, Assert.Single(expenseMatch.Items).ExpenseId);
+        if (groupedPage.Items[0].FiscalNumber is { } fiscalNumber)
+        {
+            var fiscalMatch = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>(
+                $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&search={fiscalNumber}"))!;
+            Assert.Equal(2, fiscalMatch.TotalCount);
+        }
+        var export = (await admin.GetFromJsonAsync<InvoiceChargeHistoryPage>(
+            $"/api/commerce/v1/invoice-charges/history/export?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&search={groupedSale.DocumentNumber.FullNumber}&createdByUserId={cashierId}&customerId={customerId}"))!;
+        Assert.Equal(2, export.Items.Count); Assert.Equal(1, export.TotalDocuments);
+        Assert.Equal(groupedPage.GeneratedExpenseTotal, export.GeneratedExpenseTotal);
+        Assert.Equal(groupedPage.ExpenseTotal, export.ExpenseTotal);
+
     }
 
     private PosSaleUploadRequest CreateChargeMatrixSale(long consecutive, decimal productTotal,

@@ -380,7 +380,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     state.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
                     request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
-            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,CollectionMode:OrderCollectionPaymentPolicy.ForNewSale(state.SourceOrderId), SellerId:draft.SellerId, CostCenterId:request.CostCenterId);
+            Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,SellerId:draft.SellerId, CostCenterId:request.CostCenterId);
 
         DemandValidPreparedFiscalSnapshot(upload, fiscalMaterial);
 

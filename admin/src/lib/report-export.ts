@@ -5,6 +5,8 @@ export type ReportExport = {
   title: string;
   description?: string;
   brandName: string;
+  brandIdentification?: string;
+  generatedAt?: Date;
   fileName: string;
   rows: ReportRow[];
   columns: ReportColumn[];
@@ -16,26 +18,38 @@ export type ReportExport = {
 export async function exportReportPdf(report: ReportExport) {
   const [{ jsPDF }, { autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  const headerX = report.logoSource ? 90 : 12;
-  let brandBottom = 14;
+  const brandX = report.logoSource ? 36 : 12;
   if (report.logoSource) {
     const image = pdf.getImageProperties(report.logoSource);
-    const scale = Math.min(28 / image.width, 16 / image.height);
-    pdf.addImage(report.logoSource, image.fileType, 12, 8, image.width * scale, image.height * scale);
-    pdf.setFontSize(10);
-    const brandLines = pdf.splitTextToSize(report.brandName, 70);
-    pdf.text(brandLines, 12, 29);
-    brandBottom = 29 + brandLines.length * 4;
+    const scale = Math.min(18 / image.width, 18 / image.height);
+    const width = image.width * scale, height = image.height * scale;
+    pdf.setDrawColor(220, 225, 230);
+    pdf.roundedRect(12, 8, 20, 20, 2, 2);
+    pdf.addImage(report.logoSource, image.fileType, 13 + (18 - width) / 2, 9 + (18 - height) / 2, width, height);
   }
   pdf.setFontSize(10);
-  if (!report.logoSource) pdf.text(report.brandName, 12, 12);
-  pdf.setFontSize(16);
-  pdf.text(report.title, headerX, 21);
-  pdf.setFontSize(9);
-  const description = pdf.splitTextToSize(report.description ?? "", report.logoSource ? 195 : 270);
-  pdf.text(description, headerX, 28);
+  pdf.setFont("helvetica", "bold");
+  const brandLines = pdf.splitTextToSize(report.brandName, 210 - brandX);
+  pdf.text(brandLines, brandX, 13);
+  pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
-  const footerBrand = pdf.splitTextToSize(report.brandName, 250);
+  const generated = (report.generatedAt ?? new Date()).toLocaleString("es-CO");
+  pdf.text([`Generado: ${generated}`, `Registros: ${report.rows.filter(row => !row.__group).length}`, "Sistema: Auraly"], 220, 12);
+  let headerY = Math.max(31, 13 + brandLines.length * 4.5);
+  if (report.brandIdentification) { pdf.text(report.brandIdentification, 12, headerY); headerY += 6; }
+  pdf.setFontSize(7); pdf.setTextColor(15, 118, 110);
+  pdf.text("REPORTE CORPORATIVO", 12, headerY); headerY += 7;
+  pdf.setTextColor(2, 6, 23); pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(16);
+  const titleLines = pdf.splitTextToSize(report.title, 270);
+  pdf.text(titleLines, 12, headerY); headerY += titleLines.length * 6;
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9);
+  const description = pdf.splitTextToSize(report.description ?? "", 270);
+  pdf.text(description, 12, headerY); headerY += description.length * 4 + 3;
+  pdf.setDrawColor(15, 118, 110); pdf.setLineWidth(.4); pdf.line(12, headerY, 285, headerY);
+  pdf.setFontSize(8);
+  const footerBrand = pdf.splitTextToSize([report.brandName, report.brandIdentification].filter(Boolean).join(" · "), 250);
   const footerExtraHeight = Math.max(0, footerBrand.length - 1) * 3.5;
   const sections: Array<{heading?:ReportRow;metadata:ReportRow[];rows:ReportRow[]}> = [];
   for (const row of report.rows) {
@@ -47,7 +61,7 @@ export async function exportReportPdf(report: ReportExport) {
       else section.rows.push(row);
     }
   }
-  let nextY = Math.max(32 + description.length * 4, brandBottom + 4);
+  let nextY = headerY + 6;
   for (const section of sections) {
     autoTable(pdf, {
     startY: nextY,
@@ -84,7 +98,7 @@ export async function exportReportExcel(report: ReportExport) {
   const { default: writeExcelFile } = await import("write-excel-file/browser");
   const columnHeaders = report.columns.map(column => ({ value: column.label, fontWeight: "bold" as const, backgroundColor: "#0F766E", textColor: "#FFFFFF" }));
   const rows: SheetData = [
-    [report.brandName], [report.title], [report.description ?? ""],
+    [[report.brandName, report.brandIdentification].filter(Boolean).join(" · ")], [report.title], [report.description ?? ""],
     ...(report.groupedHeaders ? [] : [columnHeaders]),
   ];
   let needsHeaders = false;

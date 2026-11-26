@@ -94,7 +94,10 @@ public sealed record DispatchListItem(Guid DispatchId, string DispatchNumber, Da
 public sealed record DispatchPage(IReadOnlyCollection<DispatchListItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
 public sealed record DispatchCandidateQuery(int Page = 1, int PageSize = 50, string? Search = null, string? DocumentType = null, DateOnly? From = null, DateOnly? To = null, Guid? WarehouseId = null, int DateRangeVersion = 1, Guid? RouteId = null);
-public sealed record DispatchCandidateDocument(Guid DocumentId, string DocumentType, string DocumentNumber, DateTimeOffset IssuedAt, Guid WarehouseId, string WarehouseName, Guid? CustomerId, string CustomerName, string? DeliveryAddress, string SellerName, int LineCount, decimal PendingQuantity, decimal DocumentTotal);
+public sealed record DispatchCandidateDocument(Guid DocumentId, string DocumentType, string DocumentNumber, DateTimeOffset IssuedAt, Guid WarehouseId, string WarehouseName, Guid? CustomerId, string CustomerName, string? DeliveryAddress, string SellerName, int LineCount, decimal PendingQuantity, decimal DocumentTotal)
+{
+    public string? FiscalNumber { get; init; }
+}
 public sealed record DispatchCandidatePage(IReadOnlyCollection<DispatchCandidateDocument> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
 public sealed record CreateDispatchRequest(Guid BusinessId, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, Guid? DriverCarrierId, string? Notes, IReadOnlyCollection<Guid> SourceDocumentIds);
@@ -105,7 +108,10 @@ public sealed record DeclareDispatchShortageRequest(Guid DispatchLineId, decimal
 
 public sealed record DispatchMutationResult(Guid DispatchId, string DispatchNumber, string Status, int DocumentCount, int LineCount, decimal ExpectedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, string RowVersion, DispatchLineDetail? UpdatedLine = null, int PendingLineCount = 0);
 public sealed record DispatchDetailQuery(int DocumentPage = 1, int DocumentPageSize = 10, int LinePage = 1, int LinePageSize = 10);
-public sealed record DispatchDocumentDetail(Guid DispatchSourceDocumentId, Guid SourceDocumentId, string DocumentType, string DocumentNumber, Guid? CustomerId, string CustomerName, string? DeliveryAddress, string SellerName, decimal DocumentTotal, string Status, Guid WarehouseId, string WarehouseName);
+public sealed record DispatchDocumentDetail(Guid DispatchSourceDocumentId, Guid SourceDocumentId, string DocumentType, string DocumentNumber, Guid? CustomerId, string CustomerName, string? DeliveryAddress, string SellerName, decimal DocumentTotal, string Status, Guid WarehouseId, string WarehouseName)
+{
+    public string? FiscalNumber { get; init; }
+}
 public sealed record DispatchLineDetail(Guid DispatchLineId, Guid DispatchSourceDocumentId, int SourceLineNumber, Guid ProductId, string ProductCode, string Description, decimal AssignedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, string Status, string RowVersion);
 public sealed record DispatchShortageDetail(Guid DispatchShortageId, Guid DispatchLineId, Guid ProductId, string ProductCode, string Description, decimal Quantity, string Reason, string? Notes, DateTimeOffset CreatedAt);
 public sealed record DispatchDetail(Guid DispatchId, Guid BusinessId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, Guid? RouteId, string? RouteName, string? Notes, string Status, IReadOnlyCollection<DispatchDocumentDetail> Documents, IReadOnlyCollection<DispatchLineDetail> Lines, IReadOnlyCollection<DispatchShortageDetail> Shortages, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string RowVersion, DispatchMutationResult? Summary = null, DispatchDetailQuery? Pagination = null);
@@ -144,7 +150,10 @@ public sealed record DispatchPaymentReviewResult(Guid DispatchId, Guid DispatchS
     decimal CashDifference, decimal TransferTotal, decimal CardTotal);
 public sealed record DispatchDeliveryReturnDetail(Guid ReturnLineId, int OriginalLineNumber, Guid ProductId, string ProductCode, string Description, decimal Quantity, string InventoryDisposition, string ReasonCode, string ReasonDescription);
 public sealed record DispatchDeliveryProductLine(int OriginalLineNumber, Guid ProductId, string ProductCode, string Description, decimal Quantity, decimal UnitPrice, decimal LineTotal, decimal ReturnedQuantity = 0, decimal ReturnedLineTotal = 0);
-public sealed record DispatchDeliveryDocument(Guid DispatchSourceDocumentId, Guid SourceDocumentId, string DocumentType, string DocumentNumber, int Sequence, Guid? CustomerId, string CustomerName, string? DeliveryAddress, decimal DocumentTotal, decimal CreditAmount, decimal? DestinationLatitude, decimal? DestinationLongitude, string DeliveryStatus, string? Reason, string? Notes, decimal? Latitude, decimal? Longitude, DateTimeOffset? DeliveredAt, IReadOnlyCollection<DispatchDeliveryProductLine> Lines, IReadOnlyCollection<DispatchDeliveryPaymentDetail> Payments, IReadOnlyCollection<DispatchDeliveryReturnDetail> Returns, decimal ReturnTotal = 0, DispatchReturnCalculation? ReturnCalculation = null, string CollectionMode = "Session", decimal? CreditCollectibleAmount = null, decimal? UncollectedPaymentAmount = null);
+public sealed record DispatchDeliveryDocument(Guid DispatchSourceDocumentId, Guid SourceDocumentId, string DocumentType, string DocumentNumber, int Sequence, Guid? CustomerId, string CustomerName, string? DeliveryAddress, decimal DocumentTotal, decimal CreditAmount, decimal? DestinationLatitude, decimal? DestinationLongitude, string DeliveryStatus, string? Reason, string? Notes, decimal? Latitude, decimal? Longitude, DateTimeOffset? DeliveredAt, IReadOnlyCollection<DispatchDeliveryProductLine> Lines, IReadOnlyCollection<DispatchDeliveryPaymentDetail> Payments, IReadOnlyCollection<DispatchDeliveryReturnDetail> Returns, decimal ReturnTotal = 0, DispatchReturnCalculation? ReturnCalculation = null, string CollectionMode = "Session", decimal? CreditCollectibleAmount = null, decimal? UncollectedPaymentAmount = null)
+{
+    public string? FiscalNumber { get; init; }
+}
 public sealed record DispatchReturnCalculation(decimal OriginalUnrounded,decimal OriginalRounding,decimal UnroundedOutstanding,decimal RemainingRounding);
 public sealed record DispatchExpenseDetail(Guid ExpenseId, string Category, decimal Amount, string? Description, string? EvidenceUrl, string ApprovalStatus, decimal? ApprovedAmount,
     Guid? ConceptId = null, Guid? AcceptedExpenseId = null, DateTimeOffset? OccurredAt = null,string? AcceptedExpenseStatus = null,
@@ -159,7 +168,10 @@ public sealed record DispatchLinkedReturn(Guid ReturnId,Guid OriginalDocumentId,
 public sealed record DispatchExecutionDetail(Guid DispatchId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, string Status, IReadOnlyCollection<DispatchDeliveryDocument> Documents, IReadOnlyCollection<DispatchExpenseDetail> Expenses, DispatchSettlementSummary? Settlement, string? RowVersion = null,
     IReadOnlyCollection<DispatchLinkedReturn>? LinkedReturns = null);
 
-public sealed record DispatchReportRow(string DispatchNumber, DateOnly ScheduledDate, string Status, string DriverName, string? VehiclePlate, string DocumentType, string DocumentNumber, string CustomerName, string? DeliveryAddress, string SellerName, string ProductCode, string ProductName, decimal AssignedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, decimal? UnitPrice, decimal? LineTotal);
+public sealed record DispatchReportRow(string DispatchNumber, DateOnly ScheduledDate, string Status, string DriverName, string? VehiclePlate, string DocumentType, string DocumentNumber, string CustomerName, string? DeliveryAddress, string SellerName, string ProductCode, string ProductName, decimal AssignedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, decimal? UnitPrice, decimal? LineTotal)
+{
+    public string? FiscalNumber { get; init; }
+}
 public sealed record DispatchReport(string Title, DateTimeOffset GeneratedAt, bool IncludesPrices, IReadOnlyCollection<DispatchReportRow> Rows);
 
 public sealed class DispatchValidationException(string message) : Exception(message);

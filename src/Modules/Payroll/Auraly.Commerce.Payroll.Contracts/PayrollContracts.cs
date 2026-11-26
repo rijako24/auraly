@@ -464,6 +464,10 @@ public sealed record PayrollPaymentBatchView(
 public sealed record PayrollPayableEmployee(Guid PayrollRunEmployeeId,Guid PaymentMethodOptionId,
     string PaymentMethodName,decimal Amount,bool BankDestinationComplete,string EmployeeName);
 
+public sealed record PayrollPaymentEmployeeView(Guid PayrollRunEmployeeId, Guid PartyId,
+    string? EmployeeName, string? Identification, DateOnly PeriodStart, DateOnly PeriodEnd,
+    DateOnly PaymentDate, decimal Amount, bool IsPaid);
+
 public sealed record PayrollRunEmploymentSelection(Guid EmploymentId, bool IsSelected);
 public sealed record PayrollWorkedDaysChange(Guid EmploymentId, decimal WorkedDays, Guid? ConceptId = null);
 

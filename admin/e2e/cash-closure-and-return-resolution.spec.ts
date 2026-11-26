@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { unzipSync, strFromU8 } from "fflate";
 import { paymentCatalogFixture } from "./support/payment-catalog";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { login as sharedLogin } from "./support/auth";
@@ -450,22 +452,67 @@ test("historial de cargos pagina y consulta sin cargar pestañas ocultas", async
   await page.route("**/api/commerce/v1/invoice-charges/history?**", route => {
     historyReads++;
     return json(route, { items: [{ documentId: saleId, documentNumber: "FV-CARGO-1", customerName: "Cliente de prueba", issuedAt: "2026-09-19T10:00:00-05:00",
-      workSessionId: closureId, expenseDocumentNumber: "GAS-123", expenseStatus: "Processed", payableBalance: 5000,
+      workSessionId: closureId, invoiceTotal:90000.25,expenseCreatedByName:"Operador de caja",fiscalNumber:"FVL100",expenseId:saleId,expenseAcceptedAt:"2026-09-19T11:05:00-05:00",expenseIssuedAt:"2026-09-19T10:00:00-05:00",expenseGrossAmount:5000,expenseFiscalNumber:"DS100",expenseDocumentNumber: "GAS-123", expenseStatus: "Processed", payableBalance: 5000,
       charge: { appliedChargeId: "one", name: "Domicilio", supplier: { name: "Domiciliario prueba" }, amount: 5000,
-        invoicedAmount: 5000, expenseAmount: 0 } }], totalCount: 1, page: 1, pageSize: 25, invoicedTotal: 5000, expenseTotal: 0 });
+        invoicedAmount: 5000, expenseAmount: 0 } }, { documentId:saleId, documentNumber:"FV-CARGO-1",invoiceTotal:90000.25,expenseCreatedByName:"Operador de caja", fiscalNumber:"FVL100",customerName:"Cliente de prueba",issuedAt:"2026-09-19T10:00:00-05:00",workSessionId:closureId,expenseId:closureId,expenseDocumentNumber:"GAS-124",expenseFiscalNumber:null,expenseAcceptedAt:"2026-09-19T11:06:00-05:00",expenseDueDate:"2026-09-25T10:00:00-05:00",expenseGrossAmount:6500,expenseWithholdingAmount:650,expenseNetPayable:5850,expenseStatus:"Cancelled",payableBalance:0,charge:{appliedChargeId:"two",name:"Agotados",supplier:{name:"Proveedor con nombre largo de servicios logísticos y transporte regional",identification:"901234567"},amount:6500,invoicedAmount:0,expenseAmount:6500}}], totalCount: 2, totalDocuments:1, page: 1, pageSize: 20, invoicedTotal: 5000, expenseTotal: 6500, generatedExpenseTotal: 11500 });
   });
   await page.goto("/dashboard/invoice-charges");
   await expect(page.getByRole("heading", { name: "Cargos de facturación", exact: true })).toBeVisible();
   await expect(page.getByText("Todavía no hay cargos", { exact: true })).toBeVisible();
   expect(configurationReads).toBe(1); expect(historyReads).toBe(0);
   await page.getByRole("tab", { name: "Consulta de cargos" }).click();
-  await expect(page.getByRole("cell", { name: /^FV-CARGO-1/ })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "Cliente de prueba" })).toBeVisible();
-  await expect(page.locator("thead th")).toContainText(["Factura", "Cliente", "Proveedor", "En factura", "Como gasto", "Cuenta por pagar"]);
+  const trigger=page.getByRole("button",{name:"Ver cargos de FV-CARGO-1",exact:true});
+  await expect(trigger).toBeVisible();await expect(trigger).toContainText("Cliente de prueba");
+  await expect(trigger).toContainText("2 cargos");await expect(trigger).toContainText("2 gastos generados");
+  await expect(page.getByRole("region", { name: "Gastos de FV-CARGO-1", exact: true })).toHaveCount(0);
   const card = await page.getByText("Cargos en el periodo").boundingBox();
   const filter = await page.getByText("Desde", { exact: true }).boundingBox();
   expect(card!.y).toBeLessThan(filter!.y);
-  await expect(page.getByText("GAS-123", { exact: true })).toBeVisible();
+  await expect(page.getByText("DIAN FVL100",{exact:true})).toBeVisible();
+  let expenseReads=0;page.on("request",request=>{if(new URL(request.url()).pathname.includes("/expenses/"))expenseReads++;});
+  await page.getByRole("button",{name:"No mostrar de nuevo",exact:true}).click();
+  for(const width of [1366,1920,390]){
+    await page.setViewportSize({width,height:width===1366?768:844});
+    const before=performance.now();await trigger.focus();await page.keyboard.press("Enter");
+    const region=page.getByRole("region",{name:"Gastos de FV-CARGO-1",exact:true});
+    const expense=region.getByRole("row",{name:"Gasto Domicilio",exact:true});
+    await expect(expense).toBeVisible();await expect(trigger).toHaveAttribute("aria-expanded","true");
+    expect(performance.now()-before).toBeLessThan(1500);
+    await expect(page.getByText("DIAN FVL100",{exact:true})).toHaveCount(1);
+    await expect(trigger).toContainText("Total factura");await expect(trigger).toContainText("90.000,25");
+    await expect(expense).toContainText("Operador de caja");
+    await expect(expense.getByTestId("charge-customer-amount")).toContainText("5.000");
+    await expect(expense.getByTestId("charge-company-amount")).toContainText("$ 0");
+
+    await expect(expense.getByText("DIAN DS100",{exact:true})).toBeVisible();
+    await expect(expense).toContainText("11:05");
+    await expect(expense.getByRole("cell").nth(5)).toContainText("5.000");
+    const cancelled=region.getByRole("row",{name:"Gasto Agotados",exact:true});
+    await expect(region.getByRole("row")).toHaveCount(3);
+    await expect(expense.getByRole("cell")).toHaveCount(7);
+    await expect(cancelled).toContainText("Proveedor con nombre largo de servicios logísticos y transporte regional");
+    await expect(cancelled).toContainText("Cancelado");
+    await expect(cancelled.getByRole("cell").nth(5)).toContainText("Por pagar: $ 0");
+    await expect(region.getByRole("columnheader",{name:"Asumido por el cliente",exact:true})).toHaveCount(1);
+    await expect(region.getByText("Vencimiento",{exact:true})).toHaveCount(0);
+    expect(await page.getByRole("main").evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);
+    const cells=await expense.getByRole("cell").evaluateAll(elements=>elements.map(element=>element.getBoundingClientRect().top));
+    expect(Math.max(...cells)-Math.min(...cells)).toBeLessThanOrEqual(1);
+    expect((await expense.boundingBox())!.height).toBeLessThan(160);
+    expect((await cancelled.boundingBox())!.height).toBeLessThan(160);
+    await trigger.scrollIntoViewIfNeeded();
+    await page.screenshot({path:test.info().outputPath(`charge-expense-${width}.png`)});
+    await region.screenshot({path:test.info().outputPath(`charge-expense-rows-${width}.png`)});
+    if(width===390){
+      await region.focus();await page.keyboard.press("End");
+      await region.evaluate(element=>{element.scrollLeft=element.scrollWidth;});
+      await expect(cancelled.getByText("Cancelado",{exact:true})).toBeInViewport();
+      await region.screenshot({path:test.info().outputPath("charge-expense-rows-mobile-amounts.png")});
+      await region.evaluate(element=>{element.scrollLeft=0;});
+    }
+    await trigger.click();await expect(expense).toBeHidden();
+  }
+  expect(expenseReads).toBe(0);expect(historyReads).toBe(1);
   await page.screenshot({ path: test.info().outputPath("consulta-cargos.png"), fullPage: true });
   expect(configurationReads).toBe(1); expect(historyReads).toBe(1);
   await page.getByRole("button", { name: "Actualizar", exact: true }).click();
@@ -491,24 +538,164 @@ test("consulta de cargos busca y pagina en el servidor", async ({ page }) => {
     requests.push(requested);
     const filtered = requested.search === "Domicilio";
     const second = requested.page === "2";
-    return json(route, { items: [{ documentId: saleId, documentNumber: second ? "FV-CARGO-2" : "FV-CARGO-1",
-      customerName: "Cliente de prueba", issuedAt: "2026-09-19T10:00:00-05:00", workSessionId: closureId,
-      expenseDocumentNumber: null, expenseStatus: null, payableBalance: null,
-      charge: { appliedChargeId: second ? "two" : "one", name: "Domicilio", supplier: { name: "Proveedor de prueba" },
-        amount: 5000, invoicedAmount: 5000, expenseAmount: 0 } }],
-      totalCount: filtered ? 1 : 21, page: second ? 2 : 1, pageSize: 20,
-      invoicedTotal: filtered ? 5000 : 105000, expenseTotal: 0 });
+    const items=Array.from({length:filtered||second?1:20},(_,index)=>({
+      documentId:second?closureId:`invoice-${index}`,documentNumber:second?"FV-CARGO-21":`FV-CARGO-${index+1}`,
+      customerName:"Cliente de prueba",invoiceTotal:105000,expenseCreatedByName:"Operador de caja",issuedAt:"2026-09-19T10:00:00-05:00",workSessionId:closureId,
+      expenseId:crypto.randomUUID(),expenseDocumentNumber:`GAS-${index+1}`,expenseStatus:"Accepted",payableBalance:null,expenseGrossAmount:5000,
+      charge:{appliedChargeId:`charge-${second?21:index}`,name:"Domicilio",supplier:{name:"Proveedor de prueba"},amount:5000,invoicedAmount:5000,expenseAmount:0}
+    }));
+    return json(route, { items,
+      totalCount: filtered ? 1 : 21, totalDocuments:filtered ? 1 : 21, page: second ? 2 : 1, pageSize: 20,
+      invoicedTotal: filtered ? 5000 : 105000, expenseTotal: 0, generatedExpenseTotal: filtered ? 5000 : 105000 });
   });
   await page.goto("/dashboard/invoice-charges");
   await page.getByRole("tab", { name: "Consulta de cargos" }).click();
-  await expect(page.getByRole("cell", { name: /^FV-CARGO-1/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ver cargos de FV-CARGO-1", exact:true })).toBeVisible();
   await expect(page.getByText("21", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button",{name:/^Ver cargos de FV-CARGO-/})).toHaveCount(20);
+  await page.getByRole("button",{name:"No mostrar de nuevo",exact:true}).click();
+  const first=page.getByRole("button",{name:"Ver cargos de FV-CARGO-1",exact:true});
+  await first.click();
+  await expect(page.getByRole("row",{name:"Gasto Domicilio",exact:true})).toContainText("Aceptado");
+  await expect(page.getByRole("row",{name:"Gasto Domicilio",exact:true})).toContainText("Sin cuenta registrada");
+  await first.click();
+  for(const width of [1366,390]){
+    await page.setViewportSize({width,height:768});
+    expect(await page.getByRole("main").evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);
+    await page.getByRole("button",{name:"Ver cargos de FV-CARGO-1",exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:test.info().outputPath(`charge-full-page-${width}.png`)});
+    await page.getByRole("button",{name:"Ver cargos de FV-CARGO-20",exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:test.info().outputPath(`charge-full-page-bottom-${width}.png`)});
+  }
   await page.getByRole("button", { name: "Siguiente página" }).click();
-  await expect(page.getByRole("cell", { name: /^FV-CARGO-2/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ver cargos de FV-CARGO-21", exact:true })).toBeVisible();
   await page.getByPlaceholder("Cargo, proveedor o factura").fill("Domicilio");
-  await expect(page.getByRole("cell", { name: /^FV-CARGO-1/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ver cargos de FV-CARGO-1", exact:true })).toBeVisible();
   await expect.poll(() => requests.at(-1)).toEqual({ page: "1", pageSize: "20", search: "Domicilio" });
   await expect(page.getByRole("button", { name: "Siguiente página" })).toBeDisabled();
+});
+
+test("consulta de cargos muestra carga vacío y error sin consultas adicionales al desplegar",async({page})=>{
+  await authenticate(page);
+  await page.route("**/api/commerce/v1/reference-options/invoice-charge-*",route=>json(route,[]));
+  await page.route("**/api/commerce/v1/invoice-charges?**",route=>json(route,{items:[],totalCount:0,page:1,pageSize:20,totalPages:0}));
+  let fail=false;let pending:Route|undefined;
+  await page.route("**/api/commerce/v1/invoice-charges/history?**",async route=>{pending=route;});
+  await page.goto("/dashboard/invoice-charges");await page.getByRole("tab",{name:"Consulta de cargos"}).click();
+  await expect(page.getByRole("status")).toContainText("Consultando cargos");
+  await expect.poll(()=>Boolean(pending)).toBe(true);
+  await json(pending!,{items:[],totalCount:0,totalDocuments:0,page:1,pageSize:20,invoicedTotal:0,expenseTotal:0,generatedExpenseTotal:0});
+  await expect(page.getByText("No hay cargos en este periodo.",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Siguiente página"})).toHaveCount(0);
+  await page.unroute("**/api/commerce/v1/invoice-charges/history?**");
+  await page.route("**/api/commerce/v1/invoice-charges/history?**",route=>fail?route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({detail:"Servicio no disponible"})}):json(route,{items:[],totalCount:0,totalDocuments:0,page:1,pageSize:20,invoicedTotal:0,expenseTotal:0,generatedExpenseTotal:0}));
+  fail=true;await page.getByRole("button",{name:"Actualizar",exact:true}).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("No fue posible consultar los cargos");
+  fail=false;await page.getByRole("button",{name:"Actualizar",exact:true}).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("No hay cargos en este periodo.",{exact:true})).toBeVisible();
+});
+
+test("consulta de cargos filtra identidades y exporta el conjunto completo sin recargar la lista", async ({ page }) => {
+  test.setTimeout(120_000);
+  await authenticate(page);
+  const legalName = "DISTRIBUCIONES DE PRODUCTOS Y SERVICIOS DEL NORTE Y DEL CARIBE SOCIEDAD POR ACCIONES SIMPLIFICADA";
+  const logo = `data:image/png;base64,${(await readFile("public/brand/auraly-mark.png")).toString("base64")}`;
+  let historyReads = 0, brandingReads = 0, failExport = false;
+  const optionsReads: string[] = [], exports: URL[] = [];
+  const items = [0, 1, 2].map(index => ({ documentId: index < 2 ? saleId : closureId,
+    documentNumber: index < 2 ? "CVI00-00000001" : "CVI00-00000002", fiscalNumber: index < 2 ? "FVL100" : "FVL101",
+    invoiceTotal: index < 2 ? 90000.25 : 60000, customerName: "Cliente de prueba", issuedAt: "2026-09-19T10:00:00-05:00",
+    workSessionId: closureId, expenseId: `expense-${index}`, expenseDocumentNumber: `GAS-${index + 1}`,
+    expenseCreatedByName: "Operador de caja", expenseAcceptedAt: "2026-09-19T11:05:00-05:00", expenseStatus: "Processed",
+    expenseGrossAmount: 5000, payableBalance: 5000,
+    charge: { appliedChargeId: `charge-${index}`, name: "Domicilio", supplier: { name: "Domiciliario prueba" },
+      amount: 5000, invoicedAmount: index === 1 ? 0 : 5000, expenseAmount: index === 1 ? 5000 : 0 } }));
+  const totals = { totalCount: 3, totalDocuments: 2, invoicedTotal: 10000, expenseTotal: 5000, generatedExpenseTotal: 15000 };
+  await page.route("**/api/commerce/v1/invoice-charges?**", route => json(route, { items: [], totalCount: 0, page: 1, pageSize: 20, totalPages: 0 }));
+  await page.route("**/api/commerce/v1/reference-options/invoice-charge-*", route => json(route, []));
+  await page.route("**/api/commerce/v1/invoice-charges/history?**", route => {
+    historyReads++; return json(route, { items: items.slice(0, 2), ...totals, page: 1, pageSize: 20 });
+  });
+  await page.route("**/api/commerce/v1/invoice-charges/history/export?**", route => {
+    exports.push(new URL(route.request().url()));
+    return failExport ? route.fulfill({ status: 400, contentType: "application/problem+json", body: JSON.stringify({ detail: "El reporte supera 5.000 cargos. Reduce el rango de fechas." }) })
+      : json(route, { items, ...totals, page: 1, pageSize: 5000 });
+  });
+  await page.route("**/api/commerce/v1/parties/role-options?**", route => {
+    const url = new URL(route.request().url()), role = url.searchParams.get("role")!;
+    optionsReads.push(role); expect(url.searchParams.get("includeInactive")).toBe("true");
+    return json(route, { items: [{ role, roleId: role === "User" ? userId : saleId, partyId: saleId,
+      displayName: role === "User" ? "Operador de caja" : "Cliente de prueba", identification: "900123456" }], page: 1, pageSize: 10, totalPages: 1, totalCount: 1 });
+  });
+  await page.route("**/api/tenants/branding/print", route => {
+    brandingReads++; return json(route, { tenantId, displayName: "Empresa", legalName, logoUrl: logo, nit: "900100200" });
+  });
+  await page.goto("/dashboard/invoice-charges");
+  await page.getByRole("tab", { name: "Consulta de cargos" }).click();
+  await expect(page.getByRole("button", { name: "Ver cargos de CVI00-00000001", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "No mostrar de nuevo", exact: true }).click();
+  await expect(page.getByText("Gastos generados", { exact: true }).locator("..")).toContainText("15.000");
+  await page.getByRole("button", { name: "Filtros", exact: true }).click();
+  expect(optionsReads).toEqual([]);
+  await page.getByRole("combobox", { name: "Filtrar por usuario que generó el gasto" }).click();
+  await page.getByRole("option", { name: /Operador de caja/ }).click();
+  await expect.poll(() => historyReads).toBe(2);
+  await page.getByRole("combobox", { name: "Filtrar cargos por cliente" }).click();
+  await page.getByRole("option", { name: /Cliente de prueba/ }).click();
+  await expect.poll(() => historyReads).toBe(3);
+  expect(optionsReads).toEqual(["User", "Customer"]);
+  await page.getByPlaceholder("Cargo, proveedor o factura").fill("FVL10");
+  await expect.poll(() => historyReads).toBe(4);
+  for (const mode of ["detail", "summary"]) {
+    if (mode === "summary") {
+      await page.getByRole("combobox", { name: "Tipo de reporte" }).click();
+      await page.getByRole("option", { name: "Consolidado por factura" }).click();
+    }
+    await page.getByRole("button", { name: "Generar reporte", exact: true }).click();
+    const title = mode === "detail" ? "Cargos por factura — detallado" : "Cargos por factura — consolidado";
+    await expect(page.getByRole("heading", { name: title, exact: true })).toHaveCount(1);
+    const report = page.locator("#auraly-report-print-area");
+    await expect(report.getByText(legalName, { exact: true })).toHaveCount(1);
+    await expect(report).toContainText("FVL101");
+    await expect(report).toContainText("Totales del filtro");
+    await expect(report).toContainText("15.000");
+    const image = report.getByRole("img", { name: `Logo de ${legalName}`, exact: true });
+    await expect(image).toBeVisible(); await expect(image).toHaveCSS("object-fit", "contain");
+    const box = await image.locator("..").boundingBox(); expect(box!.width).toBe(box!.height);
+    for (const width of [1366, 390]) {
+      await page.setViewportSize({ width, height: 768 });
+      expect(await page.getByRole("main").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`charge-report-${mode}-${width}.png`), fullPage: true });
+    }
+    const spreadsheet = page.waitForEvent("download"); await page.getByRole("button", { name: "Exportar Excel", exact: true }).click();
+    const excel = await spreadsheet; const file = test.info().outputPath(`charge-report-${mode}.xlsx`); await excel.saveAs(file);
+    const xml = Object.values(unzipSync(await readFile(file))).map(value => strFromU8(value)).join("\n");
+    expect(xml).toContain("FVL101"); expect(xml).toContain("15000");
+    const pdfDownload = page.waitForEvent("download"); await page.getByRole("button", { name: "Descargar PDF", exact: true }).click();
+    const pdf = await pdfDownload; const pdfPath = test.info().outputPath(`charge-report-${mode}.pdf`); await pdf.saveAs(pdfPath);
+    expect((await readFile(pdfPath)).subarray(0, 4).toString()).toBe("%PDF");
+    await page.evaluate(() => { window.print = () => { document.documentElement.dataset.printCalled = "true"; }; });
+    await page.getByRole("button", { name: "Imprimir", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-print-called", "true");
+    await page.emulateMedia({ media: "print" });
+    await page.pdf({ path: test.info().outputPath(`charge-report-${mode}-browser-print.pdf`), format: "A4", landscape: true });
+    await page.emulateMedia({ media: "screen" });
+    await page.getByRole("button", { name: "Volver", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Ver cargos de CVI00-00000001", exact: true })).toBeVisible();
+    expect(historyReads).toBe(4); expect(optionsReads).toEqual(["User", "Customer"]);
+  }
+  expect(exports).toHaveLength(2); expect(brandingReads).toBe(1);
+  for (const url of exports) {
+    expect(url.searchParams.get("createdByUserId")).toBe(userId);
+    expect(url.searchParams.get("customerId")).toBe(saleId);
+    expect(url.searchParams.get("search")).toBe("FVL10");
+  }
+  failExport = true;
+  await page.getByRole("button", { name: "Generar reporte", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("5.000");
+  await expect(page.getByRole("heading", { name: /Cargos por factura/ })).toHaveCount(0);
+  expect(historyReads).toBe(4);
 });
 
 test("configurar un cargo conserva concepto y proveedor y reutiliza el resultado al editar", async ({ page }) => {

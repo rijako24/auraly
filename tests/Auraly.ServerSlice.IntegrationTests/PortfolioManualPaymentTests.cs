@@ -343,14 +343,18 @@ public sealed partial class PayablesVerticalSliceTests
             {
                 using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(path));
                 var statement = profile.RootElement[0].GetProperty("StmtText").GetString()!;
-                var wideProjection = statement.StartsWith("SELECT correction.VerificationKey", StringComparison.Ordinal);
+                var wideProjection = statement.StartsWith("SELECT correction.VerificationKey,source.MovementType,source.SourceId", StringComparison.Ordinal);
                 if (!wideProjection && !statement.Contains("INTO #CorrectionPaymentReferences", StringComparison.Ordinal)
                     && !statement.Contains("INTO #CorrectionCustomerPayments", StringComparison.Ordinal)
-                    && !statement.Contains("INTO #CorrectionSupplierPayments", StringComparison.Ordinal))
+                    && !statement.Contains("INTO #CorrectionSupplierPayments", StringComparison.Ordinal)
+                    && !statement.Contains("INTO #CorrectionSales", StringComparison.Ordinal))
                     continue;
                 if (wideProjection)
                     Assert.DoesNotContain(profile.RootElement.EnumerateArray(), item =>
                         item.GetProperty("PhysicalOp").GetString() == "Sort");
+                if (statement.Contains("INTO #CorrectionSales", StringComparison.Ordinal))
+                    Assert.All(profile.RootElement.EnumerateArray().Where(item => item.GetProperty("PhysicalOp").GetString() == "Sort"),
+                        item => Assert.InRange(item.GetProperty("AvgRowSize").GetInt32(), 0, 1024));
                 // Match the physical object, not source columns named by a
                 // temporary INSERT's SET metadata.
                 sourceReads.AddRange(profile.RootElement.EnumerateArray().Where(item =>

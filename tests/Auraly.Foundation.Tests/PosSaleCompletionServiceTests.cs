@@ -65,7 +65,7 @@ public sealed class PosSaleCompletionServiceTests
     [InlineData("Transfer")]
     [InlineData("DebitCard")]
     [InlineData("CreditCard")]
-    public async Task Recovered_order_receipt_preserves_dispatch_custody_in_local_sale_and_upload(string method)
+    public async Task Recovered_order_receipt_uses_issuing_session_in_local_sale_and_upload(string method)
     {
         await WithFixtureAsync(async fixture =>
         {
@@ -87,8 +87,8 @@ public sealed class PosSaleCompletionServiceTests
             var snapshot = PosSaleContractSerializer.Deserialize(Assert.Single(await fixture.Sales.GetPendingOutboxAsync()).Payload);
             Assert.Equal(orderId, snapshot.SourceOrderId);
             Assert.Equal(sellerId,snapshot.SellerId);
-            Assert.Equal(SaleCollectionMode.Dispatch, snapshot.CollectionMode);
-            Assert.Equal(SaleCollectionMode.Dispatch, Assert.Single(await fixture.Sales.ReadWorkSessionSalesAsync(snapshot.WorkSessionId)).CollectionMode);
+            Assert.Equal(SaleCollectionMode.Session, snapshot.CollectionMode);
+            Assert.Equal(SaleCollectionMode.Session, Assert.Single(await fixture.Sales.ReadWorkSessionSalesAsync(snapshot.WorkSessionId)).CollectionMode);
             Assert.Null(snapshot.FiscalSnapshot);
             Assert.Null(snapshot.UblSnapshot);
             Assert.Equal(method, Assert.Single(snapshot.Payments).MethodCode);

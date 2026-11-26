@@ -160,8 +160,8 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await history.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
   await page.getByPlaceholder("Buscar período (AAAA-MM-DD)…",{exact:true}).fill(run.periodStart);
   await page.getByRole("option").filter({hasText:`${run.periodStart} — ${run.periodEnd}`}).click();
-  await calculatedWorkers.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);
-  await calculatedWorkers.getByRole("button",{name:"Buscar",exact:true}).click();
+  await history.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);
+  await history.getByRole("button",{name:"Buscar",exact:true}).click();
   await calculatedWorkers.getByRole("button", { name: `Ver trabajador ${employees[0].employeeName}`, exact: true }).click();
   const transport = options.concepts.find(concept => concept.systemRoleCode === "TransportAllowance")!;
   expect(transport).toBeTruthy();
@@ -203,7 +203,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await reloadedHistory.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();await page.getByPlaceholder("Buscar período (AAAA-MM-DD)…",{exact:true}).fill(run.periodStart);
   await page.getByRole("option").filter({hasText:`${run.periodStart} — ${run.periodEnd}`}).click();
   const reloadedWorkers=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
-  await reloadedWorkers.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);await reloadedWorkers.getByRole("button",{name:"Buscar",exact:true}).click();
+  await reloadedHistory.getByRole("textbox",{name:"Buscar trabajador liquidado",exact:true}).fill(tag);await reloadedHistory.getByRole("button",{name:"Buscar",exact:true}).click();
   await reloadedWorkers.getByRole("button",{name:`Ver trabajador ${employees[0].employeeName}`,exact:true}).click();
   await page.getByRole("button",{name:"Editar novedad",exact:true}).click();
   await expect(page.getByRole("region",{name:"Edición de novedad",exact:true}).getByLabel("Valor total",{exact:true})).toHaveValue("15 000");

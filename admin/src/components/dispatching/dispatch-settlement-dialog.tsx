@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { DispatchSettlementPanel } from "@/components/dispatching/transport-dispatch-app";
@@ -61,7 +63,7 @@ export function DispatchSettlementDialog({ id, onClose, onChanged, mode = "revie
           <section aria-label="Entregas del despacho" className="space-y-3">
             <h3 className="font-bold">Entregas y recaudos · {data.documents.length} {data.documents.length === 1 ? "documento" : "documentos"}</h3>
             {data.documents.map(document => <details key={document.dispatchSourceDocumentId} className="rounded-2xl border p-3">
-              <summary className="cursor-pointer text-sm"><strong>{document.documentNumber} · {document.customerName}</strong><span className="mt-1 block text-muted-foreground">{document.deliveryStatus === "Pending" ? "Pendiente" : document.deliveryStatus === "NotDelivered" ? "No entregado" : document.deliveryStatus === "PartiallyDelivered" ? "Entrega parcial" : "Entregado"} · {money.format(document.documentTotal)}</span></summary>
+              <summary className="cursor-pointer text-sm"><DocumentNumbers internalNumber={document.documentNumber} fiscalNumber={document.fiscalNumber}/><strong className="block">{document.customerName}</strong><span className="mt-1 block text-muted-foreground">{document.deliveryStatus === "Pending" ? "Pendiente" : document.deliveryStatus === "NotDelivered" ? "No entregado" : document.deliveryStatus === "PartiallyDelivered" ? "Entrega parcial" : "Entregado"} · {money.format(document.documentTotal)}</span></summary>
               <div className="mt-3 space-y-2 text-sm">
                 {document.deliveryAddress && <p>{document.deliveryAddress}</p>}
                 {document.reason && <p>Motivo: {document.reason}</p>}

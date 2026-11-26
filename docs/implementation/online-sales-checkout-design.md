@@ -102,10 +102,43 @@ conservan su comportamiento y delegan al lote de tamaño uno. Las alertas usan
 los coordinadores fiscal y contable existentes después del commit.
 
 La consulta independiente lee snapshots de ventas de la sede autenticada en
-periodos de hasta 31 días y páginas de hasta 100 filas. Une la obligación real
+periodos de hasta 31 días y páginas de hasta 100 facturas. Cada factura conserva
+juntas sus aplicaciones filtradas (hasta diez cargos por el contrato de emisión).
+Une la obligación real
 para mostrar su saldo y el tercero de la factura para mostrar el cliente. La
-búsqueda por cargo, proveedor o factura se aplica en SQL antes de los totales y
-de paginar; las tres tarjetas resumen el conjunto filtrado, no solo la página.
+búsqueda por cargo, proveedor, número interno/fiscal de la venta o del gasto y
+los filtros de cliente y usuario que generó el gasto se aplican en SQL antes de
+los totales y de paginar. Los selectores de tercero son paginados, se cargan al
+abrirlos y permiten identidades históricas inactivas bajo el permiso de consulta
+de cargos, sin conceder acceso al workspace de terceros. Las tres tarjetas
+resumen los importes asumidos por cliente, empresa y gastos generados sobre el
+conjunto filtrado, no solo la página. Los importes generados son históricos;
+el estado y saldo muestran por separado sus pagos o anulaciones.
+La consulta presenta un acordeón por factura, con número interno y consecutivo
+fiscal completo cuando existe, total de la factura, cliente y fecha de aplicación. Dentro muestra
+cada gasto en una sola fila de tabla: cargo y números interno/fiscal del gasto,
+proveedor, fecha y usuario de registro, importes asumidos por cliente y empresa,
+valor generado, saldo por pagar y estado. Los encabezados de columna sustituyen
+los rótulos repetidos de cada gasto. La tabla conserva desplazamiento horizontal
+local en móvil sin ensanchar la página. Se distinguen los importes asumidos por el
+cliente y por la empresa mediante importes alineados en columnas; el proveedor
+es el beneficiario del gasto, no quien asume el cargo. El saldo al proveedor
+se muestra aparte. No se repite el usuario emisor de la venta ni se agregan acciones
+de impresión. Abrir o cerrar un acordeón usa exclusivamente la página recibida,
+sin consultas de gasto, llamadas por fila ni modal adicional.
+La acción explícita de reporte obtiene el conjunto filtrado completo, con un
+límite de 5.000 cargos. SQL rechaza el exceso antes de enriquecer detalles y la
+aplicación exige reducir filtros; nunca exporta una página como informe completo.
+El reporte detallado agrupa gastos por factura y el consolidado conserva una
+fila por factura. Ambos usan el mismo encabezado y estilo de tabla de
+`ReportViewer` para imprimir, PDF y Excel; el detalle conserva la identificación
+de cada factura en sus filas de grupo, sin crear tablas o encabezados separados
+por cada gasto.
+La lista queda deshabilitada mientras se presenta el reporte y recupera su
+página en memoria al volver, sin una lectura redundante.
+`TotalCount` conserva el conteo de cargos; `TotalDocuments` determina la
+paginación de facturas. SQL filtra y pagina identidades de factura antes de
+enriquecer sus gastos y obligaciones; los resúmenes abarcan el conjunto filtrado.
 No introduce otra tabla de cargos emitidos. El cierre
 congela su desglose y reutiliza el endpoint de snapshot, incluyendo el permiso
 de supervisión del tenant. Sus filas de cargo son informativas y no alteran

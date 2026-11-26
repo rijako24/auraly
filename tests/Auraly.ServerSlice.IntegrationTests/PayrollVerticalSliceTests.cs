@@ -312,6 +312,12 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
         await AssertBalancedEntryAsync(batchId, PayrollAccountingDocumentTypes.Payment);
         await AssertPayrollCostCenterAsync(batchId, payrollCenterId, noveltyCenter.Code, noveltyCenter.Name);
         await AssertIndividualReceiptAsync(client,run,"Approved",true);
+        var paidWorkers=await GetAsync<PayrollHistoryPage<PayrollPaymentEmployeeView>>(client,
+            $"/api/commerce/v1/payroll/payments/{batchId}/employees?page=1&pageSize=20");
+        var paidWorker=Assert.Single(paidWorkers.Items);
+        Assert.True(paidWorker.IsPaid);Assert.Equal(payment.TotalAmount,paidWorker.Amount);
+        var paidResult=Assert.Single(run.Employees,item=>item.PayrollRunEmployeeId==paidWorker.PayrollRunEmployeeId);
+        Assert.Equal(paidResult.NetPayable,paidWorker.Amount);
 
         // The standard accounting auxiliary must reconcile payroll by cost center.
         var entry = await GetAsync<AccountingEntryView>(client,

@@ -9,7 +9,7 @@ namespace Auraly.Platform.Infrastructure.Services;
 /// <summary>
 /// Resuelve MediaRef a URL pública. Rutas de blob → SAS temporal. URLs https → sin cambios.
 /// </summary>
-public class BlobMediaUrlResolver : IMediaUrlResolver
+public class BlobMediaUrlResolver : IMediaUrlResolver, IApplicationFileUrlResolver
 {
     private static readonly TimeSpan SasExpiry = TimeSpan.FromMinutes(15);
 
@@ -29,6 +29,19 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
 
     public async Task<string> ResolveAsync(Guid businessId, string mediaRef, CancellationToken ct = default)
         => await ResolveFromContainerAsync($"business-{businessId:N}".ToLowerInvariant(), mediaRef, true, ct);
+
+    public async Task<string> ResolveApplicationFileAsync(string containerName, string blobName,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(containerName) || string.IsNullOrWhiteSpace(blobName) ||
+            Uri.TryCreate(blobName, UriKind.Absolute, out _))
+            throw new ArgumentException("La descarga requiere un contenedor y una ruta relativa configurados.");
+        // Preserve the storage error (including 404) and check only metadata.
+        // No executable bytes pass through the application server.
+        await _blobServiceClient.GetBlobContainerClient(containerName).GetBlobClient(blobName)
+            .GetPropertiesAsync(cancellationToken: ct);
+        return await ResolveFromContainerAsync(containerName, blobName, false, ct);
+    }
 
     public async Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default)
         => await ResolveFromContainerAsync($"tenant-{tenantId:N}".ToLowerInvariant(), mediaRef, false, ct);

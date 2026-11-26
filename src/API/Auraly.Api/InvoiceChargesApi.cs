@@ -17,8 +17,14 @@ public static class InvoiceChargesApi
             int? page, CancellationToken ct) =>
             Execute(() => service.PosOptionsAsync(Actor(context.User), page ?? 1, ct))).RequireAuthorization("pos.user");
         group.MapGet("/history", (HttpContext context, InvoiceChargeService service, DateOnly from, DateOnly to,
-            int? page, int? pageSize, string? search, CancellationToken ct) => Execute(() =>
-                service.HistoryAsync(Actor(context.User), from, to, page ?? 1, pageSize ?? 25, search, ct)));
+            int? page, int? pageSize, string? search, Guid? createdByUserId, Guid? customerId, CancellationToken ct) => Execute(() =>
+                service.HistoryAsync(Actor(context.User), from, to, page ?? 1, pageSize ?? 25, search, ct, createdByUserId, customerId)));
+        group.MapGet("/history/export", (HttpContext context, InvoiceChargeService service, DateOnly from, DateOnly to,
+            string? search, Guid? createdByUserId, Guid? customerId, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Execute(() => service.ExportHistoryAsync(Actor(context.User), from, to, search, createdByUserId, customerId, ct));
+        });
         group.MapGet("/options", (HttpContext context, InvoiceChargeService service, CancellationToken ct) =>
             Execute(() => service.OptionsAsync(Actor(context.User), ct)));
         group.MapGet("", (HttpContext context, InvoiceChargeService service, int? page,

@@ -255,8 +255,12 @@ public sealed partial class SqlWorkSessionStore
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
               CorrectedApprovalNumber,CorrectedReference,CounterpartyName,
               CorrectedPaymentMethodId,CorrectedPaymentMethodVersion,CorrectedPaymentMethodName,
-              CollectibleAmount,AppliedCorrectionId,CorrectionAccountingStatus
-            FROM #PaymentVerifications
+              CollectibleAmount,AppliedCorrectionId,CorrectionAccountingStatus,documentIdentity.FiscalNumber
+            FROM #PaymentVerifications item
+            OUTER APPLY(SELECT COALESCE(sale.FiscalNumber,fiscal.FiscalNumber) FiscalNumber
+              FROM #ClosureContext scope
+              LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=item.SourceId AND sale.BusinessId=scope.BusinessId
+              LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=item.SourceId AND fiscal.BusinessId=scope.BusinessId) documentIdentity
             ORDER BY SortOrder,OccurredAt,VerificationKey;
             SELECT JSON_QUERY(reconciliation.SnapshotJson,N'$.manualMovements')
             FROM dbo.WorkSessionClosureReconciliations reconciliation
@@ -1298,6 +1302,26 @@ public sealed partial class SqlWorkSessionStore
               FROM dbo.SupplierPaymentTenders WITH(FORCESEEK) WHERE PaymentId=payment.PaymentId) tender;
             CREATE UNIQUE CLUSTERED INDEX IX_CorrectionSupplierPayments ON #CorrectionSupplierPayments(PaymentId);
 
+            -- Resolve the selected sale/credit facts before the wide presentation join.
+            -- The correlated availability function can introduce an optimizer sort;
+            -- keep that sort narrow and reuse each source lookup exactly once.
+            SELECT correction.VerificationKey,sale.DocumentId,sale.DocumentNumber,sale.IssuedAt,
+              sale.CustomerId,sale.CustomerPartySiteId,sale.CreditAmount,sale.ProcessingStatus,
+              receivable.ReceivableId,receivable.OutstandingAmount,receivable.OpeningEntryId,
+              receivable.OpeningEntryLineNumber,available.AvailableAmount
+            INTO #CorrectionSales
+            FROM #Corrections correction
+            JOIN #PaymentVerifications source ON source.VerificationKey COLLATE Latin1_General_100_CI_AS=correction.VerificationKey
+            JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesDocuments(DocumentId)))
+              ON source.MovementType IN(N'Sale',N'CreditSale') AND sale.DocumentId=source.SourceId AND sale.BusinessId=@BusinessId
+            LEFT JOIN dbo.Receivables receivable WITH(UPDLOCK,HOLDLOCK,FORCESEEK(UQ_Receivables_Source(SourceDocumentId,SourceDocumentType)))
+              ON receivable.SourceDocumentId=sale.DocumentId AND receivable.SourceDocumentType=sale.DocumentType
+                AND receivable.BusinessId=@BusinessId
+            OUTER APPLY(SELECT AvailableAmount FROM accounting.ObligationAvailability(@BusinessId,N'Receivable',receivable.ReceivableId,receivable.OutstandingAmount,NULL)
+              WHERE source.MovementType=N'CreditSale') available
+            OPTION(RECOMPILE,FORCE ORDER,LOOP JOIN);
+            CREATE UNIQUE CLUSTERED INDEX IX_CorrectionSales ON #CorrectionSales(VerificationKey);
+
             SELECT correction.VerificationKey,source.MovementType,source.SourceId,
               source.SourceNumber,source.PaymentMethodCode,source.Amount,
               correction.PaymentMethodCode,correction.Amount,correction.Reason,
@@ -1305,9 +1329,9 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(saleParty.PartyId,customerParty.PartyId,supplierParty.PartyId,
                 returnParty.PartyId,evidence.PartyId) PartyId,
               COALESCE(sale.CustomerId,customerPayment.CustomerId,saleReturn.CustomerId) CustomerId,
-              COALESCE(saleReceivable.ReceivableId,customerPayment.ReceivableId,
+              COALESCE(sale.ReceivableId,customerPayment.ReceivableId,
                 supplierPayment.PayableId) SubledgerId,
-              COALESCE(saleReceivable.OutstandingAmount,customerBalance.OutstandingAmount,
+              COALESCE(sale.OutstandingAmount,customerBalance.OutstandingAmount,
                 supplierBalance.OutstandingAmount) OutstandingAmount,
               -- The previous scalar counts returned zero for an absent kind.
               COALESCE(NULLIF(customerPayment.ApplicationCount,0),supplierPayment.ApplicationCount,0) ApplicationCount,
@@ -1353,7 +1377,7 @@ public sealed partial class SqlWorkSessionStore
               CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesReturns returned WITH(UPDLOCK,HOLDLOCK,FORCESEEK(IX_SalesReturns_Original_Status(OriginalDocumentId)))
                 WHERE returned.OriginalDocumentId=sale.DocumentId AND returned.BusinessId=@BusinessId
                   AND returned.EconomicResolution=N'Refund') THEN 1 ELSE 0 END AS bit) HasRefunds,
-              availableCredit.AvailableAmount
+              sale.AvailableAmount
             FROM #Corrections correction
             LEFT JOIN #PaymentVerifications source ON source.VerificationKey COLLATE Latin1_General_100_CI_AS = correction.VerificationKey
             LEFT JOIN #ManualTreasury manual ON manual.MovementId=source.SourceId AND source.SourceDocumentType=N'ManualAccountingVoucher'
@@ -1387,8 +1411,7 @@ public sealed partial class SqlWorkSessionStore
                 AND correctedTenderCategory.SourceCode=COALESCE(correction.TenderMethodCode,
                   CASE WHEN correction.PaymentMethodCode=source.PaymentMethodCode
                     THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
-            LEFT JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesDocuments(DocumentId)))
-              ON source.MovementType IN(N'Sale',N'CreditSale') AND sale.DocumentId=source.SourceId AND sale.BusinessId=@BusinessId
+            LEFT JOIN #CorrectionSales sale ON sale.VerificationKey=correction.VerificationKey
             LEFT JOIN sales.RestaurantAccountCollections restaurantTip WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_RestaurantAccountCollections(CollectionId)))
               ON source.MovementType=N'RestaurantTip'
                 AND restaurantTip.CollectionId=source.SourceId
@@ -1397,13 +1420,8 @@ public sealed partial class SqlWorkSessionStore
               AND saleTender.DocumentId=sale.DocumentId AND saleTender.PaymentNumber=source.SourceNumber
             LEFT JOIN dbo.Customers saleCustomer WITH(FORCESEEK) ON saleCustomer.CustomerId=sale.CustomerId
             LEFT JOIN dbo.Parties saleParty WITH(FORCESEEK) ON saleParty.PartyId=saleCustomer.PartyId
-            LEFT JOIN dbo.Receivables saleReceivable WITH(UPDLOCK,HOLDLOCK,FORCESEEK(UQ_Receivables_Source(SourceDocumentId,SourceDocumentType)))
-              ON saleReceivable.SourceDocumentId=sale.DocumentId
-                AND saleReceivable.SourceDocumentType=sale.DocumentType AND saleReceivable.BusinessId=@BusinessId
             LEFT JOIN dbo.AccountingEntryLines creditOpening ON source.MovementType=N'CreditSale'
-              AND creditOpening.EntryId=saleReceivable.OpeningEntryId AND creditOpening.LineNumber=saleReceivable.OpeningEntryLineNumber
-            OUTER APPLY(SELECT AvailableAmount FROM accounting.ObligationAvailability(@BusinessId,N'Receivable',saleReceivable.ReceivableId,saleReceivable.OutstandingAmount,NULL)
-              WHERE source.MovementType=N'CreditSale') availableCredit
+              AND creditOpening.EntryId=sale.OpeningEntryId AND creditOpening.LineNumber=sale.OpeningEntryLineNumber
             LEFT JOIN #CorrectionPaymentReferences paymentReference ON paymentReference.SourceId=source.SourceId
               AND paymentReference.MovementType=source.MovementType
             LEFT JOIN #CorrectionCustomerPayments customerPayment
@@ -1649,7 +1667,7 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(27) ? null : reader.GetString(27),
                 reader.IsDBNull(28) ? null : reader.GetDecimal(28),
                 reader.IsDBNull(29) ? null : reader.GetGuid(29),
-                reader.IsDBNull(30) ? null : reader.GetString(30));
+                reader.IsDBNull(30) ? null : reader.GetString(30)){FiscalNumber=reader.IsDBNull(31)?null:reader.GetString(31)};
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
         string rangesJson, string? status)

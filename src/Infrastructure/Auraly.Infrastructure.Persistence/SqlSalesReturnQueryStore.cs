@@ -182,7 +182,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                      NULLIF(r.CustomerIdentification,N''),N'Consumidor final') CustomerName,
                    r.ReturnedAt,r.EconomicResolution,r.TotalAmount,r.Status,r.FiscalStatus,
-                   r.ReasonCode
+                   r.ReasonCode,d.FiscalNumber OriginalFiscalNumber
             INTO #MatchedReturns FROM dbo.SalesReturns r
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.SalesDocuments d ON d.DocumentId=r.OriginalDocumentId
@@ -219,7 +219,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         {
             items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetGuid(2),reader.GetString(3),
                 reader.GetString(4),reader.GetDateTimeOffset(5),reader.GetString(6),reader.GetDecimal(7),
-                reader.GetString(8),reader.IsDBNull(9)?null:reader.GetString(9),reader.GetString(10)));
+                reader.GetString(8),reader.IsDBNull(9)?null:reader.GetString(9),reader.GetString(10),reader.IsDBNull(11)?null:reader.GetString(11)));
         }
         await reader.NextResultAsync(cancellationToken);
         if (await reader.ReadAsync(cancellationToken)) total=reader.GetInt32(0);
@@ -237,7 +237,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                    r.CustomerIdentification,r.WarehouseId,w.Name,r.ReturnedAt,r.EconomicResolution,
                    r.RefundMethodCode,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,r.Status,r.FiscalStatus,
                    r.ReasonCode,r.ReasonDescription,r.Notes,b.Name,t.Name,
-                   COALESCE(CONVERT(int,JSON_VALUE(returnPayload.PayloadJson,'$.printTemplateVersion')),1)
+                   COALESCE(CONVERT(int,JSON_VALUE(returnPayload.PayloadJson,'$.printTemplateVersion')),1),d.FiscalNumber
             FROM dbo.SalesReturns r
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.Tenants t ON t.TenantId=b.TenantId
@@ -249,7 +249,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
               ON returnPayload.DocumentId=r.ReturnId AND returnPayload.BusinessId=r.BusinessId
             WHERE r.ReturnId=@Id AND r.BusinessId=@BusinessId;
             """;
-        string number;Guid originalId;string originalNumber;string customer;string identification;
+        string? originalFiscalNumber;string number;Guid originalId;string originalNumber;string customer;string identification;
         Guid warehouseId;string warehouse;DateTimeOffset returnedAt;string resolution;string? method;
         decimal untaxed;decimal tax;decimal total;string status;string? fiscalStatus;string reason;
         string description;string? notes;string businessName;string companyName;int templateVersion;
@@ -264,7 +264,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             method=reader.IsDBNull(9)?null:reader.GetString(9);untaxed=reader.GetDecimal(10);
             tax=reader.GetDecimal(11);total=reader.GetDecimal(12);status=reader.GetString(13);
             fiscalStatus=reader.IsDBNull(14)?null:reader.GetString(14);reason=reader.GetString(15);
-            description=reader.GetString(16);notes=reader.IsDBNull(17)?null:reader.GetString(17);businessName=reader.GetString(18);companyName=reader.GetString(19);templateVersion=reader.GetInt32(20);
+            description=reader.GetString(16);notes=reader.IsDBNull(17)?null:reader.GetString(17);businessName=reader.GetString(18);companyName=reader.GetString(19);templateVersion=reader.GetInt32(20);originalFiscalNumber=reader.IsDBNull(21)?null:reader.GetString(21);
         }
         var lines=new List<SalesReturnLineSnapshot>();
         var charges=new List<SalesReturnChargeSnapshot>();
@@ -294,7 +294,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         }
         return new(returnId,number,originalId,originalNumber,customer,identification,warehouseId,
             warehouse,returnedAt,resolution,method,untaxed,tax,total,status,fiscalStatus,reason,
-            description,notes,lines,charges,businessName,companyName,PrintTemplateVersion:templateVersion);
+            description,notes,lines,charges,businessName,companyName,PrintTemplateVersion:templateVersion)
+            { OriginalFiscalNumber = originalFiscalNumber };
     }
 
     private static async Task<IReadOnlyList<ReturnableSalePayment>> LoadPaymentsAsync(

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -195,6 +196,15 @@ internal sealed partial class AuralyDesktopUpdater(
         }
     }
 
+    internal static HttpClient CreateDownloadClient(Uri origin, IEnumerable<Cookie> cookies)
+    {
+        // CookieContainer enforces the original domain when the authenticated
+        // download redirects to Blob Storage. A raw Cookie header would follow it.
+        var handler = new HttpClientHandler();
+        foreach (var cookie in cookies) handler.CookieContainer.Add(origin, cookie);
+        return new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(20) };
+    }
+
     private async Task<AuralyPendingUpdate> DownloadAsync(
         AuralyUpdateRequest update,
         CancellationToken cancellationToken)
@@ -206,17 +216,12 @@ internal sealed partial class AuralyDesktopUpdater(
         var temporaryPath = installerPath + ".download";
 
         var cookies = await browser.CoreWebView2.CookieManager.GetCookiesAsync(webOrigin);
-        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(20) };
+        using var client = CreateDownloadClient(new Uri(webOrigin), cookies.Select(cookie =>
+            new Cookie(cookie.Name, cookie.Value, cookie.Path)
+                { Secure = cookie.IsSecure, HttpOnly = cookie.IsHttpOnly }));
         using var request = new HttpRequestMessage(
             HttpMethod.Get,
             new Uri(new Uri(webOrigin), update.DownloadUrl));
-        if (cookies.Count > 0)
-        {
-            request.Headers.Add(
-                "Cookie",
-                string.Join("; ", cookies.Select(cookie => $"{cookie.Name}={cookie.Value}")));
-        }
-
         using var response = await client.SendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead,

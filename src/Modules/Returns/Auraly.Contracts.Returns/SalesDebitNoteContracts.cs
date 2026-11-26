@@ -104,7 +104,10 @@ public sealed record SalesDebitNoteListItem(
     decimal TotalAmount,
     string Status,
     string FiscalStatus,
-    string? Cude);
+    string? Cude)
+{
+    public string? OriginalFiscalNumber { get; init; }
+}
 
 public sealed record SalesDebitNoteDetail(
     SalesDebitNoteListItem Header,

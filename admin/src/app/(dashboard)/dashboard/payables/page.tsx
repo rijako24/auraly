@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef, SortingState } from "@tanstack/react-table";
@@ -93,7 +95,7 @@ export default function PayablesPage() {
       header: "Documento",
       cell: ({ row }) => (
         <div>
-          <p className="font-semibold">{row.original.documentNumber}</p>
+          <DocumentNumbers internalNumber={row.original.internalDocumentNumber??row.original.documentNumber} fiscalNumber={row.original.fiscalNumber}/>{row.original.internalDocumentNumber&&row.original.internalDocumentNumber!==row.original.documentNumber&&<p className="text-xs text-muted-foreground">Factura del proveedor: {row.original.documentNumber}</p>}
           <p className="text-xs text-muted-foreground">{row.original.supplierName}{row.original.partySiteName ? ` · ${row.original.partySiteName}` : ""}</p>
           {row.original.expenseConceptName && <p className="text-xs text-muted-foreground">{row.original.expenseConceptName}</p>}
         </div>
@@ -196,7 +198,7 @@ export default function PayablesPage() {
       <Dialog open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(undefined)}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{detail?.documentNumber ?? "Detalle de obligación"}</DialogTitle>
+            <DialogTitle>{detail?<DocumentNumbers internalNumber={detail.internalDocumentNumber??detail.documentNumber} fiscalNumber={detail.fiscalNumber}/>:"Detalle de obligación"}</DialogTitle>
             <DialogDescription>{detail ? `${detail.supplierName}${detail.partySiteName ? ` · ${detail.partySiteName}` : ""} · ${detail.supplierIdentification}` : "Cargando información..."}</DialogDescription>
           </DialogHeader>
           {detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? (
@@ -210,7 +212,7 @@ export default function PayablesPage() {
                 <h3 className="mb-2 font-semibold">Origen: gasto {detail.documentNumber}</h3>
                 <p><span className="text-muted-foreground">Concepto:</span> {detail.expenseConceptName ?? "Sin concepto"}</p>
                 <p><span className="text-muted-foreground">Descripción:</span> {detail.expenseDescription || "Sin descripción"}</p>
-                {detail.sourceInvoiceNumber && <p><span className="text-muted-foreground">Factura de venta:</span> {detail.sourceInvoiceNumber}</p>}
+                {detail.sourceInvoiceNumber && <p><span className="text-muted-foreground">Factura de venta:</span> <DocumentNumbers internalNumber={detail.sourceInvoiceNumber} fiscalNumber={detail.sourceInvoiceFiscalNumber}/></p>}
               </section>}
               {detail.goodsReceiptId && <section className="flex items-center justify-between gap-3 rounded-xl border p-4 text-sm">
                 <span>{detail.sourceDocumentType === "GoodsReceiptCostDocument" ? "Factura adicional de recepción" : "Recepción de compra"}</span>

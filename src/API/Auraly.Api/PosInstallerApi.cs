@@ -1,5 +1,5 @@
 using Azure;
-using Azure.Storage.Blobs;
+using Auraly.Platform.Application.Services;
 using Microsoft.Extensions.Options;
 
 namespace Auraly.Api;
@@ -20,6 +20,7 @@ public sealed class PosInstallerOptions
         var sha256 = Sha256.Trim().ToUpperInvariant();
         var valid = containerName is { Length: > 0 and <= 63 } &&
                     blobName is { Length: > 0 and <= 1024 } &&
+                    !Uri.TryCreate(blobName, UriKind.Absolute, out _) &&
                     version is { Length: > 0 and <= 64 } &&
                     sha256.Length == 64 &&
                     sha256.All(Uri.IsHexDigit);
@@ -56,23 +57,24 @@ public static class PosInstallerApi
 
         group.MapGet("/download", async (
             IOptions<PosInstallerOptions> configured,
-            BlobServiceClient blobs,
+            IApplicationFileUrlResolver files,
             ILoggerFactory loggerFactory,
+            HttpContext context,
             CancellationToken cancellationToken) =>
         {
             var options = configured.Value;
             if (!options.TryCreateView(out _)) return Unavailable();
 
             var logger = loggerFactory.CreateLogger("PosInstaller");
-            var blob = blobs.GetBlobContainerClient(options.ContainerName.Trim())
-                .GetBlobClient(options.BlobName.Trim());
             try
             {
-                var download = await blob.DownloadStreamingAsync(cancellationToken: cancellationToken);
-                return Results.Stream(
-                    download.Value.Content,
-                    download.Value.Details.ContentType ?? "application/vnd.microsoft.portable-executable",
-                    "Auraly-POS-Setup.exe");
+                // The web host must not relay the executable through its API response.
+                // Authorization still happens here; only this configured blob receives
+                // the existing storage owner's short-lived, read-only signature.
+                var url = await files.ResolveApplicationFileAsync(options.ContainerName.Trim(),
+                    options.BlobName.Trim(), cancellationToken);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Redirect(url);
             }
             catch (RequestFailedException exception) when (exception.Status == StatusCodes.Status404NotFound)
             {

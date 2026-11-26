@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Loader2, Printer } from "lucide-react";
@@ -71,7 +73,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
   const branding = useQuery({ queryKey: ["tenant-print-branding", tenantId], queryFn: async () => {
       await tenantsApi.getPrintBranding();
       const prepared = tenantsApi.readyLocalPrintBranding();
-      if (!prepared) throw new Error("No se pudo preparar la marca de la empresa.");
+      if (!prepared || prepared.tenantId.toLowerCase() !== tenantId?.toLowerCase()) throw new Error("No se pudo preparar la marca de la empresa seleccionada.");
       return prepared;
     },
     enabled: Boolean(tenantId), staleTime: 10 * 60 * 1000 });
@@ -387,8 +389,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                   </tr></thead>
                   {invoices.map((item: Row) => <tbody key={("receivableId" in item ? item.receivableId : item.payableId) ?? item.documentNumber}>
                     <tr className="border-t">
-                      <td className="p-3 font-semibold">{item.documentNumber ?? "Sin número"}
-                        {"customerId" in item && item.internalDocumentNumber && <span className="mt-1 block text-xs font-normal text-slate-600">Referencia interna: {item.internalDocumentNumber}</span>}</td>
+                      <td className="p-3"><DocumentNumbers internalNumber={item.internalDocumentNumber??item.documentNumber} fiscalNumber={item.fiscalNumber}/>{item.internalDocumentNumber&&item.internalDocumentNumber!==item.documentNumber&&<span className="mt-1 block text-xs text-muted-foreground">Referencia: {item.documentNumber}</span>}</td>
                       <td className="p-3 whitespace-nowrap">{item.issuedAt ? formatDate(item.issuedAt) : "—"}</td>
                       <td className="p-3 whitespace-nowrap">{item.dueDate ? formatDate(item.dueDate) : "—"}</td>
                       {"customerId" in item && <><td className="p-3 text-right tabular-nums">{item.termDays ?? "—"}</td><td className="p-3 text-right tabular-nums">{item.ageDays ?? "—"}</td><td className={`p-3 text-right tabular-nums ${(item.daysPastDue ?? 0) > 0 && item.outstandingAmount > 0 ? "font-semibold text-red-700" : ""}`}>{item.daysPastDue ?? "—"}</td></>}

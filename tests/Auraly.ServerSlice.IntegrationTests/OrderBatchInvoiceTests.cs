@@ -69,7 +69,7 @@ public sealed class OrderBatchInvoiceTests(
     [InlineData(900000L,"COP")]
     [InlineData(1000000L,"USD")]
     public Task Confirmed_payment_does_not_invent_extra_amount_or_convert_currency(long amountInCents,string currency)
-        =>Conversational_payment_state_uses_the_producer_enum_and_only_confirmed_money_keeps_session_attribution(
+        =>Conversational_payment_state_preserves_amount_and_all_order_sales_use_issuing_session(
             PaymentTransactionStatus.Confirmed,false,amountInCents,currency);
 
     [Theory]
@@ -78,7 +78,7 @@ public sealed class OrderBatchInvoiceTests(
     [InlineData(PaymentTransactionStatus.Failed)]
     [InlineData(PaymentTransactionStatus.Refunded)]
     [InlineData(PaymentTransactionStatus.Confirmed,true)]
-    public async Task Conversational_payment_state_uses_the_producer_enum_and_only_confirmed_money_keeps_session_attribution(
+    public async Task Conversational_payment_state_preserves_amount_and_all_order_sales_use_issuing_session(
         PaymentTransactionStatus status,bool foreignPayment=false,long amountInCents=1000000,string currency="COP")
     {
         var userId=Guid.NewGuid();var session=Guid.NewGuid();var order=Guid.NewGuid();
@@ -172,7 +172,7 @@ public sealed class OrderBatchInvoiceTests(
         verify.Parameters.AddWithValue("@Id",document);verify.Parameters.AddWithValue("@Session",session);
         await using var reader=await verify.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());
         Assert.Equal("Completed",reader.GetString(5));
-        Assert.Equal(confirmed?"Session":"Dispatch",reader.GetString(0));Assert.Equal(confirmed?1:0,reader.GetInt32(1));Assert.Equal(1,reader.GetInt32(2));
+        Assert.Equal("Session",reader.GetString(0));Assert.Equal(1,reader.GetInt32(1));Assert.Equal(1,reader.GetInt32(2));
         Assert.Equal(0,reader.GetInt32(3));Assert.Equal(1,reader.GetInt32(4));
         Assert.Equal(1,reader.GetInt32(6));
     }
@@ -203,7 +203,8 @@ public sealed class OrderBatchInvoiceTests(
                 method == "Transfer" ? "1119" : "1399", "Asset", method == "Transfer" ? "Bank" : "CardClearing", "Debit", bankId);
         var types = (await admin.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!;
         var save = new SavePaymentMethodRequest(Guid.NewGuid(), $"BATCH-{Guid.NewGuid():N}", "Caja del lote",
-            types.Single(type => type.Code == method).Id, account.AccountId, true, false, false, false, true, 10);
+            types.Single(type => type.Code == method).Id, account.AccountId, true, false, false, false, true, 10,
+            BankAccountId: bankId);
         using var created = await admin.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{save.PaymentMethodId}", save);
         Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
         var form = (await created.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
@@ -272,15 +273,15 @@ public sealed class OrderBatchInvoiceTests(
             """, connection);
         attribution.Parameters.AddWithValue("@Document", invoice.DocumentId);
         await using var attributed = await attribution.ExecuteReaderAsync();
-        Assert.True(await attributed.ReadAsync()); Assert.Equal("Dispatch", attributed.GetString(0));
-        Assert.Equal(session, attributed.GetGuid(1)); Assert.Equal(0, attributed.GetInt32(2));
+        Assert.True(await attributed.ReadAsync()); Assert.Equal("Session", attributed.GetString(0));
+        Assert.Equal(session, attributed.GetGuid(1)); Assert.Equal(1, attributed.GetInt32(2));
         await attributed.CloseAsync();
         using var scope = fixture.CreateScope();
         var sessions = scope.ServiceProvider.GetRequiredService<WorkSessionService>();
         var preview = await sessions.PreviewClosureAsync(new WorkSessionIdentity(userId, fixture.TenantId,
             new HashSet<string>{WorkSessionPermissionCodes.Read}, fixture.BusinessId), session);
-        Assert.Equal(0m, preview.TotalSales); Assert.Equal(0m, preview.ExpectedCash);
-        Assert.All(preview.PaymentTotals, total => Assert.Equal(0m, total.NetAmount));
+        Assert.Equal(10000m, preview.TotalSales); Assert.Equal(method=="Cash"?10000m:0m, preview.ExpectedCash);
+        Assert.Equal(10000m,preview.PaymentTotals.Sum(total=>total.NetAmount));
     }
 
     [Fact]

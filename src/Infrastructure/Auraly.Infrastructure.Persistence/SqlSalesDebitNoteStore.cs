@@ -130,7 +130,7 @@ public sealed class SqlSalesDebitNoteStore(
                             n.CustomerIdentification),
                    n.CustomerIdentification,n.IssuedAt,n.ConceptCode,n.ReasonDescription,
                    n.TotalAmount,n.Status,COALESCE(n.FiscalStatus,N'PendingGeneration'),fd.UniqueCode,
-                   COUNT_BIG(*) OVER()
+                   COUNT_BIG(*) OVER(),d.FiscalNumber OriginalFiscalNumber
             FROM dbo.SalesDebitNotes n
             INNER JOIN dbo.Businesses b ON b.BusinessId=n.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.SalesDocuments d ON d.DocumentId=n.OriginalDocumentId
@@ -181,7 +181,7 @@ public sealed class SqlSalesDebitNoteStore(
                             n.CustomerIdentification),
                    n.CustomerIdentification,n.IssuedAt,n.ConceptCode,n.ReasonDescription,
                    n.TotalAmount,n.Status,COALESCE(n.FiscalStatus,N'PendingGeneration'),fd.UniqueCode,
-                   n.DueAt,n.UntaxedAmount,n.TaxAmount,n.Notes
+                   n.DueAt,n.UntaxedAmount,n.TaxAmount,n.Notes,d.FiscalNumber OriginalFiscalNumber
             FROM dbo.SalesDebitNotes n
             INNER JOIN dbo.Businesses b ON b.BusinessId=n.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.SalesDocuments d ON d.DocumentId=n.OriginalDocumentId
@@ -433,7 +433,8 @@ public sealed class SqlSalesDebitNoteStore(
         reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
         reader.GetString(4), reader.GetString(5), reader.GetDateTimeOffset(6),
         reader.GetString(7), reader.GetString(8), reader.GetDecimal(9),
-        reader.GetString(10), reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12));
+        reader.GetString(10), reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12))
+        {OriginalFiscalNumber=reader.IsDBNull(reader.GetOrdinal("OriginalFiscalNumber"))?null:reader.GetString(reader.GetOrdinal("OriginalFiscalNumber"))};
 
     private static void Scope(SqlCommand command, SalesReturnUserIdentity user)
     {

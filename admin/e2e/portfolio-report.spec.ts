@@ -299,9 +299,10 @@ for (const direction of ["receivables", "payables"] as const) {
       await expect(clientB.getByRole("heading",{name:"Cliente B",exact:true})).toHaveCount(1);
       await expect(clientA.getByRole("columnheader",{name:"Documento",exact:true})).toHaveCount(1);
       await expect(clientB.getByRole("columnheader",{name:"Documento",exact:true})).toHaveCount(1);
-      await expect(clientA.getByRole("cell",{name:"FE-1 Referencia interna: BTAX-1",exact:true})).toBeVisible();
+      await expect(clientA.getByRole("cell",{name:"Número interno: BTAX-1 Referencia: FE-1",exact:true})).toBeVisible();
       await expect(clientA.getByText("ASI-1",{exact:true})).toBeVisible();
-      await expect(clientA.getByText("Referencia interna: BTAX-1",{exact:true})).toBeVisible();
+      await expect(clientA.getByText("BTAX-1",{exact:true})).toBeVisible();
+      await expect(clientA.getByText("Referencia: FE-1",{exact:true})).toBeVisible();
       await expect(clientB.getByText("BTAX-2",{exact:true})).toBeVisible();
       await expect(clientB.getByText(/^1–30 días:\s*\$\s*7\.500,1234$/)).toBeVisible();
       await expect(dialog.getByRole("region",{name:"Edades de cartera"}).getByText(/15\.000,1234/)).toBeVisible();

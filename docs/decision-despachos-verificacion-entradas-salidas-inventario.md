@@ -2162,8 +2162,11 @@ se corrigieron y revalidaron en las ejecuciones focalizadas posteriores.
 ### Evidencia de Edge, catálogo y aislamiento sin conexión
 
 El contrato de venta conserva la atribución del recaudo como un hecho inmutable,
-no como una copia de configuración contable. Los emisores nuevos de pedidos,
-web y Edge, guardan CollectionMode Dispatch. El valor Session es cero y se omite
+no como una copia de configuración contable. Por decisión del usuario del
+26 de noviembre de 2026, los emisores nuevos de pedidos, web y Edge, vuelven a
+usar `CollectionMode=Session`: el pago pertenece a la sesión que factura. Esta
+decisión reemplaza la atribución diferida por origen pedido descrita en las
+evidencias históricas de abajo. El valor Session es cero y se omite
 al serializar: un documento antiguo en cola que no tenía ese campo conserva su
 representación exacta, hash y atribución. El servidor no vuelve a deducir ese hecho
 por tenant, fecha ni por consultar la configuración actual. Las cuentas automáticas
@@ -2171,8 +2174,13 @@ siguen resolviéndose al contabilizar. El cierre local lee la atribución del mi
 JSON ya persistido y suma CollectedAmount, incluido el redondeo, sin otra consulta
 por venta ni nueva tabla local.
 
-OrderCollectionPaymentPolicy es una validación pura del contrato compartida por
-los emisores y la aceptación; no es otro motor. Por recaudar usa el catálogo nativo
+`OrderCollectionPaymentPolicy` conserva únicamente la validación del contrato
+persistido en la aceptación; ya no elige atribución para una venta nueva. La
+validación de documentos emitidos anteriormente no altera su snapshot ni hash.
+
+El tratamiento de `Por recaudar` del siguiente párrafo corresponde a la evidencia
+histórica; fue reemplazado por formas del tipo Crédito cliente, incluida Cartera
+a domicilio. No constituye un sexto tipo de pago vigente. Por recaudar usaba el catálogo nativo
 con cuenta explícita, sólo para el importe completo de un comprobante de pedido,
 sin crédito ni evidencia de dinero recibido. No se crea auxiliar predeterminado
 ni se modifica el catálogo inicial de cuatro formas. No se ofrece como dinero en

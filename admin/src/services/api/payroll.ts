@@ -24,6 +24,7 @@ export interface PayrollDeductionAgreement { deductionAgreementId:string;employm
 export interface PayrollNovelty { costCenterId?:string|null;costCenterName?:string|null;rowVersion?:string;reasonId?:string|null; noveltyId:string;employmentId:string;employeeName:string;conceptId:string;conceptName:string;noveltyTypeOptionId:string;noveltyTypeName:string;deductionAgreementId:string|null;startDate:string;endDate:string;quantity:number;unitAmount:number|null;totalAmount:number;notes:string|null;evidenceUrl:string|null;status:string }
 export interface PayrollPayableEmployee { payrollRunEmployeeId:string;paymentMethodOptionId:string;paymentMethodName:string;amount:number;bankDestinationComplete:boolean;employeeName:string }
 export interface PayrollPaymentBatch { accountingStatus?:string|null; isPaid?:boolean; paymentMethodId?:string|null; accountId?:string|null; remainingEmployees:PayrollPayableEmployee[]; paymentBatchId:string;payrollRunId:string;paymentDate:string;paymentMethodOptionId:string;paymentMethodName:string;referenceNumber:string;status:string;employeeCount:number;totalAmount:number;rowVersion:string }
+export interface PayrollPaymentEmployee { payrollRunEmployeeId:string;partyId:string;employeeName:string|null;identification:string|null;periodStart:string;periodEnd:string;paymentDate:string;amount:number;isPaid:boolean }
 export interface PayrollReportColumn { key:string;label:string;format:"text"|"number"|"currency"|"date"|"datetime";align:"left"|"right" }
 export interface PayrollReportDefinition { code:string;name:string;description:string;dataset:string;columns:PayrollReportColumn[];sortOrder:number }
 export interface PayrollReportResult { definition:PayrollReportDefinition;from:string;to:string;rows:Array<Record<string,string|number|null>> }
@@ -61,11 +62,12 @@ export const payrollApi = {
   employments: (params:{page:number;pageSize:number;search?:string;isActive?:boolean;employmentId?:string;partyId?:string}) => apiClient.get<PayrollEmploymentPage>("/commerce/v1/payroll/employments",params),
   agreements: (params:{page:number;pageSize:number;employmentId?:string;conceptId?:string;active?:boolean;search?:string}) => apiClient.get<PayrollHistoryPage<PayrollDeductionAgreement>>("/commerce/v1/payroll/deduction-agreements",params),
   payments: (page:number,pageSize=20) => apiClient.get<PayrollHistoryPage<PayrollPaymentBatch>>("/commerce/v1/payroll/payments",{page,pageSize}),
+  paymentEmployees: (id:string,page:number,pageSize=20,signal?:AbortSignal) => apiClient.get<PayrollHistoryPage<PayrollPaymentEmployee>>(`/commerce/v1/payroll/payments/${id}/employees`,{page,pageSize},{signal}),
   electronicPeriods: (page:number,pageSize=20) => apiClient.get<PayrollHistoryPage<ElectronicPayrollPeriod>>("/commerce/v1/payroll/electronic-periods",{page,pageSize}),
   electronicDocuments: (id:string,page:number,pageSize=20) => apiClient.get<PayrollHistoryPage<ElectronicPayrollDocument>>(`/commerce/v1/payroll/electronic-periods/${id}/documents`,{page,pageSize}),
   runs: (params:{page:number;pageSize:number;status?:string;kind?:string;search?:string;runId?:string;paymentFrom?:string;paymentTo?:string;workerSearch?:string}) => apiClient.get<PayrollRunPage>("/commerce/v1/payroll/runs",params),
   run: (id:string,employmentId?:string) => apiClient.get<PayrollRun>(`/commerce/v1/payroll/runs/${id}${employmentId?`?employmentId=${encodeURIComponent(employmentId)}`:""}`),
-  calculatedEmployees:(params:{page:number;pageSize:number;from:string;to:string;search?:string;runId?:string})=>apiClient.get<PayrollCalculatedEmployeePage>(`/commerce/v1/payroll/calculated-employees?${new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)]))}`),
+  calculatedEmployees:(params:{page:number;pageSize:number;from:string;to:string;search?:string;runId?:string},signal?:AbortSignal)=>apiClient.get<PayrollCalculatedEmployeePage>(`/commerce/v1/payroll/calculated-employees?${new URLSearchParams(Object.entries(params).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)]))}`,undefined,{signal}),
   createRun: (request:CreateRun) => apiClient.post<PayrollRun>("/commerce/v1/payroll/runs",request),
   runEmployments: (id:string,params:{page:number;pageSize:number;search?:string;contractNumber?:string;sortBy?:string;sortDirection?:"asc"|"desc";costCenterId?:string;workSite?:string}) => apiClient.get<PayrollRunEmploymentPage>(`/commerce/v1/payroll/runs/${id}/employments`,params),
   calculateRun: (id:string,request:CalculatePayrollRun={}) => apiClient.post<PayrollRun>(`/commerce/v1/payroll/runs/${id}/calculate`,request),
@@ -89,6 +91,6 @@ export const payrollApi = {
   voidNovelty: (id:string,rowVersion:string) => apiClient.post<PayrollNovelty>(`/commerce/v1/payroll/novelties/${id}/void`,{rowVersion}),
   createPayment: (request:CreatePayrollPayment) => apiClient.post<PayrollPaymentBatch>("/commerce/v1/payroll/payments",request),
   reportDefinitions: () => apiClient.get<PayrollReportDefinition[]>("/commerce/v1/payroll/reports/definitions"),
-  report: (code:string,from:string,to:string,partyId?:string,employeeResultId?:string) =>
-    apiClient.get<PayrollReportResult>(`/commerce/v1/payroll/reports/${encodeURIComponent(code)}`,{from,to,partyId,employeeResultId}),
+  report: (code:string,from:string,to:string,partyId?:string,employeeResultId?:string,signal?:AbortSignal) =>
+    apiClient.get<PayrollReportResult>(`/commerce/v1/payroll/reports/${encodeURIComponent(code)}`,{from,to,partyId,employeeResultId},{signal}),
 };

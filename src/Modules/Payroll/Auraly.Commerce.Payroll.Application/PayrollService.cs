@@ -59,6 +59,7 @@ public interface IPayrollStore
         CancellationToken ct,Guid? employmentId=null);
     Task<PayrollHistoryPage<PayrollDeductionAgreementSummary>> PageAgreementsAsync(PayrollUserIdentity user,int page,int pageSize,Guid? employmentId,Guid? conceptId,bool? active,string? search,CancellationToken ct);
     Task<PayrollHistoryPage<PayrollPaymentBatchView>> PagePaymentsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct);
+    Task<PayrollHistoryPage<PayrollPaymentEmployeeView>> PagePaymentEmployeesAsync(PayrollUserIdentity user,Guid paymentBatchId,int page,int pageSize,CancellationToken ct);
     Task<PayrollHistoryPage<ElectronicPayrollPeriodView>> PageElectronicPeriodsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct);
     Task<PayrollHistoryPage<ElectronicPayrollDocumentView>> PageElectronicDocumentsAsync(PayrollUserIdentity user,Guid periodId,int page,int pageSize,CancellationToken ct);
     Task<PayrollRunPage> PageRunsAsync(PayrollUserIdentity user,int page,int pageSize,string? status,string? kind,string? search, CancellationToken ct,PayrollRunHistoryFilter? filter=null);
@@ -369,6 +370,13 @@ public sealed class PayrollService(
     public Task<PayrollHistoryPage<PayrollPaymentBatchView>> PagePaymentsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct=default)
     {
         Demand(user,PayrollPermissionCodes.Read);ValidateHistoryPage(page,pageSize);return store.PagePaymentsAsync(user,page,pageSize,ct);
+    }
+
+    public Task<PayrollHistoryPage<PayrollPaymentEmployeeView>> PagePaymentEmployeesAsync(PayrollUserIdentity user,Guid paymentBatchId,int page,int pageSize,CancellationToken ct=default)
+    {
+        Demand(user,PayrollPermissionCodes.Read);ValidateHistoryPage(page,pageSize);
+        if(paymentBatchId==Guid.Empty)throw new PayrollValidationException("Selecciona un pago de nómina válido.");
+        return store.PagePaymentEmployeesAsync(user,paymentBatchId,page,pageSize,ct);
     }
     public Task<PayrollHistoryPage<ElectronicPayrollPeriodView>> PageElectronicPeriodsAsync(PayrollUserIdentity user,int page,int pageSize,CancellationToken ct=default)
     {

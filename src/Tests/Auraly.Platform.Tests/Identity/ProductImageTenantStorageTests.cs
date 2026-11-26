@@ -17,6 +17,47 @@ namespace Auraly.Platform.Tests.Identity;
 public sealed class ProductImageTenantStorageTests
 {
     [Fact]
+    public async Task Application_download_signs_one_existing_file_without_reading_its_bytes()
+    {
+        var root = new Uri("https://applicationfiles.blob.core.windows.net");
+        var service = new Mock<BlobServiceClient>(MockBehavior.Strict, root, new BlobClientOptions());
+        service.SetupGet(value => value.Uri).Returns(root);
+        var container = new Mock<BlobContainerClient>(MockBehavior.Strict);
+        var blob = new Mock<BlobClient>(MockBehavior.Strict);
+        service.Setup(value => value.GetBlobContainerClient("downloads")).Returns(container.Object);
+        container.Setup(value => value.GetBlobClient("Auraly-POS-Setup.exe")).Returns(blob.Object);
+        blob.SetupGet(value => value.CanGenerateSasUri).Returns(false);
+        blob.SetupGet(value => value.Uri).Returns(new Uri(root, "/downloads/Auraly-POS-Setup.exe"));
+        blob.Setup(value => value.GetPropertiesAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Response.FromValue(BlobsModelFactory.BlobProperties(), Mock.Of<Response>()));
+        service.Setup(value => value.GetUserDelegationKeyAsync(It.IsAny<DateTimeOffset?>(),
+                It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Response.FromValue(BlobsModelFactory.UserDelegationKey(Guid.NewGuid().ToString(),
+                Guid.NewGuid().ToString(), DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1),
+                "b", "2020-12-06", Convert.ToBase64String(new byte[32])), Mock.Of<Response>()));
+        var resolver = new BlobMediaUrlResolver(service.Object, NullLogger<BlobMediaUrlResolver>.Instance);
+        var uri = new Uri(await resolver.ResolveApplicationFileAsync("downloads", "Auraly-POS-Setup.exe"));
+        Assert.Equal(root.Host, uri.Host);
+        Assert.Equal("/downloads/Auraly-POS-Setup.exe", uri.AbsolutePath);
+        Assert.Contains("sp=r&", uri.Query);
+        Assert.Contains("sr=b&", uri.Query);
+        blob.Verify(value => value.GetPropertiesAsync(null, It.IsAny<CancellationToken>()), Times.Once);
+        blob.Verify(value => value.DownloadStreamingAsync(It.IsAny<BlobDownloadOptions>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://example.test/installer.exe")]
+    public async Task Application_download_rejects_unconfigured_or_external_paths(string path)
+    {
+        var storage = new Mock<BlobServiceClient>(MockBehavior.Strict);
+        var resolver = new BlobMediaUrlResolver(storage.Object, NullLogger<BlobMediaUrlResolver>.Instance);
+        await Assert.ThrowsAsync<ArgumentException>(() => resolver.ResolveApplicationFileAsync("downloads", path));
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task Business_evidence_signs_only_its_fifty_private_objects_in_one_batch_without_blob_reads()
     {
         var business = Guid.NewGuid();

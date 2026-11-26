@@ -1,6 +1,7 @@
 import { apiClient, withPagedDefaults } from "./client";
 
 export interface SalesDebitNoteListItem {
+  originalFiscalNumber?:string|null;
   debitNoteId: string;
   originalDocumentId: string;
   documentNumber: string;

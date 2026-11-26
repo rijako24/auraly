@@ -43,6 +43,7 @@ public sealed record ReceivableListItem(Guid ReceivableId, Guid? CustomerId, str
     public decimal AdjustmentAmount => OriginalAmount-PaidAmount-OutstandingAmount;
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceDocumentType { get; init; }
+    public string? FiscalNumber { get; init; }
     public DateOnly? DueOn { get; init; }
     public DateOnly? IssuedOn { get; init; }
 }
@@ -61,7 +62,10 @@ public sealed record ReceivableDetail(Guid ReceivableId, Guid? CustomerId, strin
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, IReadOnlyList<ReceivableTransactionView> Transactions,
     Guid? PartySiteId = null, string? PartySiteName = null, Guid? PartyId = null,
-    string? SourceNote = null);
+    string? SourceNote = null)
+{
+    public string? FiscalNumber { get; init; }
+}
 public sealed record CustomerCreditProfile(Guid CustomerId, decimal? CreditLimit,
     int DefaultDueDays, bool IsCreditEnabled, decimal OutstandingAmount, decimal? AvailableCredit,
     int? MaximumOverdueInvoices = null, decimal PendingCreditAmount = 0);
@@ -170,6 +174,7 @@ public sealed record ReceivablesReportItem(Guid? CustomerId, string CustomerName
     public decimal NetAmount => OutstandingAmount - AvailableAdvances - AvailableCredits;
     public bool IsCreditBalance { get; init; }
     public string? InternalDocumentNumber { get; init; }
+    public string? FiscalNumber { get; init; }
     public int? TermDays { get; init; }
     public int? AgeDays { get; init; }
     // Signed calendar difference, as in the reference: negative means not yet due.

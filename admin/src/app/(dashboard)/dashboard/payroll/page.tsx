@@ -21,6 +21,7 @@ import { payrollReceiptColumns, payrollReceiptRows } from "@/lib/payroll-receipt
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
 import { paymentMethodsApi, type PaymentMethod } from "@/services/api/payment-methods";
+import { PayrollPaidEmployees } from "@/components/payroll/payroll-paid-employees";
 import { PayrollRunNovelties } from "@/components/payroll/payroll-run-novelties";
 import { PayrollEmploymentConfigurationFields, PayrollEmploymentDetailsFields, emptyPayrollConfiguration } from "@/components/payroll/payroll-employment-configuration";
 import { AccountSelect } from "@/components/accounting/account-select";
@@ -389,7 +390,8 @@ function PaymentsSection({ canPay, onCreate }: {
 }) {
  const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId),[page,setPage]=useState(1);
  const list=useQuery({queryKey:["payroll-payments",tenant,business,page],queryFn:()=>payrollApi.payments(page),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
- return <Card className="rounded-3xl">
+ const [selectedPayment,setSelectedPayment]=useState<PayrollPaymentBatch|null>(null);
+ return <><Card className="rounded-3xl">
     <CardHeader><span className="flex items-center justify-between gap-3"><span><CardTitle>Pagos de nómina</CardTitle><CardDescription>Confirma un grupo de pago y consulta su resultado contable en Trazabilidad financiera.</CardDescription></span>{canPay && <Button onClick={onCreate}>Confirmar pago</Button>}</span></CardHeader>
     <CardContent>{list.isFetching&&<p role="status">Cargando pagos…</p>}{list.isError&&<p role="alert">No fue posible cargar los pagos. <Button onClick={()=>void list.refetch()}>Reintentar pagos</Button></p>}<div className="overflow-x-auto rounded-xl border">
         <table className="w-full min-w-[800px] text-sm">
@@ -399,7 +401,7 @@ function PaymentsSection({ canPay, onCreate }: {
                 <th className="min-w-[9rem] px-4 py-3 text-left">Medio</th>
                 <th className="whitespace-nowrap px-4 py-3 text-center">Trabajadores</th>
                 <th className="min-w-[9rem] px-4 py-3 text-right">Total</th>
-                <th className="min-w-[10rem] px-4 py-3 text-left">Estado</th>
+                <th className="min-w-[10rem] px-4 py-3 text-left">Estado</th><th className="px-4 py-3 text-center">Desprendibles</th>
             </tr></thead>
             <tbody>{list.data?.items.map(item => <tr className="border-t" key={item.paymentBatchId}>
                 <td className="whitespace-nowrap px-4 py-3">{item.paymentDate}</td>
@@ -408,11 +410,12 @@ function PaymentsSection({ canPay, onCreate }: {
                 <td className="px-4 py-3 text-center tabular-nums">{item.employeeCount}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">{money.format(item.totalAmount)}</td>
                 <td className="px-4 py-3 text-left">{businessStatusLabel(item.isPaid?"Paid":item.status)}<span className="block text-xs text-muted-foreground">{accountingStatusLabel(item.accountingStatus??"MissingAccountingJob")}</span></td>
+                <td className="px-4 py-3 text-center"><Button size="icon" variant="outline" disabled={item.employeeCount===0} aria-label={`Ver desprendibles del pago ${item.referenceNumber}`} title="Ver trabajadores y descargar desprendibles" onClick={()=>setSelectedPayment(item)}><FileText className="size-4"/></Button></td>
             </tr>)}</tbody>
         </table>
         {!list.isFetching&&!list.isError&&!list.data?.items.length && <Empty text="No hay pagos confirmados."/>}
     </div><PayrollHistoryNavigation name="pagos" page={page} totalCount={list.data?.totalCount??0} busy={list.isFetching} onPage={setPage}/></CardContent>
-</Card>; }
+</Card>{selectedPayment&&<PayrollPaidEmployees key={`${tenant}-${business}-${selectedPayment.paymentBatchId}`} batch={selectedPayment} onClose={()=>setSelectedPayment(null)}/>}</>; }
 function PayrollHistoryNavigation({name,page,totalCount,busy,onPage}:{name:string;page:number;totalCount:number;busy:boolean;onPage:(page:number)=>void}) {
  return <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><span>{totalCount} resultados · Página {page}</span><div className="flex gap-2"><Button variant="outline" disabled={busy||page===1} onClick={()=>onPage(page-1)}>Anterior {name}</Button><Button variant="outline" disabled={busy||page*20>=totalCount} onClick={()=>onPage(page+1)}>Siguiente {name}</Button></div></div>;
 }

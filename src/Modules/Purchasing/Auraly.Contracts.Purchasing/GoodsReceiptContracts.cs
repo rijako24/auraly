@@ -483,7 +483,7 @@ public sealed record GoodsReceiptListItem(
     string? PurchaseEvidenceType = null, Guid? PayableId = null,
     decimal? OutstandingAmount = null, string? CurrencyCode = null, string? PayableStatus = null,
     string? AccountingStatus = null, string? AccountingErrorMessage = null,
-    string? FiscalStatus = null, string? FiscalErrorMessage = null);
+    string? FiscalStatus = null, string? FiscalErrorMessage = null,string? FiscalNumber = null);
 
 public sealed record GoodsReceiptPage(
     IReadOnlyList<GoodsReceiptListItem> Items, int Page, int PageSize,

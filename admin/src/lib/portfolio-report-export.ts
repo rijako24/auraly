@@ -63,7 +63,7 @@ export function buildPortfolioReportExport(data: ReceivablesReportPage | Payable
     ]),
     ...(options.consolidated ? [{ key: "invoiceCount", label: "Documentos", numberFormat: "0", align: "right" as const }] : [
       { key: "documentNumber", label: "Documento" },
-      ...(customerReport && options.format !== "pdf" ? [{key:"internalDocumentNumber",label:"Referencia interna"}] : []),
+      ...(options.format !== "pdf" ? [{key:"internalDocumentNumber",label:"Número interno"},{key:"fiscalNumber",label:"Número DIAN"}] : []),
       dateColumn("issuedAt", "Emisión"), dateColumn("dueDate", "Vencimiento"),
       ...(customerReport ? [
         {key:"termDays",label:"Plazo (días)",numberFormat:"0",align:"right" as const},
@@ -127,7 +127,7 @@ export function buildPortfolioReportExport(data: ReceivablesReportPage | Payable
       identification: item.identification, site: item.partySiteName ?? "Sin sede identificada", currencyCode: item.currencyCode };
     rows.push({ ...identity, invoiceCount: item.invoiceCount, documentNumber: item.documentNumber,
       issuedAt: item.issuedAt, dueDate: item.dueDate,
-      ...("customerId" in item ? {internalDocumentNumber:item.internalDocumentNumber} : {}),
+      internalDocumentNumber:item.internalDocumentNumber,fiscalNumber:item.fiscalNumber,
       ...("customerId" in item ? {termDays:item.termDays,ageDays:item.ageDays,daysPastDue:item.daysPastDue,
         legalName:item.legalName,address:item.address,city:item.city,phone:item.phone,email:item.email,creditLimit:item.creditLimit,
         ...(options.consolidated ? {availableAdvances:item.availableAdvances,availableCredits:item.availableCredits,netAmount:item.netAmount} : {})} : {}),
@@ -138,8 +138,10 @@ export function buildPortfolioReportExport(data: ReceivablesReportPage | Payable
       overdueOver90Amount: item.overdueOver90Amount,
       ageBandCode: ages.find(([key]) => item[key] > 0)?.[2],
       age: item.outstandingAmount > 0 ? portfolioAgingBandLabel(ages.find(([key]) => item[key] > 0)?.[2]) : "Sin saldo" });
-    if (compactCustomerPdf && "customerId" in item && item.internalDocumentNumber)
+    if (options.format === "pdf" && item.internalDocumentNumber && item.internalDocumentNumber!==item.documentNumber)
       rows.push({__group:`Referencia interna de ${item.documentNumber}: ${item.internalDocumentNumber}`});
+    if (options.format === "pdf" && item.fiscalNumber)
+      rows.push({__group:`DIAN ${item.fiscalNumber}`});
     if (!options.consolidated && options.includeApplications && !("isCreditBalance" in item && item.isCreditBalance))
       for (const application of item.applications ?? [])
         rows.push({ ...identity, documentNumber: item.documentNumber,

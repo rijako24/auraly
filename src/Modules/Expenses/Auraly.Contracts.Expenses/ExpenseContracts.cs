@@ -113,7 +113,7 @@ public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, stri
     string PurchaseEvidenceType = "SupplierElectronicInvoice", string? PayableStatus = null,
     decimal? OutstandingAmount = null, bool ChargeReturned = false, Guid? PayableId = null,
     string? AccountingStatus = null, string? AccountingErrorMessage = null,
-    string? FiscalStatus = null, string? FiscalErrorMessage = null);
+    string? FiscalStatus = null, string? FiscalErrorMessage = null,string? FiscalNumber = null);
 public sealed record ExpensePayableView(Guid PayableId, string Status, decimal OriginalAmount,
     decimal OutstandingAmount, Guid? PartySiteId = null, string? PartySiteName = null);
 public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,

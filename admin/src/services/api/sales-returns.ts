@@ -149,6 +149,7 @@ export interface SalesReturnHistoryQuery {
   originalDocumentId?:string; status?:"Accepted"|"Processed";
 }
 export interface SalesReturnListItem {
+  originalFiscalNumber?:string|null;
   returnId: string; documentNumber: string; originalDocumentId: string; originalDocumentNumber: string;
   customerName: string; returnedAt: string; economicResolution: SalesReturnResolution;
   totalAmount: number; status: string; fiscalStatus: string | null; reasonCode: string;

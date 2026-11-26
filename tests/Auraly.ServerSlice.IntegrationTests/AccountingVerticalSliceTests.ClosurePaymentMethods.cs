@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Returns;
@@ -206,6 +206,8 @@ public sealed partial class AccountingVerticalSliceTests
             }
             return;
         }
+        var balanceBeforePreview = await ScalarAsync<decimal>("SELECT COALESCE(SUM(Debit-Credit),0) FROM dbo.AccountingEntryLines WHERE AccountId=@Id", original.AccountId);
+        var factsBeforePreview = await ScalarAsync<string>("SELECT (SELECT * FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id ORDER BY PaymentNumber FOR JSON PATH,INCLUDE_NULL_VALUES)", sale.DocumentId);
         using (var preview = await reviewer.PostAsJsonAsync(path + "/payment-corrections/validate", new[] { correction }))
             Assert.True(preview.IsSuccessStatusCode, await preview.Content.ReadAsStringAsync());
         var corrections = page.Items.Select(value => correction with { VerificationKey = value.VerificationKey }).ToArray();
@@ -218,6 +220,9 @@ public sealed partial class AccountingVerticalSliceTests
             Assert.Equal(3, commands.Count);
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), watch.Elapsed.ToString());
         }
+        Assert.Equal(balanceBeforePreview, await ScalarAsync<decimal>("SELECT COALESCE(SUM(Debit-Credit),0) FROM dbo.AccountingEntryLines WHERE AccountId=@Id", original.AccountId));
+        Assert.Equal(factsBeforePreview, await ScalarAsync<string>("SELECT (SELECT * FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id ORDER BY PaymentNumber FOR JSON PATH,INCLUDE_NULL_VALUES)", sale.DocumentId));
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.WorkSessionClosureReconciliations WHERE WorkSessionClosureId=@Id", closure.WorkSessionClosureId));
         var decisions = page.Items.Where(item => item.PaymentMethodCode != "Cash")
             .Select(item => new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified")).ToArray();
         var request = new ReconcileWorkSessionClosureRequest(closure.PaymentTotals.Where(item => item.RequiresCount)
@@ -226,6 +231,17 @@ public sealed partial class AccountingVerticalSliceTests
         var key = Guid.NewGuid().ToString("N");
         var store = scope.ServiceProvider.GetRequiredService<IWorkSessionStore>();
         var reconciliation = await store.ReconcileClosureAsync(identity, closure.WorkSessionClosureId, key, request, default);
+        if (verifyReporting)
+        {
+            // Acceptance commits both durable jobs. An early reporting delivery
+            // cannot project the correction before its financial result commits.
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND Status=N'Pending'", reconciliation.ReconciliationId));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND Status=N'Pending' AND AttemptCount=0", reconciliation.ReconciliationId));
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                scope.ServiceProvider.GetRequiredService<Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor>()
+                    .ProcessAsync(reconciliation.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation, fixture.BusinessId, 1, default));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND Status=N'Pending' AND AttemptCount=0", reconciliation.ReconciliationId));
+        }
         var returnUser = new SalesReturnUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
             new HashSet<string> { SalesReturnPermissionCodes.Create });
         var returns = scope.ServiceProvider.GetRequiredService<SalesReturnService>();

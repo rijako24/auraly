@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useMemo, useState } from "react";
 import { ArrowRight, ArrowUpDown, ClipboardCheck, Download, PackageCheck, Plus, RotateCcw, Truck, XCircle, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
@@ -119,7 +121,7 @@ function CreateDispatch({businessId,onClose,onCreated}:{businessId:string;onClos
       <div className="rounded-xl border" aria-label="Documentos disponibles para despacho">
         {candidates.isLoading&&<p className="p-6 text-center text-muted-foreground">Cargando documentos…</p>}
         {candidates.isError&&<p role="alert" className="p-4 text-sm text-red-700">No fue posible consultar los documentos. <button type="button" className="underline" onClick={()=>void candidates.refetch()}>Reintentar</button></p>}
-        {candidates.data?.items.map(item=><label key={item.documentId} className="flex cursor-pointer gap-3 border-b p-3 hover:bg-muted/40"><Checkbox checked={selected.has(item.documentId)} disabled={create.isPending} onCheckedChange={()=>toggle(item)}/><span className="min-w-0 flex-1"><strong>{item.documentNumber} · {item.customerName}</strong><small className="block text-muted-foreground">{item.documentType==="SalesInvoice"?"Factura":"Comprobante de venta"} · {formatDateTime(item.issuedAt)} · {item.warehouseName} · {item.sellerName} · {item.lineCount} líneas</small></span><span className="font-semibold">{money.format(item.documentTotal)}</span></label>)}
+        {candidates.data?.items.map(item=><label key={item.documentId} className="flex cursor-pointer gap-3 border-b p-3 hover:bg-muted/40"><Checkbox checked={selected.has(item.documentId)} disabled={create.isPending} onCheckedChange={()=>toggle(item)}/><span className="min-w-0 flex-1"><DocumentNumbers internalNumber={item.documentNumber} fiscalNumber={item.fiscalNumber}/><strong className="block">{item.customerName}</strong><small className="block text-muted-foreground">{item.documentType==="SalesInvoice"?"Factura":"Comprobante de venta"} · {formatDateTime(item.issuedAt)} · {item.warehouseName} · {item.sellerName} · {item.lineCount} líneas</small></span><span className="font-semibold">{money.format(item.documentTotal)}</span></label>)}
         {rangeValid&&!candidates.isLoading&&!candidates.isError&&!candidates.data?.items.length&&<p className="p-8 text-center text-muted-foreground">No hay ventas pendientes de asignar en este rango.</p>}
       </div>
       <DataTablePagination pageIndex={page-1} pageSize={pageSize} pageCount={candidates.data?.totalPages??0} totalItems={candidates.data?.totalCount??0} onPageChange={index=>setPage(index+1)} onPageSizeChange={size=>{setPageSize(size);setPage(1)}}/>
@@ -153,7 +155,7 @@ function DispatchWorkspace({id,permissions,onClose}:{id?:string;permissions:Set<
         <section aria-label="Documentos del despacho" className="rounded-xl border">
           <h3 className="border-b bg-muted/40 px-4 py-3 font-semibold">Documentos</h3>
           {value.documents.map(document=><div key={document.dispatchSourceDocumentId} className="flex items-start justify-between gap-3 border-b px-4 py-4 text-sm">
-            <span className="min-w-0"><strong className="block">{document.documentNumber} · {document.customerName}</strong><small className="mt-1 block text-muted-foreground">{document.deliveryAddress??"Sin dirección"} · {document.sellerName}</small></span>
+            <span className="min-w-0"><DocumentNumbers internalNumber={document.documentNumber} fiscalNumber={document.fiscalNumber}/><strong className="block">{document.customerName}</strong><small className="mt-1 block text-muted-foreground">{document.deliveryAddress??"Sin dirección"} · {document.sellerName}</small></span>
             <span className="shrink-0 font-semibold tabular-nums">{permissions.has("dispatches.view-prices")?money.format(document.documentTotal):"Valor restringido"}</span>
           </div>)}
           <DataTablePagination pageIndex={documentPage-1} pageSize={documentPageSize} pageCount={Math.ceil((value.summary?.documentCount??0)/documentPageSize)} totalItems={value.summary?.documentCount??0} onPageChange={index=>setDocumentPage(index+1)} onPageSizeChange={size=>{setDocumentPageSize(size);setDocumentPage(1)}}/>

@@ -175,7 +175,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
             Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null,
-            CollectionMode: OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId), SellerId:draft.SellerId, CostCenterId:request.CostCenterId);
+            SellerId:draft.SellerId, CostCenterId:request.CostCenterId);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """

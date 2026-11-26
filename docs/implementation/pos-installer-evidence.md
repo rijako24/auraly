@@ -13,6 +13,28 @@ The installer bundles the Auraly desktop launcher, the production Next.js
 standalone build, Node.js runtime and the self-contained POS Edge host. It
 preserves `%LOCALAPPDATA%\Auraly\PosEdge` during an update.
 
+## Descarga autenticada desde la web (2026-11-26)
+
+La API conserva el manifiesto, la autorización y el hash publicados. La descarga
+firma únicamente el archivo seleccionado por configuración del servidor y devuelve
+una redirección temporal, no los bytes del ejecutable. `IApplicationFileUrlResolver`
+extiende el mismo `BlobMediaUrlResolver` y comparte su firma de solo lectura de
+quince minutos y su clave de delegación; no publica el contenedor ni crea otro
+almacén o servicio de descarga. Una consulta de propiedades verifica el archivo
+y conserva el 404 sin descargarlo.
+
+El BFF conserva manualmente esa redirección y `Location` únicamente para la ruta
+canónica del instalador. Así el navegador descarga desde Blob Storage sin pasar
+el archivo grande por la respuesta de Static Web Apps. El resto de rutas conserva
+el seguimiento de redirecciones existente. La respuesta usa `Cache-Control:
+no-store` para no conservar una firma vencida.
+
+El actualizador nativo deja sus cookies en `CookieContainer`, limitadas al origen
+web, y permite la redirección sin enviar sus cookies de sesión al host del archivo.
+Los controles de SHA-256 y firma del publicador y la instalación siguen en sus
+propietarios originales. Las pruebas de descarga cubren autorización, 404,
+redirección sin transferencia en el BFF y aislamiento de cookies en Desktop.
+
 ## Prueba local aislada (2026-09-22)
 
 `Build-AuralyPosInstaller.ps1 -PayloadOnly -ApiUrl http://127.0.0.1:5097

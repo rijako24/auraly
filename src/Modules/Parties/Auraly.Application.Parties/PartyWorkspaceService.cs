@@ -69,14 +69,15 @@ public sealed class PartyWorkspaceService(
              actor.Permissions.Contains("restaurant.tables.open_without_waiter"));
         var salesSeller=query.Role?.Trim()=="Seller" && actor.Permissions.Contains("sales.create");
         var invoiceFilter=query.Role?.Trim() is "Seller" or "User" && actor.Permissions.Contains("sales.reprint");
-        if(query.IncludeInactive && !invoiceFilter)
+        var chargeHistoryFilter=query.Role?.Trim() is "Customer" or "User" && actor.Permissions.Contains(InvoiceChargePermissions.Read);
+        if(query.IncludeInactive && !invoiceFilter && !chargeHistoryFilter)
             throw new PartyForbiddenException("La consulta de identidades inactivas solo está disponible para los filtros de facturas.");
         var dispatchCarrier=query.Role?.Trim()=="Carrier" && actor.Permissions.Contains("dispatches.create");
         var accountingParty = query.Role?.Trim() == "Any" && actor.Permissions.Contains("accounting.read");
         var payrollParty = query.Role?.Trim() == "Any" && query.PartyType=="Organization" &&
             (actor.Permissions.Contains("payroll.manage") || actor.Permissions.Contains("payroll.configure"))
             || query.Role?.Trim()=="Employee" && actor.Permissions.Contains("payroll.manage");
-        if (!accountingParty && !payrollParty && !returnCustomer && !dispatchCarrier && !salesSeller && !invoiceFilter && (query.Role?.Trim() != "Supplier" ||
+        if (!accountingParty && !payrollParty && !returnCustomer && !dispatchCarrier && !salesSeller && !invoiceFilter && !chargeHistoryFilter && (query.Role?.Trim() != "Supplier" ||
             (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
              !actor.Permissions.Contains(ExpensePermissionCodes.Read) &&
              !actor.Permissions.Contains(InvoiceChargePermissions.Configure))))

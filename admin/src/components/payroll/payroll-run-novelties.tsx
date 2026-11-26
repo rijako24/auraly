@@ -69,13 +69,10 @@ export function PayrollRunNovelties({ statuses, onPrepareRun, run, employmentId,
     const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId);
     const [page,setPage]=useState(1),[search,setSearch]=useState(""),[draft,setDraft]=useState("");
     const [from,setFrom]=useState(""),[to,setTo]=useState(""),[status,setStatus]=useState("_all");
-    const [liquidation,setLiquidation]=useState<PayrollRunSummary|null>(null),[runPage,setRunPage]=useState(1);
+    const [liquidation,setLiquidation]=useState<PayrollRunSummary|null>(null);
     const validDates=!from||!to||to>=from;
-    const history=useQuery({queryKey:["payroll-runs",tenant,business,"novelties",runPage,from,to,status,search],
-        queryFn:()=>payrollApi.runs({page:runPage,pageSize:20,status:status==="_all"?undefined:status,paymentFrom:from||undefined,paymentTo:to||undefined,workerSearch:search||undefined}),
-        enabled:!liquidation&&!employmentId&&validDates,staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
     const list=useQuery({queryKey:["payroll-calculated-employees",tenant,business,page,liquidation?.payrollRunId,search],
-        queryFn:()=>payrollApi.calculatedEmployees({page,pageSize:20,from:liquidation!.periodStart,to:liquidation!.periodEnd,runId:liquidation!.payrollRunId,search:search||undefined}),
+        queryFn:({signal})=>payrollApi.calculatedEmployees({page,pageSize:20,from:liquidation!.periodStart,to:liquidation!.periodEnd,runId:liquidation!.payrollRunId,search:search||undefined},signal),
         enabled:!receipt&&!receiptLoading&&!employmentId&&Boolean(liquidation&&["Calculated","Approved"].includes(liquidation.status)),staleTime:Infinity,refetchOnWindowFocus:false,refetchOnReconnect:false});
     function chooseLiquidation(value:PayrollRunSummary){setLiquidation(value);setPage(1);}
     const labelStatus=(value:string)=>statuses.find(option=>option.code===value)?.label??value;
@@ -95,29 +92,22 @@ export function PayrollRunNovelties({ statuses, onPrepareRun, run, employmentId,
                         noveltyEditor={editorEmploymentId===worker.employmentId?noveltyEditor:null}
                         onAddNovelty={onAddNovelty} onEditNovelty={onEditNovelty} onVoidNovelty={onVoidNovelty}/>
             </>}
-        {!employmentId&&!liquidation&&<section aria-label="Liquidaciones para novedades" className="space-y-4">
+        {!employmentId&&<section aria-label="Liquidaciones para novedades" className="space-y-4">
             <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <label className="space-y-1 text-sm">Liquidación<PayrollRunSelect value="" label="Buscar liquidación" approvedOnly={false} onChange={chooseLiquidation}/></label>
-                <label className="space-y-1 text-sm">Estado<Select value={status} onValueChange={value=>{setStatus(value);setRunPage(1);}}><SelectTrigger aria-label="Estado de liquidación"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="_all">Todos los estados</SelectItem>{statuses.filter(option=>option.isActive&&["Draft","Calculated","Approved","Voided"].includes(option.code)).map(option=><SelectItem key={option.optionId} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></label>
-                <label className="space-y-1 text-sm">Pago programado desde<DatePicker today={today} value={from} onChange={value=>{setFrom(value);setRunPage(1);}}/></label>
-                <label className="space-y-1 text-sm">Pago programado hasta<DatePicker today={today} value={to} onChange={value=>{setTo(value);setRunPage(1);}}/></label>
+                <label className="space-y-1 text-sm">Liquidación<PayrollRunSelect value={liquidation?.payrollRunId??""} label="Buscar liquidación" approvedOnly={false} statusOptions={statuses} disabled={!validDates||calculating||voiding} filters={{status:status==="_all"?undefined:status,paymentFrom:from||undefined,paymentTo:to||undefined,workerSearch:search||undefined}} onChange={chooseLiquidation}/></label>
+                <label className="space-y-1 text-sm">Estado<Select value={status} onValueChange={value=>{setStatus(value);setLiquidation(null);setPage(1);}}><SelectTrigger aria-label="Estado de liquidación"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="_all">Todos los estados</SelectItem>{statuses.filter(option=>option.isActive&&["Draft","Calculated","Approved","Voided"].includes(option.code)).map(option=><SelectItem key={option.optionId} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></label>
+                <label className="space-y-1 text-sm">Pago programado desde<DatePicker today={today} value={from} onChange={value=>{setFrom(value);setLiquidation(null);setPage(1);}}/></label>
+                <label className="space-y-1 text-sm">Pago programado hasta<DatePicker today={today} value={to} onChange={value=>{setTo(value);setLiquidation(null);setPage(1);}}/></label>
             </div>
-            <form className="flex min-w-0 gap-2" onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setRunPage(1);}}><Input aria-label="Buscar trabajador en liquidaciones" className="min-w-0" value={draft} maxLength={160} placeholder="Trabajador, identificación o contrato" onChange={event=>setDraft(event.target.value)}/><Button variant="outline">Buscar</Button><Button type="button" variant="ghost" onClick={()=>{setFrom("");setTo("");setSearch("");setDraft("");setStatus("_all");setRunPage(1);}}>Limpiar</Button></form>
+            <form className="flex min-w-0 gap-2" onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setPage(1);}}><Input aria-label={liquidation?"Buscar trabajador liquidado":"Buscar trabajador en liquidaciones"} className="min-w-0" value={draft} maxLength={160} placeholder="Trabajador, identificación o contrato" onChange={event=>setDraft(event.target.value)}/><Button variant="outline">Buscar</Button><Button type="button" variant="ghost" onClick={()=>{setFrom("");setTo("");setSearch("");setDraft("");setStatus("_all");setLiquidation(null);setPage(1);}}>Limpiar</Button></form>
             {!validDates&&<p role="alert">La fecha final debe ser igual o posterior a la inicial.</p>}
-            {history.isFetching?<p role="status">Cargando liquidaciones…</p>:history.isError?<div role="alert">No fue posible consultar las liquidaciones. <Button onClick={()=>void history.refetch()}>Reintentar liquidaciones</Button></div>:validDates&&<>
-                <div className="space-y-3">{history.data?.items.map(item=><button key={item.payrollRunId} type="button" className="w-full rounded-xl border p-4 text-left hover:bg-muted/40" onClick={()=>chooseLiquidation(item)}>
-                    <span className="flex flex-wrap justify-between gap-3"><strong>{item.periodStart} — {item.periodEnd}</strong><span className="text-sm">{labelStatus(item.status)}</span></span>
-                    <span className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-sm text-muted-foreground"><span>Pago programado: {item.paymentDate}</span>{item.payFrequencyName&&<span>{item.payFrequencyName}</span>}<span>{item.status==="Draft"?"Pendiente de cálculo":`${item.employeeCount} trabajadores`}</span></span>
-                </button>)}</div>
-                {history.data?.items.length===0&&<p>No hay liquidaciones con estos filtros.</p>}
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span>{history.data?.totalCount??0} liquidaciones · Página {runPage}</span><div className="flex gap-2"><Button variant="outline" disabled={runPage===1} onClick={()=>setRunPage(value=>value-1)}>Anterior liquidaciones</Button><Button variant="outline" disabled={runPage>=(history.data?.totalPages??0)} onClick={()=>setRunPage(value=>value+1)}>Siguiente liquidaciones</Button></div></div>
-            </>}
+            {!liquidation&&<p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">Selecciona una liquidación para ver sus trabajadores.</p>}
         </section>}
         {!employmentId&&liquidation&&<section aria-label="Trabajadores liquidados" className="space-y-4">
             <Button variant="outline" disabled={calculating||voiding} onClick={()=>setLiquidation(null)}>Volver a liquidaciones</Button>
             <div className="flex flex-wrap justify-between gap-3 rounded-xl border p-4"><strong>{liquidation.periodStart} — {liquidation.periodEnd}</strong><span>{labelStatus(liquidation.status)}</span></div>
             {liquidation.status==="Draft"?<div className="space-y-3 rounded-xl border bg-muted/30 p-4"><p>Esta liquidación está en borrador. Calcula primero sus trabajadores para editar sus novedades.</p>{canCalculate&&<Button onClick={()=>onPrepareRun(liquidation.payrollRunId)}>Preparar liquidación</Button>}</div>:["Calculated","Approved"].includes(liquidation.status)?<>
-            <form className="flex min-w-0 gap-2" onSubmit={event=>{event.preventDefault();setSearch(draft.trim());setPage(1);}}><Input aria-label="Buscar trabajador liquidado" className="min-w-0" value={draft} maxLength={160} placeholder="Trabajador, identificación o contrato" onChange={event=>setDraft(event.target.value)}/><Button variant="outline">Buscar</Button></form>
+
             {list.isFetching?<p role="status">Cargando trabajadores liquidados…</p>:list.isError?<div role="alert"><p>No fue posible consultar los trabajadores.</p><Button onClick={()=>void list.refetch()}>Reintentar trabajadores</Button></div>:<>
                 <div className="space-y-3">{list.data?.items.map(employee=><article key={`${employee.payrollRunId}:${employee.employmentId}`} className="relative isolate grid min-w-0 gap-3 rounded-xl border p-4 pr-16 sm:grid-cols-2 lg:grid-cols-4">
                     <Button type="button" variant="ghost" className="absolute inset-0 z-0 h-full w-full rounded-xl hover:bg-primary/5" disabled={!employee.employeeName||calculating||voiding||receiptLoading} aria-label={`Ver trabajador ${employee.employeeName??"sin identidad histórica"}`} onClick={()=>onOpen(employee.payrollRunId,employee.employmentId)}><span aria-hidden="true" className="absolute right-4 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-lg border bg-background"><Eye className="size-4"/></span></Button>

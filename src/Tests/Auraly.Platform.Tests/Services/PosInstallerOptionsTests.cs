@@ -28,6 +28,7 @@ public sealed class PosInstallerOptionsTests
     [InlineData("", "Auraly-POS-Setup.exe", "1.0.0")]
     [InlineData("downloads", "", "1.0.0")]
     [InlineData("downloads", "Auraly-POS-Setup.exe", "")]
+    [InlineData("downloads", "https://example.test/installer.exe", "1.0.0")]
     public void Untrusted_or_incomplete_installer_metadata_is_rejected(
         string container,
         string blob,

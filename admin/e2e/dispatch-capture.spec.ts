@@ -71,7 +71,8 @@ test(`despacho ${viewport.width}: carga transportadores y documentos por sede y 
   expect(optionsReads).toBe(0); expect(candidateQueries).toHaveLength(0); expect(driverQueries).toHaveLength(0);
   await page.getByRole("button", { name: "Crear despacho", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Nuevo despacho de mercancía" });
-  await expect(dialog.getByText("CV-100 · Cliente del despacho")).toBeVisible();
+  await expect(dialog.getByText("CV-100",{exact:true})).toBeVisible();
+  await expect(dialog.getByText("Cliente del despacho",{exact:true}).first()).toBeVisible();
   await expect(dialog.getByRole("button",{name:/Filtros/})).toHaveAttribute("aria-expanded","false");
   await expect(dialog.getByLabel("Documentos desde")).toHaveCount(0);
   expect(optionsReads).toBe(0);

@@ -238,8 +238,6 @@ public sealed class PosSaleCompletionService(
             throw new ArgumentOutOfRangeException(nameof(command), "El ancho del recibo debe ser de 58 u 80 mm.");
         var draft = await drafts.GetAsync(draftId, ct)
             ?? throw new KeyNotFoundException("La venta activa no existe.");
-        var paymentPurposeError=OrderCollectionPaymentPolicy.Validate(draft.SourceOrderId,OrderCollectionPaymentPolicy.ForNewSale(draft.SourceOrderId));
-        if(paymentPurposeError is not null) throw new InvalidOperationException(paymentPurposeError);
         if (command.Payments.Any(payment => !PortfolioPaymentMethods.IsSupported(payment.MethodCode)))
             throw new InvalidOperationException("Selecciona un medio de dinero válido. La cartera se registra mediante Crédito cliente.");
         if (draft.Status != PosDraftStatus.Active || draft.Lines.Count == 0)

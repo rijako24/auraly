@@ -192,7 +192,7 @@ for (const scenario of ["Cash", "DebitCard", "CreditCard", "Transfer", "Transfer
     if(offline) {
       expect(evidenceUploads).toBe(1);
       expect(submitted[0].payments[0].evidenceUrl).toBe("https://qa.invalid/transfer.png");
-      await expect(page.getByRole("button",{name:/Cliente de entrega FV-100/})).toContainText("Entregado");
+      await expect(page.getByRole("button",{name:/Cliente de entrega.*FV-100/})).toContainText("Entregado");
     }
     expect(submitted[0].payments).toEqual([expect.objectContaining({ amount: scenario==="PriorReturn"?31250:50000, paymentMethod: methodCode,
       paymentMethodId: `${methodCode}-0`, paymentMethodVersion: 7,

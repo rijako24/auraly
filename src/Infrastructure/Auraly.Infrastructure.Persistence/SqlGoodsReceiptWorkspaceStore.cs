@@ -434,7 +434,7 @@ public sealed partial class SqlGoodsReceiptWorkspaceStore(
                    entry.SupplierId,entry.SupplierName,entry.SupplierInvoiceNumber,entry.ReceivedAt,
                    entry.GrandTotal,entry.UpdatedAt,entry.PurchaseEvidenceType,
                    payable.PayableId,payable.OutstandingAmount,payable.CurrencyCode,payable.Status,
-                   posting.Status,posting.LastErrorMessage,fiscal.Status,COALESCE(fiscal.LastErrorMessage,fiscal.LastStatusDescription)
+                   posting.Status,posting.LastErrorMessage,fiscal.Status,COALESCE(fiscal.LastErrorMessage,fiscal.LastStatusDescription),fiscalDocument.FiscalNumber
             FROM PageEntries entry
             LEFT JOIN dbo.Payables payable ON payable.BusinessId=@BusinessId
               AND payable.SourceDocumentId=entry.DocumentId AND payable.SourceDocumentType=N'GoodsReceipt'
@@ -442,6 +442,7 @@ public sealed partial class SqlGoodsReceiptWorkspaceStore(
             LEFT JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=entry.DocumentId
               AND posting.SourceDocumentType=N'GoodsReceipt' AND posting.BusinessId=@BusinessId AND entry.Status<>N'Draft'
             LEFT JOIN dbo.FiscalDocumentProcesses fiscal ON fiscal.DocumentId=entry.DocumentId AND fiscal.BusinessId=@BusinessId
+            LEFT JOIN dbo.FiscalDocuments fiscalDocument ON fiscalDocument.DocumentId=entry.DocumentId AND fiscalDocument.BusinessId=@BusinessId
             ORDER BY entry.UpdatedAt DESC,entry.DocumentId;
             """;
         await using var command = new SqlCommand(sql, connection);
@@ -466,7 +467,7 @@ public sealed partial class SqlGoodsReceiptWorkspaceStore(
                 reader.IsDBNull(12) ? null : reader.GetGuid(12),reader.IsDBNull(13) ? null : reader.GetDecimal(13),
                 reader.IsDBNull(14) ? null : reader.GetString(14),reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),reader.IsDBNull(17) ? null : reader.GetString(17),
-                reader.IsDBNull(18) ? null : reader.GetString(18),reader.IsDBNull(19) ? null : reader.GetString(19)));
+                reader.IsDBNull(18) ? null : reader.GetString(18),reader.IsDBNull(19) ? null : reader.GetString(19),reader.IsDBNull(20)?null:reader.GetString(20)));
         return new(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
     }
 

@@ -1,4 +1,4 @@
-# Corte a sesiones de trabajo y equipos enrolados
+﻿# Corte a sesiones de trabajo y equipos enrolados
 
 Fecha: 2026-08-02
 
@@ -107,23 +107,68 @@ DacFx completa el modelo sin desactivar la protección.
 - Online y offline comparten el flujo comercial, fiscal y de procesamiento documental.
 
 
-## Recaudo de pedidos y despacho (acuerdo 18 de noviembre, en validación)
+## Recaudo de pedidos y despacho (decisión del 26 de noviembre de 2026)
 
-La sesión de emisión de la venta permanece en `SalesDocuments.WorkSessionId`.
-La atribución monetaria es una decisión persistida al aceptar la venta:
-`CollectionMode=Session` para la venta directa y `Dispatch` para una nueva venta
-originada en un pedido, incluyendo su recuperación desde POS. No se calcula por
-la incorporación posterior a un despacho. El default Session conserva los
-históricos y los comandos antiguos ya aceptados; la migración no los reclasifica.
-El handler valida el pedido canónico y su vínculo `OrderInvoiceLinks` igual que
-antes. Los asientos de venta e inventario conservan sus motores, cuentas y efectos.
+El usuario retiró la excepción de recaudo diferido por origen pedido. Toda venta
+nueva usa `CollectionMode=Session`, también al facturar pedidos individualmente,
+en lote o después de recuperarlos en POS web o Edge. `SalesDocuments.WorkSessionId`
+es la sesión de quien factura y el pago elegido participa en su cierre. El crédito
+sigue siendo cartera; no se inventa efectivo para una factura a crédito.
 
-El aplicador financiero no escribe un SalePayment en la sesión del emisor para
-CollectionMode=Dispatch. Los totales y verificaciones de dinero del cierre normal
-usan esa misma decisión, incluso antes de completar un documento aceptado. Las
-cantidades de documentos y ventas a crédito conservan su dimensión operativa.
-El dinero efectivamente entregado se consulta desde DispatchDeliveryPayments por
-el vínculo único WorkSessions.DispatchId, sin duplicarlo en otra tabla de dinero.
-La sesión de recaudo del despacho es independiente de la sesión normal del
-transportador. La conciliación administrativa y devoluciones deben certificarse
-junto a esta atribución antes de desplegar.
+Los emisores reutilizan el valor predeterminado del contrato `PosSaleUploadRequest`.
+Se eliminó la regla que elegía `Dispatch` por tener `SourceOrderId` y las dos
+prevalidaciones redundantes de esa regla. El motor financiero ya escribe el
+`SalePayment` en la sesión cuando la atribución es `Session`: se conserva ese
+camino y no se agrega otra escritura ni un traslado de dinero.
+
+La atribución guardada en documentos ya emitidos y sus repeticiones idempotentes
+no se recalcula. `Dispatch` permanece legible y validado para esos documentos;
+esta decisión no reclasifica históricos ni vuelve a recibir pagos. El despacho
+conserva la ruta existente de venta previamente cobrada: confirmar la entrega o
+mantener el medio actual no duplica el ingreso en la sesión del transportador.
+El vínculo canónico del pedido, la reserva de inventario y los motores contable,
+fiscal y de reporting conservan sus contratos.
+
+
+### Recaudo de cartera desde la app de transportador
+
+Decisión aprobada el 26 de noviembre de 2026: cualquier forma configurada de
+crédito es elegible, con independencia de su nombre. La app permite seleccionar
+un medio de recaudo únicamente si la factura mantiene saldo de cartera disponible;
+una factura pagada solo confirma entrega y conserva su pago. Los abonos previos
+se respetan y el recaudo no supera el saldo disponible.
+
+Confirmar entrega registra el recaudo para la sesión de despacho del transportador,
+desglosado por forma, sin reescribir la sesión de quien facturó. El usuario confirmó
+expresamente que la cartera y los efectos financieros se aplican al aprobar el
+cierre administrativo, conservando ese punto de aplicación actual. Se reutiliza
+el pago nativo vinculado a la obligación y el único motor financiero; no se repite
+la venta, el ingreso comercial, los impuestos ni otra reclasificación del mismo
+importe. El registro y la aplicación deben volver a validar el saldo y conservar
+idempotencia frente a pagos por otros canales. Este objetivo no cambia el
+comportamiento ya existente de facturar a crédito con efectivo recibido en cero.
+
+### Aceptación conjunta de la corrección y su proyección
+
+Las correcciones preparadas en Caja o Despacho no alteran la proyección antes de
+confirmar la conciliación administrativa. Esa confirmación guarda la fuente
+financiera y los trabajos durables contable y de reporting en una misma
+transacción SQL, mediante sus writers canónicos. No se realizan dos envíos
+independientes que puedan dejar uno de los trabajos sin registrar.
+
+Los motores conservan su procesamiento asíncrono: reporting solo aplica la
+corrección cuando el resultado financiero es `Posted` o
+`CommercialEffectsApplied`. Una entrega anticipada no cambia los hechos ni
+consume un intento; el observador contable activa el trabajo durable existente
+después del resultado financiero. Esto conserva el ajuste idempotente de medios
+sin proyectar una corrección financiera fallida. La proyección de la venta
+original continúa al facturar y no espera al cierre.
+
+La corrección individual desde Facturas conserva su punto de aceptación directa:
+para un comprobante de venta con atribución `Session`, sesión cerrada y conciliación
+pendiente, Guardar acepta únicamente esa corrección con `sales.payments.correct`.
+No exige conciliar los demás documentos. El motor financiero aplica la corrección
+y reporting espera ese resultado; la conciliación posterior reconoce lo aplicado
+y no lo ejecuta otra vez. No se reescribe el documento fiscal original. Los
+documentos ya emitidos con atribución `Dispatch` conservan su revisión existente
+en el despacho; esta implementación no convierte su contrato histórico a `Session`.

@@ -1,5 +1,7 @@
 "use client";
 
+import { DocumentNumbers } from "@/components/documents/document-numbers";
+
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -224,7 +226,7 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
     {
       accessorKey: "documentNumber", header: "Documento",
       cell: ({ row }) => <div>
-        <p className="font-semibold">{row.original.documentNumber ?? "Borrador sin numerar"}</p>
+        <DocumentNumbers internalNumber={row.original.documentNumber??"Borrador sin numerar"} fiscalNumber={row.original.fiscalNumber}/>
         <p className="text-xs text-muted-foreground">
           {row.original.supplierInvoiceNumber
             ? `Factura proveedor ${row.original.supplierInvoiceNumber}`

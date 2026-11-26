@@ -65,6 +65,8 @@ public sealed record PayableListItem(
     public decimal AdjustmentAmount=>OriginalAmount-PaidAmount-OutstandingAmount;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceDocumentType { get; init; }
+    public string? InternalDocumentNumber { get; init; }
+    public string? FiscalNumber { get; init; }
     public DateOnly? DueOn { get; init; }
     public DateOnly? IssuedOn { get; init; }
 }
@@ -125,7 +127,12 @@ public sealed record PayableDetail(
     string? ExpenseDescription = null,
     string? SourceInvoiceNumber = null,
     Guid? GoodsReceiptId = null,
-    Guid? PartySiteId = null, string? PartySiteName = null);
+    Guid? PartySiteId = null, string? PartySiteName = null)
+{
+    public string? InternalDocumentNumber { get; init; }
+    public string? FiscalNumber { get; init; }
+    public string? SourceInvoiceFiscalNumber { get; init; }
+}
 
 public sealed record SupplierPaymentAllocationRequest(
     Guid PayableId,
@@ -237,6 +244,8 @@ public sealed record PayablesReportItem(Guid SupplierId, string SupplierName,
     DateTimeOffset? IssuedAt = null, DateTimeOffset? DueDate = null,
     IReadOnlyList<PayablesReportApplication>? Applications = null)
 {
+    public string? InternalDocumentNumber { get; init; }
+    public string? FiscalNumber { get; init; }
     public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
     public decimal NotDueAmount { get; init; }
     public decimal Overdue1To30Amount { get; init; }

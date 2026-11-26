@@ -1666,9 +1666,10 @@ no declara implementado ni probado lo que sigue pendiente.
   Las vigencias se consultan por página sólo al abrir el perfil y su historial
   es de consulta. El usuario confirmó que esta configuración aún no está en uso
   productivo y no requiere preservar la interfaz anterior.
-- Novedades abre la lista paginada de liquidaciones, incluidos borradores, y luego
-  los trabajadores de una sola liquidación. Filtra por estado, trabajador y fecha
-  programada de pago; el selector de período consulta al abrirse. Los borradores
+- Novedades abre con la grilla vacía y exige elegir una liquidación, incluidos
+  borradores, antes de consultar trabajadores. Conserva los filtros por estado,
+  trabajador y fecha programada de pago en el selector paginado, que consulta
+  únicamente al abrirse. Los borradores
   conducen al detalle para calcular primero; las calculadas permiten modificar
   novedades y las aprobadas sólo consultar. Los filtros se aplican antes de contar
   y paginar en el lector canónico; no se cargan detalles de otros períodos. El detalle
@@ -1731,6 +1732,18 @@ consulta calculada preliminar; los reportes generales siguen tomando aprobados.
 Su pago previsto no se presenta como realizado: fecha efectiva y «Neto pagado»
 requieren `PaymentBatchPostingStatus.IsPaid`. La apertura utiliza el modal y los
 exportadores compartidos, con tabla adaptable en móvil, sin otro renderer.
+
+Desde Pagos, la consulta de trabajadores de cada lote se abre de forma explícita
+y pagina sus líneas con un conteo y detalle en un solo comando SQL, aislados por
+tenant y sede. Sólo la página elegida se enriquece desde el snapshot del resultado;
+no consulta contratos o terceros actuales por trabajador. El objetivo es menos
+de un segundo con 500 trabajadores. Cada fila pagada ofrece descargar directamente
+su PDF mediante el dataset individual `payroll-receipt`, `payrollReceiptRows` y el
+exportador compartido. El botón permanece deshabilitado mientras el trabajo
+contable no esté aplicado; al descargar se comprueba nuevamente la identidad,
+fecha efectiva e importe del pago. No se crea una fuente de pago, tabla o motor
+adicional. La marca utiliza la preparación compartida del tenant y se carga como
+máximo una vez para las descargas consecutivas de esa sesión de consulta.
 
 Una fila anterior que no conserva el nombre en su snapshot devuelve identidad
 histórica ausente, sin inventarla ni consultarla en el tercero vigente. La
