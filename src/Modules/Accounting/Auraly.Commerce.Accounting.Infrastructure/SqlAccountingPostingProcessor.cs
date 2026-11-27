@@ -2772,6 +2772,8 @@ public sealed partial class SqlAccountingPostingProcessor(
               IF @Operation IS NULL THROW 51607,N'La conciliación no tiene una operación de despacho válida.',1;
               EXEC dbo.DispatchSettlementOperationComplete @Operation,@Dispatch,@Actor;
             END;
+            IF @Completed=1 AND @DocumentType IN(N'SalesReturn',N'ReceivablePayment')
+              EXEC dbo.DispatchSettlementChildChanged @BusinessId,@DocumentId,@DocumentType;
             SELECT @Completed;
             """, connection, transaction);
         complete.Parameters.AddWithValue("@Now", now);
@@ -2825,6 +2827,8 @@ public sealed partial class SqlAccountingPostingProcessor(
               IF @Operation IS NOT NULL
                 EXEC dbo.DispatchSettlementOperationReschedule @Operation,@Dispatch,N'NeedsAttention',N'SettlementAttention',N'Attention',@Message;
             END;
+            IF @DocumentType IN(N'SalesReturn',N'ReceivablePayment')
+              EXEC dbo.DispatchSettlementChildChanged @BusinessId,@DocumentId,@DocumentType;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", source.TenantId);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);

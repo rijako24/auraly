@@ -116,12 +116,13 @@ public sealed class PosCatalogSynchronizer(
                 $"api/pos/v1/catalog/changes?{ScopeQuery}&cursor={status.Cursor}&pageSize=1000",
                 content: null,
                 cancellationToken);
-            foreach (var change in page.Changes)
-                events?.ProductReceived(
-                    change.Product,
-                    await store.GetByProductIdAsync(change.Product.ProductId, cancellationToken),
-                    bootstrap: false);
+            var previousProducts = events is null ? null : await store.GetByProductIdsAsync(
+                page.Changes.Select(change => change.Product.ProductId).ToArray(), cancellationToken);
             await store.ApplyChangesAsync(page, cancellationToken);
+            if (events is not null && previousProducts is not null)
+                foreach (var change in page.Changes)
+                    events.ProductReceived(change.Product,
+                        previousProducts.GetValueOrDefault(change.Product.ProductId), bootstrap: false);
             progress?.Publish();
             if (!page.HasMore) break;
         }
@@ -172,13 +173,17 @@ public sealed class PosCatalogSynchronizer(
                 $"api/pos/v1/customers/changes?{ScopeQuery}&cursor={cursor.Value}&pageSize=1000",
                 null,
                 cancellationToken);
-            foreach (var change in page.Changes)
-            {
-                var previous = await store.GetCustomerAsync(change.CustomerId, cancellationToken);
-                if (change.Customer is { } customer && !CustomerEquals(previous, customer))
-                    events?.CustomerReceived(customer, previous);
-            }
+            var previousCustomers = events is null ? null : await store.GetCustomersByIdsAsync(
+                page.Changes.Where(change => change.Customer is not null)
+                    .Select(change => change.CustomerId).Distinct().ToArray(), cancellationToken);
             await store.ApplyCustomerChangesAsync(page, cancellationToken);
+            if (events is not null && previousCustomers is not null)
+                foreach (var change in page.Changes)
+                {
+                    var previous = previousCustomers.GetValueOrDefault(change.CustomerId);
+                    if (change.Customer is { } customer && !CustomerEquals(previous, customer))
+                        events.CustomerReceived(customer, previous);
+                }
             progress?.Publish();
             cursor = page.ToCursor;
             if (!page.HasMore) break;

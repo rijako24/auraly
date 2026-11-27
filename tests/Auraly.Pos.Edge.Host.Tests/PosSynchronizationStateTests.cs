@@ -22,16 +22,18 @@ public sealed class PosSynchronizationStateTests
     }
 
     [Theory]
-    [InlineData(1, false)]
-    [InlineData(2, true)]
-    [InlineData(5, true)]
-    public void Initial_push_connection_does_not_duplicate_startup_catchup(
+    [InlineData(1, false, false)]
+    [InlineData(1, true, true)]
+    [InlineData(2, false, true)]
+    [InlineData(5, true, true)]
+    public void A_subscription_after_a_read_started_rechecks_the_durable_cursors(
         int connectionNumber,
+        bool catchUpStarted,
         bool expected)
     {
         Assert.Equal(
             expected,
-            PosSynchronizationConnectionPolicy.RequiresCatchUp(connectionNumber));
+            PosSynchronizationConnectionPolicy.RequiresCatchUp(connectionNumber, catchUpStarted));
     }
 
     [Fact]

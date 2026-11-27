@@ -26,18 +26,24 @@ for (const area of ["purchases", "expenses", "traceability"] as const) for (cons
           lastStatusDescription: null } }); return;
       }
       if (path.endsWith(`/accounting/postings/${ids[3]}/retry`)) {
-        accountingCommands++; await route.fulfill({ json: { sourceDocumentId: ids[3], status: "Pending", errorMessage: null } }); return;
+        accountingCommands++; await route.fulfill({ status: 202, json: {
+          sourceDocumentId: ids[3], status: "AccountingPendingConfiguration", retryQueued: true,
+          errorMessage: "Falta configurar IVA descontable",
+        } }); return;
       }
       if (path.includes("/fiscal/documents/") || path.includes("/accounting/postings/")) reads++;
       if (path.endsWith(area === "purchases" ? "/goods-receipts" : area === "expenses" ? "/expenses" : "/accounting/documents")) {
         lists++;
+        const retryPending = lists === 2 && accountingCommands === 1;
+        const hasPostingResult = lists > 2 && accountingCommands === 1;
         const items = ids.map((documentId, index) => ({ ...scenario.draft.row, documentId, expenseId: documentId,
           sourceDocumentId: documentId, documentNumber: `DOC-${index}`, sourceDocumentNumber: `DOC-${index}`,
           sourceDocumentType: "Invoice", hasManualDraft: false, supplierName: "Proveedor QA", conceptName: "Servicio",
           issuedAt: scenario.draft.occurredAt, receivedAt: scenario.draft.occurredAt, updatedAt: scenario.draft.occurredAt,
           grandTotal: 100, grossAmount: 100, withholdingAmount: 0, netPayable: 100, currencyCode: "COP",
-          status: area === "traceability" ? index === 3 ? "AccountingPendingConfiguration" : "Posted" : "Processed",
-          accountingStatus: index === 3 ? "AccountingPendingConfiguration" : "Posted",
+          status: area === "traceability" ? index === 3 && !hasPostingResult ? "AccountingPendingConfiguration" : "Posted" : "Processed",
+          accountingStatus: index === 3 && !hasPostingResult ? "AccountingPendingConfiguration" : "Posted",
+          accountingRetryQueued: index === 3 && retryPending,
           accountingErrorMessage: index === 3 ? "Falta configurar IVA descontable" : null,
           errorMessage: index === 3 ? "Falta configurar IVA descontable" : null,
           fiscalDocumentType: states[index] ? "Invoice" : null, fiscalStatus: states[index],
@@ -68,13 +74,21 @@ for (const area of ["purchases", "expenses", "traceability"] as const) for (cons
       }
       await expect(page.getByRole("button", { name: "DIAN: En proceso en la DIAN", exact: true })).toBeVisible();
       await accounting.click();
-      await expect(page.getByRole("button", { name: "Contabilidad: Pendiente de contabilización", exact: true })).toBeVisible();
+      const queued = page.getByRole("button", { name: "Contabilidad: Reintento en cola", exact: true });
+      await expect(queued).toBeVisible();
+      expect(lists).toBe(1);
       expect(fiscalCommands).toBe(area === "purchases" ? 2 : 1); expect(accountingCommands).toBe(1);
       if(area === "traceability") {
         await pending.click();
         await expect(page.getByRole("button", { name: "DIAN: Pendiente de generación", exact: true })).toBeVisible();
         expect(manualSends).toBe(1);
       }
+      await queued.click();
+      await expect.poll(() => lists).toBe(2);
+      await expect(queued).toBeEnabled();
+      await queued.click();
+      await expect(queued).toHaveCount(0);
+      expect(accountingCommands).toBe(1);
     } else {
       await expect(rejected).toHaveAttribute("aria-disabled", "true");
       await expect(accounting).toHaveAttribute("aria-disabled", "true");
@@ -82,7 +96,7 @@ for (const area of ["purchases", "expenses", "traceability"] as const) for (cons
       await accounting.focus(); await page.keyboard.press("Enter");
       expect(fiscalCommands).toBe(0); expect(accountingCommands).toBe(0);
     }
-    expect(reads).toBe(0); expect(lists).toBe(1);
+    expect(reads).toBe(0); expect(lists).toBe(authorized ? 3 : 1);
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 }

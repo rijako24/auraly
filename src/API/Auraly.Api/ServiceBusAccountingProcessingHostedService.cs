@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Auraly.Commerce.Accounting.Application;
+using Auraly.Application.Dispatching;
+using Auraly.Contracts.Dispatching;
 using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Platform.Infrastructure.Processing;
 using Azure.Messaging.ServiceBus;
@@ -49,6 +51,18 @@ public sealed class AccountingProcessingHostedService(
         AccountingProcessingSignal? signal = null;
         try
         {
+            if (args.Message.Subject == DispatchSettlementQueue.Subject)
+            {
+                var dispatch = DispatchSettlementSignalCodec.Deserialize(args.Message.Body.ToString());
+                DispatchSettlementSignalCodec.Validate(dispatch);
+                if (!string.Equals(args.Message.SessionId, dispatch.BusinessId.ToString("D"), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Service Bus SessionId differs from the dispatch BusinessId.");
+                await using var dispatchScope = scopes.CreateAsyncScope();
+                await dispatchScope.ServiceProvider.GetRequiredService<DispatchSettlementPreparation>()
+                    .ProcessAsync(dispatch, args.CancellationToken);
+                await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+                return;
+            }
             signal = AccountingProcessingSignalCodec.Deserialize(
                 args.Message.Body.ToString());
             AccountingProcessingSignalCodec.Validate(signal);

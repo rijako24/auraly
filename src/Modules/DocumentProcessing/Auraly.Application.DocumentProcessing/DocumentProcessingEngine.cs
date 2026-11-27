@@ -7,7 +7,8 @@ public enum ProcessingLeaseResult
 {
     Acquired,
     AlreadyCompleted,
-    Busy
+    Busy,
+    DeadLettered
 }
 
 public sealed record DocumentProcessingContext(
@@ -43,7 +44,8 @@ public enum DocumentProcessingResult
 {
     Processed,
     AlreadyProcessed,
-    Busy
+    Busy,
+    DeadLettered
 }
 
 public sealed class DocumentProcessingEngine(
@@ -74,6 +76,9 @@ public sealed class DocumentProcessingEngine(
         {
             return DocumentProcessingResult.AlreadyProcessed;
         }
+
+        if (lease == ProcessingLeaseResult.DeadLettered)
+            return DocumentProcessingResult.DeadLettered;
 
         if (lease == ProcessingLeaseResult.Busy)
         {

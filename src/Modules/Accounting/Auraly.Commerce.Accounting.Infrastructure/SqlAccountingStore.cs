@@ -1,5 +1,6 @@
 ﻿using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using System.Data;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -15,7 +16,6 @@ public sealed partial class SqlAccountingStore(
     AccountingSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider,
-    SqlAccountingPostingProcessor postingProcessor,
     IManualVoucherFiscalParticipant fiscalParticipant) : IAccountingStore
 {
     public Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(
@@ -930,14 +930,31 @@ public sealed partial class SqlAccountingStore(
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
 
-    public async Task<AccountingPostingView?> RetryPostingAsync(
-        AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
+    public async Task<AccountingPostingAttempt?> ReadPostingAttemptAsync(
+        AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken, bool recoverMissing = false)
     {
-        var source = await FindPostingSourceAsync(user, documentId, cancellationToken) ??
-            await RecoverMissingPostingJobAsync(user, documentId, cancellationToken);
-        if (source is null) return null;
-        await postingProcessor.ProcessAsync(documentId, source, user.BusinessId, cancellationToken);
-        return await FindPostingAsync(user, documentId, cancellationToken);
+        var posting = await FindPostingAttemptAsync(user, documentId, cancellationToken);
+        if (posting is not null || !recoverMissing)
+            return posting;
+        if (await RecoverMissingPostingJobAsync(user, documentId, cancellationToken) is null)
+            return null;
+        return await FindPostingAttemptAsync(user, documentId, cancellationToken);
+    }
+
+    public async Task<AccountingPostingView?> ConfirmPostingRetryAsync(
+        AccountingUserIdentity user, AccountingPostingAttempt attempt, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await FindPostingAttemptAsync(user, attempt.Posting.SourceDocumentId, cancellationToken, attempt))?.Posting;
+        }
+        catch (SqlException error) when (error.Number == 1222)
+        {
+            // The broker already acknowledged the retry. A concurrent posting may hold
+            // the job lock, so keep the principal's request independent of that transaction.
+            Activity.Current?.SetTag("auraly.accounting.retry_confirmation", "job-locked");
+            return attempt.Posting with { RetryQueued = true };
+        }
     }
 
     private async Task<string?> RecoverMissingPostingJobAsync(
@@ -959,6 +976,8 @@ public sealed partial class SqlAccountingStore(
                 WHERE source.SourceDocumentId=@DocumentId
                   AND source.BusinessId=@BusinessId AND source.TenantId=@TenantId
                   AND source.SourceDocumentType IN(SELECT value FROM OPENJSON(@AccountableTypes));
+                IF @@ROWCOUNT>1
+                  THROW 51405,N'Hay más de un origen contable con el mismo identificador en esta sede.',1;
                 IF @DocumentType IS NULL SELECT CAST(NULL AS nvarchar(64));
                 ELSE IF @AccountingEntryRequired IS NULL
                   THROW 51405,N'The legacy accounting source has no provable frozen mode.',1;
@@ -1001,11 +1020,6 @@ public sealed partial class SqlAccountingStore(
             throw;
         }
     }
-
-    public Task<AccountingPostingView?> GetPostingAsync(
-        AccountingUserIdentity user, Guid documentId,
-        CancellationToken cancellationToken) =>
-        FindPostingAsync(user, documentId, cancellationToken);
 
     public async Task<AccountingEntryView?> GetEntryAsync(
         AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
@@ -1314,7 +1328,8 @@ public sealed partial class SqlAccountingStore(
                 reader.IsDBNull(16) ? null : reader.GetString(16),
                 reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18),
                 NullableId(reader, 19), NullableText(reader, 20), NullableText(reader, 21),
-                NullableId(reader, 22), NullableText(reader, 23),NullableText(reader,24),NullableText(reader,25)));
+                NullableId(reader, 22), NullableText(reader, 23),NullableText(reader,24),NullableText(reader,25),
+                reader.GetBoolean(26)));
         }
         await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
@@ -2422,17 +2437,47 @@ public sealed partial class SqlAccountingStore(
             cancellationToken);
     }
 
-    private async Task<string?> FindPostingSourceAsync(AccountingUserIdentity user, Guid documentId, CancellationToken token)
+    private async Task<AccountingPostingAttempt?> FindPostingAttemptAsync(
+        AccountingUserIdentity user, Guid documentId, CancellationToken token, AccountingPostingAttempt? published = null)
     {
-        await using var connection = connections.Create(); await connection.OpenAsync(token); await using var command = new SqlCommand("SELECT SourceDocumentType FROM dbo.AccountingPostingJobs WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND SourceDocumentId=@DocumentId", connection); AddScope(command, user, documentId); return await command.ExecuteScalarAsync(token) as string;
-    }
-    private async Task<AccountingPostingView?> FindPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken token)
-    {
-        await using var connection = connections.Create(); await connection.OpenAsync(token); await using var command = new SqlCommand("""
-            SELECT p.SourceDocumentType,p.Status,p.LastErrorCode,p.LastErrorMessage,e.EntryId
-            FROM dbo.AccountingPostingJobs p LEFT JOIN dbo.AccountingEntries e ON e.SourceDocumentId=p.SourceDocumentId AND e.SourceDocumentType=p.SourceDocumentType
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        const string confirm = """
+            SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+            SET LOCK_TIMEOUT 500;
+            UPDATE dbo.AccountingPostingJobs SET ExplicitRetryAttempt=@Attempt
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND SourceDocumentId=@DocumentId
+                AND SourceDocumentType=@DocumentType AND AttemptCount=@Attempt AND IsExplicitRetryQueued=0
+                AND Status IN (N'Pending',N'AccountingPendingConfiguration');
+            SET LOCK_TIMEOUT -1;
+            """;
+        const string read = """
+            SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
+            SELECT TOP(2) p.SourceDocumentType,p.Status,p.LastErrorCode,p.LastErrorMessage,e.EntryId,
+                p.AttemptCount,p.IsExplicitRetryQueued
+            FROM dbo.AccountingPostingJobs p
+            LEFT JOIN dbo.AccountingEntries e ON e.SourceDocumentId=p.SourceDocumentId
+                AND e.SourceDocumentType=p.SourceDocumentType AND e.BusinessId=p.BusinessId AND e.TenantId=p.TenantId
             WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.SourceDocumentId=@DocumentId;
-            """, connection); AddScope(command, user, documentId); await using var reader = await command.ExecuteReaderAsync(token); if (!await reader.ReadAsync(token)) return null; return new(documentId, reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4));
+            """;
+        await using var command = new SqlCommand(published is null ? read : confirm + "\n" + read, connection);
+        AddScope(command, user, documentId);
+        if (published is not null)
+        {
+            command.Parameters.Add("@DocumentType", SqlDbType.NVarChar, 64).Value = published.Posting.SourceDocumentType;
+            command.Parameters.Add("@Attempt", SqlDbType.Int).Value = published.Count;
+        }
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token))
+            return null;
+        var posting = new AccountingPostingView(documentId, reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetGuid(4), reader.GetBoolean(6));
+        var attempt = new AccountingPostingAttempt(posting, reader.GetInt32(5));
+        if (await reader.ReadAsync(token))
+            throw new AccountingConflictException("Hay más de un origen contable con el mismo identificador en esta sede.");
+        return attempt;
     }
     private static async Task ExecuteMutationAsync(SqlCommand command, CancellationToken token, string conflict) { try { await command.ExecuteNonQueryAsync(token); } catch (SqlException exception) when (IsConflict(exception)) { throw new AccountingConflictException(conflict); } }
     private static bool IsConflict(SqlException exception) => exception.Number is 2601 or 2627 or 547 or 51400 or 51401 or 51402 or 51403 or 51404 or 51405;

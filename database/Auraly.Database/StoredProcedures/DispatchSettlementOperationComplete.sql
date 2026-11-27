@@ -19,6 +19,16 @@ BEGIN
 
     IF EXISTS
     (
+        SELECT 1 FROM dbo.DispatchSettlementOperations operation
+        CROSS APPLY dispatch.SettlementPrerequisites(operation.BusinessId,operation.PrerequisitesJson) ready
+        WHERE operation.DispatchSettlementOperationId=@Id AND operation.DispatchId=@DispatchId
+          AND operation.ActivationVersion IS NOT NULL AND
+          (operation.PreparationPhase<2 OR operation.PrerequisitesJson IS NULL OR ready.PendingCount>0)
+    )
+        THROW 51000,N'La conciliación todavía tiene documentos esperados pendientes.',1;
+
+    IF EXISTS
+    (
         SELECT 1
         FROM dbo.Dispatches dispatch
         CROSS APPLY dispatch.SettlementDocuments(dispatch.DispatchId,dispatch.BusinessId) settlementDocument
@@ -62,7 +72,7 @@ BEGIN
     UPDATE dbo.DispatchSettlementOperations
     SET Status = N'Completed',
         CompletedAt = SYSUTCDATETIME(),
-        LastError = NULL
+        LastError = NULL, ActivationAvailableAt=NULL, ActivationLeaseId=NULL, PreparationLeaseId=NULL
     WHERE DispatchSettlementOperationId = @Id;
 
     UPDATE closure SET DispatchStatus=N'Completed',ReconciliationStatus=CASE WHEN viewdata.CashDifference=0

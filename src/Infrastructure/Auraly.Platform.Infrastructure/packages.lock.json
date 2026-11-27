@@ -37,6 +37,15 @@
           "System.Memory.Data": "6.0.0"
         }
       },
+      "Azure.Messaging.WebPubSub": {
+        "type": "Direct",
+        "requested": "[1.6.0, )",
+        "resolved": "1.6.0",
+        "contentHash": "ewewoRnw/wJZMBuALoaIB8raguqM4aXp2Za3jhGYoAp0EEmKw9ZfHVXARzkB7Pb+aoOSwnsudL+izMhD9PA85Q==",
+        "dependencies": {
+          "Azure.Core": "1.46.0"
+        }
+      },
       "Azure.Storage.Blobs": {
         "type": "Direct",
         "requested": "[12.19.1, )",

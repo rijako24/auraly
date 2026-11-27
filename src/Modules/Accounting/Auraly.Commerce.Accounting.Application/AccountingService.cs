@@ -8,6 +8,8 @@ using Auraly.Commerce.Accounting.Domain;
 
 namespace Auraly.Commerce.Accounting.Application;
 
+public sealed record AccountingPostingAttempt(AccountingPostingView Posting, int Count);
+
 public interface IAccountingStore
 {
     Task<VoucherDraftPreparation> GetSupportCancellationCaptureAsync(AccountingUserIdentity user, Guid payableId,
@@ -52,8 +54,10 @@ public interface IAccountingStore
     Task<AccountingPeriodView> CreatePeriodAsync(AccountingUserIdentity user, CreateAccountingPeriodRequest request, CancellationToken cancellationToken);
     Task SetMappingAsync(AccountingUserIdentity user, SetAccountMappingRequest request, CancellationToken cancellationToken);
     Task ClosePeriodAsync(AccountingUserIdentity user, Guid periodId, CancellationToken cancellationToken);
-    Task<AccountingPostingView?> RetryPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
-    Task<AccountingPostingView?> GetPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
+    Task<AccountingPostingAttempt?> ReadPostingAttemptAsync(
+        AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken, bool recoverMissing = false);
+    Task<AccountingPostingView?> ConfirmPostingRetryAsync(
+        AccountingUserIdentity user, AccountingPostingAttempt attempt, CancellationToken cancellationToken);
     Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<AccountMovementPage> GetAccountMovementsPageAsync(AccountingUserIdentity user, AccountMovementQuery query, CancellationToken cancellationToken, int? maximumRows = null);
@@ -695,21 +699,33 @@ public sealed partial class AccountingService(
         return store.ClosePeriodAsync(user, periodId, cancellationToken);
     }
 
-    public Task<AccountingPostingView?> RetryPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken = default)
+    public async Task<AccountingPostingView?> RetryPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.Retry);
         if (documentId == Guid.Empty) throw new AccountingValidationException("El identificador del documento es obligatorio.");
-        return store.RetryPostingAsync(user, documentId, cancellationToken);
+        var requested = await store.ReadPostingAttemptAsync(user, documentId, cancellationToken, recoverMissing: true);
+        if (requested is null || requested.Posting.RetryQueued || IsCompleted(requested.Posting))
+            return requested?.Posting;
+        var published = await processing.RequestRetryAsync(
+            user.BusinessId, documentId, requested.Posting.SourceDocumentType, requested.Count, cancellationToken);
+        // A consumer can finish while the broker is confirming the send. The store marks
+        // only the exact attempt the request observed and then returns the current result.
+        return published
+            ? await store.ConfirmPostingRetryAsync(user, requested, cancellationToken)
+            : (await store.ReadPostingAttemptAsync(user, documentId, cancellationToken))?.Posting;
     }
 
-    public Task<AccountingPostingView?> GetPostingAsync(
+    private static bool IsCompleted(AccountingPostingView posting) =>
+        posting.Status is AccountingPostingStatuses.Posted or AccountingPostingStatuses.CommercialEffectsApplied;
+
+    public async Task<AccountingPostingView?> GetPostingAsync(
         AccountingUserIdentity user, Guid documentId,
         CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.Read);
         if (documentId == Guid.Empty)
             throw new AccountingValidationException("El identificador del documento es obligatorio.");
-        return store.GetPostingAsync(user, documentId, cancellationToken);
+        return (await store.ReadPostingAttemptAsync(user, documentId, cancellationToken))?.Posting;
     }
 
     public Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken = default)

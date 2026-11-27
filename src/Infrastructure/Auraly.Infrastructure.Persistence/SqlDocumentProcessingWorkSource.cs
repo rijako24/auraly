@@ -10,16 +10,31 @@ public sealed class SqlDocumentProcessingWorkSource(
     TimeProvider timeProvider)
     : IDocumentProcessingWorkSource
 {
+    internal const string EconomicEffectsColumn = """
+        CAST(CASE WHEN j.DocumentType IN (N'PosSale',N'SalesInvoice',N'SalesReceipt')
+            AND (JSON_VALUE(p.PayloadJson,'$.fiscalHabilitationOnly')=N'true'
+              OR JSON_VALUE(p.PayloadJson,'$.FiscalHabilitationOnly')=N'true')
+            THEN 0 ELSE 1 END AS bit)
+        """;
+
+    private const string PendingEffectsPredicate = """
+        EXISTS
+        (
+          SELECT 1 FROM dbo.ServerOutboxMessages message
+          WHERE message.DocumentId=j.DocumentId
+            AND message.DocumentType=j.DocumentType
+            AND message.ProcessedAt IS NULL
+            AND message.Type<>N'FiscalDocument.DianAccepted'
+        )
+        """;
+
     public async Task<IReadOnlyList<DocumentProcessingSignal>> ListReadySignalsAsync(
         int take,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $"""
             SELECT TOP(@Take) j.JobId,j.BusinessId,j.DocumentId,j.DocumentType,
-              CAST(CASE WHEN j.DocumentType=N'PosSale'
-                    AND (JSON_VALUE(p.PayloadJson,'$.fiscalHabilitationOnly')=N'true'
-                      OR JSON_VALUE(p.PayloadJson,'$.FiscalHabilitationOnly')=N'true')
-                THEN 0 ELSE 1 END AS bit) AS EconomicEffectsEnabled
+              {EconomicEffectsColumn} AS EconomicEffectsEnabled
             FROM dbo.DocumentProcessingJobs j
             INNER JOIN dbo.BusinessProcessingCursors cursorState
               ON cursorState.BusinessId=j.BusinessId
@@ -34,15 +49,7 @@ public sealed class SqlDocumentProcessingWorkSource(
               OR
               (
                 j.Status=N'Completed'
-                AND EXISTS
-                (
-                  SELECT 1
-                  FROM dbo.ServerOutboxMessages message
-                  WHERE message.DocumentId=j.DocumentId
-                    AND message.DocumentType=j.DocumentType
-                    AND message.ProcessedAt IS NULL
-                    AND message.Type<>N'FiscalDocument.DianAccepted'
-                )
+                AND {PendingEffectsPredicate}
               )
             ORDER BY j.CreatedAt,j.JobId;
             """;
@@ -63,11 +70,15 @@ public sealed class SqlDocumentProcessingWorkSource(
         DocumentProcessingSignal signal,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $"""
             SELECT j.Status,j.ProcessingSequence,c.LastCompletedSequence,
                    j.AvailableAt,j.LeaseExpiresAt,
                    b.TenantId,j.BusinessId,j.DocumentId,j.DocumentType,
-                   p.PayloadJson,p.AcceptedAt
+                   p.PayloadJson,p.AcceptedAt,
+                   {EconomicEffectsColumn} AS EconomicEffectsEnabled,
+                   CAST(CASE WHEN j.Status=N'Completed' AND {PendingEffectsPredicate}
+                             THEN 1 ELSE 0 END AS bit) AS HasPendingEffects,
+                   j.AttemptCount
             FROM dbo.DocumentProcessingJobs j
             INNER JOIN dbo.BusinessProcessingCursors c ON c.BusinessId=j.BusinessId
             INNER JOIN dbo.DocumentProcessingPayloads p
@@ -94,8 +105,13 @@ public sealed class SqlDocumentProcessingWorkSource(
             !string.Equals(documentType, signal.DocumentType, StringComparison.Ordinal))
             return new(DocumentProcessingWorkState.Missing, null,
                 "The broker message does not match the persisted movement.");
-        if (status is "Completed" or "DeadLettered")
-            return new(DocumentProcessingWorkState.Completed, null);
+        if (status == "DeadLettered")
+            return new(DocumentProcessingWorkState.DeadLettered, null);
+        var economicEffects = reader.GetBoolean(11);
+        if (status == "Completed")
+            return reader.GetBoolean(12)
+                ? new(DocumentProcessingWorkState.Completed, null, EconomicEffectsEnabled: economicEffects)
+                : new(DocumentProcessingWorkState.CompletedAndPublished, null);
         if (status == "NeedsIntervention")
             return new(DocumentProcessingWorkState.NotReady, null,
                 "The movement requires intervention and blocks its business stream.");
@@ -105,10 +121,14 @@ public sealed class SqlDocumentProcessingWorkSource(
 
         var now = timeProvider.GetUtcNow();
         var availableAt = reader.GetDateTimeOffset(3);
+        var retry = status == "RetryScheduled"
+            ? new DocumentProcessingRetry(reader.GetInt32(13), availableAt)
+            : null;
         DateTimeOffset? leaseExpiresAt = reader.IsDBNull(4) ? null : reader.GetDateTimeOffset(4);
         if (availableAt > now || status == "Processing" && leaseExpiresAt > now)
             return new(DocumentProcessingWorkState.NotReady, null,
-                "The movement is not available for this delivery yet.");
+                "The movement is not available for this delivery yet.",
+                EconomicEffectsEnabled: economicEffects, Retry: retry);
 
         return new(
             DocumentProcessingWorkState.Ready,
@@ -118,6 +138,7 @@ public sealed class SqlDocumentProcessingWorkSource(
                 new DocumentId(documentId),
                 documentType,
                 reader.GetString(9),
-                reader.GetDateTimeOffset(10)));
+                reader.GetDateTimeOffset(10)),
+            EconomicEffectsEnabled: economicEffects, Retry: retry);
     }
 }

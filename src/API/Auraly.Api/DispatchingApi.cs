@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Auraly.Application.Dispatching;
 using Auraly.Contracts.Dispatching;
+using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Time;
 using Auraly.Platform.Application.Services;
 using Auraly.Pos.Printing;
@@ -149,14 +150,17 @@ public static class DispatchingApi
                     businessClock.TimeZone, request.CompanyName, request.PaperWidthMillimeters));
             }, Results.Ok));
 
-        group.MapPost("/{dispatchId:guid}/settle", async (ClaimsPrincipal principal, Guid dispatchId,
+        group.MapPost("/{dispatchId:guid}/settle", async (HttpContext context, ClaimsPrincipal principal, Guid dispatchId,
             SettleDispatchRequest request, DispatchDeliveryService service,
             DispatchSettlementCoordinator coordinator, IMediaUrlResolver media, CancellationToken ct) =>
             await ExecuteAsync(async () =>
             {
                 var actor=principal.ToDispatchIdentity();
                 var result = await service.SettleAsync(actor, dispatchId, request, ct);
-                coordinator.Signal();
+                if (context.RequestServices.GetService<SqlDispatchSettlementActivation>() is { } activation)
+                    await activation.PublishAcceptedAsync(actor.BusinessId, dispatchId, request.IdempotencyKey.Trim(), ct);
+                else
+                    coordinator.Signal();
                 return result;
             }, Results.Ok, result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)))
             .RequireAuthorization(policy=>policy.RequireClaim("permission",DispatchPermissionCodes.Settle));

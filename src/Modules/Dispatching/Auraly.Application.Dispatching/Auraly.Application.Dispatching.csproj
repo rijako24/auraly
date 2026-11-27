@@ -7,6 +7,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
+    <ProjectReference Include="..\..\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
+    <ProjectReference Include="..\..\Receivables\Auraly.Application.Receivables\Auraly.Application.Receivables.csproj" />
+    <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
   </ItemGroup>
 </Project>

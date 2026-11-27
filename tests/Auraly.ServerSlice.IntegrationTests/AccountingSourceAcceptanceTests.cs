@@ -17,6 +17,120 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
     [Fact]
+    public async Task Http_retry_waits_for_the_consumer_and_a_duplicate_creates_only_one_entry()
+    {
+        using var scope = fixture.CreateScope();
+        var services = scope.ServiceProvider;
+        var accounting = services.GetRequiredService<AccountingService>();
+        var transport = services.GetRequiredService<TestAccountingProcessingSignalPublisher>();
+        var actor = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.Retry });
+        var accounts = await accounting.ListAccountsAsync(actor);
+        var id = Guid.NewGuid();
+        var at = new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero);
+        var voucher = new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId, at,
+            "MANUAL_VOUCHER", "Prueba de reintento por cola", [
+                new(accounts.First(account => account.Code == "519595").AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0),
+                new(accounts.First(account => account.Code == "311505").AccountId, null, null, "Contrapartida", 0, 100)]);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+        {
+            await SqlAccountingPostingJobWriter.InsertSourcesAsync(connection, transaction,
+                [new(fixture.TenantId, fixture.BusinessId, id, AccountingManualDocumentTypes.ManualVoucher,
+                    JsonSerializer.Serialize(voucher), at, Guid.NewGuid())],
+                at, AccountingJobRequirement.PreserveCommercialEffects, default);
+            await transaction.CommitAsync();
+        }
+
+        var path = $"/api/commerce/v1/accounting/postings/{id:D}/retry";
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Retry);
+        using var readOnly = fixture.CreateAdminClient(AccountingPermissionCodes.Read);
+        transport.Pause();
+        IReadOnlyList<AccountingProcessingSignal> messages;
+        try
+        {
+            using var forbidden = await readOnly.PostAsync(path, null);
+            Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            Assert.Null(await accounting.RetryPostingAsync(actor with { BusinessId = Guid.NewGuid() }, id));
+            transport.LoseNextAcknowledgement();
+            using var uncertain = await client.PostAsync(path, null);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, uncertain.StatusCode);
+            Assert.False((await accounting.GetPostingAsync(actor, id))!.RetryQueued);
+            var firstSignal = Assert.Single(transport.Drain());
+
+            await using (var held = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable))
+            {
+                await using var hold = new SqlCommand("""
+                    SELECT AttemptCount FROM dbo.AccountingPostingJobs WITH(UPDLOCK,HOLDLOCK)
+                    WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=N'ManualAccountingVoucher';
+                    """, connection, held);
+                hold.Parameters.AddWithValue("@DocumentId", id);
+                Assert.Equal(0, Assert.IsType<int>(await hold.ExecuteScalarAsync()));
+                using var duringPosting = await client.PostAsync(path, null).WaitAsync(TimeSpan.FromSeconds(8));
+                Assert.Equal(HttpStatusCode.Accepted, duringPosting.StatusCode);
+                Assert.Equal(firstSignal, Assert.Single(transport.Drain()));
+                await held.RollbackAsync();
+            }
+
+            var retries = await Task.WhenAll(client.PostAsync(path, null), client.PostAsync(path, null));
+            foreach (var response in retries)
+            {
+                using (response)
+                {
+                    Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                    var posting = Assert.IsType<AccountingPostingView>(
+                        await response.Content.ReadFromJsonAsync<AccountingPostingView>());
+                    Assert.True(posting.RetryQueued);
+                    Assert.Equal(AccountingPostingStatuses.Pending, posting.Status);
+                    Assert.Null(posting.EntryId);
+                }
+            }
+            var beforeProcessing = (await accounting.GetPostingAsync(actor, id))!;
+            Assert.True(beforeProcessing.RetryQueued);
+            Assert.Null(beforeProcessing.EntryId);
+            using var sqlCalls = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                commandFilter: sql => sql.CommandText.Contains("IsExplicitRetryQueued", StringComparison.Ordinal)
+                    || sql.CommandText.Contains("job.SourceDocumentType,job.AttemptCount", StringComparison.Ordinal));
+            using var repeated = await client.PostAsync(path, null);
+            Assert.Equal(HttpStatusCode.Accepted, repeated.StatusCode);
+            Assert.Equal(1, sqlCalls.Count);
+            messages = transport.Drain();
+            Assert.InRange(messages.Count, 1, 2);
+            Assert.All(messages, message => Assert.Equal(firstSignal, message));
+        }
+        finally
+        {
+            transport.Resume();
+        }
+        foreach (var message in messages)
+            await transport.PublishAsync(message);
+
+        transport.Pause();
+        try
+        {
+            using var alreadyPosted = await client.PostAsync(path, null);
+            Assert.Equal(HttpStatusCode.OK, alreadyPosted.StatusCode);
+            var posting = Assert.IsType<AccountingPostingView>(
+                await alreadyPosted.Content.ReadFromJsonAsync<AccountingPostingView>());
+            Assert.False(posting.RetryQueued);
+            Assert.Equal(AccountingPostingStatuses.Posted, posting.Status);
+            Assert.NotNull(posting.EntryId);
+            Assert.Empty(transport.Drain());
+        }
+        finally
+        {
+            transport.Resume();
+        }
+
+        await using var verification = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@DocumentId;
+            """, connection);
+        verification.Parameters.AddWithValue("@DocumentId", id);
+        Assert.Equal(1, Convert.ToInt32(await verification.ExecuteScalarAsync()));
+    }
+
+    [Fact]
     public async Task Acceptance_does_not_request_an_update_lock_on_a_neighboring_sources_job()
     {
         var prefix = Guid.NewGuid().ToString("N")[..20];

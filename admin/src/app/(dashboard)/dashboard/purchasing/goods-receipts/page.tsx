@@ -259,7 +259,9 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
     ];
     definitions.push({id:"processing",header:"Contabilidad / DIAN",cell:({row})=><DocumentProcessingActions key={row.original.documentId}
       documentId={row.original.documentId} accountingStatus={row.original.accountingStatus} accountingErrorMessage={row.original.accountingErrorMessage}
+      accountingRetryQueued={row.original.accountingRetryQueued}
       fiscalStatus={row.original.fiscalStatus} fiscalErrorMessage={row.original.fiscalErrorMessage}
+      onRefreshAccounting={list.refetch}
       onChanged={value=>queryClient.setQueriesData<GoodsReceiptPage>({queryKey:["goods-receipts",businessId]},current=>current?{...current,items:current.items.map(item=>item.documentId===row.original.documentId?{...item,...value}:item)}:current)}/>});
     if (canPayDirect || canPayVoucher) definitions.push({
       id: "payment", header: "Pago",
@@ -272,7 +274,7 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
           onVoucher={canPayVoucher ? () => router.push(`/dashboard/financial-traceability?new=1&payable=${row.original.payableId}`) : undefined}/> : null,
     });
     return definitions;
-  }, [formatDateTime, canPayVoucher, canPayDirect, paymentLoadingId, openDirectPayment, router, queryClient, businessId]);
+  }, [formatDateTime, canPayVoucher, canPayDirect, paymentLoadingId, openDirectPayment, router, queryClient, businessId, list.refetch]);
 
   const newEntry = async () => {
     if (!businessId || !localDraftKey) return;

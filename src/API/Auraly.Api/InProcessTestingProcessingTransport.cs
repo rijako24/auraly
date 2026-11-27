@@ -1,3 +1,4 @@
+using Auraly.Platform.Infrastructure.Processing;
 using System.Collections.Concurrent;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;

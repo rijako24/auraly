@@ -10,18 +10,12 @@ public sealed class SqlAccountingProcessingSignalGate(
         Guid businessId,
         Guid documentId,
         string documentType,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool includeDependencies = true)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            SELECT job.SourceDocumentId,job.SourceDocumentType
-            FROM dbo.AccountingPostingJobs job
-            WHERE job.BusinessId=@BusinessId
-              AND job.Status NOT IN(N'Posted',N'CommercialEffectsApplied')
-              AND
-              (
-                (job.SourceDocumentId=@DocumentId AND job.SourceDocumentType=@DocumentType)
+        const string dependencies = """
                 OR
                 (
                   @DocumentType=N'DispatchCashDifference'
@@ -54,6 +48,18 @@ public sealed class SqlAccountingProcessingSignalGate(
                       AND cost.CostDocumentId=job.SourceDocumentId
                   )
                 )
+            """;
+        const string snapshot = "SET TRANSACTION ISOLATION LEVEL SNAPSHOT;";
+        await using var command = new SqlCommand($"""
+            {(includeDependencies ? string.Empty : snapshot)}
+            SELECT job.SourceDocumentId,job.SourceDocumentType,job.AttemptCount
+            FROM dbo.AccountingPostingJobs job
+            WHERE job.BusinessId=@BusinessId
+              AND job.Status NOT IN(N'Posted',N'CommercialEffectsApplied')
+              AND
+              (
+                (job.SourceDocumentId=@DocumentId AND job.SourceDocumentType=@DocumentType)
+                {(includeDependencies ? dependencies : string.Empty)}
               )
             ORDER BY CASE WHEN @DocumentType=N'DispatchCashDifference' AND job.SourceDocumentId=@DocumentId THEN 2
                           WHEN job.SourceDocumentId=@DocumentId THEN 0 ELSE 1 END,
@@ -65,7 +71,7 @@ public sealed class SqlAccountingProcessingSignalGate(
         var result = new List<AccountingPendingWork>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            result.Add(new AccountingPendingWork(reader.GetGuid(0), reader.GetString(1)));
+            result.Add(new AccountingPendingWork(reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2)));
         return result;
     }
 }

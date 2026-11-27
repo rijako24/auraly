@@ -602,7 +602,9 @@ public sealed record AccountingDocumentRow(
     string? UniqueCode, string? FiscalStatus, bool HasManualDraft = false,
     Guid? MainPartyId = null, string? MainPartyName = null, string? MainPartyIdentification = null,
     Guid? ReversalDocumentId = null, string? ReversalStatus = null,string? VoucherTypeCode = null,
-    string? FiscalErrorMessage = null);
+    string? FiscalErrorMessage = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)] bool AccountingRetryQueued = false);
 
 public sealed record AccountingDocumentPage(
     IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)
@@ -634,7 +636,9 @@ public sealed record AccountingPostingView(
     string Status,
     string? ErrorCode,
     string? ErrorMessage,
-    Guid? EntryId);
+    Guid? EntryId,
+    [property: System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)] bool RetryQueued = false);
 
 public sealed record AccountingAccountOptionQuery(int Page, int PageSize, string? Search, bool ExpenseOnly = false, Guid? AccountId = null,
     bool IncludeStructural = false, bool IncludeInactive = false, bool LiabilityOnly = false, bool GroupingOnly = false);

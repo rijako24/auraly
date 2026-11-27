@@ -142,6 +142,8 @@
     <Build Include="Functions\DispatchEffectivePayments.sql" />
     <Build Include="Functions\DispatchPaymentTotals.sql" />
     <Build Include="Functions\DispatchSettlementDocuments.sql" />
+    <Build Include="Functions\DispatchSettlementPrerequisites.sql" />
+    <Build Include="StoredProcedures\DispatchSettlementChildChanged.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationReschedule.sql" />
     <Build Include="StoredProcedures\DispatchSettlementCashDifferenceGet.sql" />
     <Build Include="StoredProcedures\DocumentProcessingJobByDocumentGet.sql" />

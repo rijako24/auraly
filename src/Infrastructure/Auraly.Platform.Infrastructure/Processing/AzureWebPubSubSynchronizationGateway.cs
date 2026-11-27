@@ -4,7 +4,7 @@ using Azure;
 using Azure.Core;
 using Azure.Messaging.WebPubSub;
 
-namespace Auraly.Api;
+namespace Auraly.Platform.Infrastructure.Processing;
 
 public sealed class AzureWebPubSubSynchronizationGateway(
     WebPubSubServiceClient client) : IPosSynchronizationPushGateway
@@ -72,8 +72,3 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             groups: groups,
             cancellationToken: cancellationToken);
 }
-
-public sealed record PosSynchronizationNegotiationResponse(
-    Uri ClientAccessUri,
-    DateTimeOffset ExpiresAt,
-    IReadOnlyList<string>? Groups = null);

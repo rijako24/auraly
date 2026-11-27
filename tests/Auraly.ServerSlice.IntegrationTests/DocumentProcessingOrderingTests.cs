@@ -1,5 +1,7 @@
 using System.Net;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -7,6 +9,69 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "EndToEnd")]
 public sealed class DocumentProcessingOrderingTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Initial_publication_recovers_a_lost_lease_and_only_activates_the_business_head()
+    {
+        var first = fixture.CreateValidRequest(8_805);
+        var second = fixture.CreateValidRequest(8_806);
+        using var client = fixture.CreateClient();
+        using var scope = fixture.CreateScope();
+        var store = new SqlDocumentInitialSignalPublicationStore(
+            scope.ServiceProvider.GetRequiredService<SqlServerConnectionFactory>());
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            using var firstResponse = await client.SendAsync(fixture.CreateUploadMessage(first));
+            using var secondResponse = await client.SendAsync(fixture.CreateUploadMessage(second));
+            Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
+
+        var signals = fixture.DrainDocumentSignals();
+        var earlier = Assert.Single(signals, signal => signal.DocumentId == first.DocumentId);
+        var later = Assert.Single(signals, signal => signal.DocumentId == second.DocumentId);
+
+        Assert.Empty((await store.ClaimAsync(later, fixture.BusinessId, 1, default)).Signals);
+        var lost = await store.ClaimAsync(earlier, fixture.BusinessId, 1, default);
+        Assert.Equal(earlier.MovementId, Assert.Single(lost.Signals).MovementId);
+        Assert.Empty((await store.ClaimAsync(null, fixture.BusinessId, 10, default)).Signals);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var expire = new SqlCommand("""
+            UPDATE dbo.DocumentProcessingJobs
+            SET InitialSignalLeaseUntil=DATEADD(second,-1,SYSUTCDATETIME())
+            WHERE JobId=@JobId AND InitialSignalLeaseId=@LostLease;
+            """, connection);
+        expire.Parameters.AddWithValue("@JobId", earlier.MovementId);
+        expire.Parameters.AddWithValue("@LostLease", lost.LeaseId);
+        Assert.Equal(1, await expire.ExecuteNonQueryAsync());
+
+        var recovered = await store.ClaimAsync(null, fixture.BusinessId, 10, default);
+        Assert.Equal(earlier.MovementId, Assert.Single(recovered.Signals).MovementId);
+        Assert.NotEqual(lost.LeaseId, recovered.LeaseId);
+        await store.MarkPublishedAsync(lost.LeaseId, [earlier.MovementId], default);
+        await using var published = new SqlCommand("""
+            SELECT InitialSignalPublishedAt FROM dbo.DocumentProcessingJobs WHERE JobId=@JobId;
+            """, connection);
+        published.Parameters.AddWithValue("@JobId", earlier.MovementId);
+        Assert.Equal(DBNull.Value, await published.ExecuteScalarAsync());
+        await store.MarkPublishedAsync(recovered.LeaseId, [earlier.MovementId], default);
+        Assert.IsType<DateTimeOffset>(await published.ExecuteScalarAsync());
+        Assert.Empty((await store.ClaimAsync(null, fixture.BusinessId, 10, default)).Signals);
+
+        await fixture.DocumentSignals.PublishAsync(earlier);
+        var successor = await store.ClaimAsync(null, fixture.BusinessId, 10, default);
+        Assert.Equal(later.MovementId, Assert.Single(successor.Signals).MovementId);
+        await fixture.DocumentSignals.PublishAsync(later);
+        await RemoveFromPendingFiscalListingAsync(first.DocumentId, second.DocumentId);
+    }
+
     [Fact]
     public async Task Accepted_sales_receive_one_durable_sequence_and_advance_in_business_order()
     {

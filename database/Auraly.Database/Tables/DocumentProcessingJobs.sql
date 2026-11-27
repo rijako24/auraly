@@ -10,6 +10,9 @@ CREATE TABLE [dbo].[DocumentProcessingJobs]
     [AvailableAt] DATETIMEOFFSET(7) NOT NULL,
     [LeaseOwner] NVARCHAR(160) NULL,
     [LeaseExpiresAt] DATETIMEOFFSET(7) NULL,
+    [InitialSignalPublishedAt] DATETIMEOFFSET(7) NULL,
+    [InitialSignalLeaseId] UNIQUEIDENTIFIER NULL,
+    [InitialSignalLeaseUntil] DATETIMEOFFSET(7) NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [StartedAt] DATETIMEOFFSET(7) NULL,
     [CompletedAt] DATETIMEOFFSET(7) NULL,
@@ -33,4 +36,11 @@ GO
 CREATE INDEX [IX_DocumentProcessingJobs_Dispatch]
     ON [dbo].[DocumentProcessingJobs] ([BusinessId], [Status], [ProcessingSequence])
     INCLUDE ([AvailableAt], [LeaseExpiresAt], [DocumentId], [DocumentType]);
+
+GO
+
+CREATE INDEX [IX_DocumentProcessingJobs_InitialSignalPending]
+    ON [dbo].[DocumentProcessingJobs] ([AvailableAt], [CreatedAt], [JobId])
+    INCLUDE ([BusinessId], [ProcessingSequence], [InitialSignalLeaseUntil], [InitialSignalPublishedAt])
+    WHERE [Status] = N'Pending' AND [InitialSignalPublishedAt] IS NULL;
 

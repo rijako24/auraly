@@ -1,0 +1,22 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobs.ProcessSalesReporting.Disabled": "true",
+    "AzureWebJobs.ProcessDocument.Disabled": "true",
+    "AzureWebJobs.ProcessAccounting.Disabled": "true",
+    "AzureWebJobs.ProcessFiscal.Disabled": "true",
+    "AzureWebJobs.RecoverDocumentInitialSignals.Disabled": "true",
+    "DocumentInitialSignalRecoverySchedule": "0,15,30,45 * * * * *",
+    "DocumentProcessingQueueName": "auraly-document-processing",
+    "AccountingProcessingQueueName": "auraly-accounting-processing",
+    "FiscalProcessingQueueName": "auraly-fiscal-processing",
+    "SalesReportingQueueName": "auraly-sales-reporting",
+    "ServiceBusConnection__fullyQualifiedNamespace": "",
+    "ConnectionStrings__Auraly": "",
+    "Auraly__PosSynchronization__WebPubSub__Endpoint": "",
+    "Auraly__PosSynchronization__WebPubSub__Hub": "auraly_pos",
+    "Auraly__Fiscal__CredentialStore": "ProtectedDatabase"
+  }
+}

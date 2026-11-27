@@ -253,6 +253,14 @@
           "Azure.Core": "1.46.2"
         }
       },
+      "Azure.Messaging.WebPubSub": {
+        "type": "Transitive",
+        "resolved": "1.6.0",
+        "contentHash": "ewewoRnw/wJZMBuALoaIB8raguqM4aXp2Za3jhGYoAp0EEmKw9ZfHVXARzkB7Pb+aoOSwnsudL+izMhD9PA85Q==",
+        "dependencies": {
+          "Azure.Core": "1.46.0"
+        }
+      },
       "Azure.Security.KeyVault.Secrets": {
         "type": "Transitive",
         "resolved": "4.8.0",
@@ -1834,6 +1842,7 @@
           "Azure.AI.OpenAI": "[2.1.0, )",
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.18.2, )",
+          "Azure.Messaging.WebPubSub": "[1.6.0, )",
           "Azure.Storage.Blobs": "[12.19.1, )",
           "BCrypt.Net-Next": "[4.0.3, )",
           "Google.Apis.Auth": "[1.68.0, )",

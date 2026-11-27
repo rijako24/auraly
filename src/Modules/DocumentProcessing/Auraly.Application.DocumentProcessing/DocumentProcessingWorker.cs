@@ -21,13 +21,19 @@ public enum DocumentProcessingWorkState
     Ready,
     Completed,
     NotReady,
-    Missing
+    Missing,
+    DeadLettered,
+    CompletedAndPublished
 }
 
 public sealed record DocumentProcessingWork(
     DocumentProcessingWorkState State,
     ConfirmedDocument? Document,
-    string? Reason = null);
+    string? Reason = null,
+    bool? EconomicEffectsEnabled = null,
+    DocumentProcessingRetry? Retry = null);
+
+public sealed record DocumentProcessingRetry(int FailedAttempts, DateTimeOffset AvailableAt);
 
 public interface IDocumentProcessingWorkSource
 {
@@ -60,6 +66,13 @@ public sealed class DocumentProcessingWorker(
     {
         ArgumentNullException.ThrowIfNull(signal);
         var work = await workSource.LoadAsync(signal, cancellationToken);
+        if (work.State == DocumentProcessingWorkState.DeadLettered)
+            return DocumentProcessingResult.DeadLettered;
+        if (work.State == DocumentProcessingWorkState.CompletedAndPublished)
+            return DocumentProcessingResult.AlreadyProcessed;
+
+        if (work.EconomicEffectsEnabled is { } savedMode)
+            signal = signal with { EconomicEffectsEnabled = savedMode };
         if (work.State == DocumentProcessingWorkState.Completed)
         {
             await ObserveCompletionAsync(signal, cancellationToken);
@@ -73,7 +86,8 @@ public sealed class DocumentProcessingWorker(
         if (result == DocumentProcessingResult.Busy)
             throw new DocumentProcessingMessageException(
                 "The movement is already leased by another consumer.");
-        await ObserveCompletionAsync(signal, cancellationToken);
+        if (result != DocumentProcessingResult.DeadLettered)
+            await ObserveCompletionAsync(signal, cancellationToken);
         return result;
     }
 

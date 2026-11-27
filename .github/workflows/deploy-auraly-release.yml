@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       components:
-        description: Componentes modificados separados por coma (database,function,api,admin,pos-installer). PROD reutiliza el alcance archivado.
+        description: Componentes modificados separados por coma (database,function,engines-function,api,admin,pos-installer). PROD reutiliza el alcance archivado.
         required: true
         type: string
       publish_pos_installer_in_dev:
@@ -159,7 +159,9 @@ jobs:
         if: inputs.environment == 'dev'
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Setup Node
         if: inputs.environment == 'dev'

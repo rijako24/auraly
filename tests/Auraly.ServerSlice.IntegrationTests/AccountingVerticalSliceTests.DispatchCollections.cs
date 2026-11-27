@@ -9,8 +9,11 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Dispatching;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Dispatching;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -31,6 +34,10 @@ public sealed partial class AccountingVerticalSliceTests
     public Task Dispatch_settlement_resumes_an_expired_claim_after_restart_without_another_signal()
         => Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
             "SalesReceipt","Cash",true,false,restartDuringLease:true);
+    [Fact]
+    public Task Queued_dispatch_accepts_a_return_that_completes_before_the_parent_registers_the_wait()
+        => Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
+            "SalesReceipt", "Cash", true, false, "Partial", verifyReporting: true, useQueue: true);
     [Fact]
     public Task Dispatch_uses_original_posted_account_when_the_same_native_form_changes_its_account()
         =>Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
@@ -73,7 +80,7 @@ public sealed partial class AccountingVerticalSliceTests
     [InlineData("SalesReceipt", "Cash", false, false, "None", 0, false, -1000, false, true)]
     [InlineData("SalesReceipt", "Transfer", false, false, "None", 0, false, 1000)]
     public async Task Order_dispatch_collection_uses_one_session_and_reclassifies_only_changed_accounts(
-        string documentType, string method, bool sameForm, bool remap, string returnCase = "None", decimal creditPortion = 0, bool refundAfterCollection = false, decimal cashDifference = 0, bool previouslyCollected = false, bool splitCash = false, string originalMethod = "Cash", bool remapFormBeforeCollection = false, bool restartDuringLease = false, bool verifyReporting = false, bool projectBeforeSettlement = true, bool rebuildReporting = false, bool keepCurrent = false)
+        string documentType, string method, bool sameForm, bool remap, string returnCase = "None", decimal creditPortion = 0, bool refundAfterCollection = false, decimal cashDifference = 0, bool previouslyCollected = false, bool splitCash = false, string originalMethod = "Cash", bool remapFormBeforeCollection = false, bool restartDuringLease = false, bool verifyReporting = false, bool projectBeforeSettlement = true, bool rebuildReporting = false, bool keepCurrent = false, bool useQueue = false)
     {
         using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, CatalogPermissionCodes.Update);
@@ -154,7 +161,10 @@ public sealed partial class AccountingVerticalSliceTests
         }
         using var scope = fixture.CreateScope();
         var logistics = scope.ServiceProvider.GetRequiredService<DispatchService>();
-        var deliveries = scope.ServiceProvider.GetRequiredService<DispatchDeliveryService>();
+        var deliveries = useQueue
+            ? new DispatchDeliveryService(new SqlDispatchDeliveryStore(
+                scope.ServiceProvider.GetRequiredService<DispatchingSqlConnectionFactory>(), queueSettlement: true))
+            : scope.ServiceProvider.GetRequiredService<DispatchDeliveryService>();
         var actor = new DispatchActorIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
             new HashSet<string>{DispatchPermissionCodes.Create,DispatchPermissionCodes.Read,DispatchPermissionCodes.ReadAll,
                 DispatchPermissionCodes.Prepare,DispatchPermissionCodes.Release,DispatchPermissionCodes.ExecuteDeliveries,DispatchPermissionCodes.Settle}, true);
@@ -299,8 +309,25 @@ public sealed partial class AccountingVerticalSliceTests
                 await using var lease=new SqlCommand("UPDATE dbo.DispatchSettlementOperations SET Status=N'Processing',NextAttemptAt=DATEADD(SECOND,2,SYSUTCDATETIME()) WHERE DispatchId=@Id",leaseConnection);
                 lease.Parameters.AddWithValue("@Id",draft.DispatchId);Assert.Equal(1,await lease.ExecuteNonQueryAsync());
             }
-            fixture.Services.GetRequiredService<DispatchSettlementCoordinator>().Signal();
-            await worker.StartAsync(default);
+            if (useQueue)
+            {
+                var signals = new CapturedDispatchSignals();
+                var activation = new SqlDispatchSettlementActivation(
+                    scope.ServiceProvider.GetRequiredService<SqlServerConnectionFactory>(),
+                    signals, NullLogger<SqlDispatchSettlementActivation>.Instance);
+                var preparation = scope.ServiceProvider.GetRequiredService<DispatchSettlementPreparation>();
+                for (var phase = 0; phase < 3; phase++)
+                {
+                    await activation.RecoverAsync(default);
+                    Assert.Equal(phase + 1, signals.Items.Count);
+                    await preparation.ProcessAsync(signals.Items[phase], default);
+                }
+            }
+            else
+            {
+                fixture.Services.GetRequiredService<DispatchSettlementCoordinator>().Signal();
+                await worker.StartAsync(default);
+            }
             Guid closure;
             await using (var connection = new SqlConnection(fixture.ConnectionString))
             {

@@ -12,17 +12,19 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export type DocumentProcessingUpdate = {
+  accountingRetryQueued?: boolean;
   accountingStatus?: string; accountingErrorMessage?: string | null;
   fiscalStatus?: string; fiscalErrorMessage?: string | null;
 };
 
 // Page owners supply the snapshot; rows never fetch their own status. Commands
 // return the authoritative stage and never imply DIAN acceptance or posting.
-export function DocumentProcessingActions({ documentId, accountingStatus, accountingErrorMessage,
-  fiscalStatus, fiscalErrorMessage, onChanged, onSendDraft, sendingDraft = false }: {
-  documentId: string; accountingStatus?: string | null; accountingErrorMessage?: string | null;
+export function DocumentProcessingActions({ documentId, accountingStatus, accountingErrorMessage, accountingRetryQueued,
+  fiscalStatus, fiscalErrorMessage, onChanged, onRefreshAccounting, onSendDraft, sendingDraft = false }: {
+  documentId: string; accountingStatus?: string | null; accountingErrorMessage?: string | null; accountingRetryQueued?: boolean;
   fiscalStatus?: string | null; fiscalErrorMessage?: string | null;
   onChanged: (value: DocumentProcessingUpdate) => void;
+  onRefreshAccounting: () => Promise<unknown>;
   onSendDraft?: () => void; sendingDraft?: boolean;
 }) {
   const userPermissions = useAuthStore(state => state.user?.permissions);
@@ -33,8 +35,10 @@ export function DocumentProcessingActions({ documentId, accountingStatus, accoun
   const retryPosting = useMutation({ mutationFn: () => accountingApi.retryPosting(documentId),
     onSuccess: (value: AccountingPosting) => {
       client.setQueryData(["accounting-posting", tenantId, businessId, documentId], value);
-      onChanged({ accountingStatus: value.status, accountingErrorMessage: value.errorMessage });
+      onChanged(value.retryQueued ? { accountingRetryQueued: true }
+        : { accountingStatus: value.status, accountingErrorMessage: value.errorMessage, accountingRetryQueued: false });
     } });
+  const refreshAccounting = useMutation({ mutationFn: onRefreshAccounting });
   const fiscal = useMutation({ mutationFn: () => fiscalStatus === "AwaitingManualSubmission"
     ? fiscalDocumentsApi.sendManualSupport(documentId) : fiscalDocumentsApi.retry(documentId),
     onSuccess: (value: FiscalDocumentView) => {
@@ -43,7 +47,8 @@ export function DocumentProcessingActions({ documentId, accountingStatus, accoun
     } });
   const posted = accountingStatus === "Posted";
   const noPosting = accountingStatus === "CommercialEffectsApplied" || accountingStatus === "AccountingDisabled" || accountingStatus === "NotRequired";
-  const postingBusy = accountingStatus === "Pending" || accountingStatus === "Processing" || accountingStatus === "RetryScheduled";
+  const retryQueued = !!accountingRetryQueued && !posted && !noPosting;
+  const postingBusy = retryQueued || accountingStatus === "Pending" || accountingStatus === "Processing" || accountingStatus === "RetryScheduled";
   const canRetryPosting = ["AccountingPendingConfiguration", "NeedsIntervention", "DeadLettered", "Failed"].includes(accountingStatus ?? "") && permissions.includes("accounting.postings.retry");
   const accepted = fiscalStatus === "DianAccepted";
   const fiscalFailure = ["SchemaValidationFailed", "SignatureFailed", "PermanentFailure", "DianRejected", "FiscalIntegrityConflict"].includes(fiscalStatus ?? "");
@@ -57,10 +62,11 @@ export function DocumentProcessingActions({ documentId, accountingStatus, accoun
   const completeClass = "text-emerald-700 hover:text-emerald-800";
   const errorClass = "text-red-700 hover:text-red-800";
   return <TooltipProvider><div className="flex items-center gap-1" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-    {accountingStatus && <StatusAction label={`Contabilidad: ${accountingStatusLabel(accountingStatus)}`}
-      description={[postingError, onSendDraft ? "Contabilizar comprobante" : canRetryPosting ? "Reintentar contabilización" : null].filter(Boolean).join(" · ")}
+    {accountingStatus && <StatusAction label={`Contabilidad: ${retryQueued ? "Reintento en cola" : accountingStatusLabel(accountingStatus)}`}
+      description={retryQueued ? "Consultar resultado del reintento" : [postingError, onSendDraft ? "Contabilizar comprobante" : canRetryPosting ? "Reintentar contabilización" : null].filter(Boolean).join(" · ")}
       className={posted ? completeClass : noPosting ? "text-muted-foreground" : postingBusy ? processingClass : errorClass}
-      busy={retryPosting.isPending || sendingDraft} onClick={onSendDraft ?? (canRetryPosting ? () => retryPosting.mutate() : undefined)}
+      busy={retryPosting.isPending || refreshAccounting.isPending || sendingDraft}
+      onClick={retryQueued ? () => refreshAccounting.mutate() : onSendDraft ?? (canRetryPosting ? () => retryPosting.mutate() : undefined)}
       icon={posted ? CheckCircle2 : postingBusy ? Clock3 : CircleAlert} />}
     {fiscalStatus && <StatusAction label={`DIAN: ${fiscalStatusLabel(fiscalStatus)}`}
       description={[fiscalError, accepted ? "Documento aceptado; no se vuelve a enviar." : canSend ? awaiting ? "Enviar a la DIAN" : "Reintentar proceso fiscal" : awaiting ? "Pendiente de envío autorizado." : fiscalBlocked || fiscalFailure ? "Revisa el documento fiscal antes de continuar." : "El motor fiscal procesa este documento."].filter(Boolean).join(" · ")}

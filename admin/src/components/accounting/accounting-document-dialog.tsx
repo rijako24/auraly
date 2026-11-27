@@ -48,7 +48,9 @@ export function AccountingDocumentDialog({documentId,sourceLabel,hasFiscalDocume
     <div className="overflow-y-auto p-6">
       {loading&&<div className="flex items-center justify-center gap-2 p-12 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin"/>Consultando contabilización…</div>}
       {!loading&&posting.isError&&<Notice text="Este documento no tiene un trabajo contable registrado. Si produce efectos económicos, debe revisarse como una ausencia contable."/>}
-      {!loading&&posting.data&&posting.data.status!=="Posted"&&<Notice text={posting.data.errorMessage??postingNotice(posting.data.status)} status={postingStatus(posting.data.status)}/>}
+      {!loading&&posting.data&&posting.data.status!=="Posted"&&<Notice
+        text={posting.data.retryQueued ? "Usa Actualizar estado para consultar el resultado." : posting.data.errorMessage??postingNotice(posting.data.status)}
+        status={posting.data.retryQueued ? "Reintento en cola" : postingStatus(posting.data.status)}/>}
       {!loading&&posting.data?.status==="Posted"&&entry.isError&&<Notice text="El trabajo figura contabilizado, pero no fue posible recuperar su comprobante. Esta inconsistencia requiere revisión."/>}
       {value&&<div className="space-y-5">
         {fiscal.data&&<div className="grid gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 p-4 sm:grid-cols-3"><Datum label="Documento fiscal" value={accountingDocumentTypeLabel(fiscal.data.fiscalDocumentType)}/><Datum label="Número DIAN" value={fiscal.data.dianNumber}/><Datum label="Estado DIAN" value={fiscalStatusLabel(fiscal.data.status)}/>{fiscal.data.uniqueCode&&<div className="sm:col-span-3 break-all font-mono text-[10px]"><b>{fiscal.data.uniqueCodeType}</b><br/>{fiscal.data.uniqueCode}</div>}</div>}
@@ -58,7 +60,7 @@ export function AccountingDocumentDialog({documentId,sourceLabel,hasFiscalDocume
         <div className="flex justify-end"><Badge variant={difference===0?"secondary":"destructive"}>{difference===0?"Comprobante balanceado":`Diferencia ${journalMoney.format(difference)}`}</Badge></div>
       </div>}
     </div>
-    <DialogFooter className="border-t px-6 py-4">{retry.isError&&<p role="alert" className="text-destructive">{retry.error.message}</p>}{!value&&canRetry&&posting.data&&posting.data.status!=="Posted"&&posting.data.status!=="CommercialEffectsApplied"&&<Button variant="outline" disabled={retry.isPending} onClick={()=>retry.mutate()}>{retry.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<RotateCcw className="mr-2 h-4 w-4"/>}Reintentar contabilización</Button>}{value&&canClone&&<CloneVoucherButton documentId={documentId} onCloned={onCloned}/>}<Button variant="outline" disabled={!value} onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button><Button onClick={onClose}>Cerrar</Button></DialogFooter>
+    <DialogFooter className="border-t px-6 py-4">{retry.isError&&<p role="alert" className="text-destructive">{retry.error.message}</p>}{posting.data?.retryQueued&&<Button variant="outline" disabled={posting.isFetching} onClick={()=>void posting.refetch()}><RotateCcw className="mr-2 h-4 w-4"/>Actualizar estado</Button>}{!value&&canRetry&&posting.data&&!posting.data.retryQueued&&posting.data.status!=="Posted"&&posting.data.status!=="CommercialEffectsApplied"&&<Button variant="outline" disabled={retry.isPending} onClick={()=>retry.mutate()}>{retry.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<RotateCcw className="mr-2 h-4 w-4"/>}Reintentar contabilización</Button>}{value&&canClone&&<CloneVoucherButton documentId={documentId} onCloned={onCloned}/>}<Button variant="outline" disabled={!value} onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button><Button onClick={onClose}>Cerrar</Button></DialogFooter>
   </DialogContent></Dialog>;
 }
 

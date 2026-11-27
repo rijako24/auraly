@@ -1,6 +1,8 @@
 using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -12,6 +14,7 @@ public sealed class TenantSynchronizationDispatchTests(ServerSliceFixture fixtur
     {
         var otherBusinessId = Guid.NewGuid();
         var notificationId = Guid.NewGuid();
+        var priorNotificationId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using (var seed = new SqlCommand("""
@@ -23,12 +26,14 @@ public sealed class TenantSynchronizationDispatchTests(ServerSliceFixture fixtur
             FROM dbo.Businesses WHERE BusinessId=@BusinessId;
             INSERT dbo.PosSynchronizationOutboxMessages
               (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-            VALUES(@NotificationId,@OtherBusinessId,N'Customers',1,SYSUTCDATETIME());
+            VALUES(@PriorNotificationId,@OtherBusinessId,N'Customers',1,SYSUTCDATETIME()),
+              (@NotificationId,@OtherBusinessId,N'Customers',2,SYSUTCDATETIME());
             """, connection))
         {
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@OtherBusinessId", otherBusinessId);
             seed.Parameters.AddWithValue("@NotificationId", notificationId);
+            seed.Parameters.AddWithValue("@PriorNotificationId", priorNotificationId);
             await seed.ExecuteNonQueryAsync();
         }
 
@@ -41,22 +46,29 @@ public sealed class TenantSynchronizationDispatchTests(ServerSliceFixture fixtur
             while (true)
             {
                 await using var check = new SqlCommand("""
-                    SELECT PublishedAt FROM dbo.PosSynchronizationOutboxMessages
-                    WHERE NotificationId=@NotificationId;
+                    SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
+                    WHERE BusinessId=@OtherBusinessId AND PublishedAt IS NOT NULL;
                     """, connection);
-                check.Parameters.AddWithValue("@NotificationId", notificationId);
-                if (await check.ExecuteScalarAsync(timeout.Token) is DateTimeOffset)
+                check.Parameters.AddWithValue("@OtherBusinessId", otherBusinessId);
+                if (await check.ExecuteScalarAsync(timeout.Token) is 2)
                     break;
                 await Task.Delay(TimeSpan.FromMilliseconds(100), timeout.Token);
             }
+
+            var gateway = new TestPosSynchronizationPushGateway();
+            var factory = fixture.Services.GetRequiredService<SqlServerConnectionFactory>();
+            var inlineDispatcher = new SqlPosSynchronizationOutboxDispatcher(
+                factory, gateway, TimeProvider.System,
+                NullLogger<SqlPosSynchronizationOutboxDispatcher>.Instance, publishInline: true);
+            await inlineDispatcher.PublishBusinessAsync(otherBusinessId, timeout.Token);
+            Assert.Empty(gateway.Drain());
         }
         finally
         {
             await using var cleanup = new SqlCommand("""
-                DELETE dbo.PosSynchronizationOutboxMessages WHERE NotificationId=@NotificationId;
+                DELETE dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@OtherBusinessId;
                 DELETE dbo.Businesses WHERE BusinessId=@OtherBusinessId;
                 """, connection);
-            cleanup.Parameters.AddWithValue("@NotificationId", notificationId);
             cleanup.Parameters.AddWithValue("@OtherBusinessId", otherBusinessId);
             await cleanup.ExecuteNonQueryAsync();
         }

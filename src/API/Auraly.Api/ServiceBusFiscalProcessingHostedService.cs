@@ -11,13 +11,10 @@ public sealed class FiscalProcessingHostedService(
     ServiceBusClient client,
     FiscalProcessingServiceBusOptions options,
     IServiceScopeFactory scopes,
-    FiscalProcessingCoordinator processing,
     FiscalStatusSynchronizationNotifier synchronization,
-    TimeProvider timeProvider,
     ILogger<FiscalProcessingHostedService> logger) : BackgroundService
 {
     private const int MaximumDeliveries = 5;
-    private static readonly TimeSpan WorkLease = TimeSpan.FromMinutes(2);
     private readonly string workerId = $"{Environment.MachineName}:fiscal:{Guid.NewGuid():N}";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -63,63 +60,8 @@ public sealed class FiscalProcessingHostedService(
                     "Service Bus SessionId differs from the fiscal BusinessId.");
 
             await using var scope = scopes.CreateAsyncScope();
-            if (signal.Stage == FiscalProcessingStage.Generation)
-            {
-                var worker = scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>();
-                var generated = await worker.ProcessAsync(
-                    signal.BusinessId,
-                    signal.DocumentId,
-                    workerId,
-                    args.CancellationToken);
-                if (generated)
-                    await processing.RequestSubmissionAsync(
-                        signal.BusinessId,
-                        signal.DocumentId,
-                        cancellationToken: args.CancellationToken);
-                else
-                {
-                    var store = scope.ServiceProvider
-                        .GetRequiredService<IFiscalGenerationWorkStore>();
-                    var resumeAt = await store.GetResumeAtAsync(
-                        signal.BusinessId,
-                        signal.DocumentId,
-                        timeProvider.GetUtcNow(),
-                        WorkLease,
-                        args.CancellationToken);
-                    if (resumeAt is not null)
-                        await processing.ScheduleGenerationAsync(
-                            signal.BusinessId, signal.DocumentId,
-                            resumeAt.Value, args.CancellationToken);
-                }
-            }
-            else
-            {
-                var worker = scope.ServiceProvider.GetRequiredService<FiscalSubmissionWorker>();
-                var result = await worker.ProcessAsync(
-                    signal.BusinessId,
-                    signal.DocumentId,
-                    workerId,
-                    args.CancellationToken);
-                if (!result.WorkFound)
-                {
-                    var store = scope.ServiceProvider
-                        .GetRequiredService<IFiscalSubmissionWorkStore>();
-                    var resumeAt = await store.GetResumeAtAsync(
-                        signal.BusinessId, signal.DocumentId,
-                        timeProvider.GetUtcNow(), WorkLease,
-                        args.CancellationToken);
-                    if (resumeAt is not null)
-                        await processing.RequestSubmissionAsync(
-                            signal.BusinessId, signal.DocumentId,
-                            resumeAt.Value, args.CancellationToken);
-                }
-                if (result.NextAttemptAt is DateTimeOffset nextAttemptAt)
-                    await processing.RequestSubmissionAsync(
-                        signal.BusinessId,
-                        signal.DocumentId,
-                        nextAttemptAt,
-                        args.CancellationToken);
-            }
+            var handler = scope.ServiceProvider.GetRequiredService<FiscalProcessingMessageHandler>();
+            await handler.ProcessAsync(signal, workerId, args.CancellationToken);
 
             await synchronization.DispatchAsync(signal.BusinessId, args.CancellationToken);
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);

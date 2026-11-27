@@ -45,4 +45,29 @@ foreach ($requiredName in @(
         throw "El release no contiene $requiredName."
     }
 }
+if ($manifest.enginesFunction -or $manifest.deploymentComponents -contains 'engines-function') {
+    $packageName = "auraly-engines-function-$ReleaseVersion.zip"
+    if ($manifest.artifacts.name -notcontains $packageName) {
+        throw "El release no contiene $packageName."
+    }
+    $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $ReleaseRoot $packageName))
+    try {
+        $entry = $archive.GetEntry('functions.metadata')
+        if ($null -eq $entry) { throw 'La Function de motores no contiene sus metadatos.' }
+        $reader = [IO.StreamReader]::new($entry.Open())
+        try { $bindings = @($reader.ReadToEnd() | ConvertFrom-Json) }
+        finally { $reader.Dispose() }
+        $expected = @('ProcessDocument','ProcessAccounting','ProcessFiscal','ProcessSalesReporting','RecoverDocumentInitialSignals','Health')
+        if (Compare-Object -ReferenceObject $expected -DifferenceObject @($bindings.name)) {
+            throw 'Los triggers de la Function de motores no coinciden con el contrato del release.'
+        }
+        foreach ($name in $expected | Select-Object -First 4) {
+            $trigger = @($bindings | Where-Object name -eq $name).bindings | Where-Object type -eq 'serviceBusTrigger'
+            if (-not $trigger.isSessionsEnabled -or $trigger.autoCompleteMessages) {
+                throw "El binding de $name no conserva las sesiones y el acuse manual."
+            }
+        }
+    }
+    finally { $archive.Dispose() }
+}
 return $manifest

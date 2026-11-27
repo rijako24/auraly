@@ -3,6 +3,8 @@ using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Dispatching;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Auraly.Commerce.Accounting.Application;
 
@@ -30,13 +32,16 @@ public interface IAccountingProcessingSignalGate
         Guid businessId,
         Guid documentId,
         string documentType,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool includeDependencies = true);
 }
 
-public sealed record AccountingPendingWork(Guid DocumentId, string DocumentType);
+public sealed record AccountingPendingWork(Guid DocumentId, string DocumentType, int AttemptCount = 0);
 
 public sealed class AccountingProcessingCoordinator
 {
+    private static readonly TimeSpan RetryPublicationBudget = TimeSpan.FromSeconds(5);
+
     private readonly IAccountingProcessingSignalPublisher publisher;
     private readonly IAuralyIdGenerator ids;
     private readonly IAccountingProcessingSignalGate? gate;
@@ -65,20 +70,62 @@ public sealed class AccountingProcessingCoordinator
         string documentType,
         CancellationToken cancellationToken = default)
     {
-        if (businessId == Guid.Empty || documentId == Guid.Empty ||
-            string.IsNullOrWhiteSpace(documentType) || documentType.Length > 64)
-            throw new ArgumentException(
-                "Business, document and document type are required for accounting processing.");
-
-        var pending = gate is null
-            ? [new AccountingPendingWork(documentId, documentType.Trim())]
-            : await gate.ListPendingWorkAsync(
-                businessId, documentId, documentType.Trim(), cancellationToken);
+        var pending = await ResolvePendingWorkAsync(
+            businessId, documentId, documentType, cancellationToken);
         foreach (var work in pending)
             await publisher.PublishAsync(
                 new AccountingProcessingSignal(
                     ids.NewId(), businessId, work.DocumentId, work.DocumentType),
                 cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<AccountingPendingWork>> ResolvePendingWorkAsync(
+        Guid businessId,
+        Guid documentId,
+        string documentType,
+        CancellationToken cancellationToken = default,
+        bool includeDependencies = true)
+    {
+        if (businessId == Guid.Empty || documentId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(documentType) || documentType.Length > 64)
+            throw new ArgumentException(
+                "Business, document and document type are required for accounting processing.");
+
+        return gate is null
+            ? [new AccountingPendingWork(documentId, documentType.Trim())]
+            : await gate.ListPendingWorkAsync(
+                businessId, documentId, documentType.Trim(), cancellationToken, includeDependencies);
+    }
+
+    public async Task<bool> RequestRetryAsync(
+        Guid businessId,
+        Guid documentId,
+        string documentType,
+        int attemptCount,
+        CancellationToken cancellationToken = default)
+    {
+        if (!AccountingProcessingPolicy.Supports(documentType))
+            return false;
+        var pending = await ResolvePendingWorkAsync(businessId, documentId, documentType, cancellationToken,
+            includeDependencies: false);
+        if (!pending.Any(work => work.DocumentId == documentId && work.DocumentType == documentType
+            && work.AttemptCount == attemptCount))
+            return false;
+        var key = FormattableString.Invariant($"accounting-retry:{businessId:N}:{documentType}:{documentId:N}:{attemptCount}");
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RetryPublicationBudget);
+        try
+        {
+            await publisher.PublishAsync(
+                new AccountingProcessingSignal(new Guid(hash.AsSpan(0, 16)), businessId, documentId, documentType),
+                deadline.Token);
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("The accounting queue did not confirm the retry within the publication budget.", error);
+        }
+        return true;
     }
 }
 

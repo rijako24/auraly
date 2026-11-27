@@ -42,6 +42,7 @@ param posInstallerSha256 string
 param deployStaticAdminSettings bool = true
 param maximumFunctionInstances int = 20
 param seedAppConfiguration bool = false
+param provisionCommerceWorker bool = false
 
 var suffix = toLower(take(uniqueString(subscription().id, environment), 8))
 var compactEnvironment = environment == 'prod' ? 'prod' : 'dev'
@@ -947,6 +948,36 @@ resource openAiAudioDeploymentConfig 'Microsoft.AppConfiguration/configurationSt
   ]
 }
 
+module commerceWorker './modules/commerce-worker.bicep' = if (provisionCommerceWorker) {
+  name: 'auraly-commerce-worker-${compactEnvironment}'
+  params: {
+    environment: compactEnvironment
+    location: location
+    suffix: suffix
+    tags: tags
+    releaseVersion: releaseVersion
+    sqlServerHost: sqlServer.properties.fullyQualifiedDomainName
+    databaseName: database.name
+    serviceBusName: serviceBus.name
+    processingQueues: {
+      document: documentProcessingQueue.name
+      accounting: accountingProcessingQueue.name
+      fiscal: fiscalProcessingQueue.name
+      reporting: salesReportingQueue.name
+    }
+    webPubSubName: webPubSub.name
+    webPubSubEndpoint: 'https://${webPubSub.properties.hostName}'
+    fiscalVaultName: fiscalKeyVault.name
+    fiscalVaultUri: fiscalKeyVault.properties.vaultUri
+    insightsConnectionString: applicationInsights.properties.ConnectionString
+    fiscalSecretProtectionKey: fiscalSecretProtectionKey
+  }
+}
+
+output commerceWorkerName string = provisionCommerceWorker ? commerceWorker!.outputs.name : ''
+output commerceWorkerPrincipalId string = provisionCommerceWorker ? commerceWorker!.outputs.principalId : ''
+output commerceWorkerStorageAccount string = provisionCommerceWorker ? commerceWorker!.outputs.storageAccount : ''
+output commerceWorkerContainer string = provisionCommerceWorker ? commerceWorker!.outputs.containerName : ''
 output functionAppName string = functionApp.name
 output apiAppName string = apiApp.name
 output staticAdminName string = staticAdmin.name

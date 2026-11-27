@@ -459,6 +459,9 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     [AccountingEntryRequired] BIT NOT NULL CONSTRAINT [DF_AccountingPostingJobs_AccountingEntryRequired] DEFAULT (1),
     [Status] NVARCHAR(40) NOT NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_AccountingPostingJobs_Attempts] DEFAULT (0),
+    [ExplicitRetryAttempt] INT NULL,
+    [IsExplicitRetryQueued] AS CONVERT(BIT, CASE WHEN [ExplicitRetryAttempt]=[AttemptCount]
+      AND [Status] IN (N'Pending',N'AccountingPendingConfiguration') THEN 1 ELSE 0 END),
     [LastErrorCode] NVARCHAR(80) NULL,
     [LastErrorMessage] NVARCHAR(1000) NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,

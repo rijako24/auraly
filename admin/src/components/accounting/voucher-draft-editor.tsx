@@ -118,8 +118,9 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const selectedObligation = obligation.data && { value: obligationId, label: obligation.data.documentNumber,
     description: `${obligationPartyName} · Disponible ${money.format(obligation.data.availableAmount)}` };
   const readOnly = !!saved?.sentAt || !permissions.includes("accounting.manual.create");
+  const postingQueued = !!saved?.row.accountingRetryQueued;
   const statusLabel = accountingReversalStatusLabel(saved?.reversalDocumentId,saved?.reversalStatus)
-    ?? (saved ? statuses.data?.find(item => item.code === saved.status)?.label ?? accountingStatusLabel(saved.status) : "Nueva captura");
+    ?? (postingQueued ? "Reintento en cola" : saved ? statuses.data?.find(item => item.code === saved.status)?.label ?? accountingStatusLabel(saved.status) : "Nueva captura");
   const postedEntryButton = saved?.row.entryId && <Button variant="secondary" onClick={() => setEntryOpen(true)}><FileText className="mr-2 h-4 w-4" />Ver comprobante contabilizado</Button>;
   const busy = phase !== null || fiscalBusy;
   const detailIndex = lines.findIndex(line => line.value.lineId === detailLineId);
@@ -320,7 +321,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     try {
       const posting = await accountingApi.retryPosting(saved.documentId);
       accept({ ...saved, status: posting.status, row: { ...saved.row, status: posting.status,
-        errorCode: posting.errorCode, errorMessage: posting.errorMessage, entryId: posting.entryId } });
+        errorCode: posting.errorCode, errorMessage: posting.errorMessage, entryId: posting.entryId,
+        accountingRetryQueued: !!posting.retryQueued } });
     } catch (value) { setError(value instanceof Error ? value.message : "No se pudo reintentar la contabilización."); }
     finally { setPhase(null); }
   }
@@ -643,7 +645,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       <div className="flex flex-wrap items-center justify-end gap-2">
       <Button variant="outline" disabled={busy} onClick={close}>{modal ? closeLabel : "Volver"}</Button>
       {saved && !dirty && <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{phase === "refresh" ? "Consultando estado…" : "Actualizar estado"}</Button>}
-      {saved?.sentAt && saved.status !== "Posted" && permissions.includes("accounting.postings.retry") && <Button disabled={busy} onClick={() => void retry()}>{phase === "retry" ? "Solicitando reintento…" : "Reintentar contabilización"}</Button>}
+      {saved?.sentAt && saved.status !== "Posted" && saved.status !== "CommercialEffectsApplied" && !postingQueued &&
+        permissions.includes("accounting.postings.retry") && <Button disabled={busy} onClick={() => void retry()}>{phase === "retry" ? "Solicitando reintento…" : "Reintentar contabilización"}</Button>}
       {saved?.status === "Posted" && saved.row.fiscalStatus === "AwaitingManualSubmission" && permissions.includes("fiscal.manual-support.send") &&
         <Button disabled={busy} onClick={() => void sendFiscal()}><Send className="mr-2 h-4 w-4" />{phase === "fiscal" ? "Solicitando envío…" : "Enviar documento soporte a la DIAN"}</Button>}
       {canCancelPlainJournal && <Button variant="destructive" disabled={busy} onClick={() => setCancelOpen(true)}><RotateCcw className="mr-2 h-4 w-4" />Anular comprobante</Button>}

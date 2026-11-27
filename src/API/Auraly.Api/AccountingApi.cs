@@ -5,6 +5,7 @@ using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Receivables;
+using Azure.Messaging.ServiceBus;
 
 namespace Auraly.Api;
 
@@ -192,8 +193,21 @@ public static class AccountingApi
         endpoints.MapPost("/api/commerce/v1/accounting/postings/{documentId:guid}/retry", async (HttpContext context, Guid documentId, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(async () =>
             {
-                var value = await service.RetryPostingAsync(context.User.ToAccountingIdentity(), documentId, token);
-                return value is null ? Results.NotFound() : Results.Ok(value);
+                try
+                {
+                    var value = await service.RetryPostingAsync(context.User.ToAccountingIdentity(), documentId, token);
+                    if (value is null) return Results.NotFound();
+                    return value.RetryQueued
+                        ? Results.Accepted($"/api/commerce/v1/accounting/postings/by-document/{documentId:D}", value)
+                        : Results.Ok(value);
+                }
+                catch (Exception error) when (error is ServiceBusException or TimeoutException
+                    or RabbitMQ.Client.Exceptions.BrokerUnreachableException)
+                {
+                    context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(AccountingApi))
+                        .LogWarning(error, "The accounting retry publication for document {DocumentId} was not confirmed.", documentId);
+                    return Results.Problem("No se pudo confirmar el envío del reintento contable. Consulta el estado antes de reintentar.", statusCode: 503);
+                }
             })).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/entries/by-document/{documentId:guid}", async (HttpContext context, Guid documentId, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(async () =>

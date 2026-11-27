@@ -15,9 +15,19 @@ CREATE TABLE [dbo].[DispatchSettlementOperations] (
     [LastError] NVARCHAR(2000) NULL,
     [CompletedAt] DATETIMEOFFSET(7) NULL,
     [IdempotencyKey] NVARCHAR(128) NOT NULL,
+    [ActivationVersion] INT NULL,
+    [ActivationAvailableAt] DATETIMEOFFSET(7) NULL,
+    [ActivationLeaseId] UNIQUEIDENTIFIER NULL,
+    [PreparationLeaseId] UNIQUEIDENTIFIER NULL,
+    [PreparationPhase] TINYINT NOT NULL CONSTRAINT [DF_DispatchSettlementOperations_PreparationPhase] DEFAULT (0),
+    [PreparationPlanJson] NVARCHAR(MAX) NULL,
+    [PrerequisitesJson] NVARCHAR(MAX) NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_DispatchSettlementOperations] PRIMARY KEY ([DispatchSettlementOperationId]),
     CONSTRAINT [CK_DispatchSettlementOperations_ReturnIds] CHECK ([ReturnIdsJson] IS NULL OR ISJSON([ReturnIdsJson])=1),
+    CONSTRAINT [CK_DispatchSettlementOperations_PreparationPhase] CHECK ([PreparationPhase] BETWEEN 0 AND 3),
+    CONSTRAINT [CK_DispatchSettlementOperations_PreparationPlan] CHECK ([PreparationPlanJson] IS NULL OR ISJSON([PreparationPlanJson])=1),
+    CONSTRAINT [CK_DispatchSettlementOperations_Prerequisites] CHECK ([PrerequisitesJson] IS NULL OR ISJSON([PrerequisitesJson])=1),
     CONSTRAINT [FK_DispatchSettlementOperations_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_DispatchSettlementOperations_Dispatches] FOREIGN KEY ([DispatchId]) REFERENCES [dbo].[Dispatches] ([DispatchId]),
     CONSTRAINT [FK_DispatchSettlementOperations_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
@@ -31,3 +41,6 @@ CREATE TABLE [dbo].[DispatchSettlementOperations] (
 GO
 CREATE INDEX [IX_DispatchSettlementOperations_Queue] ON [dbo].[DispatchSettlementOperations] ([Status],[NextAttemptAt]) INCLUDE ([Attempts],[DispatchId]);
 GO
+CREATE INDEX [IX_DispatchSettlementOperations_Activation] ON [dbo].[DispatchSettlementOperations] ([ActivationAvailableAt],[DispatchSettlementOperationId])
+    INCLUDE ([BusinessId],[ActivationVersion],[Status])
+    WHERE [ActivationAvailableAt] IS NOT NULL;

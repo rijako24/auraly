@@ -8,7 +8,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Dispatching;
 
-public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory connections) : IDispatchDeliveryStore
+public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory connections, bool queueSettlement = false) : IDispatchDeliveryStore
 {
     public async Task<IReadOnlyList<DispatchReasonOption>> ReasonsAsync(DispatchActorIdentity actor, string reasonType, CancellationToken ct)
     {
@@ -106,14 +106,19 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
 
         DispatchSettlementSummary? settlement=null;
         await using(var command=new SqlCommand("""
-          SELECT closed.ExpectedCash,closed.DeclaredCash,closed.CashDifference,closed.DepositTotal,closed.CreditDocumentTotal,closed.CreditAdvanceTotal,closed.ReturnTotal,closed.Status,closed.ReceivedBy,closed.ReceivedAt,closed.CashReceived,closed.DeclaredCard,closed.DeclaredTransfer,closed.TransporterClosedBy,closed.TransporterClosedAt,(SELECT PreviouslyCollectedTotal FROM dispatch.PaymentTotals(@Id)),
-            COALESCE(CONVERT(int,JSON_VALUE(snapshot.ReceiptSnapshotJson,'$.receiptTemplateVersion')),1)
+          SELECT closed.ExpectedCash,closed.DeclaredCash,closed.CashDifference,closed.DepositTotal,closed.CreditDocumentTotal,closed.CreditAdvanceTotal,closed.ReturnTotal,
+            CASE WHEN operation.Status=N'NeedsAttention' THEN N'Attention' ELSE closed.Status END,
+            closed.ReceivedBy,closed.ReceivedAt,closed.CashReceived,closed.DeclaredCard,closed.DeclaredTransfer,closed.TransporterClosedBy,closed.TransporterClosedAt,(SELECT PreviouslyCollectedTotal FROM dispatch.PaymentTotals(@Id)),
+            COALESCE(CONVERT(int,JSON_VALUE(snapshot.ReceiptSnapshotJson,'$.receiptTemplateVersion')),1),
+            CASE WHEN @Administrative=1 AND operation.Status=N'NeedsAttention' AND operation.ActivationVersion IS NOT NULL
+              THEN operation.LastError END
           FROM dispatch.Closures closed
           JOIN dbo.WorkSessionClosures snapshot ON snapshot.WorkSessionClosureId=closed.DispatchSettlementId
+          LEFT JOIN dbo.DispatchSettlementOperations operation ON operation.DispatchId=closed.DispatchId AND operation.BusinessId=closed.BusinessId
           WHERE closed.DispatchId=@Id;
         """,connection))
-        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);if(await reader.ReadAsync(ct)){var expected=reader.GetDecimal(0);var deposits=reader.GetDecimal(3);var remainingCredit=reader.GetDecimal(4);var advances=reader.GetDecimal(5);var returnTotal=reader.GetDecimal(6);var undelivered=documents.Where(value=>value.DeliveryStatus==DeliveryStatuses.NotDelivered).Sum(value=>value.DocumentTotal);var cards=payments.Values.SelectMany(value=>value).Where(value=>value.PaymentMethod is "DebitCard" or "CreditCard").Sum(value=>value.Amount);var balance=dispatchTotal-(grossCash+deposits+cards+remainingCredit+returnTotal+undelivered+reader.GetDecimal(15));settlement=new(grossCash,approvedExpenses,expected,reader.GetDecimal(1),reader.GetDecimal(2),deposits,remainingCredit,advances,returnTotal,undelivered,dispatchTotal,balance,reader.GetString(7),NullableGuid(reader,8),reader.IsDBNull(9)?null:reader.GetDateTimeOffset(9),NullableDecimal(reader,10),cards,NullableDecimal(reader,11),NullableDecimal(reader,12),NullableGuid(reader,13),reader.GetDateTimeOffset(14),reader.GetDecimal(15),reader.GetInt32(16)); } }
-        return new(id,number,date,driver,plate,status,documents,expenses,settlement,rowVersion,linkedReturns){IsAssignedDriver=isAssignedDriver};
+        { command.Parameters.AddWithValue("@Id",id);command.Parameters.AddWithValue("@Administrative",administrative&&actor.Permissions.Contains(DispatchPermissionCodes.Settle));await using var reader=await command.ExecuteReaderAsync(ct);if(await reader.ReadAsync(ct)){var expected=reader.GetDecimal(0);var deposits=reader.GetDecimal(3);var remainingCredit=reader.GetDecimal(4);var advances=reader.GetDecimal(5);var returnTotal=reader.GetDecimal(6);var undelivered=documents.Where(value=>value.DeliveryStatus==DeliveryStatuses.NotDelivered).Sum(value=>value.DocumentTotal);var cards=payments.Values.SelectMany(value=>value).Where(value=>value.PaymentMethod is "DebitCard" or "CreditCard").Sum(value=>value.Amount);var balance=dispatchTotal-(grossCash+deposits+cards+remainingCredit+returnTotal+undelivered+reader.GetDecimal(15));settlement=new(grossCash,approvedExpenses,expected,reader.GetDecimal(1),reader.GetDecimal(2),deposits,remainingCredit,advances,returnTotal,undelivered,dispatchTotal,balance,reader.GetString(7),NullableGuid(reader,8),reader.IsDBNull(9)?null:reader.GetDateTimeOffset(9),NullableDecimal(reader,10),cards,NullableDecimal(reader,11),NullableDecimal(reader,12),NullableGuid(reader,13),reader.GetDateTimeOffset(14),reader.GetDecimal(15),reader.GetInt32(16)){ProcessingError=NullableString(reader,17)}; } }
+        return new(id,number,date,driver,plate,settlement?.Status=="Attention"&&status=="SettlementProcessing"?"SettlementAttention":status,documents,expenses,settlement,rowVersion,linkedReturns){IsAssignedDriver=isAssignedDriver};
     }
 
     public async Task<DispatchExecutionDetail> RecordAsync(DispatchActorIdentity actor, Guid dispatchId, RecordDispatchDeliveryRequest request, CancellationToken ct)
@@ -536,8 +541,9 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF EXISTS(SELECT * FROM @ExpectedReturns EXCEPT SELECT * FROM @ActualReturns)
               OR EXISTS(SELECT * FROM @ActualReturns EXCEPT SELECT * FROM @ExpectedReturns)
               THROW 51000,N'Las devoluciones vinculadas deben coincidir con los productos, cantidades y tratamiento registrados en la entrega.',1;
-            INSERT dbo.DispatchSettlementOperations(DispatchSettlementOperationId,BusinessId,DispatchId,WorkSessionId,CashReceived,Notes,CashDifferencePaymentMethodId,ReturnIdsJson,RequestedBy,RequestedAt,Status,Attempts,NextAttemptAt,IdempotencyKey)
-            SELECT NEWID(),@BusinessId,@Id,session.WorkSessionId,@Cash,@Notes,@DifferenceForm,@ReturnIds,@UserId,SYSUTCDATETIME(),N'Pending',0,SYSUTCDATETIME(),@Key
+            INSERT dbo.DispatchSettlementOperations(DispatchSettlementOperationId,BusinessId,DispatchId,WorkSessionId,CashReceived,Notes,CashDifferencePaymentMethodId,ReturnIdsJson,RequestedBy,RequestedAt,Status,Attempts,NextAttemptAt,IdempotencyKey,ActivationVersion,ActivationAvailableAt)
+            SELECT NEWID(),@BusinessId,@Id,session.WorkSessionId,@Cash,@Notes,@DifferenceForm,@ReturnIds,@UserId,SYSUTCDATETIME(),N'Pending',0,SYSUTCDATETIME(),@Key,
+              CASE WHEN @QueueSettlement=1 THEN 0 END,CASE WHEN @QueueSettlement=1 THEN SYSUTCDATETIME() END
             FROM dbo.WorkSessions session WHERE session.DispatchId=@Id AND session.Kind=N'Dispatch' AND session.BusinessId=@BusinessId;
             IF @@ROWCOUNT<>1 THROW 51000,N'El cierre debe conservar una única sesión de dinero del despacho.',1;
             DECLARE @GrossCash decimal(19,4),@Deposit decimal(19,4),@Advance decimal(19,4),@Returns decimal(19,4),
@@ -578,7 +584,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
             IF @@TRANCOUNT>0 ROLLBACK;
             THROW;
           END CATCH
-        """,connection);Scope(command,actor,dispatchId);Money(command,"@Cash",request.CashReceived);command.Parameters.Add("@ReturnIds",SqlDbType.NVarChar,-1).Value=request.ReturnIds is {Count:>0} ? JsonSerializer.Serialize(request.ReturnIds.Order()) : DBNull.Value;command.Parameters.AddWithValue("@DifferenceForm",(object?)request.CashDifferencePaymentMethodId??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct,administrative:true))!;
+        """,connection);Scope(command,actor,dispatchId);Money(command,"@Cash",request.CashReceived);command.Parameters.Add("@ReturnIds",SqlDbType.NVarChar,-1).Value=request.ReturnIds is {Count:>0} ? JsonSerializer.Serialize(request.ReturnIds.Order()) : DBNull.Value;command.Parameters.AddWithValue("@DifferenceForm",(object?)request.CashDifferencePaymentMethodId??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);command.Parameters.AddWithValue("@QueueSettlement",queueSettlement);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51000){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct,administrative:true))!;
     }
 
     private static void Scope(SqlCommand command,DispatchActorIdentity actor,Guid id){command.Parameters.AddWithValue("@TenantId",actor.TenantId);command.Parameters.AddWithValue("@BusinessId",actor.BusinessId);command.Parameters.AddWithValue("@UserId",actor.UserId);command.Parameters.AddWithValue("@ReadAll",actor.Permissions.Contains(DispatchPermissionCodes.ReadAll));command.Parameters.AddWithValue("@Settle",actor.Permissions.Contains(DispatchPermissionCodes.Settle));command.Parameters.AddWithValue("@IsAdministrator",actor.IsAdministrator);command.Parameters.AddWithValue("@Id",id);}

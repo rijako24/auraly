@@ -59,6 +59,20 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             "SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId", request.DocumentId));
         Assert.Equal(before, await ScalarStringAsync("SELECT SnapshotJson FROM dbo.FiscalSnapshots WHERE DocumentId=@DocumentId", request.DocumentId));
         Assert.False(await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "final-consumer-replay"));
+
+        // The generation worker committed the artifact directly, simulating termination
+        // before the generation delivery could publish the submission signal.
+        fixture.DrainFiscalSignals();
+        using var scope = fixture.Services.CreateScope();
+        var handler = scope.ServiceProvider.GetRequiredService<FiscalProcessingMessageHandler>();
+        await handler.ProcessAsync(new FiscalProcessingSignal(
+            Guid.NewGuid(), fixture.BusinessId, request.DocumentId, FiscalProcessingStage.Generation),
+            "generation-redelivery", CancellationToken.None);
+
+        var continuation = Assert.Single(fixture.DrainFiscalSignals());
+        Assert.Equal(FiscalProcessingStage.Submission, continuation.Signal.Stage);
+        Assert.Equal(fixture.BusinessId, continuation.Signal.BusinessId);
+        Assert.Equal(request.DocumentId, continuation.Signal.DocumentId);
         Assert.Equal(1, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType=N'SignedXml'", request.DocumentId));
         Assert.Equal(0, await ScalarIntAsync("SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId", request.DocumentId));
     }

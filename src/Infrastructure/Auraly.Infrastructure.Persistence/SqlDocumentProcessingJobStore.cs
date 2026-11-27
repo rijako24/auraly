@@ -2,13 +2,15 @@ using System.Data;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
 
 namespace Auraly.Infrastructure.Persistence;
 
 public sealed class SqlDocumentProcessingJobStore(
     SqlServerConnectionFactory connections,
     SqlDocumentProcessingSessionAccessor sessions,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IConfiguration configuration)
     : IDocumentProcessingJobStore
 {
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
@@ -62,6 +64,11 @@ public sealed class SqlDocumentProcessingJobStore(
             {
                 await DisposeWithRollbackAsync(connection, transaction, cancellationToken);
                 return ProcessingLeaseResult.AlreadyCompleted;
+            }
+            if (status == "DeadLettered")
+            {
+                await DisposeWithRollbackAsync(connection, transaction, cancellationToken);
+                return ProcessingLeaseResult.DeadLettered;
             }
 
             var now = timeProvider.GetUtcNow();
@@ -120,18 +127,51 @@ public sealed class SqlDocumentProcessingJobStore(
                     LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
                 WHERE JobId=@JobId AND Status=N'Processing';
 
+                DECLARE @Updated int=@@ROWCOUNT;
                 UPDATE dbo.BusinessProcessingCursors
                 SET LastCompletedSequence=@ProcessingSequence,UpdatedAt=@EffectiveCompletedAt
                 WHERE BusinessId=@BusinessId
                   AND LastCompletedSequence=@PreviousSequence
                   AND @EffectiveCompletedAt IS NOT NULL;
+
+                SET @Updated+=@@ROWCOUNT;
+                IF @Updated=2 AND NOT EXISTS
+                (
+                  SELECT 1 FROM dbo.ServerOutboxMessages
+                  WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
+                    AND ProcessedAt IS NULL AND Type<>N'FiscalDocument.DianAccepted'
+                )
+                BEGIN
+                  -- Some historical handlers only write a financial job.
+                  INSERT dbo.ServerOutboxMessages
+                    (MessageId,DocumentId,DocumentType,Type,Payload,OccurredAt)
+                  VALUES(NEWID(),@DocumentId,@DocumentType,N'document.processing.completed',N'{}',@EffectiveCompletedAt);
+                END;
+                IF @Updated=2 AND @RecoverContinuations=1
+                BEGIN
+                  ;WITH source AS
+                  (
+                    SELECT TOP(1) RecoveryAvailableAt
+                    FROM dbo.ServerOutboxMessages
+                    WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
+                      AND ProcessedAt IS NULL AND Type<>N'FiscalDocument.DianAccepted'
+                      AND Type NOT LIKE N'doc.send.%'
+                    ORDER BY OccurredAt,MessageId
+                  )
+                  UPDATE source SET RecoveryAvailableAt=DATEADD(minute,2,@EffectiveCompletedAt);
+                END;
+                SELECT @Updated;
                 """, session.Connection, session.Transaction);
             command.Parameters.AddWithValue("@JobId", session.JobId);
             command.Parameters.AddWithValue("@BusinessId", context.BusinessId.Value);
+            command.Parameters.AddWithValue("@DocumentId", context.DocumentId.Value);
+            command.Parameters.AddWithValue("@DocumentType", context.DocumentType);
             command.Parameters.AddWithValue("@ProcessingSequence", session.ProcessingSequence);
             command.Parameters.AddWithValue("@PreviousSequence", session.ProcessingSequence - 1);
             command.Parameters.AddWithValue("@CompletedAt", completedAt);
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != 2)
+            command.Parameters.AddWithValue("@RecoverContinuations",
+                configuration.GetValue("Auraly:DocumentProcessing:DurableContinuation:Enabled", false));
+            if (await command.ExecuteScalarAsync(cancellationToken) is not 2)
                 throw new DBConcurrencyException(
                     "The document job and business cursor were not completed atomically.");
             await session.Transaction.CommitAsync(cancellationToken);
@@ -229,6 +269,15 @@ public sealed class SqlDocumentProcessingJobStore(
                 if (await advance.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException(
                         "The dead-lettered movement could not release its ordered position.");
+                if (context.DocumentType == "SalesReturn")
+                {
+                    await using var alert = new SqlCommand(
+                        "EXEC dbo.DispatchSettlementChildChanged @BusinessId,@DocumentId,@DocumentType;", connection, transaction);
+                    alert.Parameters.AddWithValue("@BusinessId", context.BusinessId.Value);
+                    alert.Parameters.AddWithValue("@DocumentId", context.DocumentId.Value);
+                    alert.Parameters.AddWithValue("@DocumentType", context.DocumentType);
+                    await alert.ExecuteNonQueryAsync(cancellationToken);
+                }
             }
 
             await transaction.CommitAsync(cancellationToken);

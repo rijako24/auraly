@@ -58,6 +58,50 @@ public sealed class DocumentProcessingWorkerTests
     }
 
     [Fact]
+    public async Task A_terminal_failure_never_dispatches_derived_work()
+    {
+        var document = CreateDocument();
+        var handler = new RecordingHandler();
+        var observer = new RecordingObserver();
+        var worker = new DocumentProcessingWorker(
+            new WorkSource(new(DocumentProcessingWorkState.DeadLettered, null)),
+            new DocumentProcessingEngine(new ReceiptStore(), [handler]), [observer]);
+
+        Assert.Equal(DocumentProcessingResult.DeadLettered,
+            await worker.ProcessOneAsync(CreateSignal(document)));
+        Assert.Empty(handler.Completed);
+        Assert.Equal(0, observer.Calls);
+    }
+
+    [Fact]
+    public async Task A_replay_with_no_pending_effects_returns_without_dispatching_again()
+    {
+        var document = CreateDocument();
+        var observer = new RecordingObserver();
+        var worker = new DocumentProcessingWorker(
+            new WorkSource(new(DocumentProcessingWorkState.CompletedAndPublished, null)),
+            new DocumentProcessingEngine(new ReceiptStore(), [new RecordingHandler()]), [observer]);
+
+        Assert.Equal(DocumentProcessingResult.AlreadyProcessed,
+            await worker.ProcessOneAsync(CreateSignal(document)));
+        Assert.Equal(0, observer.Calls);
+    }
+
+    [Fact]
+    public async Task Persisted_habilitation_mode_is_authoritative_when_the_broker_signal_differs()
+    {
+        var document = CreateDocument();
+        var observer = new RecordingObserver();
+        var worker = new DocumentProcessingWorker(
+            new WorkSource(new(DocumentProcessingWorkState.Completed, null, EconomicEffectsEnabled: false)),
+            new DocumentProcessingEngine(new ReceiptStore(), [new RecordingHandler()]), [observer]);
+
+        await worker.ProcessOneAsync(CreateSignal(document) with { EconomicEffectsEnabled = true });
+
+        Assert.False(Assert.Single(observer.Signals).EconomicEffectsEnabled);
+    }
+
+    [Fact]
     public async Task Completion_observers_run_for_processed_and_replayed_messages()
     {
         var document = CreateDocument(); var observer = new RecordingObserver();
@@ -74,8 +118,14 @@ public sealed class DocumentProcessingWorkerTests
 
     private sealed class RecordingObserver : IDocumentProcessingCompletionObserver
     {
-        public int Calls { get; private set; }
-        public Task ObserveAsync(DocumentProcessingSignal signal, CancellationToken cancellationToken) { Calls++; return Task.CompletedTask; }
+        public List<DocumentProcessingSignal> Signals { get; } = [];
+        public int Calls => Signals.Count;
+
+        public Task ObserveAsync(DocumentProcessingSignal signal, CancellationToken cancellationToken)
+        {
+            Signals.Add(signal);
+            return Task.CompletedTask;
+        }
     }
 
     private static DocumentProcessingSignal CreateSignal(ConfirmedDocument document) =>

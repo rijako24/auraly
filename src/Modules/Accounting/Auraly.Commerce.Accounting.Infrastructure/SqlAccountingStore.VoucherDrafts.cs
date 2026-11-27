@@ -205,7 +205,8 @@ public sealed partial class SqlAccountingStore
               CASE WHEN d.SentAt IS NOT NULL THEN COALESCE(JSON_VALUE(source.PayloadJson,'$.VoucherTypeCode'),d.VoucherTypeCode) ELSE d.VoucherTypeCode END,
               d.WorkSessionId,JSON_QUERY(source.PayloadJson,'$.FinancialEffects'),d.FiscalCaptureJson,
               fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus,
-              reversal.SourceDocumentId,reversalJob.Status,j.AppliedPaymentMethodsJson,JSON_QUERY(source.PayloadJson,'$.Lines')
+              reversal.SourceDocumentId,reversalJob.Status,j.AppliedPaymentMethodsJson,JSON_QUERY(source.PayloadJson,'$.Lines'),
+              ISNULL(j.IsExplicitRetryQueued,CONVERT(bit,0))
             FROM accounting.VoucherDrafts d
             LEFT JOIN dbo.Parties mainParty ON mainParty.PartyId=d.MainPartyId AND mainParty.TenantId=d.TenantId
             LEFT JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=d.DocumentId
@@ -282,7 +283,8 @@ public sealed partial class SqlAccountingStore
             reader.IsDBNull(21) ? null : reader.GetDecimal(21), reader.IsDBNull(22) ? null : reader.GetDecimal(22),
             reader.IsDBNull(20) ? null : reader.GetDateTimeOffset(20), NullableText(reader, 33), NullableText(reader, 34),
             NullableText(reader, 35), NullableText(reader, 36), NullableText(reader, 37), true,
-            mainPartyId, mainPartyName, mainPartyIdentification, reversalDocumentId, reversalStatus,voucherType);
+            mainPartyId, mainPartyName, mainPartyIdentification, reversalDocumentId, reversalStatus,voucherType,
+            AccountingRetryQueued: reader.GetBoolean(42));
         var lines = new List<VoucherDraftLineView>();
         var capturedConcepts=financialEffects?.Concepts?.ToDictionary(item=>item.FinancialConceptId);
         await reader.NextResultAsync(token);

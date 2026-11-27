@@ -199,6 +199,17 @@ public sealed partial class PosCatalogStore
         Guid customerId,
         CancellationToken ct = default)
     {
+        var customers = await GetCustomersByIdsAsync([customerId], ct);
+        return customers.GetValueOrDefault(customerId);
+    }
+
+    internal async Task<IReadOnlyDictionary<Guid, PosCustomerPricing>> GetCustomersByIdsAsync(
+        IReadOnlyCollection<Guid> customerIds,
+        CancellationToken ct)
+    {
+        var customers = new Dictionary<Guid, PosCustomerPricing>();
+        if (customerIds.Count == 0)
+            return customers;
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
@@ -208,11 +219,17 @@ public sealed partial class PosCatalogStore
                    IsCreditEnabled,CreditLimit,AvailableCredit,DefaultDueDays,
                    PriceChannelValidFrom,PriceChannelValidUntil,SitesJson
             FROM PosPricingCustomers
-            WHERE CustomerId=@CustomerId AND IsActive=1;
+            WHERE CustomerId IN (SELECT value FROM json_each(@CustomerIds)) AND IsActive=1;
             """;
-        command.Parameters.Add(Q("@CustomerId", customerId));
+        command.Parameters.Add(Q("@CustomerIds",
+            JsonSerializer.Serialize(customerIds.Select(id => id.ToString("D")))));
         await using var reader = await command.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadCustomer(reader) : null;
+        while (await reader.ReadAsync(ct))
+        {
+            var customer = ReadCustomer(reader);
+            customers.Add(customer.CustomerId, customer);
+        }
+        return customers;
     }
 
     public async Task<long?> CustomerCursorAsync(CancellationToken ct = default)

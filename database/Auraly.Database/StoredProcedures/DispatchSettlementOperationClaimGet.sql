@@ -11,7 +11,7 @@ BEGIN
     ;WITH candidate AS
     (
         SELECT TOP(1) operation.* FROM dbo.DispatchSettlementOperations operation WITH(UPDLOCK,READPAST,READCOMMITTEDLOCK)
-        WHERE operation.Status IN(N'Pending',N'Processing') AND operation.NextAttemptAt<=SYSUTCDATETIME()
+        WHERE operation.ActivationVersion IS NULL AND operation.Status IN(N'Pending',N'Processing') AND operation.NextAttemptAt<=SYSUTCDATETIME()
           AND (operation.Status=N'Pending' OR NOT EXISTS(SELECT 1 FROM dbo.WorkSessions session
             JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionId=session.WorkSessionId
             JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=closure.WorkSessionClosureId
@@ -41,7 +41,7 @@ BEGIN
     IF NOT EXISTS(SELECT 1 FROM @Claimed)
       SELECT MIN(operation.NextAttemptAt),TODATETIMEOFFSET(SYSUTCDATETIME(),'+00:00')
       FROM dbo.DispatchSettlementOperations operation WITH(READPAST,READCOMMITTEDLOCK)
-      WHERE operation.Status IN(N'Pending',N'Processing')
+      WHERE operation.ActivationVersion IS NULL AND operation.Status IN(N'Pending',N'Processing')
         AND (operation.Status=N'Pending' OR NOT EXISTS(SELECT 1 FROM dbo.WorkSessions session
           JOIN dbo.WorkSessionClosures closure ON closure.WorkSessionId=session.WorkSessionId
           JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=closure.WorkSessionClosureId

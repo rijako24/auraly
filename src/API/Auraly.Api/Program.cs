@@ -37,6 +37,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Dispatching;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.WorkSessions;
@@ -91,11 +92,9 @@ builder.Services.AddSingleton<PayrollSqlConnectionFactory>();
 builder.Services.AddSingleton<PricingSqlConnectionFactory>();
 builder.Services.AddSingleton<RoutesSqlConnectionFactory>();
 builder.Services.AddSingleton<DispatchingSqlConnectionFactory>();
-builder.Services.AddSingleton<ConfigurationFiscalTechnicalKeyProvider>();
-builder.Services.AddSingleton<SqlProtectedFiscalTechnicalKeyStore>();
+builder.Services.AddFiscalProcessingPersistence();
 builder.Services.AddSingleton<IFiscalTechnicalKeySecretWriter>(sp =>
     sp.GetRequiredService<SqlProtectedFiscalTechnicalKeyStore>());
-builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, CompositeFiscalTechnicalKeyProvider>();
 builder.Services.AddScoped<IFiscalConfigurationStore, SqlFiscalConfigurationStore>();
 builder.Services.AddScoped<FiscalConfigurationService>();
 builder.Services.AddScoped<IFiscalDeviceSeriesStore, SqlFiscalDeviceSeriesStore>();
@@ -111,103 +110,30 @@ builder.Services.AddScoped<IFiscalSaleCorrectionStore, SqlFiscalSaleCorrectionSt
 builder.Services.AddScoped<FiscalDocumentService>();
 builder.Services.AddScoped<IPosFiscalStatusStore, SqlPosFiscalStatusStore>();
 builder.Services.AddScoped<PosFiscalStatusService>();
-builder.Services.AddScoped<IFiscalGenerationWorkStore, SqlFiscalGenerationWorkStore>();
-builder.Services.AddScoped<IFiscalSubmissionWorkStore, SqlFiscalSubmissionWorkStore>();
-builder.Services.AddScoped<IDianHabilitationConfigurationProvider,
-    SqlDianHabilitationConfigurationProvider>();
-builder.Services.AddScoped<IDianProductionConfigurationProvider,
-    SqlDianProductionConfigurationProvider>();
-var fiscalCredentialStore = builder.Configuration["Auraly:Fiscal:CredentialStore"]
-    ?? (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing")
-        ? "ProtectedDatabase"
-        : "AzureKeyVault");
-if (string.Equals(fiscalCredentialStore, "AzureKeyVault", StringComparison.OrdinalIgnoreCase))
-{
-    var keyVaultUri = builder.Configuration["Auraly:Fiscal:KeyVaultUri"];
-    if (!Uri.TryCreate(keyVaultUri, UriKind.Absolute, out var vaultUri) ||
-        vaultUri.Scheme != Uri.UriSchemeHttps)
-        throw new InvalidOperationException(
-            "Auraly:Fiscal:KeyVaultUri must be an HTTPS Azure Key Vault URI when CredentialStore is AzureKeyVault.");
-    builder.Services.AddSingleton<SqlProtectedFiscalCredentialVault>();
-    builder.Services.AddSingleton<IFiscalCredentialVault>(services =>
-        new RoutedFiscalCredentialVault(
-            AzureKeyVaultFiscalCredentialVault.Create(vaultUri),
-            services.GetRequiredService<SqlProtectedFiscalCredentialVault>()));
-}
-else if (string.Equals(fiscalCredentialStore, "ProtectedDatabase", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddSingleton<IFiscalCredentialVault, SqlProtectedFiscalCredentialVault>();
-}
-else
-{
-    throw new InvalidOperationException(
-        "Auraly:Fiscal:CredentialStore must be AzureKeyVault or ProtectedDatabase.");
-}
-builder.Services.AddSingleton<EnvironmentFiscalSoftwarePinProvider>();
-builder.Services.AddSingleton<WindowsFiscalSigningCertificateProvider>();
-builder.Services.AddSingleton<IFiscalSoftwarePinProvider, ManagedFiscalSoftwarePinProvider>();
-builder.Services.AddSingleton<IFiscalSigningCertificateProvider, ManagedFiscalSigningCertificateProvider>();
-builder.Services.AddSingleton<IFiscalXmlSigner, DianXadesSigner>();
-builder.Services.AddSingleton<IDianWcfClientFactory, DianWcfClientFactory>();
-builder.Services.AddScoped<IDianHabilitationTransport, DianHabilitationTransport>();
-builder.Services.AddScoped<IDianProductionTransport, DianProductionTransport>();
+builder.Services.AddFiscalProcessingExecution<SqlProtectedFiscalCredentialVault>(
+    builder.Configuration, builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"));
 builder.Services.AddScoped<IDianNumberingRangeClient, DianNumberingRangeClient>();
-builder.Services.AddSingleton<DianInvoiceUblBuilder>();
-builder.Services.AddSingleton<DianSupportDocumentUblBuilder>();
-builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
-builder.Services.AddSingleton<DianDebitNoteUblBuilder>();
-builder.Services.AddSingleton<DianAttachedDocumentBuilder>();
 builder.Services.AddSingleton<DianInvoicePdfRenderer>();
-builder.Services.AddSingleton<DianSchemaValidator>();
-builder.Services.AddSingleton<DianPayrollXmlBuilder>();
-builder.Services.AddSingleton<DianPayrollSchemaValidator>();
-builder.Services.AddSingleton<FiscalSubmissionPackageBuilder>();
-builder.Services.AddScoped<FiscalGenerationWorker>();
-builder.Services.AddScoped<FiscalSubmissionWorker>();
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>();
-builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
-builder.Services.AddScoped<SqlInventoryLedgerWriter>();
 builder.Services.AddScoped<IReferenceOptionStore, SqlReferenceOptionStore>();
 builder.Services.AddScoped<ReferenceOptionService>();
 builder.Services.AddScoped<IPaymentMethodStore, SqlPaymentMethodStore>();
 builder.Services.AddScoped<PaymentMethodService>();
 builder.Services.AddScoped<IFinancialConceptStore, SqlFinancialConceptStore>();
 builder.Services.AddScoped<FinancialConceptService>();
-builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJobStore>();
-builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
-builder.Services.AddScoped<IDocumentProcessingCompletionObserver,
-    SqlDocumentProcessingCompletionObserver>();
-builder.Services.AddScoped<SqlPosSaleDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler>(services => services.GetRequiredService<SqlPosSaleDocumentHandler>());
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHandler>();
-builder.Services.AddScoped<SqlGoodsReceiptDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler>(services => services.GetRequiredService<SqlGoodsReceiptDocumentHandler>());
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptCostRevisionDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlExpenseDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashReceiptDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashDisbursementDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesDebitNoteDocumentHandler>();
-builder.Services.AddScoped<SqlInventoryOperationProcessor>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlStockCountDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryDamageDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryAdjustmentDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDispatchDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferReceiptDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductionDocumentHandler>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlDispatchCashDifferenceDocumentHandler>();
-builder.Services.AddScoped<DocumentProcessingEngine>();
-builder.Services.AddScoped<DocumentProcessingWorker>();
-builder.Services.AddScoped<SqlAccountingPostingProcessor>();
-builder.Services.AddScoped<IAccountingPostingCompletionObserver, SqlAccountingReportingCompletionObserver>();
+builder.Services.AddDocumentProcessingExecution();
+builder.Services.AddDispatchSettlementExecution();
+var dispatchSettlementQueue = builder.Configuration.GetValue(DispatchSettlementQueue.EnabledSetting, false);
+if (dispatchSettlementQueue &&
+    (!string.Equals(builder.Configuration["Auraly:Processing:Transport"] ?? "ServiceBus", "ServiceBus", StringComparison.OrdinalIgnoreCase)
+     || !builder.Configuration.GetValue("Auraly:DocumentProcessing:DurableActivation:Enabled", false)
+     || !builder.Configuration.GetValue("Auraly:DocumentProcessing:DurableContinuation:Enabled", false)))
+    throw new InvalidOperationException("Queued dispatch settlement requires Service Bus and durable document publication.");
+builder.Services.AddAccountingProcessingExecution();
 builder.Services.AddSingleton<IAccountingProcessingSignalGate, SqlAccountingProcessingSignalGate>();
-builder.Services.AddScoped<SqlSalesReportingProjectionWriter>();
-builder.Services.AddScoped<SqlSalesReportingProcessor>();
+builder.Services.AddSalesReportingExecution();
 builder.Services.AddScoped<ISalesReportingStore, SqlSalesReportingStore>();
 builder.Services.AddScoped<SalesReportingService>();
 builder.Services.AddScoped<IAccountingStore, SqlAccountingStore>();
@@ -215,9 +141,7 @@ builder.Services.AddScoped<IBankReconciliationStore, SqlBankReconciliationStore>
 builder.Services.AddScoped<AccountingService>();
 builder.Services.AddScoped<IComplianceReportingStore, SqlComplianceReportingStore>();
 builder.Services.AddScoped<ComplianceReportingService>();
-builder.Services.AddScoped<IWithholdingRuleStore, SqlWithholdingRuleStore>();
-builder.Services.AddScoped<WithholdingEngine>();
-builder.Services.AddScoped<WithholdingService>();
+builder.Services.AddWithholdingCalculation();
 builder.Services.AddSingleton<AccountingProcessingCoordinator>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddSingleton<SalesReportingProcessingCoordinator>();
@@ -295,6 +219,8 @@ else
             AzureRuntimeClientFactory.CreateServiceBusClient(builder.Configuration));
         builder.Services.AddSingleton(provider =>
             provider.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
+        if (builder.Configuration.GetValue("Auraly:DocumentProcessing:DurableActivation:Enabled", false))
+            builder.Services.AddSingleton<IDocumentInitialSignalPublicationStore, SqlDocumentInitialSignalPublicationStore>();
         builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
             ServiceBusDocumentProcessingPublisher>();
 
@@ -325,6 +251,10 @@ else
         builder.Services.AddSingleton(new ServiceBusCommerceProcessingOptions(
             fiscalQueueName, accountingQueueName, salesReportingQueueName));
         builder.Services.AddSingleton<ServiceBusCommerceProcessingPublisher>();
+        builder.Services.AddSingleton<IDispatchSettlementSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
+        if (dispatchSettlementQueue)
+            builder.Services.AddSingleton<SqlDispatchSettlementActivation>();
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
             provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
         builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
@@ -478,8 +408,6 @@ builder.Services.AddSingleton<PayrollCalculator>();
 builder.Services.AddScoped<PayrollService>();
 builder.Services.AddScoped<IPayrollReportingStore, SqlPayrollReportingStore>();
 builder.Services.AddScoped<PayrollReportingService>();
-builder.Services.AddScoped<IReceivablesStore, SqlReceivablesStore>();
-builder.Services.AddScoped<ReceivablesService>();
 builder.Services.AddScoped<SqlCustomerCreditValidator>();
 builder.Services.AddScoped<SqlPosCreditFiscalMaterialReader>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
@@ -496,14 +424,13 @@ builder.Services.AddScoped<RouteService>();
 builder.Services.AddScoped<Auraly.BuildingBlocks.Infrastructure.Persistence.IOperationalDocumentNumberAllocator, SqlOperationalDocumentAllocator>();
 builder.Services.AddScoped<IDispatchStore, SqlDispatchStore>();
 builder.Services.AddScoped<DispatchService>();
-builder.Services.AddScoped<IDispatchDeliveryStore, SqlDispatchDeliveryStore>();
+builder.Services.AddScoped<IDispatchDeliveryStore>(services =>
+    new SqlDispatchDeliveryStore(services.GetRequiredService<DispatchingSqlConnectionFactory>(), dispatchSettlementQueue));
 builder.Services.AddScoped<DispatchDeliveryService>();
 builder.Services.AddSingleton<DispatchSettlementCoordinator>();
 builder.Services.AddScoped<SellerOrderWriter>();
-if (!builder.Environment.IsEnvironment("Testing"))
+if (!builder.Environment.IsEnvironment("Testing") && !dispatchSettlementQueue)
     builder.Services.AddHostedService<DispatchSettlementHostedService>();
-builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
-builder.Services.AddScoped<SalesReturnService>();
 builder.Services.AddScoped<ISalesDebitNoteStore, SqlSalesDebitNoteStore>();
 builder.Services.AddScoped<SalesDebitNoteService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();

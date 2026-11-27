@@ -225,6 +225,19 @@ try {
         "-p:PathMap=$repoRoot=/_/src"
     if ($LASTEXITCODE) { throw 'La publicacion de Function fallo.' }
 
+    $enginesPublish = Join-Path $publishPath 'engines-function'
+    Push-Location (Join-Path $repoRoot 'src\API\Auraly.Commerce.Worker')
+    try {
+        & dotnet restore Auraly.Commerce.Worker.csproj --locked-mode
+        if ($LASTEXITCODE) { throw 'La restauración de la Function de motores falló.' }
+        & dotnet publish Auraly.Commerce.Worker.csproj -c Release --no-restore -o $enginesPublish `
+            -p:ContinuousIntegrationBuild=true -p:Deterministic=true "-p:PathMap=$repoRoot=/_/src"
+        if ($LASTEXITCODE) { throw 'La publicación de la Function de motores falló.' }
+    }
+    finally {
+        Pop-Location
+    }
+
     $apiPublish = Join-Path $publishPath 'api'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Api\Auraly.Api.csproj') `
         -c Release --no-restore -o $apiPublish `
@@ -307,6 +320,9 @@ try {
         -SourceDirectory $functionPublish `
         -DestinationPath (Join-Path $releasePath "auraly-function-$Version.zip")
     New-DeterministicZip `
+        -SourceDirectory $enginesPublish `
+        -DestinationPath (Join-Path $releasePath "auraly-engines-function-$Version.zip")
+    New-DeterministicZip `
         -SourceDirectory $apiPublish `
         -DestinationPath (Join-Path $releasePath "auraly-api-$Version.zip")
     New-DeterministicZip `
@@ -332,6 +348,7 @@ try {
         version = $Version
         commit = $commit
         reportingProjectionVersion = $reportingProjectionVersion
+        enginesFunction = $true
         dirty = [bool]$gitStatus
         validation = [ordered]@{
             scope = if ($targetedValidation) { 'Targeted' } else { 'Full' }

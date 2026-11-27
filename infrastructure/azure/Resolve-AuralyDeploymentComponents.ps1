@@ -15,7 +15,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$allowedComponents = @('database', 'function', 'api', 'admin', 'pos-installer')
+$allowedComponents = @('database', 'function', 'engines-function', 'api', 'admin', 'pos-installer')
 
 function ConvertTo-NormalizedComponentList {
     param([AllowNull()][string[]]$Values)
@@ -71,7 +71,7 @@ if ($Persist) {
 [pscustomobject]@{
     Components = @($selected)
     Csv = $selected -join ','
-    DeployCloud = @($selected | Where-Object { $_ -in @('database', 'function', 'api', 'pos-installer') }).Count -gt 0
+    DeployCloud = @($selected | Where-Object { $_ -in @('database', 'function', 'engines-function', 'api', 'pos-installer') }).Count -gt 0
     DeployAdmin = $selected -contains 'admin'
     # API-only releases do not publish the database, but they still compare the
     # release DACPAC with the target before replacing the running API.

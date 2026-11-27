@@ -13,7 +13,7 @@ param(
     [string]$ReleaseRoot,
 
     [Parameter(Mandatory)]
-    [ValidateSet('database', 'function', 'api', 'pos-installer')]
+    [ValidateSet('database', 'function', 'engines-function', 'api', 'pos-installer')]
     [string[]]$Components,
 
     [switch]$AllowRecordedComponentSubset,
@@ -37,6 +37,7 @@ $configuration = if ($Environment -eq 'dev') {
         SqlServer = 'sql-auraly-dev-w5usmo6w'
         Database = 'auraly-dev'
         Function = 'func-auraly-dev-w5usmo6w'
+        EnginesFunction = 'func-auraly-engines-dev-w5usmo6w'
         Api = 'api-auraly-dev-w5usmo6w'
         Admin = 'admin-auraly-dev-w5usmo6w'
         AppConfiguration = 'cfg-auraly-dev-w5usmo6w'
@@ -49,6 +50,7 @@ else {
         SqlServer = 'sql-auraly-prod-7sov4nxc'
         Database = 'auraly-prod'
         Function = 'func-auraly-prod-7sov4nxc'
+        EnginesFunction = 'func-auraly-engines-prod-7sov4nxc'
         Api = 'api-auraly-prod-7sov4nxc'
         Admin = 'admin-auraly-prod-7sov4nxc'
         AppConfiguration = 'cfg-auraly-prod-7sov4nxc'
@@ -159,6 +161,7 @@ function Set-AppConfigurationValueWithRetry {
 function Sync-AndAssertFunctionTriggers {
     param(
         [Parameter(Mandatory)][string]$PackagePath,
+        [string]$FunctionName = $configuration.Function,
         [int]$Attempts = 18,
         [int]$DelaySeconds = 10
     )
@@ -171,7 +174,7 @@ function Sync-AndAssertFunctionTriggers {
     $syncUri = 'https://management.azure.com/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.Web/sites/{2}/syncfunctiontriggers?api-version=2024-04-01' -f `
         [Uri]::EscapeDataString($subscriptionId),
         [Uri]::EscapeDataString($configuration.ResourceGroup),
-        [Uri]::EscapeDataString($configuration.Function)
+        [Uri]::EscapeDataString($FunctionName)
     $archive = [IO.Compression.ZipFile]::OpenRead($PackagePath)
     try {
         $metadataEntry = $archive.GetEntry('functions.metadata')
@@ -202,7 +205,7 @@ function Sync-AndAssertFunctionTriggers {
         if ($LASTEXITCODE -eq 0) {
             $registered = @(& az functionapp function list `
                 --resource-group $configuration.ResourceGroup `
-                --name $configuration.Function `
+                --name $FunctionName `
                 --query '[].name' `
                 --output tsv 2>$null | ForEach-Object { ($_ -split '/')[-1] })
             if ($LASTEXITCODE -eq 0) {
@@ -595,6 +598,30 @@ function Publish-Database {
         $verificationConnection.AccessToken = $accessToken
         try {
             $verificationConnection.Open()
+            if ($selectedComponents -contains 'engines-function') {
+                $runtimeIdentity = Invoke-AzJson -Arguments @('identity','show','--resource-group',$configuration.ResourceGroup,
+                    '--name',"id-auraly-engines-$Environment",'--output','json')
+                $clientGuid = [guid]$runtimeIdentity.clientId
+                if ($clientGuid -eq [guid]::Empty) { throw 'La Function de motores no tiene identidad SQL.' }
+                $sid = '0x' + [Convert]::ToHexString($clientGuid.ToByteArray())
+                $principal = "id-auraly-engines-$Environment"
+                $grant = $verificationConnection.CreateCommand()
+                try {
+                    $grant.CommandText = @"
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name=N'$principal')
+    CREATE USER [$principal] WITH SID=$sid, TYPE=E;
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name=N'$principal' AND sid=$sid AND type='E')
+    THROW 51000,N'La identidad SQL de motores no coincide con el principal esperado.',1;
+IF IS_ROLEMEMBER(N'db_datareader',N'$principal')<>1
+    ALTER ROLE db_datareader ADD MEMBER [$principal];
+IF IS_ROLEMEMBER(N'db_datawriter',N'$principal')<>1
+    ALTER ROLE db_datawriter ADD MEMBER [$principal];
+GRANT EXECUTE TO [$principal];
+"@
+                    [void]$grant.ExecuteNonQuery()
+                }
+                finally { $grant.Dispose() }
+            }
             $verificationCommand = $verificationConnection.CreateCommand()
             $verificationCommand.CommandTimeout = 60
             $verificationCommand.CommandText = @'
@@ -667,9 +694,12 @@ WHERE tenantValue.TenantKey=N'@auraly';
 }
 
 function Publish-Function {
+    param([switch]$Engines)
+    $functionName = if ($Engines) { $configuration.EnginesFunction } else { $configuration.Function }
+    $artifactPrefix = if ($Engines) { 'auraly-engines-function' } else { 'auraly-function' }
     $container = 'auraly-deploy'
-    $blobName = "auraly-function-$ReleaseVersion-$([guid]::NewGuid().ToString('N')).zip"
-    $zip = Join-Path $releasePath "auraly-function-$ReleaseVersion.zip"
+    $blobName = "$artifactPrefix-$ReleaseVersion-$([guid]::NewGuid().ToString('N')).zip"
+    $zip = Join-Path $releasePath "$artifactPrefix-$ReleaseVersion.zip"
     $uploaded = $false
     $packageUri = $null
     $parameterFile = $null
@@ -708,22 +738,29 @@ function Publish-Function {
             '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'
             contentVersion = '1.0.0.0'
             parameters = @{
-                functionAppName = @{ value = $configuration.Function }
+                functionAppName = @{ value = $functionName }
                 location = @{ value = 'eastus2' }
                 packageUri = @{ value = $packageUri }
             }
         } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $parameterFile -Encoding utf8NoBOM
 
         & az deployment group create `
-            --name "auraly-$Environment-function-$ReleaseVersion" `
+            --name "$Environment-$artifactPrefix-$ReleaseVersion" `
             --resource-group $configuration.ResourceGroup `
             --template-file (Join-Path $PSScriptRoot 'function-onedeploy-v2.bicep') `
             --parameters "@$parameterFile" `
             --output none
         Assert-LastExitCode 'OneDeploy de Function fallo'
         if ($databaseCutover) {
-            & az functionapp start --resource-group $configuration.ResourceGroup --name $configuration.Function --output none
+            & az functionapp start --resource-group $configuration.ResourceGroup --name $functionName --output none
             Assert-LastExitCode 'No se pudo iniciar el Worker nuevo después del corte de base de datos'
+        }
+        if ($Engines) {
+            & az functionapp config appsettings set --resource-group $configuration.ResourceGroup --name $functionName `
+                --settings "Release__Version=$ReleaseVersion" --output none
+            Assert-LastExitCode 'No se pudo registrar la versión de la Function de motores'
+            Sync-AndAssertFunctionTriggers -PackagePath $zip -FunctionName $functionName
+            return
         }
         Sync-FunctionRuntimeSettingsFromApi
         Sync-AndAssertFunctionTriggers -PackagePath $zip
@@ -840,7 +877,7 @@ $selectedComponents = @($Components | ForEach-Object { $_.Trim().ToLowerInvarian
 $recordedComponents = @(
     $manifest.deploymentComponents |
         ForEach-Object { "$_".Trim().ToLowerInvariant() } |
-        Where-Object { $_ -in @('database', 'function', 'api', 'pos-installer') } |
+        Where-Object { $_ -in @('database', 'function', 'engines-function', 'api', 'pos-installer') } |
         Sort-Object -Unique)
 if ($recordedComponents.Count -gt 0) {
     if ($AllowRecordedComponentSubset) {
@@ -855,6 +892,21 @@ if ($recordedComponents.Count -gt 0) {
 }
 
 $databaseCutover = $selectedComponents -contains 'database'
+if ($selectedComponents -contains 'engines-function' -and -not $manifest.enginesFunction) {
+    throw 'El manifiesto no declara el paquete compatible de la Function de motores.'
+}
+$engineExists = $false
+if ($databaseCutover -or ($selectedComponents -contains 'engines-function')) {
+    $engineResources = @(Invoke-AzJson -Arguments @('resource','list','--resource-group',$configuration.ResourceGroup,
+        '--resource-type','Microsoft.Web/sites','--output','json'))
+    $engineExists = $configuration.EnginesFunction -in $engineResources.name
+    if (($selectedComponents -contains 'engines-function') -and -not $engineExists) {
+        throw 'La Function de motores debe estar aprovisionada antes de iniciar el despliegue.'
+    }
+    if ($databaseCutover -and $engineExists -and ($selectedComponents -notcontains 'engines-function')) {
+        throw 'El corte de esquema requiere un paquete compatible para la Function de motores.'
+    }
+}
 if ($databaseCutover -and
     ($selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function' -or $manifest.deploymentComponents -notcontains 'admin')) {
     throw 'El corte de base de datos exige publicar API y Worker compatibles junto con Admin en el mismo release.'
@@ -876,6 +928,15 @@ if ($databaseCutover) {
     if ($apiState -ne 'Stopped' -or $workerState -ne 'Stopped') {
         throw 'No se confirmó la detención de ambos escritores anteriores; no se publicará la base de datos.'
     }
+    if ($engineExists) {
+        & az functionapp stop --resource-group $configuration.ResourceGroup --name $configuration.EnginesFunction --output none
+        Assert-LastExitCode 'No se pudo detener la Function de motores'
+        $engineState = Invoke-AzJson -Arguments @('functionapp','show','--resource-group',$configuration.ResourceGroup,
+            '--name',$configuration.EnginesFunction,'--output','json')
+        if ($engineState.state -ne 'Stopped' -and $engineState.properties.state -ne 'Stopped') {
+            throw 'No se confirmó la detención de la Function de motores.'
+        }
+    }
 }
 if ($selectedComponents -contains 'database') {
     Publish-Database
@@ -889,12 +950,21 @@ if ($selectedComponents -contains 'function') {
     Publish-Function
 }
 if ($selectedComponents -contains 'api') { Publish-Api }
+if ($selectedComponents -contains 'engines-function') { Publish-Function -Engines }
 $installerMetadata = if ($selectedComponents -contains 'pos-installer') { Publish-PosInstallerIfPresent } else { $null }
 
 $apiStatus = if ($selectedComponents -contains 'api' -or $selectedComponents -contains 'pos-installer') {
     Wait-HttpHealthy "https://$($configuration.Api).azurewebsites.net/health"
 }
 else { $null }
+
+if ($selectedComponents -contains 'engines-function') {
+    $null = Wait-HttpHealthy "https://$($configuration.EnginesFunction).azurewebsites.net/api/health"
+    $enginesVersion = (& az functionapp config appsettings list --resource-group $configuration.ResourceGroup `
+        --name $configuration.EnginesFunction --query "[?name=='Release__Version'].value | [0]" --output tsv).Trim()
+    Assert-LastExitCode 'No se pudo validar la versión de la Function de motores'
+    if ($enginesVersion -ne $ReleaseVersion) { throw 'La versión remota de la Function de motores es inconsistente.' }
+}
 $functionStatus = if ($selectedComponents -contains 'function') {
     Wait-HttpHealthy "https://$($configuration.Function).azurewebsites.net/api/health"
 }

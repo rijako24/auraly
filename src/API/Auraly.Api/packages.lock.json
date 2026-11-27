@@ -912,6 +912,9 @@
       "auraly.application.dispatching": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Application.Receivables": "[1.0.0, )",
+          "Auraly.Application.Returns": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )"
@@ -1411,6 +1414,8 @@
           "Azure.Identity": "[1.17.2, )",
           "Azure.Security.KeyVault.Certificates": "[4.8.0, )",
           "Azure.Security.KeyVault.Secrets": "[4.8.0, )",
+          "Microsoft.Extensions.Configuration.Abstractions": "[8.0.0, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[8.0.2, )",
           "System.Security.Cryptography.Xml": "[8.0.5, )",
           "System.ServiceModel.Http": "[8.1.2, )"
         }
@@ -1421,6 +1426,7 @@
           "Auraly.Application.Authentication": "[1.0.0, )",
           "Auraly.Application.Authorization": "[1.0.0, )",
           "Auraly.Application.Catalog": "[1.0.0, )",
+          "Auraly.Application.Dispatching": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Application.Expenses": "[1.0.0, )",
           "Auraly.Application.Fiscal": "[1.0.0, )",
@@ -1529,11 +1535,13 @@
           "Auraly.Application.Sales": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Platform.Application": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",
           "Azure.AI.OpenAI": "[2.1.0, )",
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.18.2, )",
+          "Azure.Messaging.WebPubSub": "[1.6.0, )",
           "Azure.Storage.Blobs": "[12.19.1, )",
           "BCrypt.Net-Next": "[4.0.3, )",
           "Google.Apis.Auth": "[1.68.0, )",

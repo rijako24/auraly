@@ -25,6 +25,8 @@ public enum PosSynchronizationTrigger
 
 public sealed class PosSynchronizationSignal
 {
+    private int catchUpStarted;
+
     private readonly Channel<PosSynchronizationTrigger> channel =
         Channel.CreateUnbounded<PosSynchronizationTrigger>(
             new UnboundedChannelOptions
@@ -39,6 +41,10 @@ public sealed class PosSynchronizationSignal
         if (trigger != PosSynchronizationTrigger.None)
             channel.Writer.TryWrite(trigger);
     }
+
+    internal void MarkCatchUpStarted() => Interlocked.Exchange(ref catchUpStarted, 1);
+
+    internal bool CatchUpStarted => Volatile.Read(ref catchUpStarted) != 0;
 
     public void Schedule(
         PosSynchronizationTrigger trigger,
@@ -558,10 +564,10 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         pushState.MarkConnected();
         events.Record("Success", "Connection", "Caja conectada con Auraly Server");
         uiState.Publish();
-        // The hosted service already starts one bounded catch-up without waiting
-        // for Web PubSub. Only a reconnection may have missed invalidations.
+        // A read that started before the first subscription could have missed
+        // an update. Reuse the same queue and durable cursors to catch it.
         if (PosSynchronizationConnectionPolicy.RequiresCatchUp(
-                Interlocked.Increment(ref successfulConnections)))
+                Interlocked.Increment(ref successfulConnections), signal.CatchUpStarted))
             signal.Signal(PosSynchronizationTrigger.All);
         commandPrintSignal.Wake();
         return Task.CompletedTask;
@@ -645,8 +651,8 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
 
 internal static class PosSynchronizationConnectionPolicy
 {
-    public static bool RequiresCatchUp(int successfulConnectionNumber) =>
-        successfulConnectionNumber > 1;
+    public static bool RequiresCatchUp(int successfulConnectionNumber, bool catchUpStarted) =>
+        successfulConnectionNumber > 1 || catchUpStarted;
 }
 
 internal sealed class PosEventDrivenSynchronizationHostedService(
@@ -670,6 +676,7 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
         while (!stoppingToken.IsCancellationRequested)
         {
             var trigger = await signal.ReadAsync(stoppingToken);
+            signal.MarkCatchUpStarted();
             var isManual = trigger.HasFlag(PosSynchronizationTrigger.Manual);
             trigger &= ~PosSynchronizationTrigger.AutomaticRetry;
             if (isManual) automaticRetryAttempts = 0;

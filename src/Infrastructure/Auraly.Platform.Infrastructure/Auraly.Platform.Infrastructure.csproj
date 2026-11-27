@@ -18,6 +18,7 @@
     <PackageReference Include="Azure.Identity" Version="1.17.2" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
+    <PackageReference Include="Azure.Messaging.WebPubSub" Version="1.6.0" />
     <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
@@ -40,6 +41,7 @@
     <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
+    <ProjectReference Include="..\..\Modules\Dispatching\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
   </ItemGroup>
 
 </Project>

@@ -364,7 +364,8 @@ public sealed partial class SqlAccountingStore
               mainParty.Identification MainPartyIdentification,
               reversal.SourceDocumentId ReversalDocumentId,reversalJob.Status ReversalStatus,
               COALESCE(accepted.VoucherTypeCode,draft.VoucherTypeCode,sourceNumber.VoucherTypeCode) VoucherTypeCode,
-              COALESCE(fiscalProcess.LastErrorMessage,fiscalProcess.LastStatusDescription) FiscalErrorMessage
+              COALESCE(fiscalProcess.LastErrorMessage,fiscalProcess.LastStatusDescription) FiscalErrorMessage,
+              ISNULL(posting.IsExplicitRetryQueued,CONVERT(bit,0)) AccountingRetryQueued
             INTO #Documents
             FROM #DocumentPage job
             LEFT JOIN dbo.AccountingSourceDocuments accepted ON accepted.SourceDocumentId=job.SourceDocumentId

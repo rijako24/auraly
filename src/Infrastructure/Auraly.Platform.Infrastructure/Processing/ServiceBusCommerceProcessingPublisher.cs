@@ -1,6 +1,7 @@
 using Auraly.Application.Fiscal;
 using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
+using Auraly.Contracts.Dispatching;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
 
@@ -22,6 +23,7 @@ public sealed class ServiceBusCommerceProcessingPublisher(
     ServiceBusCommerceProcessingOptions options)
     : IFiscalProcessingSignalPublisher,
       IAccountingProcessingSignalPublisher,
+      IDispatchSettlementSignalPublisher,
       ISalesReportingProcessingSignalPublisher,
       IAsyncDisposable
 {
@@ -81,6 +83,15 @@ public sealed class ServiceBusCommerceProcessingPublisher(
             cancellationToken);
     }
 
+    public Task PublishAsync(DispatchSettlementSignal signal, CancellationToken cancellationToken)
+    {
+        DispatchSettlementSignalCodec.Validate(signal);
+        var message = CreateMessage(DispatchSettlementSignalCodec.Serialize(signal),
+            signal.OperationId, signal.BusinessId, signal.OperationId, DispatchSettlementQueue.Subject);
+        message.MessageId = FormattableString.Invariant($"{signal.OperationId:D}:dispatch:{signal.Version}");
+        return accounting.SendMessageAsync(message, cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await fiscal.DisposeAsync();
@@ -104,6 +115,23 @@ public sealed class ServiceBusCommerceProcessingPublisher(
         };
         message.ApplicationProperties["documentId"] = documentId.ToString("D");
         return message;
+    }
+}
+
+public static class DispatchSettlementSignalCodec
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static string Serialize(DispatchSettlementSignal signal) => JsonSerializer.Serialize(signal, Options);
+
+    public static DispatchSettlementSignal Deserialize(string value) =>
+        JsonSerializer.Deserialize<DispatchSettlementSignal>(value, Options)
+        ?? throw new InvalidOperationException("The dispatch settlement signal is invalid.");
+
+    public static void Validate(DispatchSettlementSignal signal)
+    {
+        if (signal.OperationId == Guid.Empty || signal.BusinessId == Guid.Empty || signal.Version < 0)
+            throw new InvalidOperationException("The dispatch settlement signal has an invalid scope or version.");
     }
 }
 

@@ -1,26 +1,30 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Api;
+using Auraly.Application.Dispatching;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Dispatching;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Dispatching;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed partial class AccountingVerticalSliceTests
 {
     [Theory]
-    [InlineData("Cash", "Transfer")]
-    [InlineData("DebitCard", "CreditCard")]
-    [InlineData("CreditCard", "Cash")]
-    [InlineData("Transfer", "DebitCard")]
+    [InlineData("Cash", "Transfer", true)]
+    [InlineData("DebitCard", "CreditCard", false)]
+    [InlineData("CreditCard", "Cash", false)]
+    [InlineData("Transfer", "DebitCard", false)]
     public async Task Order_invoiced_as_home_delivery_credit_changes_money_and_reporting_only_after_dispatch_reconciliation(
-        string driverMethod, string finalMethod)
+        string driverMethod, string finalMethod, bool useQueue)
     {
         using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
@@ -124,9 +128,15 @@ public sealed partial class AccountingVerticalSliceTests
         }
         Assert.Equal(before, await BeforeApprovalAsync());
         var approval = new SettleDispatchRequest(finalMethod == "Cash" ? 10000 : 0, null, Guid.NewGuid().ToString("N"));
-        await PostAsync<DispatchExecutionDetail>($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/settle", approval);
-        var worker = ActivatorUtilities.CreateInstance<DispatchSettlementHostedService>(fixture.Services);
-        await worker.StartAsync(default);
+        DispatchSettlementHostedService? worker = null;
+        if (useQueue)
+            await CompleteThroughQueueAsync();
+        else
+        {
+            await PostAsync<DispatchExecutionDetail>($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/settle", approval);
+            worker = ActivatorUtilities.CreateInstance<DispatchSettlementHostedService>(fixture.Services);
+            await worker.StartAsync(default);
+        }
         try
         {
             var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
@@ -154,7 +164,59 @@ public sealed partial class AccountingVerticalSliceTests
             await AssertBalancedAsync(customerPayment);
             Assert.Equal(0, await CountAsync("AccountingEntries", "SourceDocumentId", settlement));
         }
-        finally { await worker.StopAsync(default); worker.Dispose(); }
+        finally
+        {
+            if (worker is not null) { await worker.StopAsync(default); worker.Dispose(); }
+        }
+
+        async Task CompleteThroughQueueAsync()
+        {
+            var provider = scope.ServiceProvider;
+            var deliveries = new DispatchDeliveryService(new SqlDispatchDeliveryStore(
+                provider.GetRequiredService<DispatchingSqlConnectionFactory>(), queueSettlement: true));
+            var actor = new DispatchActorIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+                new HashSet<string> { DispatchPermissionCodes.Settle, DispatchPermissionCodes.ReadAll }, true);
+            var accepted = await deliveries.SettleAsync(actor, dispatch.DispatchId, approval, default);
+            Assert.Equal("Processing", accepted.Settlement!.Status);
+            Assert.Equal(before, await BeforeApprovalAsync());
+
+            var messages = new CapturedDispatchSignals();
+            var activation = new SqlDispatchSettlementActivation(provider.GetRequiredService<SqlServerConnectionFactory>(),
+                messages, NullLogger<SqlDispatchSettlementActivation>.Instance);
+            var preparation = provider.GetRequiredService<DispatchSettlementPreparation>();
+
+            await activation.RecoverAsync(default);
+            var initial = Assert.Single(messages.Items);
+            await preparation.ProcessAsync(initial, default);
+            await preparation.ProcessAsync(initial, default);
+            Assert.Equal(before, await BeforeApprovalAsync());
+            await activation.RecoverAsync(default);
+            Assert.Equal(2, messages.Items.Count);
+
+            var finance = provider.GetRequiredService<TestAccountingProcessingSignalPublisher>();
+            finance.Pause();
+            try
+            {
+                await preparation.ProcessAsync(messages.Items[1], default);
+                Assert.Equal(before, await BeforeApprovalAsync());
+                Assert.Equal("Accepted", await ScalarAsync<string>("""
+                    SELECT payment.Status FROM dbo.CustomerPayments payment
+                    JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
+                    JOIN dbo.Receivables debt ON debt.ReceivableId=application.ReceivableId
+                    WHERE debt.SourceDocumentId=@Id;
+                    """, sale));
+                await activation.RecoverAsync(default);
+                Assert.Equal(2, messages.Items.Count);
+            }
+            finally { finance.Resume(); }
+            var child = Assert.Single(finance.Drain());
+            await finance.PublishAsync(child);
+            await finance.PublishAsync(child);
+            await activation.RecoverAsync(default);
+            Assert.Equal(3, messages.Items.Count);
+            await preparation.ProcessAsync(messages.Items[2], default);
+            await preparation.ProcessAsync(messages.Items[2], default);
+        }
 
         async Task<T> PostAsync<T>(string path, object body)
         {
@@ -165,11 +227,24 @@ public sealed partial class AccountingVerticalSliceTests
         Task<string> BeforeApprovalAsync() => ScalarAsync<string>("""
             SELECT (SELECT
               (SELECT OutstandingAmount FROM dbo.Receivables WHERE SourceDocumentId=@Id) Debt,
-              (SELECT COUNT(*) FROM dbo.CustomerPaymentApplications a JOIN dbo.Receivables d ON d.ReceivableId=a.ReceivableId WHERE d.SourceDocumentId=@Id) Applications,
+              (SELECT COUNT(*) FROM dbo.CustomerPaymentApplications a JOIN dbo.Receivables d ON d.ReceivableId=a.ReceivableId
+                JOIN dbo.CustomerPayments payment ON payment.PaymentId=a.PaymentId AND payment.Status=N'Processed'
+                WHERE d.SourceDocumentId=@Id) Applications,
               (SELECT COUNT(*) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE l.AccountId=(SELECT CreditAccountId FROM dbo.SalesDocuments WHERE DocumentId=@Id)) Entries,
               JSON_QUERY((SELECT * FROM reporting.SalesReportDocuments WHERE DocumentId=@Id FOR JSON PATH,INCLUDE_NULL_VALUES)) Report,
               JSON_QUERY((SELECT * FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id ORDER BY PaymentNumber FOR JSON PATH,INCLUDE_NULL_VALUES)) Payments
               FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
             """, sale);
+    }
+
+    private sealed class CapturedDispatchSignals : IDispatchSettlementSignalPublisher
+    {
+        public List<DispatchSettlementSignal> Items { get; } = [];
+
+        public Task PublishAsync(DispatchSettlementSignal signal, CancellationToken cancellationToken)
+        {
+            Items.Add(signal);
+            return Task.CompletedTask;
+        }
     }
 }

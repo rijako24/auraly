@@ -26,6 +26,48 @@ on:
         type: string
 
 jobs:
+  commerce-worker:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: src/API/Auraly.Commerce.Worker
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet restore --locked-mode
+      - run: dotnet publish --no-restore --configuration Release --output "${{ runner.temp }}/commerce-worker"
+      - name: Verify published Service Bus bindings
+        shell: pwsh
+        run: |
+          $metadata = Get-Content "${{ runner.temp }}/commerce-worker/functions.metadata" -Raw | ConvertFrom-Json
+          $routes = @{
+            ProcessDocument = '%DocumentProcessingQueueName%'
+            ProcessAccounting = '%AccountingProcessingQueueName%'
+            ProcessFiscal = '%FiscalProcessingQueueName%'
+            ProcessSalesReporting = '%SalesReportingQueueName%'
+          }
+          foreach ($route in $routes.GetEnumerator()) {
+            $function = @($metadata | Where-Object name -eq $route.Key)
+            if ($function.Count -ne 1) { throw "El artefacto necesita un único disparador $($route.Key)." }
+            $trigger = @($function[0].bindings | Where-Object type -eq 'serviceBusTrigger')
+            if ($trigger.Count -ne 1 -or !$trigger[0].isSessionsEnabled -or
+                $trigger[0].autoCompleteMessages -ne $false -or
+                $trigger[0].queueName -ne $route.Value -or
+                $trigger[0].connection -ne 'ServiceBusConnection') {
+              throw "El binding $($route.Key) debe conservar su cola, sesiones y acuse manual."
+            }
+          }
+          $recovery = @($metadata | Where-Object name -eq 'RecoverDocumentInitialSignals')
+          if ($recovery.Count -ne 1) { throw 'El artefacto debe contener un único publicador de respaldo documental.' }
+          $timer = @($recovery[0].bindings | Where-Object type -eq 'timerTrigger')
+          if ($timer.Count -ne 1 -or $timer[0].schedule -ne '%DocumentInitialSignalRecoverySchedule%') {
+            throw 'El publicador de respaldo debe usar la agenda documental configurable.'
+          }
   backend:
     if: github.event_name != 'workflow_dispatch' || (inputs.test_suite != 'browser' && inputs.test_suite != 'dev-browser')
     # Keep SQL latency gates on the same fixed Windows generation used to build

@@ -26,6 +26,7 @@ $suffix = if ($Environment -eq 'Dev') { 'w5usmo6w' } else { '7sov4nxc' }
 $resourceGroup = "RG-AURALY-$($Environment.ToUpperInvariant())"
 $apiName = "api-auraly-$compactEnvironment-$suffix"
 $functionName = "func-auraly-$compactEnvironment-$suffix"
+$enginesName = "func-auraly-engines-$compactEnvironment-$suffix"
 $serviceBusName = "sb-auraly-$compactEnvironment-$suffix"
 $webPubSubName = "wps-auraly-$compactEnvironment-$suffix"
 $staticAdminName = "admin-auraly-$compactEnvironment-$suffix"
@@ -101,6 +102,19 @@ function Test-RemoteEnvironment {
     Assert-Condition ($null -ne $function) "No existe $functionName."
     Assert-Condition ($function.State -eq 'Running') "$functionName no esta en ejecucion."
     $functionSettings = ConvertTo-SettingsMap $function.SiteConfig.AppSettings
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($manifest.deploymentComponents -contains 'engines-function') {
+        $engineApp = Get-AzWebApp -ResourceGroupName $resourceGroup -Name $enginesName
+        Assert-Condition ($null -ne $engineApp -and $engineApp.State -eq 'Running') "La Function $enginesName no está disponible."
+        $engineSettings = ConvertTo-SettingsMap $engineApp.SiteConfig.AppSettings
+        Assert-Condition ($engineSettings['Release__Version'] -eq $ReleaseVersion -and
+            $engineSettings['ServiceBusConnection__credential'] -eq 'managedidentity') 'La Function de motores no corresponde al release.'
+        if (-not $SkipHealth) {
+            $engineHealth = Invoke-RestMethod -Uri "https://$enginesName.azurewebsites.net/api/health" -TimeoutSec 30
+            Assert-Condition ($engineHealth.status -eq 'healthy' -and $engineHealth.version -eq $ReleaseVersion) `
+                'La Function de motores no confirmó su estado y versión.'
+        }
+    }
     $requiredFunctionSettings = @(
         'AzureWebJobsStorage__accountName',
         'ServiceBusConnection__fullyQualifiedNamespace',

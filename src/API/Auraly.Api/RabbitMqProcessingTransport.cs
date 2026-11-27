@@ -356,6 +356,12 @@ public sealed class RabbitMqDocumentProcessingHostedService(
                         .GetRequiredService<DocumentProcessingWorker>();
                     var result = await worker.ProcessOneAsync(
                         signal, args.CancellationToken);
+                    if (result == DocumentProcessingResult.DeadLettered)
+                    {
+                        await channel.BasicNackAsync(
+                            args.DeliveryTag, false, false, args.CancellationToken);
+                        return;
+                    }
                     await channel.BasicAckAsync(
                         args.DeliveryTag, false, args.CancellationToken);
                     logger.LogInformation(
@@ -426,12 +432,9 @@ public sealed class RabbitMqFiscalProcessingHostedService(
     RabbitMqProcessingTransport transport,
     RabbitMqProcessingOptions options,
     IServiceScopeFactory scopes,
-    FiscalProcessingCoordinator processing,
     FiscalStatusSynchronizationNotifier synchronization,
-    TimeProvider timeProvider,
     ILogger<RabbitMqFiscalProcessingHostedService> logger) : BackgroundService
 {
-    private static readonly TimeSpan WorkLease = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
     private readonly string workerId = $"{Environment.MachineName}:fiscal-rabbit:{Guid.NewGuid():N}";
 
@@ -475,50 +478,8 @@ public sealed class RabbitMqFiscalProcessingHostedService(
                 args.BasicProperties, signal.BusinessId);
 
             await using var scope = scopes.CreateAsyncScope();
-            if (signal.Stage == FiscalProcessingStage.Generation)
-            {
-                var worker = scope.ServiceProvider.GetRequiredService<FiscalGenerationWorker>();
-                var generated = await worker.ProcessAsync(
-                    signal.BusinessId, signal.DocumentId, workerId, args.CancellationToken);
-                if (generated)
-                    await processing.RequestSubmissionAsync(
-                        signal.BusinessId, signal.DocumentId,
-                        cancellationToken: args.CancellationToken);
-                else
-                {
-                    var store = scope.ServiceProvider
-                        .GetRequiredService<IFiscalGenerationWorkStore>();
-                    var resumeAt = await store.GetResumeAtAsync(
-                        signal.BusinessId, signal.DocumentId,
-                        timeProvider.GetUtcNow(), WorkLease, args.CancellationToken);
-                    if (resumeAt is not null)
-                        await processing.ScheduleGenerationAsync(
-                            signal.BusinessId, signal.DocumentId,
-                            resumeAt.Value, args.CancellationToken);
-                }
-            }
-            else
-            {
-                var worker = scope.ServiceProvider.GetRequiredService<FiscalSubmissionWorker>();
-                var result = await worker.ProcessAsync(
-                    signal.BusinessId, signal.DocumentId, workerId, args.CancellationToken);
-                if (!result.WorkFound)
-                {
-                    var store = scope.ServiceProvider
-                        .GetRequiredService<IFiscalSubmissionWorkStore>();
-                    var resumeAt = await store.GetResumeAtAsync(
-                        signal.BusinessId, signal.DocumentId,
-                        timeProvider.GetUtcNow(), WorkLease, args.CancellationToken);
-                    if (resumeAt is not null)
-                        await processing.RequestSubmissionAsync(
-                            signal.BusinessId, signal.DocumentId,
-                            resumeAt.Value, args.CancellationToken);
-                }
-                if (result.NextAttemptAt is DateTimeOffset nextAttemptAt)
-                    await processing.RequestSubmissionAsync(
-                        signal.BusinessId, signal.DocumentId,
-                        nextAttemptAt, args.CancellationToken);
-            }
+            var handler = scope.ServiceProvider.GetRequiredService<FiscalProcessingMessageHandler>();
+            await handler.ProcessAsync(signal, workerId, args.CancellationToken);
 
             await synchronization.DispatchAsync(signal.BusinessId, args.CancellationToken);
             await channel.BasicAckAsync(args.DeliveryTag, false, args.CancellationToken);

@@ -2,10 +2,11 @@ using Azure.Core;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.WebPubSub;
+using Microsoft.Extensions.Configuration;
 
-namespace Auraly.Api;
+namespace Auraly.Platform.Infrastructure.Processing;
 
-internal static class AzureRuntimeClientFactory
+public static class AzureRuntimeClientFactory
 {
     public static ServiceBusClient CreateServiceBusClient(IConfiguration configuration)
     {

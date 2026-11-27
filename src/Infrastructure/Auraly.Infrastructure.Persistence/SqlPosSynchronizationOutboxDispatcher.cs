@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Threading.Channels;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Microsoft.Data.SqlClient;
@@ -9,7 +10,8 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
     SqlServerConnectionFactory connections,
     IPosSynchronizationPushGateway gateway,
     TimeProvider timeProvider,
-    ILogger<SqlPosSynchronizationOutboxDispatcher> logger)
+    ILogger<SqlPosSynchronizationOutboxDispatcher> logger,
+    bool publishInline = false)
     : IPosSynchronizationOutboxDispatcher
 {
     private readonly Channel<Scope> signals =
@@ -26,6 +28,8 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (publishInline)
+            return PublishPendingAsync(new Scope(tenantId, businessId), cancellationToken);
         signals.Writer.TryWrite(new Scope(tenantId, businessId));
         return Task.CompletedTask;
     }
@@ -35,8 +39,11 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
         CancellationToken cancellationToken = default)
     {
         foreach (var scope in await ReadPersistedScopesAsync(cancellationToken, tenantId))
-            signals.Writer.TryWrite(scope);
+            await DispatchPendingAsync(tenantId, scope.BusinessId, cancellationToken);
     }
+
+    public Task PublishBusinessAsync(Guid businessId, CancellationToken cancellationToken) =>
+        PublishPendingAsync(new Scope(null, businessId), cancellationToken);
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -70,23 +77,61 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
         Scope scope,
         CancellationToken cancellationToken)
     {
-        var pending = await ReadPendingAsync(
-            scope.TenantId, scope.BusinessId, cancellationToken);
-        foreach (var invalidation in pending)
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        var token = timeout.Token;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        var resource = $"pos-sync-publish:{scope.BusinessId:D}";
+        await using (var claim = new SqlCommand("""
+            DECLARE @Result int;
+            EXEC @Result=sys.sp_getapplock @Resource=@Resource,@LockMode=N'Exclusive',
+              @LockOwner=N'Session',@LockTimeout=1000;
+            SELECT @Result;
+            """, connection))
         {
-            try
+            claim.Parameters.Add(Parameter("@Resource", resource));
+            if ((int)(await claim.ExecuteScalarAsync(token))! < 0)
+                throw new InvalidOperationException("El ámbito de publicación del POS está ocupado.");
+        }
+
+        try
+        {
+            const int pageSize = 64;
+            while (true)
             {
-                await gateway.SendAsync(invalidation, cancellationToken);
-                await MarkPublishedAsync(invalidation, cancellationToken);
+                var pending = await ReadPendingAsync(connection, scope, pageSize, token);
+                if (pending.Count == 0)
+                    return;
+
+                var sent = new List<PosSynchronizationInvalidation>(pending.Count);
+                foreach (var invalidation in pending)
+                {
+                    try
+                    {
+                        await gateway.SendAsync(invalidation, token);
+                        sent.Add(invalidation);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        await MarkPublishedAsync(connection, scope.BusinessId, sent, token);
+                        await RecordFailureAsync(connection, invalidation, exception.Message, token);
+                        throw;
+                    }
+                }
+                await MarkPublishedAsync(connection, scope.BusinessId, sent, token);
+                if (pending.Count < pageSize)
+                    return;
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                await RecordFailureAsync(
-                    invalidation,
-                    exception.Message,
-                    cancellationToken);
-                throw;
-            }
+        }
+        finally
+        {
+            await using var release = new SqlCommand("""
+                EXEC sys.sp_releaseapplock @Resource=@Resource,@LockOwner=N'Session';
+                """, connection) { CommandTimeout = 3 };
+            release.Parameters.Add(Parameter("@Resource", resource));
+            if (connection.State == System.Data.ConnectionState.Open)
+                await release.ExecuteNonQueryAsync(CancellationToken.None);
         }
     }
 
@@ -121,13 +166,12 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
         return scopes;
     }
 
-    private async Task<IReadOnlyCollection<PosSynchronizationInvalidation>> ReadPendingAsync(
-        Guid tenantId,
-        Guid businessId,
+    private static async Task<IReadOnlyCollection<PosSynchronizationInvalidation>> ReadPendingAsync(
+        SqlConnection connection,
+        Scope scope,
+        int pageSize,
         CancellationToken cancellationToken)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             WITH Pending AS
@@ -147,18 +191,21 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
                     ) AS Position
                 FROM dbo.PosSynchronizationOutboxMessages o
                 JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
-                WHERE o.BusinessId=@BusinessId
-                  AND b.TenantId=@TenantId
+                WHERE o.BusinessId=@BusinessId AND b.IsActive=1
+                  AND (@TenantId IS NULL OR b.TenantId=@TenantId)
                   AND o.PublishedAt IS NULL
             )
-            SELECT NotificationId,TenantId,BusinessId,Stream,
+            SELECT TOP(@Take) NotificationId,TenantId,BusinessId,Stream,
                    AvailableThroughCursor,OccurredAt,TargetDeviceId
             FROM Pending
-            WHERE Position=1;
+            WHERE Position=1
+            ORDER BY Stream,TargetDeviceId;
             """;
         command.Parameters.AddRange([
-            Parameter("@TenantId", tenantId),
-            Parameter("@BusinessId", businessId)
+            new SqlParameter("@TenantId", System.Data.SqlDbType.UniqueIdentifier)
+                { Value = (object?)scope.TenantId ?? DBNull.Value },
+            Parameter("@BusinessId", scope.BusinessId),
+            Parameter("@Take", pageSize)
         ]);
         var values = new List<PosSynchronizationInvalidation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -177,39 +224,43 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
     }
 
     private async Task MarkPublishedAsync(
-        PosSynchronizationInvalidation invalidation,
+        SqlConnection connection,
+        Guid businessId,
+        IReadOnlyCollection<PosSynchronizationInvalidation> sent,
         CancellationToken cancellationToken)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
+        if (sent.Count == 0)
+            return;
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            UPDATE dbo.PosSynchronizationOutboxMessages
+            UPDATE pending
             SET PublishedAt=@Now,LastAttemptAt=@Now,AttemptCount=AttemptCount+1,
                 LastError=NULL
-            WHERE BusinessId=@BusinessId AND Stream=@Stream
-              AND AvailableThroughCursor<=@Cursor AND PublishedAt IS NULL
-              AND ((@TargetDeviceId IS NULL AND TargetDeviceId IS NULL)
-                   OR TargetDeviceId=@TargetDeviceId);
+            FROM dbo.PosSynchronizationOutboxMessages pending
+            INNER JOIN OPENJSON(@Sent) WITH
+              (Stream nvarchar(32), AvailableThroughCursor bigint, TargetDeviceId uniqueidentifier) sent
+              ON sent.Stream=pending.Stream
+              AND pending.AvailableThroughCursor<=sent.AvailableThroughCursor
+              AND (pending.TargetDeviceId=sent.TargetDeviceId
+                OR pending.TargetDeviceId IS NULL AND sent.TargetDeviceId IS NULL)
+            WHERE pending.BusinessId=@BusinessId AND pending.PublishedAt IS NULL;
             """;
         command.Parameters.AddRange([
             Parameter("@Now", timeProvider.GetUtcNow()),
-            Parameter("@BusinessId", invalidation.BusinessId),
-            Parameter("@Stream", invalidation.Stream),
-            Parameter("@Cursor", invalidation.AvailableThroughCursor),
-            new SqlParameter("@TargetDeviceId",
-                (object?)invalidation.TargetDeviceId ?? DBNull.Value)
+            Parameter("@BusinessId", businessId),
+            new SqlParameter("@Sent", System.Data.SqlDbType.NVarChar, -1)
+                { Value = JsonSerializer.Serialize(sent.Select(value =>
+                    new { value.Stream, value.AvailableThroughCursor, value.TargetDeviceId })) }
         ]);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task RecordFailureAsync(
+        SqlConnection connection,
         PosSynchronizationInvalidation invalidation,
         string error,
         CancellationToken cancellationToken)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE dbo.PosSynchronizationOutboxMessages
@@ -227,5 +278,5 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
     private static SqlParameter Parameter(string name, object value) =>
         new(name, value);
 
-    private sealed record Scope(Guid TenantId, Guid BusinessId);
+    private sealed record Scope(Guid? TenantId, Guid BusinessId);
 }

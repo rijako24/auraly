@@ -249,6 +249,7 @@ export interface GoodsReceiptListItem {
   accountingErrorMessage?: string | null;
   fiscalStatus?: string | null;
   fiscalErrorMessage?: string | null;
+  accountingRetryQueued?: boolean;
 }
 
 export interface GoodsReceiptPage {

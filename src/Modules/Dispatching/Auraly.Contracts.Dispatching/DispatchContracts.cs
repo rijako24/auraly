@@ -163,6 +163,8 @@ public sealed record DispatchSettlementSummary(decimal GrossCash, decimal Approv
     int ReceiptTemplateVersion = 1)
 {
     public const int CurrentReceiptTemplateVersion = 2;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProcessingError { get; init; }
 }
 public sealed record DispatchLinkedReturn(Guid ReturnId,Guid OriginalDocumentId,string DocumentNumber,decimal TotalAmount,string EconomicResolution);
 public sealed record DispatchExecutionDetail(Guid DispatchId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, string Status, IReadOnlyCollection<DispatchDeliveryDocument> Documents, IReadOnlyCollection<DispatchExpenseDetail> Expenses, DispatchSettlementSummary? Settlement, string? RowVersion = null,
