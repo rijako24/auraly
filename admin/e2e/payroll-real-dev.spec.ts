@@ -13,13 +13,24 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: context.timeZone }).format(new Date());
   const path = "/api/commerce/v1/payroll";
   const options = await scopedJson<PayrollOptions>("GET", `${path}/options`);
-  const existingRuns = (await scopedJson<PayrollRunPage>("GET", `${path}/runs?page=1&pageSize=50&kind=Regular`)).items;
-  const periods = Array.from({ length: 12 }, (_, offset) => {
+  const monthly = options.catalogs["payroll-pay-frequency"].find(value => value.code === "Monthly");
+  expect(monthly, "El catálogo de nómina necesita la periodicidad mensual.").toBeTruthy();
+  const runsPath = `${path}/runs?pageSize=50&kind=Regular`;
+  const firstPage = await scopedJson<PayrollRunPage>("GET", `${runsPath}&page=1`);
+  const existingRuns = [...firstPage.items];
+  for (let pageNumber = 2; pageNumber <= firstPage.totalPages; pageNumber++) {
+    const next = await scopedJson<PayrollRunPage>("GET", `${runsPath}&page=${pageNumber}`);
+    existingRuns.push(...next.items);
+  }
+  const occupiedPeriods = new Set(existingRuns
+    .filter(run => run.status !== "Voided" && run.payFrequencyOptionId === monthly!.optionId)
+    .map(run => `${run.periodStart}/${run.periodEnd}`));
+  const periods = Array.from({ length: occupiedPeriods.size + 2 }, (_, offset) => {
     const month = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1 + offset, 1);
     return { start: new Date(month).toISOString().slice(0, 10),
       end: new Date(Date.UTC(new Date(month).getUTCFullYear(), new Date(month).getUTCMonth() + 1, 0)).toISOString().slice(0, 10) };
   });
-  const period = periods.find(candidate => candidate.start>=today && !existingRuns.some(run => run.runKind === "Regular" && run.periodStart === candidate.start && run.periodEnd === candidate.end));
+  const period = periods.find(candidate => candidate.start >= today && !occupiedPeriods.has(`${candidate.start}/${candidate.end}`));
   expect(period, "Se necesita un período regular libre en el entorno de pruebas.").toBeTruthy();
   const periodStart = period!.start;
   const accountingPeriods = await scopedJson<Array<{ startsOn: string; endsOn: string; status: string }>>("GET", "/api/commerce/v1/accounting/periods");
@@ -137,6 +148,13 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await page.setViewportSize({width:390,height:844});
   await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
+  const calculateButton = selection.getByRole("button", { name: "Calcular nómina", exact: true });
+  const searchBox = selection.getByRole("textbox", { name: "Buscar trabajador de la liquidación", exact: true });
+  await expect(calculateButton).toBeVisible();
+  await expect(searchBox).toBeVisible();
+  const calculateBounds = await calculateButton.boundingBox();
+  const searchBounds = await searchBox.boundingBox();
+  expect(calculateBounds!.y + calculateBounds!.height).toBeLessThanOrEqual(searchBounds!.y);
   await page.screenshot({path:"../work/release-preparation-current/dev-native-payroll-mobile-selection.png",fullPage:true});
   await page.setViewportSize({width:1366,height:768});
   await selection.getByRole("textbox",{name:"Filtrar sitio de trabajo",exact:true}).fill("");
@@ -145,7 +163,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await expect(selection.getByRole("checkbox",{name:`Incluir ${employees[0].employeeName}, contrato ${employees[0].contractNumber}`,exact:true})).toBeChecked();
   await selection.getByRole("checkbox",{name:`Incluir ${employees[1].employeeName}, contrato ${employees[1].contractNumber}`,exact:true}).check();
   const calculating = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/runs/${run.payrollRunId}/calculate`));
-  await selection.getByRole("button", { name: "Calcular nómina", exact: true }).click();
+  await calculateButton.click();
   const calculationResponse = await calculating;
   expect(calculationResponse.ok(), await calculationResponse.text()).toBe(true);
   run = await calculationResponse.json() as PayrollRun;
