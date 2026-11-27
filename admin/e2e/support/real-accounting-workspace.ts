@@ -68,7 +68,14 @@ export async function realAccountingContext(page: Page, businessIdOverride?: str
       const response = await fetch(path, { method, headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
         credentials: "include", body: data === undefined ? undefined : JSON.stringify(data) });
       const text = await response.text();
-      return { ok: response.ok, status: response.status, body: text ? JSON.parse(text) : null };
+      let body: unknown = null;
+      if (text) {
+        try { body = JSON.parse(text); }
+        catch {
+          throw new Error(`${method} ${path}: HTTP ${response.status}, se esperaba JSON y llegó ${response.headers.get("content-type") ?? "un tipo de contenido ausente"}.`);
+        }
+      }
+      return { ok: response.ok, status: response.status, body };
     }, { method, path, headers, data, extraHeaders });
   }
   async function scopedJson<T>(method: string, path: string, data?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {

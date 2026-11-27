@@ -207,6 +207,13 @@ partidas ni facturas. Cancelar sin completar exige capturar los datos antes de e
 `Datos del pago` permite revisar el soporte sin cambiar la forma. Cambiar de forma
 elimina el soporte anterior; crédito a plazo no envía un tender monetario.
 
+En móvil la condición de pago ocupa una fila completa y conserva ambos botones
+sin encoger su texto. En pantallas mayores usa su ancho natural y la barra
+distribuye los controles en las filas necesarias. El selector de forma conserva
+su desplegable amplio. Estas adaptaciones no cargan datos adicionales; la
+verificación visual espera la página cargada y comprueba también los límites
+de cada botón, no solamente la ausencia de scroll horizontal.
+
 `OrdersWorkspace` sirve dashboard y ambas vistas del POS. Transmite el tipo real,
 la identidad nativa y el soporte a `PosClient.invoiceOrders`; online y Edge envían
 el mismo `InvoiceOrdersRequest`. `OrderBatchService` entrega la evidencia a
@@ -217,18 +224,21 @@ al checkout conversacional: `PrepareCommerceCheckoutOperation` vincula un
 `PaymentTransaction`, `OrderPaidCheckoutFulfillmentHandler` confirma el pedido y
 `SqlOrderStore` consulta el estado de esa transacción. No significa que la captura
 operativa de pedidos cobre al cliente ni autoriza añadirle un paso de pago. En el
-flujo operativo de despacho el pedido no recibe dinero: el transportador registra
-el recaudo al entregar. No hay motor ni writer nuevo.
+flujo operativo de despacho el transportador declara el medio al entregar y la
+aplicación financiera espera la conciliación administrativa. No hay motor ni
+writer nuevo.
 
 Al emitir desde el lote, `PaymentAlreadyConfirmed` transporta ese hecho existente
-desde la lectura autoritativa del pedido hasta la política compartida de
-atribución. El store lo contrasta con la transacción de pago de la misma sede en
+desde la lectura autoritativa del pedido hasta la confirmación del checkout
+canónico. El store lo contrasta con la transacción de pago de la misma sede en
 su consulta y transacción habituales. Si existe un vínculo de pago pero la
 transacción no pertenece a esa sede, se rechaza la emisión; no se interpreta la
-inconsistencia como un pedido sin cobro. Un pago ya confirmado conserva `Session`;
-un pedido operativo sin pago conserva `Dispatch`. No se copian cuentas ni se
-crea un segundo cobro, y los documentos ya preparados se repiten con su fuente
-inmutable.
+inconsistencia como un pedido sin cobro. La decisión vigente devuelve todas las
+nuevas emisiones a `Session`, también al recuperar un pedido en POS. Una forma
+de crédito configurada como cartera domicilio abre la deuda y no representa
+efectivo recibido por el facturador. Los documentos históricos ya aceptados con
+`Dispatch` conservan su fuente inmutable; no se reclasifican por inferencia. No
+se copian cuentas ni se crea un segundo cobro.
 
 Decisión final del usuario del 18 de noviembre: conservar la recuperación y
 facturación habituales de Pedidos, tanto desde POS como desde Pedidos. Se retiró

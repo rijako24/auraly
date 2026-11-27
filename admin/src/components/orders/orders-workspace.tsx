@@ -834,17 +834,17 @@ export function OrdersWorkspace({
                     <Printer className="h-4 w-4" />
                   </Button>
                 )}
-                <div className="grid h-9 min-w-0 flex-1 grid-cols-2 rounded-xl border border-slate-200 bg-white p-1 shadow-sm sm:flex-none" aria-label="Condición de pago">
+                <div className="grid h-9 w-full shrink-0 grid-cols-2 rounded-xl border border-slate-200 bg-white p-1 shadow-sm sm:w-auto" aria-label="Condición de pago">
                   <button type="button" aria-pressed={paymentMethodCode === "Cash"}
                     disabled={working || selectingAll}
                     onClick={() => setPaymentMethodCode("Cash")}
-                    className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Cash" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+                    className={`flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Cash" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
                     <Banknote className="h-3.5 w-3.5" />De contado
                   </button>
                   <button type="button" aria-pressed={paymentMethodCode === "Credit"}
                     disabled={working || selectingAll}
                     onClick={() => setPaymentMethodCode("Credit")}
-                    className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Credit" ? "bg-amber-500 text-amber-950" : "text-slate-600 hover:bg-slate-50"}`}>
+                    className={`flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${paymentMethodCode === "Credit" ? "bg-amber-500 text-amber-950" : "text-slate-600 hover:bg-slate-50"}`}>
                     <CreditCard className="h-3.5 w-3.5" />Crédito
                   </button>
                 </div>

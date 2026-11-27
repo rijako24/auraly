@@ -30,7 +30,7 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   const api = "/api/commerce/v1";
   const advance = await realAccountingAuxiliary(context, payable ? "1394" : "2809",
     payable ? "Asset" : "Liability", payable ? "SupplierAdvance" : "CustomerAdvance", payable ? "Debit" : "Credit", null, true);
-  const detail = page.getByRole("dialog", { name: documentNumber, exact: true });
+  const detail = page.getByRole("dialog").filter({ has: page.getByRole("heading").filter({ hasText: documentNumber }) });
   await detail.getByRole("button", { name: "Desaplicar", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "Desaplicar abono", exact: true });
   const advanceRow = editor.getByRole("row", { name: "Partida 2", exact: true });
@@ -503,7 +503,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   const invoiceRow = page.getByRole("row").filter({ hasText: documentNumber });
   await expect(invoiceRow).toContainText("900,2501");
   await invoiceRow.click();
-  const detail = page.getByRole("dialog", { name: documentNumber, exact: true });
+  const detail = page.getByRole("dialog").filter({ has: page.getByRole("heading").filter({ hasText: documentNumber }) });
   await expect(detail).toContainText("900,2501");
   await expect(detail).toContainText("100,25");
   await detail.getByRole("button", { name: "Cerrar", exact: true }).click();
@@ -672,7 +672,7 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   await expect(balance).toContainText("Pago parcial");
   expect(detailReads).toBe(1);
   await page.screenshot({ path: "../work/gasto-real-abono.png", fullPage: true });
-  const detailDialog = page.getByRole("dialog", { name: expense.documentNumber, exact: true });
+  const detailDialog = page.getByRole("dialog").filter({ has: page.getByRole("heading").filter({ hasText: expense.documentNumber }) });
   await detailDialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   // Only the read-failure stage is simulated. Creation, payment, replay, ledger
   // and history above use the real API and SQL financial engine.
@@ -700,7 +700,7 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
     `${api}/accounting/open-positions?subledgerKind=SupplierCredit&partyId=${supplier.partyId}&page=1&pageSize=10`);
   const originalAdvance = expect.objectContaining({ originalAmount: 50.0001, outstandingAmount: 50.0001 });
   expect(beforeCancellation.items).toEqual([originalAdvance]);
-  await page.getByRole("dialog", { name: expense.documentNumber, exact: true }).getByRole("button", { name: "Cerrar", exact: true }).click();
+  await page.getByRole("dialog").filter({ has: page.getByRole("heading").filter({ hasText: expense.documentNumber }) }).getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.goto("/dashboard/expenses");
   await page.getByRole("button", { name: `Ver gasto ${expense.documentNumber}`, exact: true }).click();
   await page.getByRole("button", { name: "Anular gasto", exact: true }).click();

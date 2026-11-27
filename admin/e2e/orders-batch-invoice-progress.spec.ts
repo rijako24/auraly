@@ -101,6 +101,9 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     await route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*" } });
   });
 
+  let releaseWorkspace!: () => void;
+  const workspaceGate = new Promise<void>(resolve => { releaseWorkspace = resolve; });
+  if (paymentCode !== "Cash") releaseWorkspace();
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -119,7 +122,7 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
       roles: user.roles,
       permissions: user.permissions,
     };
-    else if (path.endsWith("/pos/workspace/options")) body = [workspace];
+    else if (path.endsWith("/pos/workspace/options")) { await workspaceGate; body = [workspace]; }
     else if (path.endsWith("/pos/workspace/select")) body = workspace;
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId };
     else if (path.endsWith("/routes")) body = { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 0 };
@@ -239,7 +242,20 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
 
+  if (paymentCode === "Cash") await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard/orders#edgeToken=edge-test-token");
+  if (paymentCode === "Cash") {
+    try {
+      await expect(page.getByRole("button", { name: "De contado", exact: true })).toBeVisible();
+      await expect(page.getByText("Iniciando Auraly", { exact: true })).toBeHidden();
+      const condition = page.locator('[aria-label="Condición de pago"]');
+      expect(await condition.locator("button").evaluateAll(buttons => buttons.every(button =>
+        button.clientWidth >= button.scrollWidth && button.clientHeight >= button.scrollHeight)),
+      "Las condiciones deben caber también mientras se carga la caja y todavía no aparece la forma de pago.").toBe(true);
+      await page.screenshot({ path: test.info().outputPath("orders-loading-mobile.png"), fullPage: true });
+    } finally { releaseWorkspace(); }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
   await expect(page.getByText("PED-001")).toBeVisible();
   const invoiceAction = page.getByRole("button", { name: paymentCode==="Credit"?"Facturar a crédito (3)":"Facturar de contado (3)" });
   const refreshButton = page.getByRole("button", { name: "Actualizar pedidos", exact: true });
@@ -327,6 +343,15 @@ test(`factura e imprime pedidos con evidencia de ${paymentCode} en una instalaci
       await page.setViewportSize(viewport);
       await printToggle.scrollIntoViewIfNeeded();
       await expectNoHorizontalOverflow(page.getByRole("toolbar", { name: "Acciones de pedidos", exact: true }));
+      const condition = page.locator('[aria-label="Condición de pago"]');
+      expect(await condition.locator("button").evaluateAll(buttons => buttons.every(button =>
+        button.clientWidth >= button.scrollWidth && button.clientHeight >= button.scrollHeight)),
+      "Cada condición de pago debe contener su texto sin comprimirlo ni superponerlo.").toBe(true);
+      const conditions = await condition.locator("button").evaluateAll(buttons => buttons.map(button => {
+        const box = button.getBoundingClientRect(); return { left: box.left, right: box.right };
+      }));
+      expect(conditions).toHaveLength(2);
+      expect(conditions[0].right).toBeLessThanOrEqual(conditions[1].left + 1);
       const bounds = await printToggle.boundingBox();
       expect(bounds).not.toBeNull();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
