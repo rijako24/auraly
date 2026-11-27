@@ -45,7 +45,11 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal("Invoiced",result.Status);var sale=result.DocumentId!.Value;
         var amount=await ScalarAsync<decimal>("SELECT PayableAmount FROM dbo.SalesDocuments WHERE DocumentId=@Id",sale);
         var paymentHash=await ScalarAsync<string>("SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',(SELECT * FROM dbo.SalesPayments WHERE DocumentId=@Id FOR JSON PATH)),2)",sale);
-        Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id",sale));
+        Assert.Equal(1,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id",sale));
+        Assert.Equal(issuerSession,await ScalarAsync<Guid>("SELECT WorkSessionId FROM dbo.WorkSessionMovements WHERE DocumentId=@Id",sale));
+        Assert.Equal(method,await ScalarAsync<string>("SELECT PaymentMethodCode FROM dbo.WorkSessionMovements WHERE DocumentId=@Id",sale));
+        Assert.Equal(amount,await ScalarAsync<decimal>("SELECT Amount FROM dbo.WorkSessionMovements WHERE DocumentId=@Id",sale));
+        var originalSession=await ScalarAsync<string>("SELECT (SELECT * FROM dbo.WorkSessionMovements WHERE WorkSessionId=@Id ORDER BY WorkSessionMovementId FOR JSON PATH,INCLUDE_NULL_VALUES)",issuerSession);
         var dispatch=Guid.NewGuid();var source=Guid.NewGuid();
         var previous=await SeedDispatchSettlementAsync(dispatch,source,Guid.NewGuid(),sale,amount);
         try
@@ -83,6 +87,7 @@ public sealed partial class AccountingVerticalSliceTests
                 Assert.Equal("Closed",await ScalarAsync<string>("SELECT Status FROM dbo.Dispatches WHERE DispatchId=@Id",dispatch));
                 using(var replay=await admin.PostAsJsonAsync($"/api/commerce/v1/dispatches/{dispatch}/settle",settle))replay.EnsureSuccessStatusCode();
                 Assert.Equal(paymentHash,await ScalarAsync<string>("SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',(SELECT * FROM dbo.SalesPayments WHERE DocumentId=@Id FOR JSON PATH)),2)",sale));
+                Assert.Equal(originalSession,await ScalarAsync<string>("SELECT (SELECT * FROM dbo.WorkSessionMovements WHERE WorkSessionId=@Id ORDER BY WorkSessionMovementId FOR JSON PATH,INCLUDE_NULL_VALUES)",issuerSession));
                 Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",sale));
                 Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE WorkSessionId=(SELECT WorkSessionId FROM dbo.WorkSessions WHERE DispatchId=@Id)",dispatch));
                 Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.CustomerPayments WHERE IdempotencyKey LIKE CONCAT(N'dispatch-settlement:',LOWER(REPLACE(CONVERT(nvarchar(36),@Id),N'-',N'')),N':%')",dispatch));
@@ -93,7 +98,7 @@ public sealed partial class AccountingVerticalSliceTests
                 for(var replay=0;replay<2;replay++)await reporting.ProcessAsync(closure,"DispatchCashDifference",fixture.BusinessId,1,default);
                 Assert.Equal(amount,await ScalarAsync<decimal>("SELECT CollectedAmount FROM reporting.SalesReportDocuments WHERE DocumentId=@Id",sale));
                 Assert.Equal(method,await ScalarAsync<string>("SELECT MethodCode FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'",sale));
-                Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment' AND WorkSessionId IS NOT NULL",sale));
+                Assert.Equal(issuerSession,await ScalarAsync<Guid>("SELECT WorkSessionId FROM reporting.SalesReportPaymentFacts WHERE SourceDocumentId=@Id AND MovementType=N'Payment'",sale));
                 using var historyClient=fixture.CreateAdminClient("sales.reprint");
                 var number=await ScalarAsync<string>("SELECT DocumentNumber FROM dbo.SalesDocuments WHERE DocumentId=@Id",sale);
                 using var history=await historyClient.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/search",new SearchOnlineSalesIssuedSalesRequest(new(fixture.BusinessId),number,Take:10,DateRangeVersion:2));

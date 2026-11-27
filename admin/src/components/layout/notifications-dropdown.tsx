@@ -171,28 +171,21 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     }
     let active = true;
     let dispose: (() => void) | undefined;
-    const refreshVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
     const receiveServiceWorkerMessage = (event: MessageEvent<{ type?: string }>) => {
       if (event.data?.type === "auraly:pos-approvals-changed") void refresh();
     };
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
     navigator.serviceWorker?.addEventListener("message", receiveServiceWorkerMessage);
-    void refresh()
-      .then(() => posApprovalClient.subscribe(() => active && void refresh()))
+    void posApprovalClient.subscribe(() => active && void refresh())
       .then((stop) => {
-        if (active) dispose = stop;
-        else stop();
+        if (!active) { stop(); return; }
+        dispose = stop;
+        return refresh();
       })
       .catch((caught) => {
         if (active) setError(caught instanceof Error ? caught.message : "No fue posible conectar las autorizaciones.");
       });
     return () => {
       active = false;
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
       navigator.serviceWorker?.removeEventListener("message", receiveServiceWorkerMessage);
       dispose?.();
     };

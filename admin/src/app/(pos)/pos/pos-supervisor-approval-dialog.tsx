@@ -76,6 +76,7 @@ export function PosSupervisorApprovalDialog({
     };
     void subscribeApprovals(() => void refresh())
       .then((stop) => {
+        if (!active) { stop(); return; }
         dispose = stop;
         return refresh();
       })

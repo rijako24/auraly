@@ -24,13 +24,14 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
     {
         await using var connection=connections.Create(); await connection.OpenAsync(ct);
         await using var header=new SqlCommand("""
-          SELECT DispatchId,DispatchNumber,ScheduledDate,DriverName,VehiclePlate,Status,RowVersion
+          SELECT DispatchId,DispatchNumber,ScheduledDate,DriverName,VehiclePlate,Status,RowVersion,
+            CONVERT(bit,CASE WHEN DriverUserId=@UserId THEN 1 ELSE 0 END)
           FROM dbo.Dispatches WHERE DispatchId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId
             AND (DriverUserId=@UserId OR CreatedBy=@UserId OR (@Administrative=1 AND @Settle=1));
         """,connection); Scope(header,actor,dispatchId);header.Parameters.AddWithValue("@Administrative",administrative);
-        Guid id;string number,driver,status,rowVersion;DateOnly date;string? plate;
+        Guid id;string number,driver,status,rowVersion;DateOnly date;string? plate;bool isAssignedDriver;
         await using(var reader=await header.ExecuteReaderAsync(ct))
-        { if(!await reader.ReadAsync(ct))return null;id=reader.GetGuid(0);number=reader.GetString(1);date=DateOnly.FromDateTime(reader.GetDateTime(2));driver=reader.GetString(3);plate=NullableString(reader,4);status=reader.GetString(5);rowVersion=Convert.ToBase64String((byte[])reader[6]); }
+        { if(!await reader.ReadAsync(ct))return null;id=reader.GetGuid(0);number=reader.GetString(1);date=DateOnly.FromDateTime(reader.GetDateTime(2));driver=reader.GetString(3);plate=NullableString(reader,4);status=reader.GetString(5);rowVersion=Convert.ToBase64String((byte[])reader[6]);isAssignedDriver=reader.GetBoolean(7); }
 
         var payments=new Dictionary<Guid,List<DispatchDeliveryPaymentDetail>>();
         await using(var command=new SqlCommand($"SELECT DispatchSourceDocumentId,{PaymentColumns} FROM dispatch.EffectivePayments(@Id) ORDER BY PaymentId",connection))
@@ -112,7 +113,7 @@ public sealed partial class SqlDispatchDeliveryStore(DispatchingSqlConnectionFac
           WHERE closed.DispatchId=@Id;
         """,connection))
         { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);if(await reader.ReadAsync(ct)){var expected=reader.GetDecimal(0);var deposits=reader.GetDecimal(3);var remainingCredit=reader.GetDecimal(4);var advances=reader.GetDecimal(5);var returnTotal=reader.GetDecimal(6);var undelivered=documents.Where(value=>value.DeliveryStatus==DeliveryStatuses.NotDelivered).Sum(value=>value.DocumentTotal);var cards=payments.Values.SelectMany(value=>value).Where(value=>value.PaymentMethod is "DebitCard" or "CreditCard").Sum(value=>value.Amount);var balance=dispatchTotal-(grossCash+deposits+cards+remainingCredit+returnTotal+undelivered+reader.GetDecimal(15));settlement=new(grossCash,approvedExpenses,expected,reader.GetDecimal(1),reader.GetDecimal(2),deposits,remainingCredit,advances,returnTotal,undelivered,dispatchTotal,balance,reader.GetString(7),NullableGuid(reader,8),reader.IsDBNull(9)?null:reader.GetDateTimeOffset(9),NullableDecimal(reader,10),cards,NullableDecimal(reader,11),NullableDecimal(reader,12),NullableGuid(reader,13),reader.GetDateTimeOffset(14),reader.GetDecimal(15),reader.GetInt32(16)); } }
-        return new(id,number,date,driver,plate,status,documents,expenses,settlement,rowVersion,linkedReturns);
+        return new(id,number,date,driver,plate,status,documents,expenses,settlement,rowVersion,linkedReturns){IsAssignedDriver=isAssignedDriver};
     }
 
     public async Task<DispatchExecutionDetail> RecordAsync(DispatchActorIdentity actor, Guid dispatchId, RecordDispatchDeliveryRequest request, CancellationToken ct)

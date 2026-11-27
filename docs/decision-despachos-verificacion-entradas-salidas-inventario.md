@@ -2406,6 +2406,11 @@ usuario activo vinculado y su permiso de entregas dentro de la transacción;
 no se convierte automáticamente un usuario administrativo en transportador.
 `Mis entregas` limita lectura y acceso directo al creador y al asignado. La
 revisión administrativa usa explícitamente `review=true` y `dispatches.settle`.
+La respuesta de ejecución incluye `IsAssignedDriver`, calculado para el actor
+en la misma lectura de cabecera. La captura del cierre ciego se ofrece sólo al
+asignado con permiso de entregas; el creador puede consultar el recorrido sin
+recibir ese botón. La API conserva su validación del usuario asignado al cerrar.
+Esta información no añade consultas, permisos ni otro flujo de cierre.
 
 Documentos y verificación se consultan con páginas independientes de diez,
 ordenadas y limitadas en SQL antes de materializar sus detalles. Sus totales

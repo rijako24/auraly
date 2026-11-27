@@ -1,10 +1,11 @@
 import {expect,test} from "@playwright/test";
 import type {DeliveryResultInput} from "../src/services/api/dispatches";
 
-const creditScenarios: { name: string; credit: number; notDelivered: boolean; collect?: string; width?: number; keep?:boolean }[] = [
+const creditScenarios: { name: string; credit: number; notDelivered: boolean; collect?: string; width?: number; keep?:boolean; assigned?:boolean }[] = [
   {name:"crédito total",credit:50000,notDelivered:false},{name:"crédito con pago previo",credit:25000,notDelivered:false},
   {name:"crédito no entregado",credit:50000,notDelivered:true},{name:"comprobante pagado",credit:0,notDelivered:false},
   {name:"factura electrónica pagada",credit:0,notDelivered:false},
+  {name:"creador sin asignación",credit:0,notDelivered:false,assigned:false},
   ...["Cash","DebitCard","CreditCard","Transfer"].flatMap(collect=>[390,1366].map(width=>({name:`crédito recaudado ${collect} ${width}`,credit:50000,notDelivered:false,collect,width}))),
   ...[0,50000].flatMap(credit=>[390,1366].map(width=>({name:`pago conservado ${credit} ${width}`,credit,notDelivered:false,keep:true,width}))),
 ];
@@ -17,7 +18,7 @@ for(const scenario of creditScenarios){
     await page.addInitScript(({user,businessId})=>{localStorage.setItem("selected_tenant_id",user.tenantId);localStorage.setItem("selected_business_id",businessId);localStorage.setItem("auth-state",JSON.stringify({state:{isAuthenticated:true,user},version:0}))},{user,businessId});
     const dispatch={dispatchId:"dispatch-credit",dispatchNumber:"DSP-CREDITO",scheduledDate:"2026-11-17",driverName:"Transportador",status:"InDelivery",documentCount:1,lineCount:1,expectedQuantity:1,verifiedQuantity:1,shortageQuantity:0,rowVersion:"AAAAAAAAAAA="};
     const document={dispatchSourceDocumentId:"source",sourceDocumentId:"sale",documentType:scenario.name==="comprobante pagado"?"SalesReceipt":"SalesInvoice",documentNumber:"FV-CREDITO",customerName:"Cliente a crédito",documentTotal:50000,creditAmount:scenario.credit,creditCollectibleAmount:scenario.collect?30000:scenario.credit,uncollectedPaymentAmount:scenario.keep&&scenario.credit===0?50000:0,collectionMode:scenario.keep?"Dispatch":"Session",sequence:1,deliveryStatus:"Pending",payments:[],returns:[],lines:[],notes:null};
-    const execution={...dispatch,documents:[document],expenses:[],settlement:null};
+    const execution={...dispatch,documents:[document],expenses:[],settlement:null,isAssignedDriver:scenario.assigned!==false};
     let moneyCatalogReads=0,uploads=0;const submissions:DeliveryResultInput[]=[];
     await page.route("**/api/**",async route=>{
       const request=route.request(),path=new URL(request.url()).pathname;let body:unknown=[];
@@ -79,6 +80,7 @@ for(const scenario of creditScenarios){
       expect(submissions[0].payments).toContainEqual(expect.objectContaining({applicationType:"CreditAdvance",amount:30000,paymentMethod:scenario.collect,paymentMethodId:`${scenario.collect}-2`}));
     }else expect(submissions[0].payments).toEqual(scenario.notDelivered||scenario.credit===0?[]:[{applicationType:"CreditDocument",paymentMethod:null,amount:0,reference:null,evidenceUrl:"https://qa.invalid/factura-firmada.png"}]);
     expect(submissions[0].deliveryStatus).toBe(scenario.notDelivered?"NotDelivered":"Delivered");
+    await expect(page.getByRole("button",{name:"Cerrar despacho",exact:true})).toHaveCount(scenario.assigned===false?0:1);
   });
 }
 

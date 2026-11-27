@@ -88,6 +88,9 @@ public sealed partial class AccountingVerticalSliceTests
             dispatch = await PostAsync<DispatchMutationResult>($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/{transition}", new DispatchTransitionRequest(dispatch.RowVersion, Guid.NewGuid().ToString("N")));
         using var driver = fixture.CreateUserClient(driverId, DispatchPermissionCodes.ExecuteDeliveries);
         var execution = (await driver.GetFromJsonAsync<DispatchExecutionDetail>($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/execution"))!;
+        Assert.True(execution.IsAssignedDriver);
+        var creatorExecution = (await admin.GetFromJsonAsync<DispatchExecutionDetail>($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/execution"))!;
+        Assert.False(creatorExecution.IsAssignedDriver);
         var source = Assert.Single(execution.Documents);
         var card = driverMethod is "DebitCard" or "CreditCard";
         var deliveryCommand = new RecordDispatchDeliveryRequest(source.DispatchSourceDocumentId, "Delivered", null, null, null, null,
@@ -98,6 +101,9 @@ public sealed partial class AccountingVerticalSliceTests
         using (var delivered = await driver.PutAsJsonAsync($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/delivery-results", deliveryCommand))
         { Assert.True(delivered.IsSuccessStatusCode, await delivered.Content.ReadAsStringAsync()); execution = (await delivered.Content.ReadFromJsonAsync<DispatchExecutionDetail>())!; }
         Assert.Equal(before, await BeforeApprovalAsync());
+        using (var deniedClose = await admin.PostAsJsonAsync($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/close-route",
+            new CloseDispatchRouteRequest(0, null, Guid.NewGuid().ToString("N"), 0, 0)))
+            Assert.Equal(HttpStatusCode.Forbidden, deniedClose.StatusCode);
         using (var closed = await driver.PostAsJsonAsync($"/api/commerce/v1/dispatches/{dispatch.DispatchId}/close-route",
             new CloseDispatchRouteRequest(driverMethod == "Cash" ? 10000 : 0, null, Guid.NewGuid().ToString("N"), card ? 10000 : 0, driverMethod == "Transfer" ? 10000 : 0)))
         { Assert.True(closed.IsSuccessStatusCode, await closed.Content.ReadAsStringAsync()); execution = (await closed.Content.ReadFromJsonAsync<DispatchExecutionDetail>())!; }

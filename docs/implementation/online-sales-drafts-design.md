@@ -188,13 +188,19 @@ bodega que bloquee inventario negativo.
   no exige modificar el frontend ni registrar el permiso en un segundo motor de
   autorización.
 
-## Pendiente inmediato
+La campana de autorizaciones conserva un solo propietario de carga. El cliente
+push termina su primer intento de conexión antes de que la campana consulte la
+lista inicial: no consulta antes y otra vez al abrir el socket. Si ese intento
+falla, se conserva la lectura inicial y el backoff acotado existente; una
+conexión posterior vuelve a sincronizar para cubrir el intervalo desconectado.
+Las invalidaciones y abrir la campana conservan su actualización explícita.
+Regresar desde suspensión usa la reconexión del mismo cliente, sin otra lectura
+paralela por foco/visibilidad. Desmontar un diálogo mientras conecta libera la
+suscripción cuando termina el intento, sin dejar un socket huérfano.
 
-La paridad online de la pantalla todavía no está terminada. Falta conectar el
-cliente web a estos contratos y completar cobro, emisión, numeración online,
-procesamiento, impresión desde el documento confirmado y recuperación visual al
-reabrir la pantalla.
+## Flujo online vigente
 
-El modo online no se expone en la interfaz antes de cerrar ese recorrido. Así se
-evita ofrecer una caja que permita capturar productos, pero no terminar y
-persistir una factura real.
+Captura, cobro, emisión, numeración, procesamiento, impresión del documento
+confirmado y recuperación del borrador están implementados. Las reglas de ese
+recorrido se desarrollan en `online-sales-checkout-design.md`; este documento
+conserva el contrato de los borradores y sus autorizaciones.

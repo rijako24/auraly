@@ -7,7 +7,7 @@ test("transportador declara sin valores esperados, imprime y conserva un único 
   await page.addInitScript(({tenantId,businessId,user})=>{localStorage.setItem("selected_tenant_id",tenantId);localStorage.setItem("selected_business_id",businessId);localStorage.setItem("auth-state",JSON.stringify({state:{isAuthenticated:true,user},version:0}));},{tenantId,businessId,user});
   const dispatch={dispatchId:"dispatch-id",dispatchNumber:"DSP-CIERRE",scheduledDate:"2026-11-17",driverName:"Conductor",status:"PendingSettlement",documentCount:1,rowVersion:"AAAAAAAAAAA="};
   const document={dispatchSourceDocumentId:"source-id",sourceDocumentId:"sale-id",documentType:"SalesReceipt",documentNumber:"CV-100",customerName:"Cliente",documentTotal:50000,creditAmount:0,deliveryStatus:"Delivered",payments:[],returns:[],lines:[]};
-  let execution:Record<string,unknown>={...dispatch,documents:[document],expenses:[],settlement:null};
+  let execution:Record<string,unknown>={...dispatch,documents:[document],expenses:[],settlement:null,isAssignedDriver:true};
   let reads=0,closeWrites=0,prints=0;
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname;let body:unknown=[];

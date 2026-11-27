@@ -145,6 +145,7 @@ export class PosApprovalClient {
     let reconnectTimer: number | null = null;
     let failedAttempts = 0;
     let openedAt: number | null = null;
+    let initialConnectionAttemptFinished = false;
     const disconnect = () => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -203,7 +204,7 @@ export class PosApprovalClient {
           openedAt = null;
           scheduleReconnect();
         });
-        onApprovalsChanged();
+        if (initialConnectionAttemptFinished) onApprovalsChanged();
       } catch {
         disconnect();
         scheduleReconnect();
@@ -219,7 +220,10 @@ export class PosApprovalClient {
       else disconnect();
     };
     document.addEventListener("visibilitychange", visibilityChanged);
-    void connect();
+    // The caller reads its initial snapshot after this attempt, once. Later
+    // connections notify it again to cover events missed while disconnected.
+    await connect();
+    initialConnectionAttemptFinished = true;
     return () => {
       stopped = true;
       document.removeEventListener("visibilitychange", visibilityChanged);
