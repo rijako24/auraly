@@ -1675,7 +1675,10 @@ no declara implementado ni probado lo que sigue pendiente.
   únicamente al abrirse. Los borradores
   conducen al detalle para calcular primero; las calculadas permiten modificar
   novedades y las aprobadas sólo consultar. Los filtros se aplican antes de contar
-  y paginar en el lector canónico; no se cargan detalles de otros períodos. El detalle
+  y paginar en el lector canónico. Cuando se busca por trabajador, el conteo y
+  la página reutilizan una sola selección de identificadores. La consulta
+  revisa el resultado congelado para las liquidaciones procesadas y ejecuta la
+  elegibilidad de trabajadores únicamente para los borradores filtrados. El detalle
   conserva el mismo cálculo, días por concepto y las operaciones de guardar,
   editar y retirar; incorpora centro, observación y evidencia de la línea y la
   autorización de descuento en esa captura. Aprobados quedan en consulta y

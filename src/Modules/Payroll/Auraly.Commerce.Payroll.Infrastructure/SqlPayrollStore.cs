@@ -2258,25 +2258,41 @@ public sealed partial class SqlPayrollStore(
     {
         filter ??= new();
         await using var connection=connections.Create();await connection.OpenAsync(ct);
-        const string selection="""
+        const string scopedRuns="""
             FROM payroll.Runs r WHERE r.TenantId=@Tenant AND r.BusinessId=@Business
               AND (@Status IS NULL OR r.Status=@Status) AND (@Kind IS NULL OR r.RunKind=@Kind)
               AND (@RunId IS NULL OR r.PayrollRunId=@RunId)
               AND (@PaymentFrom IS NULL OR r.PaymentDate>=@PaymentFrom) AND (@PaymentTo IS NULL OR r.PaymentDate<=@PaymentTo)
               AND (@Search IS NULL OR CONVERT(nvarchar(10),r.PeriodStart,23) LIKE @Search ESCAPE N'~'
                 OR CONVERT(nvarchar(10),r.PeriodEnd,23) LIKE @Search ESCAPE N'~')
-              AND (@Worker IS NULL OR (r.Status=N'Draft' AND EXISTS(
-                SELECT 1 FROM payroll.EligibleRunEmployments(@Tenant,@Business,r.PayrollRunId) e
-                JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=@Tenant
-                WHERE e.IsSelected=1 AND (COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)) LIKE @Worker ESCAPE N'~'
-                  OR p.Identification LIKE @Worker ESCAPE N'~' OR e.ContractNumber LIKE @Worker ESCAPE N'~')))
-                OR (r.Status<>N'Draft' AND EXISTS(SELECT 1 FROM payroll.RunEmployees e
-                  WHERE e.PayrollRunId=r.PayrollRunId AND e.TenantId=r.TenantId
-                    AND (JSON_VALUE(e.EmployeeSnapshotJson,'$.EmployeeName') LIKE @Worker ESCAPE N'~'
-                      OR JSON_VALUE(e.EmployeeSnapshotJson,'$.Identification') LIKE @Worker ESCAPE N'~'
-                      OR JSON_VALUE(e.EmployeeSnapshotJson,'$.ContractNumber') LIKE @Worker ESCAPE N'~'))))
             """;
-        await using var command=new SqlCommand("SELECT COUNT(*) "+selection+"; WITH page AS (SELECT r.* "+selection+"\n"+"""
+        var workerPattern = RunSelectionPattern(filter.WorkerSearch);
+        var selection = scopedRuns;
+        var findMatches = "";
+        if (workerPattern is not null)
+        {
+            // Resolve the search once for both the count and the page. The
+            // eligibility function only receives IDs of scoped draft runs.
+            findMatches = $"""
+                DECLARE @Drafts table (PayrollRunId uniqueidentifier PRIMARY KEY);
+                DECLARE @Matches table (PayrollRunId uniqueidentifier PRIMARY KEY);
+                INSERT @Drafts SELECT r.PayrollRunId
+                    {scopedRuns} AND r.Status=N'Draft';
+                INSERT @Matches SELECT r.PayrollRunId
+                    {scopedRuns} AND r.Status<>N'Draft' AND EXISTS(SELECT 1 FROM payroll.RunEmployees e
+                      WHERE e.PayrollRunId=r.PayrollRunId AND e.TenantId=r.TenantId
+                        AND (JSON_VALUE(e.EmployeeSnapshotJson,'$.EmployeeName') LIKE @Worker ESCAPE N'~'
+                          OR JSON_VALUE(e.EmployeeSnapshotJson,'$.Identification') LIKE @Worker ESCAPE N'~'
+                          OR JSON_VALUE(e.EmployeeSnapshotJson,'$.ContractNumber') LIKE @Worker ESCAPE N'~'));
+                INSERT @Matches SELECT draft.PayrollRunId FROM @Drafts draft
+                    WHERE EXISTS(SELECT 1 FROM payroll.EligibleRunEmployments(@Tenant,@Business,draft.PayrollRunId) e
+                      JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=@Tenant
+                      WHERE e.IsSelected=1 AND (COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)) LIKE @Worker ESCAPE N'~'
+                        OR p.Identification LIKE @Worker ESCAPE N'~' OR e.ContractNumber LIKE @Worker ESCAPE N'~'));
+                """;
+            selection += " AND EXISTS(SELECT 1 FROM @Matches m WHERE m.PayrollRunId=r.PayrollRunId)";
+        }
+        await using var command=new SqlCommand("SET NOCOUNT ON; "+findMatches+" SELECT COUNT(*) "+selection+"; WITH page AS (SELECT r.* "+selection+"\n"+"""
               ORDER BY r.PeriodEnd DESC,r.CreatedAt DESC,r.PayrollRunId OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY
             )
             SELECT r.PayrollRunId,r.RunKind,r.PeriodStart,r.PeriodEnd,r.PaymentDate,r.Status,
@@ -2292,7 +2308,8 @@ public sealed partial class SqlPayrollStore(
         command.Parameters.Add("@PaymentFrom",SqlDbType.Date).Value=(object?)filter.PaymentFrom?.ToDateTime(TimeOnly.MinValue)??DBNull.Value;
         command.Parameters.Add("@PaymentTo",SqlDbType.Date).Value=(object?)filter.PaymentTo?.ToDateTime(TimeOnly.MinValue)??DBNull.Value;
         command.Parameters.Add("@Search",SqlDbType.NVarChar,324).Value=(object?)RunSelectionPattern(search)??DBNull.Value;
-        command.Parameters.Add("@Worker",SqlDbType.NVarChar,324).Value=(object?)RunSelectionPattern(filter.WorkerSearch)??DBNull.Value;
+        if (workerPattern is not null)
+            command.Parameters.Add("@Worker",SqlDbType.NVarChar,324).Value=workerPattern;
         command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@Size",pageSize);
         await using var reader=await command.ExecuteReaderAsync(ct);await reader.ReadAsync(ct);var count=reader.GetInt32(0);
         await reader.NextResultAsync(ct);var values=new List<PayrollRunSummary>();

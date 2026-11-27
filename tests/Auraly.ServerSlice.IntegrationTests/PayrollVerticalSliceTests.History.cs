@@ -122,7 +122,9 @@ public sealed partial class PayrollVerticalSliceTests
             filterTimings.Add(clock.Elapsed.TotalMilliseconds);Assert.Equal(1,counter.Count);Assert.Equal(1,result.TotalCount);
             Assert.Equal(sample%2==0?1:0,result.Items.Count);
         }
-        Assert.True(filterTimings.Order().ElementAt(18)<1000,"El filtro de novedades excedió 1 s.");samples["filtro de trabajador en liquidaciones"]=filterTimings;
+        var workerFilterP95 = filterTimings.Order().ElementAt(18);
+        Assert.True(workerFilterP95 < 1000, $"El filtro de novedades excedió 1 s con p95 de {workerFilterP95:F1} ms.");
+        samples["filtro de trabajador en liquidaciones"]=filterTimings;
         var employeesPage=await service.PageCalculatedEmployeesAsync(user,1,20,new(2080,1,1),new(2200,1,1),null,runId:historical.PayrollRunId);
         Assert.Equal(1,employeesPage.TotalCount);Assert.Equal(historical.PayrollRunId,Assert.Single(employeesPage.Items).PayrollRunId);
         Assert.Empty((await service.PageCalculatedEmployeesAsync(user with{BusinessId=Guid.NewGuid()},1,20,new(2080,1,1),new(2200,1,1),null,runId:historical.PayrollRunId)).Items);
