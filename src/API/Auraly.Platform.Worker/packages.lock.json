@@ -1323,6 +1323,17 @@
           "Auraly.Domain.Catalog": "[1.0.0, )"
         }
       },
+      "auraly.application.dispatching": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Application.Receivables": "[1.0.0, )",
+          "Auraly.Application.Returns": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )"
+        }
+      },
       "auraly.application.documentprocessing": {
         "type": "Project",
         "dependencies": {
@@ -1753,6 +1764,7 @@
           "Auraly.Application.Authentication": "[1.0.0, )",
           "Auraly.Application.Authorization": "[1.0.0, )",
           "Auraly.Application.Catalog": "[1.0.0, )",
+          "Auraly.Application.Dispatching": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Application.Expenses": "[1.0.0, )",
           "Auraly.Application.Fiscal": "[1.0.0, )",
@@ -1837,6 +1849,7 @@
           "Auraly.Application.Sales": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Platform.Application": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",
           "Azure.AI.OpenAI": "[2.1.0, )",
