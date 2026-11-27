@@ -75,7 +75,12 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
         {label}{sorting.by === by ? sorting.direction === "asc" ? " ↑" : " ↓" : ""}</Button>;
     const sortAria = (by: string) => sorting.by === by ? sorting.direction === "asc" ? "ascending" as const : "descending" as const : undefined;
     return <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-5 rounded-2xl border p-4 sm:p-5" aria-busy={busy}>
-        <h3 className="font-semibold">Seleccionar trabajadores</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-semibold">Seleccionar trabajadores</h3>
+            <Button type="button" variant="outline" disabled={locked || query.isFetching || query.isError || !data || stale || count < 1 || count > 500}
+                onClick={() => void calculate()}><Calculator className="mr-2 h-4 w-4"/>{busy ? "Calculando…" : run.status === "Draft" ? "Calcular nómina" : "Recalcular"}</Button>
+        </div>
+        {dirty && <p role="status" className="text-sm text-muted-foreground">La selección se guardará al calcular la liquidación.</p>}
         <form className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim());setWorkSite(draftWorkSite.trim());setContractNumber(draftContract.trim()); }}>
             <Input aria-label="Buscar trabajador de la liquidación" placeholder="Nombre, identificación o contrato" value={draftSearch}
                 className="min-w-0 flex-1"
@@ -130,8 +135,5 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
                 <Button size="sm" variant="outline" disabled={locked || query.isFetching || page * data.pageSize >= data.totalCount} onClick={() => setPage(value => value + 1)}>Siguiente trabajadores</Button>
             </div></div>
         </>}
-        <Button variant="outline" disabled={locked || query.isFetching || query.isError || !data || stale || count < 1 || count > 500}
-            onClick={() => void calculate()}><Calculator className="mr-2 h-4 w-4"/>{busy ? "Calculando…" : run.status === "Draft" ? "Calcular nómina" : "Recalcular"}</Button>
-        {dirty && <p role="status" className="text-sm text-muted-foreground">La selección se guardará al calcular la liquidación.</p>}
     </section>;
 }

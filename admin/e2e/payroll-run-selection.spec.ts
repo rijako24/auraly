@@ -69,6 +69,11 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(50);
     const bounds=await selection.evaluate(element=>element.getBoundingClientRect().toJSON());
     expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(viewport.width);
+    const calculate = await selection.getByRole("button", { name: "Recalcular", exact: true }).evaluate(element => element.getBoundingClientRect().toJSON());
+    const filters = await selection.getByRole("textbox", { name: "Buscar trabajador de la liquidación" }).evaluate(element => element.getBoundingClientRect().toJSON());
+    expect(calculate.left).toBeGreaterThanOrEqual(0);
+    expect(calculate.right).toBeLessThanOrEqual(viewport.width);
+    expect(calculate.bottom).toBeLessThanOrEqual(filters.top);
     for(const name of ["Buscar","Siguiente trabajadores"]){
         const control=await selection.getByRole("button",{name,exact:true}).evaluate(element=>element.getBoundingClientRect().toJSON());
         expect(control.left).toBeGreaterThanOrEqual(0);expect(control.right).toBeLessThanOrEqual(viewport.width);
