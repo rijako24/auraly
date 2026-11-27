@@ -1175,6 +1175,103 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("completed", true, true)]
+    [InlineData("first-deployment", true, true)]
+    [InlineData("previous-success", false, true)]
+    [InlineData("accepted", false, true)]
+    [InlineData("failed", false, true)]
+    [InlineData("missing-id", false, true)]
+    [InlineData("missing-completion", false, true)]
+    [InlineData("invalid-json", false, true)]
+    [InlineData("deploy-error", false, true)]
+    [InlineData("lookup-error", false, false)]
+    [InlineData("stop-error", false, false)]
+    [InlineData("still-running", false, false)]
+    [InlineData("timeout", false, true)]
+    public async Task Api_publication_accepts_only_its_new_completed_extraction(
+        string scenario, bool starts, bool deploys)
+    {
+        var package = Path.GetTempFileName();
+        var commandDirectory = Directory.CreateTempSubdirectory("auraly-publication-test-").FullName;
+        try
+        {
+            var source = Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyApiPackage.ps1");
+            var script = $$"""
+                $ErrorActionPreference='Stop'
+                $commandDirectory=$args[2]
+                $env:AURALY_PUBLICATION_TEST_SCENARIO='{{scenario}}'
+                $env:AURALY_PUBLICATION_TEST_LOG=Join-Path $commandDirectory 'calls.jsonl'
+                $fakeAz=Join-Path $commandDirectory 'az.ps1'
+                @'
+                  $scenario=$env:AURALY_PUBLICATION_TEST_SCENARIO
+                  $command=$args -join ' '
+                  ConvertTo-Json -InputObject $command -Compress | Add-Content -LiteralPath $env:AURALY_PUBLICATION_TEST_LOG
+                  if($command.StartsWith('webapp log deployment list ')) {
+                    if($scenario -eq 'lookup-error'){exit 1}
+                    if($scenario -ne 'first-deployment'){'previous-deployment'}
+                    exit 0
+                  }
+                  if($command.StartsWith('webapp stop ')) {
+                    if($scenario -eq 'stop-error'){exit 1}
+                    exit 0
+                  }
+                  if($command.StartsWith('webapp show ')) {
+                    @{state=$(if($scenario -eq 'still-running'){'Running'}else{'Stopped'})}|ConvertTo-Json -Compress
+                    exit 0
+                  }
+                  if($command.StartsWith('webapp deploy ')) {
+                    if($scenario -eq 'timeout'){Start-Sleep -Seconds 10}
+                    if($scenario -eq 'deploy-error'){exit 1}
+                    if($scenario -eq 'invalid-json'){'{';exit 0}
+                    $result=@{id='current-deployment';status=4;complete=$true}
+                    if($scenario -eq 'previous-success'){$result.id='previous-deployment'}
+                    if($scenario -eq 'accepted'){$result.status=1;$result.complete=$false}
+                    if($scenario -eq 'failed'){$result.status=3}
+                    if($scenario -eq 'missing-id'){$result.Remove('id')}
+                    if($scenario -eq 'missing-completion'){$result.Remove('complete')}
+                    $result|ConvertTo-Json -Compress
+                    exit 0
+                  }
+                  if($command.StartsWith('webapp start ')){exit 0}
+                  throw 'Unexpected Azure command in publication test.'
+                '@ | Set-Content -LiteralPath $fakeAz
+                $env:PATH=$commandDirectory+[IO.Path]::PathSeparator+$env:PATH
+                if((Get-Command az).Path -ne $fakeAz){throw 'Fake Azure command was not selected; no cloud access is permitted.'}
+                $issue=$null
+                $timer=[Diagnostics.Stopwatch]::StartNew()
+                try {& $args[0] -ResourceGroup 'qa' -AppName 'api-qa' -PackagePath $args[1] -TimeoutSeconds $(if('{{scenario}}' -eq 'timeout'){2}else{10})}
+                catch {$issue=$_.Exception.Message}
+                $events=@(Get-Content -LiteralPath $env:AURALY_PUBLICATION_TEST_LOG | ForEach-Object {ConvertFrom-Json $_})
+                @{events=$events;issue=$issue;elapsed=$timer.Elapsed.TotalSeconds}|ConvertTo-Json -Depth 4 -Compress
+                """;
+            using var result = JsonDocument.Parse(await RunPowerShellAsync(script, source, package, commandDirectory));
+            var events = result.RootElement.GetProperty("events").EnumerateArray().Select(item => item.GetString()!).ToArray();
+            Assert.Equal(starts, events.Any(item => item.StartsWith("webapp start ", StringComparison.Ordinal)));
+            Assert.Equal(deploys, events.Any(item => item.StartsWith("webapp deploy ", StringComparison.Ordinal)));
+            if (starts) Assert.Equal(JsonValueKind.Null, result.RootElement.GetProperty("issue").ValueKind);
+            else Assert.Equal(JsonValueKind.String, result.RootElement.GetProperty("issue").ValueKind);
+            if (scenario == "timeout")
+            {
+                Assert.Contains("tiempo máximo", result.RootElement.GetProperty("issue").GetString(), StringComparison.Ordinal);
+                Assert.True(result.RootElement.GetProperty("elapsed").GetDouble() < 9, "Publication did not enforce its deadline.");
+            }
+            if (deploys)
+            {
+                var command = Assert.Single(events.Where(item => item.StartsWith("webapp deploy ", StringComparison.Ordinal)));
+                Assert.Contains("--async true --track-status false", command, StringComparison.Ordinal);
+                Assert.Contains("--restart false", command, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            File.Delete(package);
+            Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), Path.GetFullPath(commandDirectory), StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("auraly-publication-test-", Path.GetFileName(commandDirectory), StringComparison.Ordinal);
+            Directory.Delete(commandDirectory, recursive: true);
+        }
+    }
+
     private static async Task<string> RunPowerShellAsync(string script, params string[] arguments)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-migration-check-{Guid.NewGuid():N}.ps1");

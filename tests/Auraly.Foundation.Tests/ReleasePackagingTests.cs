@@ -44,14 +44,19 @@ public sealed class ReleasePackagingTests
         var stop = script.IndexOf("az webapp stop", StringComparison.Ordinal);
         var verify = script.IndexOf(".Trim() -ne 'Stopped'", StringComparison.Ordinal);
         var deploy = script.IndexOf("az webapp deploy", StringComparison.Ordinal);
-        var failure = script.IndexOf("if ($LASTEXITCODE -ne 0)", deploy, StringComparison.Ordinal);
+        var failure = script.IndexOf("if ($process.ExitCode -ne 0)", deploy, StringComparison.Ordinal);
         var start = script.IndexOf("az webapp start", StringComparison.Ordinal);
         Assert.True(stop >= 0 && verify > stop && deploy > verify && failure > deploy && start > failure);
-        Assert.Contains("--restart false", script, StringComparison.Ordinal);
-        Assert.Contains("--async false --track-status false", script, StringComparison.Ordinal);
+        Assert.Contains("'--restart', 'false'", script, StringComparison.Ordinal);
+        Assert.Contains("'--async', 'true', '--track-status', 'false'", script, StringComparison.Ordinal);
+        Assert.Contains("$deployment.id -eq $previousDeploymentId", script, StringComparison.Ordinal);
+        Assert.Contains("$deployment.status -ne 4", script, StringComparison.Ordinal);
         Assert.Contains("$appJson | ConvertFrom-Json", script, StringComparison.Ordinal);
         Assert.DoesNotContain("not_null(", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("finally", script, StringComparison.Ordinal);
+        Assert.Contains("$process.WaitForExit($TimeoutSeconds * 1000)", script, StringComparison.Ordinal);
+        Assert.Contains("$process.Kill($true)", script, StringComparison.Ordinal);
+        var cleanup = script[script.IndexOf("finally", StringComparison.Ordinal)..script.IndexOf("# Azure accepts", StringComparison.Ordinal)];
+        Assert.DoesNotContain("az webapp start", cleanup, StringComparison.Ordinal);
         foreach (var caller in new[]
                  {
                      Path.Combine(root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"),
