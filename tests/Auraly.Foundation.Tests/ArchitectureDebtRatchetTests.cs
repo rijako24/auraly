@@ -266,7 +266,7 @@ public sealed class ArchitectureDebtRatchetTests
     public void ConfirmedDocumentHandlers_ShareTheEngineTransaction()
     {
         var handlers = CSharpFiles(Path.Combine("src", "Infrastructure", "Auraly.Infrastructure.Persistence"))
-            .Where(file => File.ReadAllText(file).Contains("IConfirmedDocumentHandler", StringComparison.Ordinal))
+            .Where(file => Regex.IsMatch(File.ReadAllText(file), @":\s*IConfirmedDocumentHandler\b"))
             .ToArray();
 
         Assert.NotEmpty(handlers);
@@ -700,14 +700,24 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
-    public void DispatchSettlement_ExecutesCanonicalDocumentsWithoutWaitingForOtherEngines()
+    public void DispatchSettlement_UsesCanonicalCommandsAndSeparatesQueuedAndLegacyExecution()
     {
-        var source = File.ReadAllText(Path.Combine(
+        var legacy = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "DispatchSettlementHostedService.cs"));
-        Assert.Contains("DocumentProcessingWorker", source, StringComparison.Ordinal);
-        Assert.Contains("documentWorker.ProcessOneAsync", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("DocumentProcessingJobs WHERE", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("FiscalStatus FROM", source, StringComparison.Ordinal);
+        var queued = File.ReadAllText(Path.Combine(RepositoryRoot, "src", "Modules", "Dispatching",
+            "Auraly.Application.Dispatching", "DispatchSettlementPreparation.cs"));
+        Assert.Contains("DocumentProcessingWorker", legacy, StringComparison.Ordinal);
+        Assert.Contains("worker.ProcessOneAsync", legacy, StringComparison.Ordinal);
+        Assert.Contains("preparation.AcceptReturnAsync", legacy, StringComparison.Ordinal);
+        Assert.Contains("preparation.AcceptPaymentAsync", legacy, StringComparison.Ordinal);
+        Assert.DoesNotContain("DocumentProcessingJobs WHERE", legacy, StringComparison.Ordinal);
+        Assert.DoesNotContain("FiscalStatus FROM", legacy, StringComparison.Ordinal);
+        Assert.Contains("returns.ConfirmAsync", queued, StringComparison.Ordinal);
+        Assert.Contains("receivables.ConfirmPaymentAsync", queued, StringComparison.Ordinal);
+        Assert.Contains("documents.PublishAsync", queued, StringComparison.Ordinal);
+        Assert.Contains("store.AdvanceAsync(operation, prerequisites", queued, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProcessOneAsync", queued, StringComparison.Ordinal);
+        Assert.DoesNotContain("SqlAccountingPostingProcessor", queued, StringComparison.Ordinal);
     }
 
     [Fact]

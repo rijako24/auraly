@@ -168,8 +168,13 @@ public sealed class DatabaseUpgradeMigrationTests
     [InlineData("dev", "database,api,function,admin", true, "Stopped", 1, 0, "detener la API")]
     [InlineData("dev", "database,api,function,admin", false, "Running", 2, 0, "detención")]
     [InlineData("dev", "api,function", false, "Stopped", 0, 0, null)]
+    [InlineData("dev", "database,api,function,admin", false, "Stopped", 0, 0, "requiere un paquete compatible", "Stopped")]
+    [InlineData("dev", "database,api,function,admin,engines-function", false, "Stopped", 0, 0, "debe estar aprovisionada")]
+    [InlineData("dev", "database,api,function,admin,engines-function", false, "Stopped", 3, 0, "detención de la Function de motores", "Running")]
+    [InlineData("dev", "database,api,function,admin,engines-function", false, "Stopped", 3, 1, null, "Stopped")]
     public async Task Canonical_cutover_guards_execute_before_publication(
-        string environment, string components, bool failStop, string observedState, int expectedStops, int expectedStarts, string? expectedIssue)
+        string environment, string components, bool failStop, string observedState, int expectedStops, int expectedStarts,
+        string? expectedIssue, string? enginesState = null)
     {
         var pipeline = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
         var start = pipeline.IndexOf("$databaseCutover =", StringComparison.Ordinal);
@@ -193,7 +198,8 @@ public sealed class DatabaseUpgradeMigrationTests
             # complete scope used to require the coordinated Admin cutover.
             $manifest=@{deploymentComponents='{{components}}'.Split(',')}
             $selectedComponents=@($manifest.deploymentComponents|Where-Object {$_ -ne 'admin'})
-            $configuration=@{ResourceGroup='test';Api='api';Function='worker'}
+            $manifest.enginesFunction=$selectedComponents -contains 'engines-function'
+            $configuration=@{ResourceGroup='test';Api='api';Function='worker';EnginesFunction='engines'}
             $events=[Collections.Generic.List[string]]::new()
             function az {
               $events.Add(($args -join ' '))
@@ -201,7 +207,17 @@ public sealed class DatabaseUpgradeMigrationTests
             }
             function Assert-LastExitCode { param([string]$Message) if($LASTEXITCODE -ne 0){throw $Message} }
             function Assert-OfflineLeaseSigningConfiguration {}
-            function Invoke-AzJson { param([string[]]$Arguments) return @{state='{{observedState}}'} }
+            function Invoke-AzJson {
+              param([string[]]$Arguments)
+              if ($Arguments[0] -eq 'resource') {
+                if ('{{enginesState}}') { [pscustomobject]@{name='engines'} }
+                return
+              }
+              if ($Arguments -contains 'engines') {
+                return [pscustomobject]@{state='{{enginesState}}';properties=@{state='{{enginesState}}'} }
+              }
+              return [pscustomobject]@{state='{{observedState}}'}
+            }
             $issue=$null
             try {
             {{guard}}
@@ -216,6 +232,7 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Equal(expectedStarts, events.Count(item => item.StartsWith("functionapp start ", StringComparison.Ordinal)));
         if (expectedStops > 0) Assert.StartsWith("webapp stop ", stops[0]);
         if (expectedStops > 1) Assert.StartsWith("functionapp stop ", stops[1]);
+        if (expectedStops > 2) Assert.Contains("--name engines", stops[2], StringComparison.Ordinal);
         var issue = result.RootElement.GetProperty("issue");
         if (expectedIssue is null) Assert.Equal(JsonValueKind.Null, issue.ValueKind);
         else Assert.Contains(expectedIssue, issue.GetString(), StringComparison.Ordinal);

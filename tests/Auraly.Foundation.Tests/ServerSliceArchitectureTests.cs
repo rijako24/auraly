@@ -5,23 +5,34 @@ namespace Auraly.Foundation.Tests;
 public sealed class ServerSliceArchitectureTests
 {
     [Fact]
-    public void Every_canonical_project_in_the_repository_is_connected_to_the_solution()
+    public void Every_canonical_project_is_connected_to_the_solution_or_the_versioned_worker_pipeline()
     {
         var root = FindRepositoryRoot();
         var solution = File.ReadAllText(Path.Combine(root, "Auraly.Commerce.sln"));
+        const string workerProject = "Auraly.Commerce.Worker.csproj";
+        var workerRoot = Path.Combine(root, "src", "API", "Auraly.Commerce.Worker");
+        var worker = Path.Combine(workerRoot, workerProject);
+        Assert.True(File.Exists(worker));
+        Assert.True(File.Exists(Path.Combine(workerRoot, "global.json")));
+        var release = File.ReadAllText(Path.Combine(root, "infrastructure", "azure", "New-AuralyRelease.ps1"));
+        var quality = File.ReadAllText(Path.Combine(root, ".github", "workflows", "quality.yml"));
+        Assert.Contains($"dotnet restore {workerProject} --locked-mode", release, StringComparison.Ordinal);
+        Assert.Contains($"dotnet publish {workerProject}", release, StringComparison.Ordinal);
+        Assert.Contains("working-directory: src/API/Auraly.Commerce.Worker", quality, StringComparison.Ordinal);
+        Assert.Contains("dotnet publish --no-restore", quality, StringComparison.Ordinal);
         var projects = Directory
             .GetFiles(root, "Auraly.*.*proj", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutput(path))
             .ToArray();
         var missing = projects
-            .Where(project => !solution.Contains(Path.GetFileName(project), StringComparison.Ordinal))
+            .Where(project => project != worker && !solution.Contains(Path.GetFileName(project), StringComparison.Ordinal))
             .Select(project => Path.GetRelativePath(root, project))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
         Assert.True(
             missing.Length == 0,
-            $"Canonical projects missing from Auraly.Commerce.sln:{Environment.NewLine}{string.Join(Environment.NewLine, missing)}");
+            $"Canonical projects without a build entry point:{Environment.NewLine}{string.Join(Environment.NewLine, missing)}");
     }
 
     [Fact]
