@@ -81,7 +81,7 @@ public sealed partial class SqlDispatchSettlementPreparationStore
         return items;
     }
 
-    public async Task AdvanceAsync(DispatchSettlementWork operation,
+    public async Task<bool> AdvanceAsync(DispatchSettlementWork operation,
         IReadOnlyList<DispatchSettlementPrerequisite> prerequisites, CancellationToken token)
     {
         await using var connection = connections.Create();
@@ -96,7 +96,8 @@ public sealed partial class SqlDispatchSettlementPreparationStore
                 PrerequisitesJson=CASE WHEN @Submitted=0 THEN @Expected ELSE PrerequisitesJson END,
                 PreparationLeaseId=NULL,ActivationLeaseId=NULL,ActivationVersion=ActivationVersion+1,
                 Attempts=0,NextAttemptAt=SYSUTCDATETIME(),
-                ActivationAvailableAt=CASE WHEN @Submitted=0 AND ready.PendingCount=0 THEN SYSUTCDATETIME() END
+                ActivationAvailableAt=CASE WHEN @Submitted=0 AND ready.PendingCount=0 AND ready.AttentionCount=0 THEN SYSUTCDATETIME() END
+            OUTPUT inserted.ActivationAvailableAt
             FROM dbo.DispatchSettlementOperations operation
             CROSS APPLY dispatch.SettlementPrerequisites(@Business,@Expected) ready
             WHERE operation.DispatchSettlementOperationId=@Id AND operation.BusinessId=@Business
@@ -105,7 +106,7 @@ public sealed partial class SqlDispatchSettlementPreparationStore
         BindOperation(command, operation);
         command.Parameters.Add("@Expected", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(prerequisites);
         command.Parameters.AddWithValue("@Submitted", operation.Phase == DispatchPreparationPhase.CashDifference);
-        await command.ExecuteNonQueryAsync(token);
+        return await command.ExecuteScalarAsync(token) is DateTimeOffset;
     }
 
     public async Task RescheduleAsync(DispatchSettlementWork operation, string error, CancellationToken token)

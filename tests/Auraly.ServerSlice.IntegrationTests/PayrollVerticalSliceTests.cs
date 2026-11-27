@@ -728,6 +728,14 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
             Assert.Equal(2,commands.Count);
         }
         Assert.NotEmpty(receipt.Rows);
+        foreach (var concept in new[] { "HEALTH_EMPLOYEE", "PENSION_EMPLOYEE" })
+        {
+            var contribution = Assert.Single(receipt.Rows, row =>
+                Assert.IsType<JsonElement>(row["conceptCode"]).GetString() == concept);
+            Assert.Equal(.04m, Assert.IsType<JsonElement>(contribution["percentageRate"]).GetDecimal());
+        }
+        Assert.Null(Assert.Single(receipt.Rows, row =>
+            Assert.IsType<JsonElement>(row["conceptCode"]).GetString() == "BASIC")["percentageRate"]);
         Assert.All(receipt.Rows,row=>{
             Assert.Equal(employee.PayrollRunEmployeeId.ToString("D"),Assert.IsType<JsonElement>(row["payrollRunEmployeeId"]).GetString());
             Assert.Equal(status,Assert.IsType<JsonElement>(row["runStatus"]).GetString());

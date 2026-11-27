@@ -17,6 +17,7 @@ public sealed class CommerceEngineFunctions(
     IDocumentProcessingWorkSource documentWork,
     SqlAccountingPostingProcessor accounting,
     DispatchSettlementPreparation dispatches,
+    SqlDispatchSettlementActivation dispatchActivation,
     FiscalProcessingMessageHandler fiscal,
     SqlPosSynchronizationOutboxDispatcher synchronization,
     ServiceBusDocumentProcessingPublisher documentPublisher,
@@ -112,15 +113,18 @@ public sealed class CommerceEngineFunctions(
                 var dispatch = DispatchSettlementSignalCodec.Deserialize(message.Body.ToString());
                 DispatchSettlementSignalCodec.Validate(dispatch);
                 ValidateSession(message, dispatch.BusinessId);
-                await dispatches.ProcessAsync(dispatch, cancellationToken);
+                if (await dispatches.ProcessAsync(dispatch, cancellationToken))
+                    await dispatchActivation.PublishReadyAsync(dispatch.BusinessId, dispatch.OperationId, cancellationToken);
             }
             else
             {
                 var signal = AccountingProcessingSignalCodec.Deserialize(message.Body.ToString());
                 AccountingProcessingSignalCodec.Validate(signal);
                 ValidateSession(message, signal.BusinessId);
-                await accounting.ProcessAsync(signal.DocumentId, signal.DocumentType, signal.BusinessId,
+                var readyDispatch = await accounting.ProcessAsync(signal.DocumentId, signal.DocumentType, signal.BusinessId,
                     cancellationToken);
+                if (readyDispatch is { } operationId)
+                    await dispatchActivation.PublishReadyAsync(signal.BusinessId, operationId, cancellationToken);
             }
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested)

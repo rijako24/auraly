@@ -1,7 +1,8 @@
 CREATE PROCEDURE dbo.DispatchSettlementChildChanged
     @BusinessId UNIQUEIDENTIFIER,
     @DocumentId UNIQUEIDENTIFIER,
-    @DocumentType NVARCHAR(64)
+    @DocumentType NVARCHAR(64),
+    @ReadyOperationId UNIQUEIDENTIFIER = NULL OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -16,10 +17,12 @@ BEGIN
     DECLARE @DispatchId uniqueidentifier=TRY_CONVERT(uniqueidentifier,@DispatchText);
     IF @DispatchId IS NULL RETURN;
 
+    DECLARE @Changed TABLE(OperationId UNIQUEIDENTIFIER, Status NVARCHAR(32));
     UPDATE operation
-    SET ActivationAvailableAt=CASE WHEN ready.PendingCount=0 THEN SYSUTCDATETIME() END,
+    SET ActivationAvailableAt=CASE WHEN ready.PendingCount=0 AND ready.AttentionCount=0 THEN SYSUTCDATETIME() END,
         Status=CASE WHEN ready.AttentionCount>0 THEN N'NeedsAttention' ELSE N'Processing' END,
         LastError=CASE WHEN ready.AttentionCount>0 THEN N'Un documento de la conciliación requiere atención contable o de inventario.' END
+    OUTPUT inserted.DispatchSettlementOperationId,inserted.Status INTO @Changed
     FROM dbo.DispatchSettlementOperations operation
     CROSS APPLY dispatch.SettlementPrerequisites(operation.BusinessId,operation.PrerequisitesJson) ready
     WHERE operation.DispatchId=@DispatchId AND operation.BusinessId=@BusinessId
@@ -27,4 +30,5 @@ BEGIN
       AND operation.PreparationLeaseId IS NULL AND operation.ActivationAvailableAt IS NULL
       AND operation.Status IN(N'Processing',N'NeedsAttention')
       AND (ready.PendingCount=0 OR ready.AttentionCount>0);
+    SELECT @ReadyOperationId=OperationId FROM @Changed WHERE Status=N'Processing';
 END

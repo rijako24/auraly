@@ -16,29 +16,40 @@ test("cierres abre modales distintos para caja y despacho sin cargar detalles oc
     else if(path.endsWith("/execution-context/tenants"))body=[{tenantId,name:"Prueba"}];
     else if(path.endsWith("/execution-context/businesses"))body=[{tenantId,businessId,name:"Sede",timeZone:"America/Bogota"}];
     else if(path.endsWith("/execution-context/access"))body={tenantId,businessId,roles:[],permissions:user.permissions};
-    else if(path.endsWith("/closures/inbox")){inboxReads++;body={items:[{closureId:"dispatch-close-id",type:"Dispatch",cashClosure:null,dispatchClosure:dispatch},{closureId:"cash-id",type:"Cash",cashClosure:cash,dispatchClosure:null}],page:1,pageSize:50,totalItems:2};}
+    else if(path.endsWith("/closures/inbox")){inboxReads++;body={items:[
+      {closureId:"dispatch-close-id",type:"Dispatch",cashClosure:null,dispatchClosure:dispatch},
+      {closureId:"dispatch-processing",type:"Dispatch",cashClosure:null,dispatchClosure:{...dispatch,dispatchNumber:"DSP-PROCESANDO",status:"Processing"}},
+      {closureId:"dispatch-completed",type:"Dispatch",cashClosure:null,dispatchClosure:{...dispatch,dispatchNumber:"DSP-LIQUIDADO",status:"Completed"}},
+      {closureId:"cash-id",type:"Cash",cashClosure:cash,dispatchClosure:null},
+      {closureId:"cash-completed",type:"Cash",cashClosure:{...cash,workSessionClosureId:"cash-completed",userName:"Cajero conciliado",reconciliationStatus:"Reconciled"},dispatchClosure:null},
+    ],page:1,pageSize:50,totalItems:5};}
     else if(path.endsWith("/dispatches/dispatch-id/execution")){executionReads++;body=execution;}
     else if(path.endsWith("/payment-verifications/page")){cashDetailReads++;body={items:[],groups:[],page:1,pageSize:1,totalItems:0};}
     else if(path.endsWith("/invoice-charges/page")){cashDetailReads++;body={items:[],page:1,pageSize:50,totalItems:0,totalAmount:0,closureSummary:{count:0,invoicedAmount:0,expenseAmount:0,paymentMethods:[]}};}
     await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(body)});
   });
   await page.goto("/dashboard/cash-differences");
-  await expect(page.getByRole("cell",{name:"Despacho",exact:true})).toBeVisible();
-  await expect(page.getByRole("row").filter({has:page.getByRole("cell",{name:"Despacho",exact:true})})).toContainText(/Inició.*7:00/);
+  const pendingDispatch=page.getByRole("row").filter({hasText:"DSP-PRUEBA"});
+  await expect(pendingDispatch.getByRole("cell",{name:"Despacho",exact:true})).toBeVisible();
+  await expect(pendingDispatch).toContainText(/Inició.*7:00/);
+  for(const label of ["DSP-PROCESANDO","DSP-LIQUIDADO","Cajero conciliado"])
+    await expect(page.getByRole("row").filter({hasText:label}).getByRole("button",{name:"Ver cierre",exact:true})).toBeVisible();
   expect(executionReads).toBe(0);expect(cashDetailReads).toBe(0);expect(inboxReads).toBe(1);
-  await page.getByRole("button",{name:"Ver despacho",exact:true}).click();
+  await pendingDispatch.getByRole("button",{name:"Conciliar",exact:true}).click();
   const dispatchDialog=page.getByRole("dialog",{name:"Recepción y liquidación del despacho"});
   await expect(dispatchDialog.getByRole("button",{name:/Corregir forma de pago/})).toHaveCount(0);
   await expect(dispatchDialog).toContainText("DSP-PRUEBA");await expect(dispatchDialog).toContainText("Transportador prueba");
   await expect(dispatchDialog.getByRole("region",{name:"Recaudos por forma de pago"})).toContainText("Declarado");await expect(dispatchDialog).toContainText("Peaje");
-  await dispatchDialog.getByRole("region",{name:"Entregas del despacho"}).getByText("FVL-123 · Cliente entrega",{exact:true}).click();
+  const document=dispatchDialog.getByRole("region",{name:"Entregas del despacho"}).locator("summary").filter({hasText:"FVL-123"});
+  await expect(document).toContainText("Cliente entrega");
+  await document.click();
   await expect(dispatchDialog).toContainText("Dirección del cliente");
   expect(executionReads).toBe(1);expect(cashDetailReads).toBe(0);expect(inboxReads).toBe(1);
   await page.screenshot({path:"../work/release-preparation-current/cierre-despacho-modal.png",fullPage:true});
   await page.setViewportSize({width:390,height:844});
   expect(await dispatchDialog.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   await page.keyboard.press("Escape");await expect(dispatchDialog).toHaveCount(0);
-  await page.getByRole("button",{name:"Conciliar",exact:true}).click();
+  await page.getByRole("row").filter({hasText:"Cajero prueba"}).getByRole("button",{name:"Conciliar",exact:true}).click();
   const cashDialog=page.getByRole("dialog",{name:"Conciliar cierre",exact:true});
   await expect(cashDialog).toBeVisible();await expect(cashDialog).toContainText("Cajero prueba");
   await expect(cashDialog.getByText("Entregas y recaudos",{exact:false})).toHaveCount(0);

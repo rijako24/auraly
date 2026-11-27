@@ -1256,8 +1256,11 @@ visibles. La periodicidad se obtiene del catálogo contractual existente.
 
 El mismo POST calculate admite `rowVersion`, `selectAll` y hasta 500 cambios
 por EmploymentId. Los cambios ganan sobre Todos/Ninguno; sin esos campos se
-usa la selección persistida. La UI prepara la selección localmente y la
-confirma al calcular, como indica el formulario; no escribe por cada checkbox.
+usa la selección persistida. Generar una liquidación regular crea el borrador y
+solicita el cálculo con la versión devuelta, sin sobrescribir la selección
+inicial de todos los elegibles. Si el cálculo falla se abre el borrador con su
+error y se puede reintentar sin volver a crear el período. La UI prepara los
+cambios de selección localmente y los confirma al pulsar «Guardar cambios».
 Todos/Ninguno comprende los elegibles del período, incluidas otras páginas y
 filtros. Las modificaciones de selección requieren la versión mostrada y el
 servidor rechaza IDs no elegibles incluso si se mandan para desmarcarlos.
@@ -1723,15 +1726,21 @@ concede crear, editar centros ni consultar otros recursos de contabilidad.
 La aceptación exige regresiones de cálculo, historial, tenant/permisos,
 concurrencia/idempotencia y captura real a 1366×768, escritorio y 390×844.
 
-La bandeja de novedades expone modificar/consultar, recalcular y desprendible
-por trabajador. El recálculo reutiliza `CalculateRun` con su versión y contrato;
-actualiza la versión del encabezado en las filas del mismo período sin otro GET.
+La bandeja de novedades expone modificar/consultar y el desprendible individual.
+Desde la selección de la liquidación se puede abrir el mismo detalle del
+trabajador cuando la selección está guardada. El recálculo al guardar la
+novedad reutiliza `CalculateRun` con su versión y contrato; actualiza la versión
+del encabezado en las filas del mismo período sin otro GET. Los días editados
+por concepto se capturan en unidades completas en esa vista.
 El desprendible individual filtra por `PayrollRunEmployeeId` en el reporte
 canónico, además del tenant, sede, fechas y tercero. Sólo ese resultado admite
 consulta calculada preliminar; los reportes generales siguen tomando aprobados.
 Su pago previsto no se presenta como realizado: fecha efectiva y «Neto pagado»
 requieren `PaymentBatchPostingStatus.IsPaid`. La apertura utiliza el modal y los
-exportadores compartidos, con tabla adaptable en móvil, sin otro renderer.
+exportadores compartidos, con tabla adaptable en móvil. El PDF usa formato
+vertical con identificación del trabajador, contrato y neto destacados. La
+columna de porcentaje usa la tasa y la base de la línea ya calculada. Una
+cantidad o una tarifa por unidad no se interpreta como porcentaje.
 
 Desde Pagos, la consulta de trabajadores de cada lote se abre de forma explícita
 y pagina sus líneas con un conteo y detalle en un solo comando SQL, aislados por

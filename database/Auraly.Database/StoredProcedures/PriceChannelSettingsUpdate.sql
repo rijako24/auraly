@@ -5,7 +5,9 @@ CREATE PROCEDURE dbo.PriceChannelSettingsUpdate
     @Strategy NVARCHAR(48),
     @Value DECIMAL(19, 6) = NULL,
     @AutoUpdatePrice BIT = NULL,
-    @ItemSyncJson NVARCHAR(MAX) = N'[]'
+    @ItemSyncJson NVARCHAR(MAX) = N'[]',
+    @NewItemsJson NVARCHAR(MAX) = NULL,
+    @RetiredItemsJson NVARCHAR(MAX) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -27,10 +29,10 @@ BEGIN
 
     -- This command changes only the selection. The existing publication engine
     -- retains ownership of price calculation and versioning.
-    DECLARE @Changes TABLE(ProductId UNIQUEIDENTIFIER,MinimumQuantity DECIMAL(19,6),AutoUpdatePrice BIT,
+    DECLARE @Changes TABLE(PriceChannelItemId UNIQUEIDENTIFIER,ProductId UNIQUEIDENTIFIER,MinimumQuantity DECIMAL(19,6),AutoUpdatePrice BIT,
         PRIMARY KEY(ProductId,MinimumQuantity));
     INSERT @Changes
-    SELECT item.ProductId,item.MinimumQuantity,COALESCE(selection.AutoUpdatePrice,@AutoUpdatePrice)
+    SELECT item.PriceChannelItemId,item.ProductId,item.MinimumQuantity,COALESCE(selection.AutoUpdatePrice,@AutoUpdatePrice)
     FROM dbo.PriceChannelItems item WITH(UPDLOCK,HOLDLOCK)
     LEFT JOIN @Overrides selection ON selection.ProductId=item.ProductId AND selection.MinimumQuantity=item.MinimumQuantity
     WHERE item.PriceChannelId=@Id AND item.IsActive=1
@@ -39,17 +41,27 @@ BEGIN
         SELECT 1 FROM @Changes changeValue WHERE changeValue.ProductId=selection.ProductId
             AND changeValue.MinimumQuantity=selection.MinimumQuantity))
         THROW 51005, N'Una condición de precio cambió o no pertenece al canal. Vuelve a abrirlo antes de guardar.', 1;
-    IF EXISTS(SELECT 1 FROM @Changes changeValue
-        JOIN dbo.PriceChannelItems item ON item.PriceChannelId=@Id AND item.ProductId=changeValue.ProductId
-            AND item.MinimumQuantity=changeValue.MinimumQuantity AND item.IsActive=1
-        WHERE changeValue.AutoUpdatePrice=1 AND item.TargetMarginPercent IS NULL)
-        THROW 51005, N'Configura un margen válido en todos los productos seleccionados antes de sincronizar sus precios.', 1;
-
     UPDATE dbo.PriceChannels SET Name=@Name,Strategy=@Strategy,Value=@Value
     WHERE PriceChannelId=@Id AND TenantId=@TenantId;
     IF @@ROWCOUNT=0 THROW 51004, 'Segment not found', 1;
+
+    IF @NewItemsJson IS NOT NULL
+    BEGIN
+        IF @Strategy<>N'TieredProductPrice'
+            THROW 51005, N'Las escalas requieren el modo por producto y cantidad.', 1;
+        EXEC dbo.PriceSegmentItemSave @Id=@Id, @BusinessId=@BusinessId,
+            @NewItemsJson=@NewItemsJson, @RetiredItemsJson=@RetiredItemsJson;
+    END
+
+    IF EXISTS(SELECT 1 FROM @Changes changeValue
+        JOIN dbo.PriceChannelItems item ON item.PriceChannelItemId=changeValue.PriceChannelItemId AND item.IsActive=1
+        WHERE changeValue.AutoUpdatePrice=1 AND item.TargetMarginPercent IS NULL)
+        THROW 51005, N'Configura un margen válido en todos los productos seleccionados antes de sincronizar sus precios.', 1;
     UPDATE item SET AutoUpdatePrice=changeValue.AutoUpdatePrice
     FROM dbo.PriceChannelItems item
-    JOIN @Changes changeValue ON changeValue.ProductId=item.ProductId AND changeValue.MinimumQuantity=item.MinimumQuantity
+    JOIN @Changes changeValue ON changeValue.PriceChannelItemId=item.PriceChannelItemId
     WHERE item.PriceChannelId=@Id AND item.IsActive=1 AND item.AutoUpdatePrice<>changeValue.AutoUpdatePrice;
+
+    IF @NewItemsJson IS NOT NULL
+        SELECT COUNT(*) FROM dbo.PriceChannelItems WHERE PriceChannelId=@Id AND IsActive=1;
 END

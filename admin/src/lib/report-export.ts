@@ -1,5 +1,6 @@
 import { reportCellText, safeReportFileName, type ReportColumn, type ReportRow } from "./report-viewer";
 import type { SheetData } from "write-excel-file/browser";
+import type { Styles } from "jspdf-autotable";
 
 export type ReportExport = {
   title: string;
@@ -13,11 +14,16 @@ export type ReportExport = {
   logoSource?: string | null;
   keepRowsTogether?: boolean;
   groupedHeaders?: boolean;
+  pdfLayout?: "portrait-document";
 };
 
 export async function exportReportPdf(report: ReportExport) {
   const [{ jsPDF }, { autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
-  const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const portrait = report.pdfLayout === "portrait-document";
+  const pdf = new jsPDF({ orientation: portrait ? "portrait" : "landscape", unit: "mm", format: "a4" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const right = pageWidth - 12;
   const brandX = report.logoSource ? 36 : 12;
   if (report.logoSource) {
     const image = pdf.getImageProperties(report.logoSource);
@@ -29,29 +35,38 @@ export async function exportReportPdf(report: ReportExport) {
   }
   pdf.setFontSize(10);
   pdf.setFont("helvetica", "bold");
-  const brandLines = pdf.splitTextToSize(report.brandName, 210 - brandX);
+  const brandLines = pdf.splitTextToSize(report.brandName, (portrait ? right : 210) - brandX);
   pdf.text(brandLines, brandX, 13);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
-  const generated = (report.generatedAt ?? new Date()).toLocaleString("es-CO");
-  pdf.text([`Generado: ${generated}`, `Registros: ${report.rows.filter(row => !row.__group).length}`, "Sistema: Auraly"], 220, 12);
-  let headerY = Math.max(31, 13 + brandLines.length * 4.5);
+  if (!portrait) {
+    const generated = (report.generatedAt ?? new Date()).toLocaleString("es-CO");
+    pdf.text([`Generado: ${generated}`, `Registros: ${report.rows.filter(row => !row.__group).length}`, "Sistema: Auraly"], 220, 12);
+  }
+  let headerY = Math.max(portrait && !report.logoSource ? 20 : 31, 13 + brandLines.length * 4.5);
   if (report.brandIdentification) { pdf.text(report.brandIdentification, 12, headerY); headerY += 6; }
-  pdf.setFontSize(7); pdf.setTextColor(15, 118, 110);
-  pdf.text("REPORTE CORPORATIVO", 12, headerY); headerY += 7;
+  if (!portrait) {
+    pdf.setFontSize(7); pdf.setTextColor(15, 118, 110);
+    pdf.text("REPORTE CORPORATIVO", 12, headerY); headerY += 7;
+  }
   pdf.setTextColor(2, 6, 23); pdf.setFont("helvetica", "bold");
   pdf.setFontSize(16);
-  const titleLines = pdf.splitTextToSize(report.title, 270);
+  const titleLines = pdf.splitTextToSize(report.title, right - 12);
   pdf.text(titleLines, 12, headerY); headerY += titleLines.length * 6;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
-  const description = pdf.splitTextToSize(report.description ?? "", 270);
+  const description = pdf.splitTextToSize(report.description ?? "", right - 12);
   pdf.text(description, 12, headerY); headerY += description.length * 4 + 3;
-  pdf.setDrawColor(15, 118, 110); pdf.setLineWidth(.4); pdf.line(12, headerY, 285, headerY);
+  if (portrait) pdf.setDrawColor(148, 163, 184);
+  else pdf.setDrawColor(15, 118, 110);
+  pdf.setLineWidth(.4); pdf.line(12, headerY, right, headerY);
   pdf.setFontSize(8);
-  const footerBrand = pdf.splitTextToSize([report.brandName, report.brandIdentification].filter(Boolean).join(" · "), 250);
+  const footerBrand = pdf.splitTextToSize([report.brandName, report.brandIdentification].filter(Boolean).join(" · "), right - 35);
   const footerExtraHeight = Math.max(0, footerBrand.length - 1) * 3.5;
   const sections: Array<{heading?:ReportRow;metadata:ReportRow[];rows:ReportRow[]}> = [];
+  const documentHeading: Partial<Styles> = { fontSize: 12, fontStyle: "bold", fillColor: [226, 232, 240], textColor: [15, 23, 42], cellPadding: 3 };
+  const documentMetadata: Partial<Styles> = { fontSize: 9, fontStyle: "normal", fillColor: [248, 250, 252], textColor: [51, 65, 85] };
+  const documentTotal: Partial<Styles> = { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: "bold", fontSize: 11 };
   for (const row of report.rows) {
     if (report.groupedHeaders && row.__groupLevel === 1) sections.push({heading:row,metadata:[],rows:[]});
     else {
@@ -62,32 +77,42 @@ export async function exportReportPdf(report: ReportExport) {
     }
   }
   let nextY = headerY + 6;
+  const pagesWithFooter = new Set<number>();
   for (const section of sections) {
     autoTable(pdf, {
     startY: nextY,
     margin: { left: 12, right: 12, bottom: 15 + footerExtraHeight },
     head: [...(section.heading ? [[{content:String(section.heading.__group),colSpan:report.columns.length,
-      styles:{fontSize:10,fontStyle:"bold" as const}}],
+      styles: portrait ? documentHeading : { fontSize: 10, fontStyle: "bold" as const }}],
       ...section.metadata.map(row=>[{content:String(row.__group),colSpan:report.columns.length,
-        styles:{fontSize:7,fontStyle:"normal" as const}}])] : []),report.columns.map(column => column.label)],
+        styles: portrait ? documentMetadata : { fontSize: 7, fontStyle: "normal" as const }}])] : []),report.columns.map(column => column.label)],
     body: section.rows.map(row => row.__group
       ? [{ content: String(row.__group), colSpan: report.columns.length, styles: row.__groupLevel === 1
           ? { fillColor: [15, 118, 110], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 10 }
-          : { fillColor: [220, 245, 240] } }]
-      : report.columns.map(column => {
+          : { fillColor: portrait ? [248, 250, 252] : [220, 245, 240] } }]
+      : portrait && row.__emphasis === "total" ? [
+          { content: reportCellText(report.columns[0], row), styles: documentTotal },
+          { content: report.columns.slice(1).map(column => reportCellText(column, row)).filter(Boolean).join(" · "),
+            colSpan: report.columns.length - 1, styles: { ...documentTotal, halign: "right" } },
+        ] : report.columns.map(column => {
+          if (portrait && row.__emphasis === "subtotal") return { content: reportCellText(column, row),
+            styles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" } };
           const color=column.cellStyle?.(row);
           return color ? {content:reportCellText(column,row),styles:{fillColor:color.backgroundColor,textColor:color.textColor}}
             : reportCellText(column,row);
         })),
-    styles: { fontSize: report.columns.length > 10 ? 6 : 8, overflow: "linebreak" },
+    styles: { fontSize: portrait ? 9 : report.columns.length > 10 ? 6 : 8, overflow: "linebreak" },
     columnStyles: Object.fromEntries(report.columns.map((column,index) => [index, { halign: column.align ?? "left" }])),
-    headStyles: { fillColor: [15, 118, 110] },
+    headStyles: portrait ? { fillColor: [51, 65, 85], cellPadding: 2.5 } : { fillColor: [15, 118, 110] },
     rowPageBreak: report.keepRowsTogether ? "avoid" : "auto",
     didDrawPage: data => {
       nextY=(data.cursor?.y ?? nextY)+8;
+      const page = pdf.getNumberOfPages();
+      if (pagesWithFooter.has(page)) return;
+      pagesWithFooter.add(page);
       pdf.setFontSize(8);
-      pdf.text(footerBrand, 12, 202 - footerExtraHeight);
-      pdf.text(`Auraly · ${pdf.getNumberOfPages()}`, 285, 202, { align: "right" });
+      pdf.text(footerBrand, 12, pageHeight - 8 - footerExtraHeight);
+      pdf.text(`Auraly · ${page}`, right, pageHeight - 8, { align: "right" });
     },
   });
   }

@@ -12,19 +12,22 @@ public sealed class SqlDispatchSettlementActivation(
     IDispatchSettlementSignalPublisher publisher,
     ILogger<SqlDispatchSettlementActivation> logger)
 {
-    public Task RecoverAsync(CancellationToken token) => PublishDueAsync(null, null, null, token);
+    public Task RecoverAsync(CancellationToken token) => PublishDueAsync(null, null, null, null, token);
 
     public Task PublishAcceptedAsync(Guid businessId, Guid dispatchId, string key, CancellationToken token) =>
-        PublishDueAsync(businessId, dispatchId, key, token);
+        PublishDueAsync(businessId, dispatchId, key, null, token);
 
-    private async Task PublishDueAsync(Guid? business, Guid? dispatch, string? key, CancellationToken token)
+    public Task PublishReadyAsync(Guid businessId, Guid operationId, CancellationToken token) =>
+        PublishDueAsync(businessId, null, null, operationId, token);
+
+    private async Task PublishDueAsync(Guid? business, Guid? dispatch, string? key, Guid? operationId, CancellationToken token)
     {
         var lease = Guid.NewGuid();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
         budget.CancelAfter(business is null ? TimeSpan.FromSeconds(90) : TimeSpan.FromSeconds(2));
         try
         {
-            var signals = await ClaimAsync(lease, business, dispatch, key, budget.Token);
+            var signals = await ClaimAsync(lease, business, dispatch, key, operationId, budget.Token);
             if (signals.Count == 0)
                 return;
             var accepted = new ConcurrentBag<Guid>();
@@ -56,17 +59,19 @@ public sealed class SqlDispatchSettlementActivation(
         }
         catch (Exception error) when (!token.IsCancellationRequested)
         {
-            logger.LogWarning(error, "Dispatch settlement activation could not be confirmed for scope {BusinessId}/{DispatchId}.",
-                business, dispatch);
+            logger.LogWarning(error, "Dispatch settlement activation could not be confirmed for {BusinessId}/{DispatchId}/{OperationId}.",
+                business, dispatch, operationId);
         }
     }
 
     private async Task<IReadOnlyList<DispatchSettlementSignal>> ClaimAsync(Guid lease, Guid? business,
-        Guid? dispatch, string? key, CancellationToken token)
+        Guid? dispatch, string? key, Guid? operationId, CancellationToken token)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
-        var scope = business is null ? "" : "AND BusinessId=@Business AND DispatchId=@Dispatch AND IdempotencyKey=@Key";
+        var scope = business is null ? "" : operationId is not null
+            ? "AND BusinessId=@Business AND DispatchSettlementOperationId=@Operation"
+            : "AND BusinessId=@Business AND DispatchId=@Dispatch AND IdempotencyKey=@Key";
         await using var command = new SqlCommand($"""
             SET NOCOUNT ON;
             SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
@@ -91,8 +96,13 @@ public sealed class SqlDispatchSettlementActivation(
         if (business is { } id)
         {
             command.Parameters.AddWithValue("@Business", id);
-            command.Parameters.Add("@Dispatch", SqlDbType.UniqueIdentifier).Value = dispatch!;
-            command.Parameters.Add("@Key", SqlDbType.NVarChar, 128).Value = key!;
+            if (operationId is { } operation)
+                command.Parameters.AddWithValue("@Operation", operation);
+            else
+            {
+                command.Parameters.Add("@Dispatch", SqlDbType.UniqueIdentifier).Value = dispatch!;
+                command.Parameters.Add("@Key", SqlDbType.NVarChar, 128).Value = key!;
+            }
         }
         var signals = new List<DispatchSettlementSignal>();
         await using var reader = await command.ExecuteReaderAsync(token);

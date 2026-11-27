@@ -33,7 +33,7 @@ public interface IDispatchSettlementPreparationStore
     Task<IReadOnlyList<DispatchReturnWork>> LoadReturnsAsync(DispatchSettlementWork operation, CancellationToken token);
     Task<IReadOnlyList<DispatchPaymentWork>> LoadPaymentsAsync(DispatchSettlementWork operation, CancellationToken token);
     Task<DispatchFinancialWork> EnsureCashDifferenceDocumentAsync(DispatchSettlementWork operation, CancellationToken token);
-    Task AdvanceAsync(DispatchSettlementWork operation, IReadOnlyList<DispatchSettlementPrerequisite> prerequisites,
+    Task<bool> AdvanceAsync(DispatchSettlementWork operation, IReadOnlyList<DispatchSettlementPrerequisite> prerequisites,
         CancellationToken token);
     Task RescheduleAsync(DispatchSettlementWork operation, string error, CancellationToken token);
 }
@@ -45,11 +45,11 @@ public sealed class DispatchSettlementPreparation(
     AccountingProcessingCoordinator accounting,
     IDocumentProcessingSignalPublisher documents)
 {
-    public async Task ProcessAsync(DispatchSettlementSignal signal, CancellationToken token)
+    public async Task<bool> ProcessAsync(DispatchSettlementSignal signal, CancellationToken token)
     {
         var operation = await store.ClaimAsync(signal, token);
         if (operation is null)
-            return;
+            return false;
         try
         {
             IReadOnlyList<DispatchSettlementPrerequisite> prerequisites = [];
@@ -81,7 +81,7 @@ public sealed class DispatchSettlementPreparation(
                 default:
                     throw new InvalidOperationException("La etapa de preparación del despacho no es válida.");
             }
-            await store.AdvanceAsync(operation, prerequisites, token);
+            return await store.AdvanceAsync(operation, prerequisites, token);
         }
         catch (Exception error) when (!token.IsCancellationRequested)
         {

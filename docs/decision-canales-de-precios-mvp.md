@@ -250,6 +250,7 @@ Reglas:
 - `MarginOverLatestCost` y `FixedMarginOverAverageCost` no aceptan valores negativos ni márgenes iguales o superiores a 100%;
 - los descuentos sobre precio público y los precios escalonados usan como piso el costo base de la sede vigente en Preparar/Cambiar precio;
 - cada escala de precio por cantidad puede conservar un margen objetivo y marcar «Actualizar precio»; al publicar un lote de costos/precios, las escalas marcadas se recalculan con el costo base de la sede y se actualizan dentro de la misma transacción del lote. Una falla revierte precios base y canales juntos;
+- al agregar un producto a un canal, sus nuevas escalas se preparan en la lista local y se confirman juntas con «Guardar canal». La vista actualiza el campo dependiente al digitar. El guardado usa el cálculo canónico con el costo vigente y acepta solo cantidades positivas y únicas por producto dentro del canal. Un conflicto con una escala existente revierte el guardado completo del canal;
 - `ProductMarginAdjustment` permite restar puntos, pero nunca produce un margen menor que 0%;
 - el cambio de costo genera un delta de catálogo para las cajas afectadas.
 
@@ -461,4 +462,9 @@ Todos los importes y porcentajes usan `DECIMAL`.
   reemplaza una edición posterior ni agrega otra lectura para reconstruirla.
   Mientras llega el costo autorizado de un producto nuevo, se puede digitar la
   cantidad; precio y guardado esperan ese costo para validar el margen y el piso.
+- La lista del canal agrupa las escalas por producto. «Editar» abre todas sus
+  escalas y admite agregar, cambiar o retirar cantidades. Cada fila también se
+  puede retirar individualmente. Al guardar el canal se registran en una sola
+  transacción las nuevas versiones, los retiros y la selección de sincronización.
+  El detalle usa los precios confirmados por esa respuesta.
 - Las tablas pertenecen a `Auraly.Database.sqlproj`.

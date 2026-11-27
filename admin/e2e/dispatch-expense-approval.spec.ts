@@ -30,7 +30,7 @@ test("la revisión aprueba con Gastos, rechaza sin descontar y reutiliza el resu
     else if(path.endsWith("/report-reject/review")){rejections++;expect(request.postDataJSON().decision).toBe("Rejected");execution={...execution,expenses:execution.expenses.map(item=>item.expenseId==="report-reject"?{...item,approvalStatus:"Rejected",approvedAmount:0}:item)};body=execution;}
     await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(body)});
   });
-  await page.goto("/dashboard/cash-differences");await page.getByRole("row").filter({hasText:"DSP-GASTOS"}).getByRole("button",{name:"Ver despacho",exact:true}).click();
+  await page.goto("/dashboard/cash-differences");await page.getByRole("row").filter({hasText:"DSP-GASTOS"}).getByRole("button",{name:"Conciliar",exact:true}).click();
   const review=page.getByRole("dialog",{name:"Recepción y liquidación del despacho",exact:true});
   await review.getByRole("button",{name:"Aprobar",exact:true}).first().click();
   const approval=page.getByRole("dialog",{name:"Aprobar gasto del despacho",exact:true});await expect(approval).toContainText("Peaje reportado");

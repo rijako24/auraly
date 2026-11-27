@@ -26,13 +26,13 @@ public sealed partial class SqlAccountingPostingProcessor(
     IPosSynchronizationOutboxDispatcher synchronization,
     IAccountingPostingCompletionObserver completion)
 {
-    public async Task ProcessAsync(
+    public async Task<Guid?> ProcessAsync(
         Guid documentId,
         string documentType,
         Guid businessId,
         CancellationToken cancellationToken)
     {
-        if (!AccountingProcessingPolicy.Supports(documentType)) return;
+        if (!AccountingProcessingPolicy.Supports(documentType)) return null;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -54,7 +54,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
                 await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
-                return;
+                return null;
             }
 
             if (!source.AccountingEntryRequired)
@@ -65,18 +65,18 @@ public sealed partial class SqlAccountingPostingProcessor(
                     await MarkPendingConfigurationAsync(connection, transaction, source,
                         "PaymentMethodConfigurationMissing", "La forma de pago no tiene una cuenta vigente válida para esta operación.", cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
-                    return;
+                    return null;
                 }
                 source = commercialSource;
                 await ApplyFinancialEffectsAsync(
                     connection, transaction, source, cancellationToken);
-                await CompletePostingAsync(connection, transaction, source,
+                var readyDispatch = await CompletePostingAsync(connection, transaction, source,
                     AccountingPostingStatuses.CommercialEffectsApplied, timeProvider.GetUtcNow(), cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
                 await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
-                return;
+                return readyDispatch;
             }
 
             var bankResolution = await ResolveBankAccountsAsync(connection, transaction, source, cancellationToken);
@@ -89,7 +89,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                         : "El documento no se contabilizó: falta un auxiliar bancario único y válido para la sede y transferencia. Revisa el PUC y vuelve a procesar.",
                     cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return;
+                return null;
             }
 
             // Freeze before validation/savepoint so configuration retries keep their classification.
@@ -113,7 +113,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                         : "No active automatic or default cost center is configured for this operation.",
                     cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return;
+                return null;
             }
 
             var periodId = await FindOpenPeriodAsync(
@@ -126,7 +126,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     "No hay un período contable abierto que incluya la fecha del documento.",
                     cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return;
+                return null;
             }
 
             transaction.Save("BeforeFinancialEffects");
@@ -141,7 +141,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                             ? "No se aplicó la conciliación del despacho. Revisa sus formas de pago y la contabilización de las ventas y devoluciones originales."
                         : "La forma de pago no tiene una cuenta vigente válida para esta operación.", cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return;
+                return null;
             }
             source = configuredSource;
             await ApplyFinancialEffectsAsync(
@@ -230,7 +230,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     factsResult.ErrorCode!, factsResult.ErrorMessage!,
                     cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return;
+                return null;
             }
 
             var facts = factsResult.Facts;
@@ -251,7 +251,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     $"Faltan cuentas contables válidas para: {string.Join(", ", missing)}. Revisa la configuración y vuelve a procesar.",
                     cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return;
+                return null;
             }
 
             var proposedLines = facts.BuildLines(accountIds, costCenterId).ToArray();
@@ -266,7 +266,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
                 await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
-                return;
+                return null;
             }
             // A free receipt can move physical units without a monetary effect.
             // Complete its existing job; never fabricate zero-valued journal lines.
@@ -280,10 +280,10 @@ public sealed partial class SqlAccountingPostingProcessor(
                 await synchronization.DispatchPendingAsync(
                     source.TenantId, source.BusinessId, CancellationToken.None);
                 await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
-                return;
+                return null;
             }
             var lines = AccountingJournal.Validate(proposedLines);
-            await InsertEntryAsync(
+            var readyDispatchOperationId = await InsertEntryAsync(
                 connection, transaction, source, periodId.Value, facts.Description,
                 lines, cancellationToken);
             if (source.DocumentType == AccountingManualDocumentTypes.OpeningBalance)
@@ -293,6 +293,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             await synchronization.DispatchPendingAsync(
                 source.TenantId, source.BusinessId, CancellationToken.None);
             await completion.ObserveAsync(source.TenantId, source.BusinessId, source.DocumentId, source.DocumentType, CancellationToken.None);
+            return readyDispatchOperationId;
         }
         catch (Exception error)
         {
@@ -2615,7 +2616,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         DefaultIgnoreCondition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    private async Task InsertEntryAsync(
+    private async Task<Guid?> InsertEntryAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         Guid periodId, string description, IReadOnlyList<JournalLine> lines,
         CancellationToken cancellationToken)
@@ -2745,10 +2746,10 @@ public sealed partial class SqlAccountingPostingProcessor(
                 throw new DBConcurrencyException("No se guardaron todas las partidas del asiento contable.");
             source=source with{ResolvedBankAccountsJson=persisted.GetString(1)};
         }
-        await CompletePostingAsync(connection, transaction, source, AccountingPostingStatuses.Posted, now, cancellationToken, lines);
+        return await CompletePostingAsync(connection, transaction, source, AccountingPostingStatuses.Posted, now, cancellationToken, lines);
     }
 
-    private static async Task CompletePostingAsync(SqlConnection connection,
+    private static async Task<Guid?> CompletePostingAsync(SqlConnection connection,
         SqlTransaction transaction, SourceEnvelope source, string status, DateTimeOffset now,
         CancellationToken cancellationToken, IReadOnlyList<JournalLine>? lines = null)
     {
@@ -2773,7 +2774,7 @@ public sealed partial class SqlAccountingPostingProcessor(
               EXEC dbo.DispatchSettlementOperationComplete @Operation,@Dispatch,@Actor;
             END;
             IF @Completed=1 AND @DocumentType IN(N'SalesReturn',N'ReceivablePayment')
-              EXEC dbo.DispatchSettlementChildChanged @BusinessId,@DocumentId,@DocumentType;
+              EXEC dbo.DispatchSettlementChildChanged @BusinessId,@DocumentId,@DocumentType,@ReadyDispatchOperationId OUTPUT;
             SELECT @Completed;
             """, connection, transaction);
         complete.Parameters.AddWithValue("@Now", now);
@@ -2792,8 +2793,11 @@ public sealed partial class SqlAccountingPostingProcessor(
         complete.Parameters.Add("@AppliedBanks", SqlDbType.NVarChar, -1).Value = lines is null
             ? DBNull.Value : JsonSerializer.Serialize(appliedBanks);
         AddSource(complete, source);
+        var readyDispatch = complete.Parameters.Add("@ReadyDispatchOperationId", SqlDbType.UniqueIdentifier);
+        readyDispatch.Direction = ParameterDirection.Output;
         if (Convert.ToInt32(await complete.ExecuteScalarAsync(cancellationToken)) != 1)
             throw new DBConcurrencyException("The accounting posting could not be completed.");
+        return readyDispatch.Value is Guid operationId ? operationId : null;
     }
 
     private static async Task<string> NextVoucherNumberAsync(SqlConnection connection, SqlTransaction transaction, Guid tenantId, DateTimeOffset now, CancellationToken token)

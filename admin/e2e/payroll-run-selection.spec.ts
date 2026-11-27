@@ -63,17 +63,26 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await page.goto("/dashboard/payroll?section=runs");
     await page.getByRole("button",{name:/2026-01-01 — 2026-01-31/}).click();
     await expect(page.getByText("No fue posible cargar los trabajadores de la liquidación.",{exact:true})).toBeVisible();
-    await expect(page.getByRole("button",{name:"Recalcular",exact:true})).toBeDisabled();
+    await expect(page.getByRole("button",{name:"Guardar cambios",exact:true})).toHaveCount(0);
     failPage=false;await page.getByRole("button",{name:"Reintentar trabajadores",exact:true}).click();
+    const actions=page.getByRole("group",{name:"Acciones de la liquidación"});
+    const recalculate=actions.getByRole("button",{name:"Guardar cambios",exact:true});
     const selection=page.getByRole("region",{name:"Trabajadores de la liquidación",exact:true});
     await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(50);
     const bounds=await selection.evaluate(element=>element.getBoundingClientRect().toJSON());
     expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(viewport.width);
-    const calculate = await selection.getByRole("button", { name: "Recalcular", exact: true }).evaluate(element => element.getBoundingClientRect().toJSON());
+    const refreshButton = actions.getByRole("button", { name: "Actualizar liquidación", exact: true });
+    await expect(refreshButton).toHaveText("");
+    await expect(selection.getByRole("checkbox",{name:"Incluir todos los trabajadores elegibles",exact:true})).toBeChecked();
+    await selection.getByRole("checkbox",{name:"Incluir todos los trabajadores elegibles",exact:true}).uncheck();
+    const refresh = (await refreshButton.boundingBox())!;
+    const calculate = (await recalculate.boundingBox())!;
     const filters = await selection.getByRole("textbox", { name: "Buscar trabajador de la liquidación" }).evaluate(element => element.getBoundingClientRect().toJSON());
-    expect(calculate.left).toBeGreaterThanOrEqual(0);
-    expect(calculate.right).toBeLessThanOrEqual(viewport.width);
-    expect(calculate.bottom).toBeLessThanOrEqual(filters.top);
+    expect(refresh.x).toBeGreaterThanOrEqual(0);
+    expect(calculate.x).toBeGreaterThan(refresh.x + refresh.width);
+    expect(calculate.x + calculate.width).toBeLessThanOrEqual(viewport.width);
+    expect(Math.abs(calculate.y + calculate.height / 2 - refresh.y - refresh.height / 2)).toBeLessThanOrEqual(2);
+    expect(calculate.y + calculate.height).toBeLessThanOrEqual(filters.top);
     for(const name of ["Buscar","Siguiente trabajadores"]){
         const control=await selection.getByRole("button",{name,exact:true}).evaluate(element=>element.getBoundingClientRect().toJSON());
         expect(control.left).toBeGreaterThanOrEqual(0);expect(control.right).toBeLessThanOrEqual(viewport.width);
@@ -82,8 +91,6 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
         const table=await selection.getByRole("table").evaluate(element=>({viewport:element.parentElement!.clientWidth,content:element.parentElement!.scrollWidth}));
         expect(table.content).toBeGreaterThan(table.viewport);
     }
-    await expect(selection.getByRole("checkbox",{name:"Incluir todos los trabajadores elegibles",exact:true})).toBeChecked();
-    await selection.getByRole("checkbox",{name:"Incluir todos los trabajadores elegibles",exact:true}).uncheck();
     await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeDisabled();
     const first=selection.getByRole("checkbox",{name:"Incluir Trabajador 00, contrato C-0",exact:true});
     await first.focus();await page.keyboard.press("Space");await expect(first).toBeChecked();await expect(first).toBeFocused();
@@ -98,12 +105,13 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("");
     await selection.getByRole("button",{name:"Buscar",exact:true}).click();
     await expect(first).toBeChecked();
-    await selection.getByRole("button",{name:"Recalcular",exact:true}).click();
+    await recalculate.click();
     await expect(page.getByText("Cálculo no disponible",{exact:true})).toBeVisible();
     await expect(first).toBeChecked();
     const readsBeforeCalculation=selectionReads;
-    await selection.getByRole("button",{name:"Recalcular",exact:true}).click();
-    await expect(first).toBeDisabled();await expect(selection.getByRole("button",{name:"Calculando…",exact:true})).toBeDisabled();
+    await recalculate.click();
+    await expect(first).toBeDisabled();await expect(actions.getByRole("button",{name:"Calculando…",exact:true})).toBeDisabled();
+    await expect(refreshButton).toBeDisabled();
     release();
     await expect(page.locator("summary")).toHaveCount(2);
     await expect(first).toBeChecked();
@@ -148,13 +156,13 @@ test(`selección paginada: teclado, búsqueda, reintento y cálculo sin refetch 
     await page.screenshot({path:testInfo.outputPath(`seleccion-filtros-${viewport.width}.png`)});
     await first.uncheck();
     run={...run,rowVersion:"AAAAAAAAAAM="};
-    await page.getByRole("button",{name:"Actualizar liquidación",exact:true}).click();
+    await refreshButton.click();
     await expect(selection.getByText("La liquidación cambió. Descarta la selección anterior antes de continuar.",{exact:true})).toBeVisible();
     await expect(first).not.toBeChecked();
-    await expect(selection.getByRole("button",{name:"Recalcular",exact:true})).toBeDisabled();
+    await expect(recalculate).toBeDisabled();
     await selection.getByRole("button",{name:"Descartar selección",exact:true}).click();
     await expect(first).toBeChecked();
-    await expect(selection.getByRole("button",{name:"Recalcular",exact:true})).toBeEnabled();
+    await expect(recalculate).toHaveCount(0);
     const readsBeforeApprove=selectionReads;
     await page.getByRole("button",{name:"Aprobar y contabilizar",exact:true}).click();
     await expect(selection).toHaveCount(0);
@@ -181,7 +189,7 @@ test("sólo lectura no carga el selector de trabajadores",async({page,baseURL})=
     detailUnavailable=false;await page.getByRole("button",{name:"Reintentar detalle",exact:true}).click();
     await expect(page.getByRole("button",{name:"Reintentar detalle",exact:true})).toHaveCount(0);
     await expect(page.getByText("Seleccionar trabajadores",{exact:true})).toHaveCount(0);
-    await expect(page.getByRole("button",{name:"Calcular nómina",exact:true})).toHaveCount(0);
+    await expect(page.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
 });
 
 test("sin contratos elegibles explica periodicidad y vigencia antes de liquidar",async({page,baseURL})=>{
@@ -201,6 +209,6 @@ test("sin contratos elegibles explica periodicidad y vigencia antes de liquidar"
     await page.goto("/dashboard/payroll");
     await page.getByRole("button",{name:/2026-12-01 — 2026-12-15/}).click();
     await expect(page.getByText("No hay contratos activos y vigentes que coincidan con la periodicidad de esta liquidación. Revisa la periodicidad y las fechas de los contratos.",{exact:true})).toBeVisible();
-    await expect(page.getByRole("button",{name:"Calcular nómina",exact:true})).toBeDisabled();
+    await expect(page.getByRole("button",{name:"Reintentar cálculo",exact:true})).toBeDisabled();
     expect(candidateReads).toBe(1);
 });

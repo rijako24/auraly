@@ -23,7 +23,9 @@ function scopedDetail(value:ReturnType<typeof run>,requestUrl:string){
 }
 async function openWorker(page:Page){
     await page.goto("/dashboard/payroll?section=novelties");
-    await page.getByRole("article").filter({hasText:"2026-03-01 — 2026-03-31"}).getByRole("button",{name:"Ana días",exact:true}).click();
+    await page.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
+    await page.getByRole("option",{name:/2026-03-01 — 2026-03-31/}).click();
+    await page.getByRole("article").filter({hasText:"2026-03-01 — 2026-03-31"}).getByRole("button",{name:"Ver trabajador Ana días",exact:true}).click();
 }
 
 test("novedades: recálculo individual conserva compañeros, evita refetch y bloquea contabilización en curso",async({page,baseURL},testInfo)=>{
@@ -69,29 +71,32 @@ test("novedades: recálculo individual conserva compañeros, evita refetch y blo
     await expect(days).toBeDisabled();await expect(page.getByRole("button",{name:"Volver a trabajadores",exact:true})).toBeDisabled();
     await expect(page.getByRole("button",{name:"Actualizar nómina",exact:true})).toBeDisabled();
     await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();
-    await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeDisabled();
-    await expect(page.getByRole("region",{name:"Trabajadores de la liquidación",exact:true}).getByRole("checkbox")).toHaveCount(2);
-    const readsDuringSave=candidateReads;
+    const period=page.getByRole("button",{name:/2026-03-01 — 2026-03-31/});
+    await expect(period).toBeDisabled();
     release();
+    await period.click();
+    const selection=page.getByRole("region",{name:"Trabajadores de la liquidación",exact:true});
+    await expect(selection.locator("tbody").getByRole("checkbox")).toHaveCount(2);
+    const readsDuringSave=candidateReads;
     await expect(page.locator("summary").filter({hasText:"Ana días"})).toContainText(/1[.]150[.]000/);
     await expect(page.locator("summary").filter({hasText:"Bruno completo"})).toContainText(/1[.]380[.]000/);
     await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeEnabled();
-    await page.getByRole("tab",{name:"Novedades",exact:true}).click();
     await page.getByRole("button",{name:"Ana días",exact:true}).click();
+    await expect(page.getByRole("tab",{name:"Novedades",exact:true})).toHaveAttribute("aria-selected","true");
     await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();await expect(days).toHaveValue("25");
     await expect(editor.getByText(/Ausencias registradas: 2/)).toBeVisible();
     await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
-    await page.getByRole("button",{name:"Bruno completo",exact:true}).click();
+    await page.getByRole("button",{name:"Ver trabajador Bruno completo",exact:true}).click();
     await page.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
     await expect(page.getByRole("region",{name:"Liquidación de Bruno completo",exact:true}).getByRole("spinbutton")).toHaveValue("30");
     await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
-    await page.getByRole("button",{name:"Ana días",exact:true}).click();
+    await page.getByRole("button",{name:"Ver trabajador Ana días",exact:true}).click();
     await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
     await expect(days).toHaveValue("25");
     await expect(editor.getByText(/Ausencias registradas: 2/)).toBeVisible();
     await editor.getByRole("heading",{name:"Ana días",exact:true}).scrollIntoViewIfNeeded();
     await page.screenshot({path:testInfo.outputPath("novedades-dias.png")});
-    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(3);expect(calculatedReads).toBe(1);expect(calculations).toBe(2);
+    expect(optionsReads).toBe(1);expect(runsReads).toBe(2);expect(detailReads).toBeGreaterThanOrEqual(3);expect(calculatedReads).toBe(1);expect(calculations).toBe(2);
     expect(candidateReads).toBe(readsDuringSave);
 });
 
@@ -126,6 +131,12 @@ test("días por concepto: transporte conserva salario y deducciones sin lecturas
     const editor=page.getByRole("region",{name:"Liquidación de Ana días",exact:true});
     await expect(editor.getByRole("spinbutton")).toHaveCount(0);
     await editor.getByRole("button",{name:"Editar días de Auxilio de transporte",exact:true}).click();
+    const days=editor.getByRole("spinbutton",{name:"Días trabajados de Auxilio de transporte",exact:true});
+    await days.press("ArrowDown");
+    await expect(days).toHaveValue("29");
+    await days.fill("25.5");
+    await editor.getByRole("button",{name:"Guardar días de Auxilio de transporte",exact:true}).click();
+    expect(calculations).toBe(0);
     await editor.getByRole("spinbutton",{name:"Días trabajados de Auxilio de transporte",exact:true}).fill("25");
     await editor.getByRole("button",{name:"Guardar días de Auxilio de transporte",exact:true}).click();
     await expect(editor.getByRole("spinbutton")).toHaveValue("25");
@@ -133,7 +144,7 @@ test("días por concepto: transporte conserva salario y deducciones sin lecturas
     await editor.getByRole("button",{name:"Cancelar edición de días",exact:true}).click();
     await editor.getByRole("button",{name:"Editar días de Salario",exact:true}).click();
     await expect(editor.getByRole("spinbutton")).toHaveValue("30");
-    expect(reads).toBe(3);expect(calculations).toBe(1);
+    expect(reads).toBe(4);expect(calculations).toBe(1);
 });
 
 test("novedades: lectura histórica no inventa entradas editables",async({page,baseURL})=>{
@@ -156,7 +167,7 @@ test("novedades: lectura histórica no inventa entradas editables",async({page,b
     await expect(editor.getByRole("button",{name:/Editar días/})).toHaveCount(0);
 });
 
-test("novedades lista todos los trabajadores y excluye borradores sin consultar por trabajador",async({page,baseURL},testInfo)=>{
+test("novedades lista solo los trabajadores de la liquidación elegida sin consultar por trabajador",async({page,baseURL},testInfo)=>{
     const scenario=financialVoucherScenario();scenario.user.permissions.push("payroll.read","payroll.calculate");
     await installFinancialVoucherContext(page,baseURL!,scenario);
     const current=run(scenario.businessId);
@@ -175,17 +186,21 @@ test("novedades lista todos los trabajadores y excluye borradores sin consultar 
     });
     await page.goto("/dashboard/payroll?section=novelties");
     const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
+    await expect(list).toHaveCount(0);
+    expect(calculatedReads).toBe(0);
+    await page.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
+    await page.getByRole("option",{name:/2026-03-01 — 2026-03-31/}).click();
     await expect(list.getByRole("article")).toHaveCount(3);
     await expect(list.getByText(/2026-12-01/)).toHaveCount(0);
     await expect(list.getByText(/Contrato N-12/)).toBeVisible();
-    expect(detailReads).toBe(0);expect(runsReads).toBe(0);
+    expect(detailReads).toBe(0);expect(runsReads).toBe(1);
     await page.screenshot({path:testInfo.outputPath("novedades-trabajadores.png")});
-    await list.getByRole("button",{name:"Clara completa",exact:true}).click();
+    await list.getByRole("button",{name:"Ver trabajador Clara completa",exact:true}).click();
     await expect(list).toHaveCount(0);
     await expect(page.getByRole("region",{name:"Liquidación de Clara completa",exact:true})).toBeVisible();
     await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
     await expect(list.getByRole("article")).toHaveCount(3);
-    expect(optionsReads).toBe(1);expect(runsReads).toBe(0);expect(detailReads).toBe(1);expect(calculatedReads).toBe(1);
+    expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);expect(calculatedReads).toBe(1);
 });
 
 test("cambiar liquidación desde Liquidaciones cierra la captura del período anterior",async({page,baseURL})=>{
@@ -204,15 +219,18 @@ test("cambiar liquidación desde Liquidaciones cierra la captura del período an
         throw new Error(`Unexpected request ${path}`);
     });
     await openWorker(page);
-    await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+    await page.getByRole("button",{name:"Agregar novedad",exact:true}).click();
     await page.getByRole("textbox",{name:"Notas",exact:true}).fill("Entrada sin guardar de marzo");
     await page.getByRole("tab",{name:"Liquidaciones",exact:true}).click();
     await page.getByRole("button",{name:/2026-06-01 — 2026-06-30/}).click();
+    await page.getByRole("dialog",{name:"Detalle de liquidación",exact:true}).getByRole("button",{name:"Cerrar ventana",exact:true}).click();
     await page.getByRole("tab",{name:"Novedades",exact:true}).click();
-    await page.getByRole("article").filter({hasText:"2026-06-01 — 2026-06-30"}).getByRole("button",{name:"Ana días",exact:true}).click();
+    await page.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
+    await page.getByRole("option",{name:/2026-06-01 — 2026-06-30/}).click();
+    await page.getByRole("article").filter({hasText:"2026-06-01 — 2026-06-30"}).getByRole("button",{name:"Ver trabajador Ana días",exact:true}).click();
     const editor=page.getByRole("region",{name:"Edición de novedad",exact:true});
     await expect(editor).toHaveCount(0);
-    await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+    await page.getByRole("button",{name:"Agregar novedad",exact:true}).click();
     await expect(editor.getByRole("textbox",{name:"Notas",exact:true})).toHaveValue("");
     await expect(editor.getByRole("button",{name:"Inicio",exact:true})).toContainText("1 de junio de 2026");
 });

@@ -363,6 +363,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> SaveChannelSettingsAsync(
         HttpContext context, Guid id, SavePriceChannelSettingsRequest request,
         SqlServerConnectionFactory connections,
+        TimeProvider timeProvider,
         IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
@@ -381,6 +382,19 @@ public static class PriceSegmentsApi
                 decimal.Round(item.MinimumQuantity, 6) != item.MinimumQuantity) ||
             itemSync.GroupBy(item => (item.ProductId, item.MinimumQuantity)).Any(group => group.Count() > 1))
             return Results.Problem("La selección de sincronización no es válida; guarda como máximo 500 excepciones por vez.", statusCode: 400);
+        var newItems = request.NewItems ?? [];
+        if (newItems.Count > 500 || newItems.Any(item => item.ProductId == Guid.Empty || item.MinimumQuantity <= 0 ||
+                item.MinimumQuantity > 9999999999999.999999m || decimal.Round(item.MinimumQuantity, 6) != item.MinimumQuantity) ||
+            newItems.GroupBy(item => (item.ProductId, item.MinimumQuantity)).Any(group => group.Count() > 1))
+            return Results.Problem("Agrega hasta 500 escalas con cantidades mayores que cero y sin repetir por producto.", statusCode: 400);
+        var retiredItems = request.RetiredItems ?? [];
+        if (retiredItems.Count > 500 || retiredItems.Any(item => item.ProductId == Guid.Empty || item.MinimumQuantity <= 0 ||
+                item.MinimumQuantity > 9999999999999.999999m || decimal.Round(item.MinimumQuantity, 6) != item.MinimumQuantity) ||
+            retiredItems.Distinct().Count() != retiredItems.Count)
+            return Results.Problem("Selecciona hasta 500 escalas vigentes y sin repetir para editar o retirar.", statusCode: 400);
+        var changesTiers = newItems.Count > 0 || retiredItems.Count > 0;
+        if (changesTiers && strategy != PriceChannelStrategies.TieredProductPrice)
+            return Results.Problem("Las escalas requieren el modo por producto y cantidad.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
@@ -389,6 +403,11 @@ public static class PriceSegmentsApi
         if (!await access.HasPermissionForBusinessesAsync(
                 identity.UserId, identity.TenantId, businessIds, "pricing.segments.manage", ct))
             return Results.Forbid();
+        var addedItems = await NormalizeTierItemsAsync(connection, transaction, identity.BusinessId,
+            newItems.Select(item => new TierInput(item.ProductId, item.Amount, item.MinimumQuantity,
+                item.TargetMarginPercent, item.AutoUpdatePrice, item.InputMode)).ToArray(), timeProvider.GetUtcNow(), ct);
+        if (addedItems is null)
+            return Results.Problem("Verifica el producto, el costo más IVA y el margen de cada escala antes de guardar.", statusCode: 400);
         await using var command = Procedure("dbo.PriceChannelSettingsUpdate", connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@Id", id);
@@ -397,9 +416,17 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@Value", (object?)value ?? DBNull.Value);
         command.Parameters.AddWithValue("@AutoUpdatePrice", (object?)request.AutoUpdatePrice ?? DBNull.Value);
         command.Parameters.Add("@ItemSyncJson", System.Data.SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(itemSync);
+        int? productCount = null;
         try
         {
-            await command.ExecuteNonQueryAsync(ct);
+            if (changesTiers)
+            {
+                command.Parameters.Add("@NewItemsJson", System.Data.SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(addedItems);
+                if (retiredItems.Count > 0)
+                    command.Parameters.Add("@RetiredItemsJson", System.Data.SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(retiredItems);
+                productCount = (int)(await command.ExecuteScalarAsync(ct))!;
+            }
+            else await command.ExecuteNonQueryAsync(ct);
             await transaction.CommitAsync(ct);
         }
         catch (SqlException exception) when (exception.Number == 51004)
@@ -412,10 +439,20 @@ public static class PriceSegmentsApi
             await transaction.RollbackAsync(ct);
             return Results.Problem(exception.Message, statusCode: 400);
         }
+        catch (SqlException exception) when (exception.Number == 51007)
+        {
+            await transaction.RollbackAsync(ct);
+            return Results.Problem(exception.Message, statusCode: 409);
+        }
+        catch (SqlException exception) when (exception.Number is 51006 or 2601 or 2627)
+        {
+            await transaction.RollbackAsync(ct);
+            return Results.Problem("El canal ya tiene un precio para una de las cantidades seleccionadas. Revisa sus escalas antes de guardar.", statusCode: 409);
+        }
         await SynchronizeAsync(identity.TenantId, businessIds,
             pricingSynchronization, synchronization, ct);
-        return request.AutoUpdatePrice.HasValue || itemSync.Count > 0
-            ? Results.Ok(new { autoUpdatePrice = request.AutoUpdatePrice, itemSync })
+        return request.AutoUpdatePrice.HasValue || itemSync.Count > 0 || changesTiers
+            ? Results.Ok(new { autoUpdatePrice = request.AutoUpdatePrice, itemSync, addedItems, productCount })
             : Results.NoContent();
     }
 
@@ -550,7 +587,7 @@ public static class PriceSegmentsApi
         decimal MinimumQuantity, decimal? TargetMarginPercent,
         bool AutoUpdatePrice, string? InputMode);
     private sealed record NormalizedTierItem(Guid ProductId, decimal Amount,
-        decimal MinimumQuantity, decimal? TargetMarginPercent, bool AutoUpdatePrice);
+        decimal MinimumQuantity, decimal? TargetMarginPercent, bool AutoUpdatePrice, decimal CostBasisAmount, decimal SalesTaxRate);
 
     private static async Task<IReadOnlyList<NormalizedTierItem>?> NormalizeTierItemsAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
@@ -595,7 +632,7 @@ public static class PriceSegmentsApi
                 input.AutoUpdatePrice && (cost <= 0 || margin is null or < 0 or >= 100))
                 return null;
             result.Add(new(input.ProductId, amount, input.MinimumQuantity,
-                margin, input.AutoUpdatePrice));
+                margin, input.AutoUpdatePrice, cost, costInfo.SalesTaxRate));
         }
         return result;
     }
@@ -611,7 +648,11 @@ public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amoun
 public sealed record CreatePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);
 public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity,
     decimal? TargetMarginPercent = null, bool AutoUpdatePrice = false, string? InputMode = null);
-public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue, bool? AutoUpdatePrice = null, IReadOnlyList<PriceChannelItemSyncSelection>? ItemSync = null);
+public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue,
+    bool? AutoUpdatePrice = null, IReadOnlyList<PriceChannelItemSyncSelection>? ItemSync = null,
+    IReadOnlyList<CreatePriceSegmentItemRequest>? NewItems = null,
+    IReadOnlyList<PriceChannelTierKey>? RetiredItems = null);
+public sealed record PriceChannelTierKey(Guid ProductId, decimal MinimumQuantity);
 public sealed record PriceChannelExclusion(Guid ExclusionId, string ScopeType, Guid ScopeId,
     string ScopeName, int? CategoryDepth, string? ProductCode);
 public sealed record SavePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);

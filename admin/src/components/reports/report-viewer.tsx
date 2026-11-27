@@ -6,6 +6,7 @@ import { ArrowLeft, Download, Printer, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TenantBrand } from "@/components/brand/tenant-brand";
+import type { ReportExport } from "@/lib/report-export";
 import { filterReportRows, reportCellText, safeReportFileName, toReportCsv, type ReportColumn, type ReportRow } from "@/lib/report-viewer";
 import { tenantsApi } from "@/services/api/tenants";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
@@ -20,9 +21,10 @@ type Props = {
   documentDownloads?: boolean;
   searchable?: boolean;
   groupedHeaders?: boolean;
+  pdfLayout?: ReportExport["pdfLayout"];
 };
 
-export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false, searchable = true, groupedHeaders = false }: Props) {
+export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false, searchable = true, groupedHeaders = false, pdfLayout }: Props) {
   const [search, setSearch] = useState("");
   const [exporting, setExporting] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
       const { exportReportPdf, exportReportExcel } = await import("@/lib/report-export");
       await (format === "pdf" ? exportReportPdf : exportReportExcel)({ title, brandName, brandIdentification, generatedAt,
         description, fileName: fileName ?? title, rows: filtered, columns, groupedHeaders, keepRowsTogether: groupedHeaders,
-        logoSource: branding.data?.logoUrl });
+        logoSource: branding.data?.logoUrl, pdfLayout });
     } catch (error) { setExportError(error instanceof Error ? error.message : "No se pudo exportar."); }
     finally { setExporting(null); }
   }

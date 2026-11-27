@@ -934,7 +934,10 @@ servicios canónicos se conservan en una reentrega.
 
 Cuando un hijo termina, su transacción reevalúa el conjunto esperado. Si el
 hijo terminó antes de registrar la espera, esa misma evaluación al avanzar el
-padre detecta el resultado. La recuperación selecciona intenciones de
+padre detecta el resultado. El procesamiento devuelve la identidad de la
+continuación disponible al disparador tras confirmar la transacción. El
+disparador reclama y publica esa operación por negocio e ID en la misma cola
+contable. La recuperación selecciona intenciones de
 activación vencidas por índice. Una conciliación en espera de hijos queda
 fuera de esa consulta. La conciliación muestra el motivo de un hijo con
 intervención requerida y el último resultado de esa operación.

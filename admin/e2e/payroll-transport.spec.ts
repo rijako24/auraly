@@ -73,9 +73,9 @@ test("cálculo: muestra la respuesta autoritativa sin un segundo GET",async({pag
     await route.fallback();
   });
   await page.goto("/dashboard/payroll?section=runs");await page.getByRole("button",{name:/2026-01-01 — 2026-01-31/}).click();
-  await page.getByRole("button",{name:"Calcular nómina",exact:true}).click();
+  await page.getByRole("button",{name:"Reintentar cálculo",exact:true}).click();
   await expect(page.locator("summary").filter({hasText:"Trabajadora calculada"})).toBeVisible();
-  await expect(page.getByRole("button",{name:"Recalcular",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
   expect(calculations).toBe(1);expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);
 });
 

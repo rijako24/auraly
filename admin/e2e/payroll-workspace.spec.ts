@@ -102,9 +102,11 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
         Object.assign(runs[0],{employees:[updated],rowVersion:"AAAAAAAAAAI=",totalDeductions:130000,netPayable:870000,calculationVersion:2});
         body={...runs[0],isPartialCalculation:true};
       } else if (path.endsWith("/calculate")) {
-        Object.assign(runs[0], { status: "Calculated", employeeCount: 1, totalEarnings: 1000000, totalDeductions: 80000, netPayable: 920000,
+        if(!employees.length){await route.fulfill({status:400,json:{detail:"No hay contratos elegibles para el cálculo."}});return;}
+        const run=runs.find(item=>path.endsWith(`/${item.payrollRunId}/calculate`))!;
+        Object.assign(run, { status: "Calculated", employeeCount: 1, totalEarnings: 1000000, totalDeductions: 80000, netPayable: 920000,
           employees: [{ payrollRunEmployeeId: "run-employee", employmentId: employees[0].employmentId, partyId: employees[0].partyId,
-            employeeName: "Elena Prueba", workedDays: 30, earnings: 1000000, deductions: 80000, employerContributions: 0, provisions: 0, netPayable: 920000, lines: [] }] }); body = runs[0]; }
+            employeeName: "Elena Prueba", workedDays: 30, baseWorkedDays:30, earnings: 1000000, deductions: 80000, employerContributions: 0, provisions: 0, netPayable: 920000, lines: [] }] }); body = run; }
       else if (path.endsWith("/approve")) { if (path.includes("/rule-sets/")) {options.ruleSets.at(-1)!.status = "Approved"; body=options.ruleSets.at(-1)!;} else { runs[0].status = "Approved"; runs[0].payableEmployees = [{ payrollRunEmployeeId: "run-employee",
         paymentMethodOptionId: "payroll-payment-method-Cash", paymentMethodName: "Efectivo", amount: 920000, bankDestinationComplete: true, employeeName: "Elena Prueba" }]; } }
       else if (path.endsWith("/payroll/payments")) { body = { ...data, status: "Confirmed", employeeCount: 1, totalAmount: 920000, paymentMethodName: "Caja nómina", accountingStatus: "Pending", isPaid: false, remainingEmployees: [], rowVersion: version }; runs[0].payableEmployees = []; options.paymentBatches.push(body as PayrollPaymentBatch); }
@@ -276,10 +278,9 @@ test("liquidación, aprobación, pago, DIAN y reportes se recorren desde sus pes
   await page.getByRole("button", { name: "Nueva liquidación", exact: true }).click();
   await choose(page, "Periodicidad", "Mensual");
   await expect(page.getByRole("combobox",{name:"Reglas aprobadas",exact:true})).toHaveCount(0);
-  await page.getByRole("button", { name: "Crear borrador" }).click();
-  await expect.poll(() => state.runs.length).toBe(1);
-  await page.getByRole("button").filter({ hasText: /Borrador/ }).click();
-  await page.getByRole("button", { name: "Calcular nómina", exact: true }).click();
+  await page.getByRole("button", { name: "Generar liquidación", exact: true }).click();
+  await expect.poll(() => state.runs[0]?.status).toBe("Calculated");
+  expect(state.writes.filter(write=>write.path.endsWith("/calculate"))).toHaveLength(1);
   await page.getByRole("button", { name: "Aprobar y contabilizar" }).click();
   await expect.poll(() => state.runs[0].status).toBe("Approved");
   await expect(page.getByRole("button", { name: "Recalcular", exact: true })).toHaveCount(0);
@@ -328,7 +329,7 @@ test("crear y reabrir contrato, descuento y novedad conserva sus datos", async (
   await page.getByRole("button", { name: "Actualizar nómina" }).click();
   await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   await page.getByRole("button",{name:"Ver trabajador Elena Prueba",exact:true}).click();
-  await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+  await page.getByRole("button",{name:"Agregar novedad",exact:true}).click();
   const noveltyEditor=page.getByRole("region",{name:"Edición de novedad",exact:true});
   await expect(noveltyEditor.getByRole("textbox").first()).toHaveValue("Elena Prueba");
   await choose(page, "Concepto", "PRESTAMO · Préstamo empleado");
@@ -501,10 +502,14 @@ test.describe("fechas iniciales de nómina", () => {
       await choose(page, "Periodicidad", "Mensual");
       await expect(page.getByRole("combobox",{name:"Reglas aprobadas",exact:true})).toHaveCount(0);
       const count = state.writes.length;
-      await page.getByRole("button", { name: "Crear borrador", exact: true }).click();
-      await expect.poll(() => state.writes.length).toBe(count + 1);
-      expect(state.writes.at(-1)?.body).toMatchObject({ businessId: expectedBusiness,
+      await page.getByRole("button", { name: "Generar liquidación", exact: true }).click();
+      await expect.poll(() => state.writes.length).toBe(count + 2);
+      expect(state.writes[count].body).toMatchObject({ businessId: expectedBusiness,
         periodStart: "2026-11-01", periodEnd: "2026-11-30", paymentDate: day });
+      const detail=page.getByRole("dialog",{name:"Detalle de liquidación",exact:true});
+      await expect(detail.getByText("No hay contratos elegibles para el cálculo.",{exact:true})).toBeVisible();
+      await expect(detail.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toHaveCount(0);
+      await detail.getByRole("button",{name:"Cerrar ventana",exact:true}).click();
       if (expectedBusiness === businessId) {
         await page.getByRole("banner").getByRole("combobox").click();
         await page.getByRole("button", { name: "Sede norte Espacio de trabajo" }).click();
@@ -551,7 +556,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   const editor=page.getByRole("region",{name:"Liquidación de Elena Prueba",exact:true});
   await expect(editor.getByRole("button",{name:"Recalcular trabajador",exact:true})).toHaveCount(0);
   await expect(editor.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
-  await editor.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+  await editor.getByRole("button",{name:"Agregar novedad",exact:true}).click();
   const dialog=page.getByRole("region",{name:"Edición de novedad",exact:true});
   await expect(dialog.getByRole("textbox").first()).toHaveValue("Elena Prueba");
   await choose(page,"Concepto","PRESTAMO · Préstamo empleado");await choose(page,"Tipo de novedad","Valor");
@@ -579,7 +584,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   try {
     await expect.poll(()=>state.options.novelties.length).toBe(1);
     await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
-    await editor.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+    await editor.getByRole("button",{name:"Agregar novedad",exact:true}).click();
     await dialog.getByRole("textbox",{name:"Notas",exact:true}).fill("Segunda captura sin guardar");
   } finally {release();}
   await expect(page.getByText(/Novedad guardada. No fue posible actualizar el cálculo/)).toBeVisible();
@@ -587,8 +592,11 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
   await expect(dialog).toBeHidden();
   expect(state.options.novelties).toHaveLength(1);
+  expect(state.reads.length).toBe(readsBefore);
   await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();
   await page.getByRole("button",{name:"Ver trabajador Elena Prueba",exact:true}).click();
+  await expect(editor.getByRole("button",{name:"Reintentar cálculo",exact:true})).toBeEnabled();
+  const readsBeforeRetry=state.reads.length;
   await editor.getByRole("button",{name:"Reintentar cálculo",exact:true}).click();
   await expect(editor.getByRole("row").filter({hasText:"PRESTAMO"})).toContainText("50.000");
   await expect(editor.getByRole("button",{name:"Reintentar cálculo",exact:true})).toHaveCount(0);
@@ -596,7 +604,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   expect(calculations).toHaveLength(2);
   expect(calculations[0].body).toEqual({rowVersion:version,recalculateEmploymentIds:[employee.employmentId]});
   expect(state.writes.filter(item=>item.path.endsWith("/novelties"))).toHaveLength(1);
-  expect(state.reads.length).toBe(readsBefore);
+  expect(state.reads.length).toBe(readsBeforeRetry);
 });
 
 
@@ -742,47 +750,37 @@ test("los historiales cargan solo la pestaña visible y los documentos al desple
   await page.screenshot({path:"test-results/payroll-electronic-history-mobile.png",fullPage:true});
 });
 
-test("acciones por trabajador reutilizan el recálculo y abren solo su desprendible en un modal móvil",async({page,baseURL})=>{
+test("acciones por trabajador abren solo su desprendible en un modal móvil",async({page,baseURL})=>{
   const state=await setup(page,baseURL!);
   const workers=Array.from({length:2},(_,index)=>({payrollRunEmployeeId:`result-${index}`,employmentId:`employment-${index}`,partyId:`party-${index}`,
     employeeName:`Trabajador ${index}`,identification:String(index),contractNumber:`C-${index}`,monthlySalary:1000000,
     workedDays:30,baseWorkedDays:30,maximumContractDays:30,periodDays:30,earnings:1000000,deductions:0,netPayable:1000000,employerContributions:0,provisions:0,lines:[]}));
   state.runs.push({payrollRunId:"row-actions",businessId,ruleSetId:null,runKind:"Regular",originalPayrollRunId:null,periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",
     status:"Calculated",employeeCount:2,totalEarnings:2000000,totalDeductions:0,netPayable:2000000,totalEmployerContributions:0,totalProvisions:0,calculationVersion:1,rowVersion:version,payableEmployees:[],employees:workers});
-  let calls=0;const versions:string[]=[],receipts:URL[]=[];
-  await page.route("**/payroll/runs/row-actions/calculate",async route=>{
-    const request=route.request().postDataJSON();versions.push(request.rowVersion);
-    if(request.rowVersion!==state.runs[0].rowVersion)return route.fulfill({status:409,json:{detail:"La liquidación cambió."}});
-    const run=state.runs[0],index=run.employees.findIndex(worker=>worker.employmentId===request.recalculateEmploymentIds[0]);
-    const worker={...run.employees[index],payrollRunEmployeeId:`result-updated-${index}`,earnings:2000000,netPayable:2000000};
-    run.employees[index]=worker;run.rowVersion=++calls===1?"AAAAAAAAAAI=":"AAAAAAAAAAM=";
-    run.totalEarnings=run.netPayable=run.employees.reduce((sum,row)=>sum+row.netPayable,0);
-    return route.fulfill({json:{...run,isPartialCalculation:true,employees:[worker]}});
-  });
+  const receipts:URL[]=[];
   await page.route("**/payroll/reports/payroll-receipt?**",async route=>{
     const url=new URL(route.request().url());receipts.push(url);
     const worker=state.runs[0].employees.find(row=>row.payrollRunEmployeeId===url.searchParams.get("employeeResultId"))!;
     const header={...worker,runStatus:"Calculated",periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",paidDate:null,profileName:"Operativo",costCenterName:"Principal"};
     return route.fulfill({json:{from:header.periodStart,to:header.periodEnd,rows:[
       {...header,id:"salary",conceptCode:"SAL",conceptName:"Salario",nature:"Earning",quantity:30,amount:1000000},
-      {...header,id:"bonus",conceptCode:"BON",conceptName:"Bonificación",nature:"Earning",quantity:1,amount:1000000}]}});
+      {...header,id:"bonus",conceptCode:"BON",conceptName:"Bonificación",nature:"Earning",quantity:1,amount:1000000},
+      {...header,id:"health",conceptCode:"SALUD",conceptName:"Salud trabajador",nature:"Deduction",quantity:1,percentageRate:0.04,amount:80000},
+      {...header,id:"absence",conceptCode:"AUS",conceptName:"Ausencia",nature:"Deduction",quantity:2,amount:0}]}});
   });
   await page.goto("/dashboard/payroll?section=novelties");
   await selectNoveltyLiquidation(page,/2026-08-01 — 2026-08-31/);
   const list=page.getByRole("region",{name:"Trabajadores liquidados",exact:true});
   await expect(list.getByRole("article")).toHaveCount(2);
-  await list.getByRole("button",{name:"Recalcular a Trabajador 0",exact:true}).click();
-  await expect.poll(()=>calls).toBe(1);
-  await expect(list.getByRole("button",{name:"Recalcular a Trabajador 1",exact:true})).toBeEnabled();
-  await list.getByRole("button",{name:"Recalcular a Trabajador 1",exact:true}).click();
-  await expect.poll(()=>calls).toBe(2);
-  expect(versions).toEqual([version,"AAAAAAAAAAI="]);
+  await expect(list.getByRole("button",{name:/^Recalcular a /})).toHaveCount(0);
   await expect(list.getByRole("button",{name:"Desprendible de Trabajador 0",exact:true})).toBeEnabled();
   await list.getByRole("button",{name:"Desprendible de Trabajador 0",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"Desprendible laboral",exact:true});
   await expect(dialog.getByText("Trabajador 0 · 0",{exact:true})).toBeVisible();
+  await expect(dialog.getByRole("row").filter({hasText:"Salud trabajador"})).toContainText(/4\s*%/);
+  await expect(dialog.getByRole("row").filter({hasText:"Ausencia"})).not.toContainText(/\d\s*%/);
   await expect(dialog.locator("#auraly-report-print-area").getByText(/Preliminar · Trabajador 0/)).toBeVisible();
-  expect(receipts).toHaveLength(1);expect(receipts[0].searchParams.get("employeeResultId")).toBe("result-updated-0");
+  expect(receipts).toHaveLength(1);expect(receipts[0].searchParams.get("employeeResultId")).toBe("result-0");
   expect(state.reads.filter(read=>read.path.endsWith("/calculated-employees"))).toHaveLength(1);
   expect(state.reads.filter(read=>read.path.endsWith("/payroll/runs/row-actions"))).toHaveLength(0);
   await page.setViewportSize({width:390,height:844});
@@ -936,7 +934,7 @@ test("desprendibles conservan el resultado, separan valores y exportan el mismo 
   await page.setViewportSize({width:390,height:844});
   expect(await report.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   const salary=report.getByRole("row").filter({hasText:"SAL · Salario"}).first();
-  const amount=salary.getByRole("cell").nth(2);
+  const amount=salary.getByRole("cell").nth(3);
   expect(await amount.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   await expect(amount).toHaveCSS("white-space","nowrap");
   await report.getByText("Ana · 123",{exact:true}).scrollIntoViewIfNeeded();
@@ -985,13 +983,13 @@ for(const width of [1366,390])test(`novedades exige liquidación y conserva esta
   await page.getByRole("button",{name:"Ver trabajador Elena Filtro",exact:true}).click();await workerRequest;
   await expect(page.getByRole("region",{name:"Liquidación de Elena Filtro",exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();await page.getByRole("button",{name:"Volver a liquidaciones",exact:true}).click();
+  await page.getByRole("button",{name:"Volver a trabajadores",exact:true}).click();await page.getByRole("button",{name:"Quitar selección de Buscar liquidación",exact:true}).click();
   await history.getByRole("button",{name:"Limpiar",exact:true}).click();
   await history.getByRole("combobox",{name:"Buscar liquidación",exact:true}).click();
   await page.getByRole("option").filter({hasText:/2026-08-01/}).last().click();
   await expect(page.getByText("Aprobada",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"Preparar liquidación",exact:true})).toHaveCount(0);
-  await page.getByRole("button",{name:"Volver a liquidaciones",exact:true}).click();
+  await page.getByRole("button",{name:"Quitar selección de Buscar liquidación",exact:true}).click();
   await page.screenshot({path:info.outputPath(`novelties-filters-${width}.png`),fullPage:true});
 });
 
@@ -1008,7 +1006,15 @@ for(const width of [1366,390])test(`pagos descarga solo el desprendible contabil
   });
   await page.route("**/payroll/reports/payroll-receipt?**",async route=>{
     const url=new URL(route.request().url());receipts.push(url);
-    await route.fulfill({json:{from:"2026-08-01",to:"2026-08-31",rows:[{id:"salary",payrollRunEmployeeId:url.searchParams.get("employeeResultId"),partyId:url.searchParams.get("partyId"),employeeName:"Trabajadora 20",identification:"1020",contractNumber:"CONTRATO-20",periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",paidDate:"2026-08-31",monthlySalary:1000000,workedDays:30,earnings:1000000,deductions:0,netPayable:1000000,profileName:"Operativo",costCenterName:"Principal",healthName:"EPS",pensionName:"AFP",conceptCode:"SAL",conceptName:"Salario",nature:"Earning",quantity:30,amount:1000000}]}});
+    const header={payrollRunEmployeeId:url.searchParams.get("employeeResultId"),partyId:url.searchParams.get("partyId"),employeeName:"Trabajadora 20",identification:"1020",contractNumber:"CONTRATO-20",periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",paidDate:"2026-08-31",monthlySalary:1150000,workedDays:28,earnings:1100000,deductions:100000,netPayable:1000000,profileName:"Operativo",costCenterName:"Principal",healthName:"EPS de prueba",pensionName:"AFP de prueba",jobTitle:"Auxiliar administrativa"};
+    const lines=[
+      {id:"salary",conceptCode:"SAL",conceptName:"Salario básico",nature:"Earning",quantity:28,amount:1100000},
+      {id:"absence",conceptCode:"AUS",conceptName:"Ausencia",nature:"Deduction",quantity:2,amount:0},
+      {id:"health",conceptCode:"SALUD",conceptName:"Salud trabajador",nature:"Deduction",quantity:1,percentageRate:0.04,amount:44000},
+      {id:"pension",conceptCode:"PEN",conceptName:"Pensión trabajador",nature:"Deduction",quantity:1,percentageRate:0.04,amount:44000},
+      {id:"other",conceptCode:"OTR",conceptName:"Otra deducción",nature:"Deduction",quantity:1,amount:12000},
+    ];
+    await route.fulfill({json:{from:header.periodStart,to:header.periodEnd,rows:lines.map(line=>({...header,...line}))}});
   });
   await page.goto("/dashboard/payroll?section=payments");
   const open=page.getByRole("button",{name:"Ver desprendibles del pago PAGO-APROBADO",exact:true});await expect(open).toBeVisible();expect(roster).toHaveLength(0);expect(receipts).toHaveLength(0);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Calculator } from "lucide-react";
 import { toast } from "sonner";
@@ -12,12 +12,14 @@ import { payrollApi, type PayrollRun, type CalculatePayrollRun } from "@/service
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 
-export function PayrollRunSelection({ run, disabled, calculating, onCalculate, onBlocksApproval }: {
+export function PayrollRunSelection({ run, disabled, calculating, onCalculate, onBlocksApproval, renderBeforeSelection, onOpenWorker }: {
     run: PayrollRun;
     disabled: boolean;
     calculating: boolean;
     onCalculate: (id:string,request:CalculatePayrollRun)=>Promise<PayrollRun>;
     onBlocksApproval: (value: boolean) => void;
+    renderBeforeSelection: (calculateButton: ReactNode) => ReactNode;
+    onOpenWorker: (employmentId: string) => void;
 }) {
     const tenantId = useTenantContextStore(state => state.selectedTenantId);
     const businessId = useBusinessContextStore(state => state.selectedBusinessId);
@@ -70,17 +72,20 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
         }
     }
     const locked = disabled || busy;
+    const calculatedWorkers = new Set(run.employees.map(worker => worker.employmentId));
+    const canRefreshLegacyCalculation = run.employees.some(worker => worker.baseWorkedDays == null && run.runKind === "Regular");
     const sortHeader = (by: string, label: string) => <Button size="sm" variant="ghost" disabled={locked || query.isFetching}
         aria-label={`Ordenar por ${label}`} onClick={() => { setPage(1); setSorting(current => ({ by, direction: current.by === by && current.direction === "asc" ? "desc" : "asc" })); }}>
         {label}{sorting.by === by ? sorting.direction === "asc" ? " ↑" : " ↓" : ""}</Button>;
     const sortAria = (by: string) => sorting.by === by ? sorting.direction === "asc" ? "ascending" as const : "descending" as const : undefined;
-    return <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-5 rounded-2xl border p-4 sm:p-5" aria-busy={busy}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-semibold">Seleccionar trabajadores</h3>
-            <Button type="button" variant="outline" disabled={locked || query.isFetching || query.isError || !data || stale || count < 1 || count > 500}
-                onClick={() => void calculate()}><Calculator className="mr-2 h-4 w-4"/>{busy ? "Calculando…" : run.status === "Draft" ? "Calcular nómina" : "Recalcular"}</Button>
-        </div>
-        {dirty && <p role="status" className="text-sm text-muted-foreground">La selección se guardará al calcular la liquidación.</p>}
+    return <>
+      {renderBeforeSelection(dirty || busy || run.status === "Draft" || canRefreshLegacyCalculation ?
+        <Button type="button" variant="outline" disabled={locked || query.isFetching || query.isError || !data || stale || count < 1 || count > 500}
+            onClick={() => void calculate()}><Calculator aria-hidden="true" className="size-4"/>{busy ? "Calculando…" : dirty ? "Guardar cambios" : run.status === "Draft" ? (run.runKind === "Adjustment" ? "Calcular ajuste" : "Reintentar cálculo") : "Actualizar cálculo"}</Button> : null
+      )}
+      <section aria-label="Trabajadores de la liquidación" className="min-w-0 max-w-full space-y-5 rounded-2xl border p-4 sm:p-5" aria-busy={busy}>
+        <h3 className="font-semibold">Seleccionar trabajadores</h3>
+        {dirty && <p role="status" className="text-sm text-muted-foreground">Guarda los cambios para actualizar la liquidación.</p>}
         <form className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" onSubmit={event => { event.preventDefault(); setPage(1); setSearch(draftSearch.trim());setWorkSite(draftWorkSite.trim());setContractNumber(draftContract.trim()); }}>
             <Input aria-label="Buscar trabajador de la liquidación" placeholder="Nombre, identificación o contrato" value={draftSearch}
                 className="min-w-0 flex-1"
@@ -122,7 +127,9 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
                         <td className="py-3"><Checkbox aria-label={`Incluir ${item.employeeName}, contrato ${item.contractNumber}`} checked={selected}
                             disabled={locked || stale || (!selected && count >= 500) || (!changes[item.employmentId] && Object.keys(changes).length >= 500)}
                             onCheckedChange={value => toggle(item.employmentId, value === true, item.isSelected)}/></td>
-                        <td className="min-w-40 max-w-64 whitespace-normal break-words">{item.employeeName}</td><td>{item.identification}</td><td>{item.contractNumber}</td>
+                        <td className="min-w-40 max-w-64 whitespace-normal break-words">{calculatedWorkers.has(item.employmentId)
+                            ? <button type="button" title="Ver novedades" disabled={locked || stale || dirty} className="rounded text-left font-medium text-primary hover:underline focus-visible:outline-2 disabled:text-muted-foreground disabled:no-underline" onClick={()=>onOpenWorker(item.employmentId)}>{item.employeeName}</button>
+                            : item.employeeName}</td><td>{item.identification}</td><td>{item.contractNumber}</td>
                         <td>{item.startDate}</td><td>{item.endDate ?? "vigente"}</td><td>{item.payFrequencyName}</td>
                     </tr>;
                 })}</tbody>
@@ -135,5 +142,6 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
                 <Button size="sm" variant="outline" disabled={locked || query.isFetching || page * data.pageSize >= data.totalCount} onClick={() => setPage(value => value + 1)}>Siguiente trabajadores</Button>
             </div></div>
         </>}
-    </section>;
+      </section>
+    </>;
 }

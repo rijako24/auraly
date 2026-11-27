@@ -109,9 +109,13 @@ function StationDialog({ businessId, initialStation, client, kinds, modes, onSta
   const printer = printerDraft ?? existingProfile ?? {
     key: profileKey, printerName: "", paperWidthMillimeters: 80, copies: 1, cut: true,
   } satisfies RestaurantCommandPrinterProfile;
+  const installedPrinters = localPrinters.data?.printers ?? [];
+  const configuredPrinterName = printer.printerName.trim().toLowerCase();
+  const selectedPrinterName = installedPrinters.find(name => name.toLowerCase() === configuredPrinterName);
+  const canEditPrinter = localPrinters.isSuccess && installedPrinters.length > 0 && !localPrinters.isFetching;
   const remoteConfigured = Boolean(deviceId && deviceId === configuration.data?.printerDeviceId
     && configuration.data.printerProfileKey);
-  const localPrinterReady = Boolean(localPrinters.isSuccess && printer.printerName && Number.isInteger(printer.copies)
+  const localPrinterReady = Boolean(canEditPrinter && selectedPrinterName && Number.isInteger(printer.copies)
     && printer.copies >= 1 && printer.copies <= 3);
   const printerReady = localPrinterReady || (!printerDraft && remoteConfigured);
   const save = useMutation({
@@ -218,13 +222,15 @@ function StationDialog({ businessId, initialStation, client, kinds, modes, onSta
         {current.mode !== "Virtual" && <>
           <div className="grid gap-2"><Label>Equipo que imprime</Label><Select value={deviceId ?? ""} onValueChange={(printerDeviceId) => change({ printerDeviceId })}><SelectTrigger aria-label="Equipo que imprime"><SelectValue placeholder="Selecciona el equipo"/></SelectTrigger><SelectContent>{devices.data?.map(device => <SelectItem key={device.deviceId} value={device.deviceId}>{device.name}{device.deviceId === thisDeviceId ? " · Este equipo" : ""}</SelectItem>)}</SelectContent></Select></div>
           {devices.isError && <p role="alert" className="text-sm text-destructive">No se pudieron consultar los equipos de impresión.</p>}
-          {client && localPrinters.isPending && <p className="text-sm text-muted-foreground">Consultando las impresoras de este equipo…</p>}
-          {localPrinters.isError && <p role="alert" className="text-sm text-destructive">{localPrinters.error.message}</p>}
           <div className="space-y-4 rounded-2xl border bg-muted/30 p-4">
-            <div className="grid gap-2"><Label>Impresora Windows</Label><Select value={printer.printerName || undefined} onValueChange={printerName => setPrinterDraft({ ...printer, printerName })}><SelectTrigger aria-label="Impresora Windows"><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{localPrinters.data?.printers.map(name => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent></Select></div>
-            {localPrinters.isSuccess && !localPrinters.data.printers.length && <p className="text-sm text-amber-700">Windows no reporta impresoras instaladas. Instala su controlador y actualiza la lista.</p>}
-            <div className="grid grid-cols-2 gap-3"><div className="grid gap-2"><Label>Tamaño de tirilla</Label><Select value={String(printer.paperWidthMillimeters)} onValueChange={width => setPrinterDraft({ ...printer, paperWidthMillimeters: Number(width) as 58 | 80 })}><SelectTrigger aria-label="Tamaño de tirilla"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="command-copies">Copias</Label><Input id="command-copies" type="number" min={1} max={3} value={printer.copies} onChange={event => setPrinterDraft({ ...printer, copies: Number(event.target.value) })}/></div></div>
-            <label className="flex items-center justify-between gap-3"><span className="text-sm font-medium">Corte de papel</span><Switch checked={printer.cut} onCheckedChange={cut => setPrinterDraft({ ...printer, cut })}/></label>
+            <div className="grid gap-2"><Label>Impresora Windows</Label><Select disabled={!canEditPrinter} value={selectedPrinterName ?? ""} onValueChange={printerName => setPrinterDraft({ ...printer, printerName })}><SelectTrigger aria-label="Impresora Windows"><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{installedPrinters.map(name => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent></Select></div>
+            {!client && <p className="text-sm text-muted-foreground">Abre Restaurante desde el Punto de venta instalado en Windows para consultar las impresoras de ese equipo.</p>}
+            {client && localPrinters.isFetching && <p role="status" className="text-sm text-muted-foreground">Consultando las impresoras de este equipo…</p>}
+            {localPrinters.isError && <p role="alert" className="text-sm text-destructive">No fue posible consultar las impresoras del equipo. Comprueba que el Punto de venta esté abierto y pulsa Actualizar impresoras.</p>}
+            {localPrinters.isSuccess && !installedPrinters.length && <p className="text-sm text-amber-700">Windows no reporta impresoras instaladas. Instala su controlador y actualiza la lista.</p>}
+            {localPrinters.isSuccess && printer.printerName && !selectedPrinterName && <p role="status" className="text-sm text-amber-700">Windows ya no reporta «{printer.printerName}». Selecciona una impresora disponible.</p>}
+            <div className="grid grid-cols-2 gap-3"><div className="grid gap-2"><Label>Tamaño de tirilla</Label><Select disabled={!canEditPrinter} value={String(printer.paperWidthMillimeters)} onValueChange={width => setPrinterDraft({ ...printer, paperWidthMillimeters: Number(width) as 58 | 80 })}><SelectTrigger aria-label="Tamaño de tirilla"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="command-copies">Copias</Label><Input id="command-copies" disabled={!canEditPrinter} type="number" min={1} max={3} value={printer.copies} onChange={event => setPrinterDraft({ ...printer, copies: Number(event.target.value) })}/></div></div>
+            <label className="flex items-center justify-between gap-3"><span className="text-sm font-medium">Corte de papel</span><Switch disabled={!canEditPrinter} checked={printer.cut} onCheckedChange={cut => setPrinterDraft({ ...printer, cut })}/></label>
             <Button variant="outline" size="sm" disabled={!client || localPrinters.isFetching || save.isPending} onClick={() => void localPrinters.refetch()}>Actualizar impresoras</Button>
           </div>
         </>}

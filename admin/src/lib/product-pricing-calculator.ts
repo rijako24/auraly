@@ -53,12 +53,18 @@ export function marginFromCostAndSale(cost: number, salePrice: number): number {
   return marginFromCostAndGrossSale(cost, salePrice, 0);
 }
 
-export function marginFromCostAndGrossSale(cost: number, grossSalePrice: number, salesTaxRate: number): number {
+export function marginFromCostAndGrossSale(cost: number, grossSalePrice: number, salesTaxRate: number, decimals = 4): number {
   requireNonNegative(cost, "cost");
   requireTaxRate(salesTaxRate);
   if (!Number.isFinite(grossSalePrice) || grossSalePrice <= 0) return 0;
   const netSalePrice = grossSalePrice / (1 + salesTaxRate / 100);
-  return roundPercent(((netSalePrice - cost) / netSalePrice) * 100);
+  return roundDecimal(((netSalePrice - cost) / netSalePrice) * 100, decimals);
+}
+
+// PriceMargin on the server rounds the net and the gross tier price separately.
+export function previewPriceChannelSalePrice(cost: number, margin: number, salesTaxRate: number): number {
+  const net = roundDecimal(cost / (100 - requireMargin(margin)) * 100, 4);
+  return roundDecimal(net * (1 + requireTaxRate(salesTaxRate) / 100), 4);
 }
 
 function requireNonNegative(value: number, field: ProductPricingField): number {
@@ -83,6 +89,7 @@ function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function roundPercent(value: number): number {
-  return Math.round((value + Number.EPSILON) * 10_000) / 10_000;
+function roundDecimal(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  return Math.sign(value) * Math.round((Math.abs(value) + Number.EPSILON) * factor) / factor;
 }

@@ -153,7 +153,8 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
           JSON_VALUE(re.EmployeeSnapshotJson,'$.Configuration.Values.Details.JobTitle') [jobTitle],
           re.PayrollRunEmployeeId [payrollRunEmployeeId],re.EmploymentId [employmentId],r.PayrollRunId [payrollRunId],
           re.WorkedDays [workedDays],l.ConceptCode [conceptCode],l.ConceptName [conceptName],
-          l.NatureCode [nature],l.Quantity [quantity],l.Amount [amount],
+          l.NatureCode [nature],l.Quantity [quantity],
+          CASE WHEN l.BaseAmount IS NOT NULL THEN l.Rate END [percentageRate],l.Amount [amount],
           l.CostCenterName [lineCostCenterName],l.Notes [notes],l.EvidenceUrl [evidenceUrl],
           re.Earnings [earnings],re.Deductions [deductions],re.NetPayable [netPayable]
         FROM payroll.Runs r JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId

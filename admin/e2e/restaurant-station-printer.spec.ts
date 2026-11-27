@@ -10,6 +10,8 @@ for (const { mode, failCommandOnce, creating, deviceMatches } of [
   { mode: "Both", failCommandOnce: true, creating: false, deviceMatches: false },
   { mode: "Both", failCommandOnce: false, creating: true, deviceMatches: false },
   { mode: "Physical", failCommandOnce: false, creating: false, deviceMatches: null },
+  { mode: "Both", failCommandOnce: false, creating: true, deviceMatches: "no-session" },
+  { mode: "Physical", failCommandOnce: false, creating: false, deviceMatches: "no-printers" },
 ] as const) {
   test(`la estación configura directamente su impresora en modo ${mode}, reintento=${failCommandOnce}, nueva=${creating}, mismo equipo=${deviceMatches}`, async ({ page, baseURL }) => {
     const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -19,15 +21,16 @@ for (const { mode, failCommandOnce, creating, deviceMatches } of [
     const user = { userId: "55555555-5555-5555-5555-555555555555", tenantId,
       username: "qa", roles: ["Administrador"], permissions: ["dashboard.read", "business_config.read", "businesses.update"] };
     await page.context().addCookies([{ name: "auth_token", value: "qa", url: baseURL!, httpOnly: true }]);
-    await page.addInitScript(({ user, tenantId, businessId }) => {
+    await page.addInitScript(({ user, tenantId, businessId, hasSession }) => {
       localStorage.setItem("selected_tenant_id", tenantId);
       localStorage.setItem("selected_business_id", businessId);
       localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
-      sessionStorage.setItem("auraly.pos.edge-token", "qa-local-session");
-    }, { user, tenantId, businessId });
+      if (hasSession) sessionStorage.setItem("auraly.pos.edge-token", "qa-local-session");
+    }, { user, tenantId, businessId, hasSession: deviceMatches !== "no-session" });
     let profileReads = 0;
     let configurationReads = 0;
     let stationCreated = false;
+    let hasPrinters = deviceMatches !== "no-printers";
     const writes: string[] = [];
     const localReads: string[] = [];
     await page.route("**/api/**", async route => {
@@ -71,7 +74,7 @@ for (const { mode, failCommandOnce, creating, deviceMatches } of [
       if (route.request().method() === "GET") localReads.push(path);
       let value: unknown;
       if (path.endsWith("/health")) value = { deviceId: deviceMatches ? deviceId : deviceMatches === false ? "88888888-8888-8888-8888-888888888888" : null, status: "Ready" };
-      else if (path.endsWith("/configuration/printers")) value = { installedPrinters: ["EPSON Cocina"], configuration: {} };
+      else if (path.endsWith("/configuration/printers")) value = { installedPrinters: hasPrinters ? ["EPSON Cocina"] : [], configuration: {} };
       else if (route.request().method() === "PUT") {
         writes.push("printer");
         value = route.request().postDataJSON();
@@ -79,7 +82,7 @@ for (const { mode, failCommandOnce, creating, deviceMatches } of [
       } else { profileReads++; value = []; }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
     });
-    await page.goto("/dashboard/settings/restaurant#estaciones");
+    await page.goto("/dashboard/restaurant/setup#estaciones");
     await page.getByRole("button", { name: creating ? "Nueva estación" : "Editar estación Cocina", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: creating ? "Nueva estación" : "Editar estación Cocina", exact: true });
     if (creating) await dialog.getByLabel("Nombre", { exact: true }).fill("Cocina");
@@ -89,6 +92,21 @@ for (const { mode, failCommandOnce, creating, deviceMatches } of [
     await dialog.getByRole("combobox", { name: "Salida de comanda" }).click();
     await page.getByRole("option", { name: mode === "Both" ? "Pantalla e impresora" : "Solo impresora", exact: true }).click();
     await expect(dialog.getByRole("combobox", { name: "Impresora Windows" })).toBeVisible();
+    if (deviceMatches === "no-session") {
+      await expect(dialog.getByText(/Abre Restaurante desde el Punto de venta instalado en Windows/)).toBeVisible();
+      await expect(dialog.getByRole("combobox", { name: "Impresora Windows" })).toBeDisabled();
+      await expect(dialog.getByRole("button", { name: "Guardar estación", exact: true })).toBeDisabled();
+      expect(localReads).toHaveLength(0);
+      expect(writes).toHaveLength(0);
+      return;
+    }
+    if (deviceMatches === "no-printers") {
+      await expect(dialog.getByText(/Windows no reporta impresoras instaladas/)).toBeVisible();
+      await expect(dialog.getByRole("combobox", { name: "Impresora Windows" })).toBeDisabled();
+      hasPrinters = true;
+      await dialog.getByRole("button", { name: "Actualizar impresoras", exact: true }).click();
+      await expect(dialog.getByText(/Windows no reporta impresoras instaladas/)).toHaveCount(0);
+    }
     await expect(dialog.getByText(/Para seleccionar o cambiar la impresora|Abre esta configuración en el equipo de impresión/)).toHaveCount(0);
     await dialog.getByRole("combobox", { name: "Impresora Windows" }).click();
     await page.getByRole("option", { name: "EPSON Cocina" }).click();
@@ -107,9 +125,9 @@ for (const { mode, failCommandOnce, creating, deviceMatches } of [
     }
     await expect(dialog).toBeHidden();
     expect(writes).toEqual([...(creating ? ["station"] : []), "printer", "command", ...(failCommandOnce ? ["command"] : [])]);
-    expect(profileReads).toBe(1);
-    expect(localReads.sort()).toEqual(["/edge/v1/configuration/printers",
-      "/edge/v1/configuration/restaurant-command-printers", "/edge/v1/health"].sort());
+    const expectedReads = ["/edge/v1/configuration/printers", "/edge/v1/configuration/restaurant-command-printers", "/edge/v1/health"];
+    expect(profileReads).toBe(deviceMatches === "no-printers" ? 2 : 1);
+    expect(localReads.sort()).toEqual((deviceMatches === "no-printers" ? [...expectedReads,...expectedReads] : expectedReads).sort());
     expect(configurationReads).toBe(1);
   });
 }

@@ -311,16 +311,33 @@ public sealed partial class AccountingVerticalSliceTests
             }
             if (useQueue)
             {
-                var signals = new CapturedDispatchSignals();
+                var signals = new CapturedDispatchSignals { FailNextPublication = true };
                 var activation = new SqlDispatchSettlementActivation(
                     scope.ServiceProvider.GetRequiredService<SqlServerConnectionFactory>(),
                     signals, NullLogger<SqlDispatchSettlementActivation>.Instance);
                 var preparation = scope.ServiceProvider.GetRequiredService<DispatchSettlementPreparation>();
+                await activation.PublishAcceptedAsync(fixture.BusinessId, draft.DispatchId, acceptance.IdempotencyKey, default);
+                Assert.Empty(signals.Items);
+                await using (var connection = new SqlConnection(fixture.ConnectionString))
+                {
+                    await connection.OpenAsync();
+                    await using var expirePublication = new SqlCommand("""
+                        UPDATE dbo.DispatchSettlementOperations SET ActivationAvailableAt=SYSUTCDATETIME()
+                        WHERE BusinessId=@Business AND DispatchId=@Dispatch AND ActivationLeaseId IS NOT NULL;
+                        """, connection);
+                    expirePublication.Parameters.AddWithValue("@Business", fixture.BusinessId);
+                    expirePublication.Parameters.AddWithValue("@Dispatch", draft.DispatchId);
+                    Assert.Equal(1, await expirePublication.ExecuteNonQueryAsync());
+                }
+                await activation.RecoverAsync(default);
                 for (var phase = 0; phase < 3; phase++)
                 {
-                    await activation.RecoverAsync(default);
                     Assert.Equal(phase + 1, signals.Items.Count);
-                    await preparation.ProcessAsync(signals.Items[phase], default);
+                    var signal = signals.Items[phase];
+                    var ready = await preparation.ProcessAsync(signal, default);
+                    Assert.Equal(phase < 2, ready);
+                    if (ready)
+                        await activation.PublishReadyAsync(signal.BusinessId, signal.OperationId, default);
                 }
             }
             else

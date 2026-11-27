@@ -54,7 +54,7 @@ test("despacho real: reportar, cerrar a ciegas, aprobar, rechazar y recibir el e
       await close.getByRole("textbox",{name:"Total de tarjetas",exact:true}).fill("0");await close.getByRole("textbox",{name:"Total de transferencias",exact:true}).fill("0");
       const saved=driver.waitForResponse(response=>response.url().endsWith("/close-route"));await close.getByRole("button",{name:"Confirmar cierre",exact:true}).click();expect((await saved).ok()).toBe(true);
     }
-    await receiver.goto("/dashboard/cash-differences");await receiver.getByRole("row").filter({hasText:profile.DispatchNumber}).getByRole("button",{name:"Ver despacho",exact:true}).click();
+    await receiver.goto("/dashboard/cash-differences");await receiver.getByRole("row").filter({hasText:profile.DispatchNumber}).getByRole("button",{name:"Conciliar",exact:true}).click();
     const review=receiver.getByRole("dialog",{name:"Recepción y liquidación del despacho",exact:true});
     execution=(await(await receiver.request.get(`${path}/execution`,{headers})).json()) as DispatchExecution;
     const approvedReport=execution.expenses.find(item=>item.amount===1000)!;

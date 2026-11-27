@@ -128,12 +128,16 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
     await creating.getByRole("button", { name: dateLabel, exact: true }).click();
   }
   const creatingRun = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/payroll/runs"));
-  await creating.getByRole("button", { name: "Crear borrador", exact: true }).click();
+  const calculatingRun = page.waitForResponse(response => response.request().method() === "POST" && /\/payroll\/runs\/[^/]+\/calculate$/.test(response.url()));
+  await creating.getByRole("button", { name: "Generar liquidación", exact: true }).click();
   const createdResponse = await creatingRun;
   expect(createdResponse.ok(), await createdResponse.text()).toBe(true);
-  let run = await createdResponse.json() as PayrollRun;
+  const created = await createdResponse.json() as PayrollRun;
+  const firstCalculation = await calculatingRun;
+  expect(firstCalculation.ok(), await firstCalculation.text()).toBe(true);
+  let run = await firstCalculation.json() as PayrollRun;
+  expect(run.payrollRunId).toBe(created.payrollRunId);
   expect(run.periodStart).toBe(periodStart);
-  await page.getByRole("button", { name: new RegExp(`^${run.periodStart} — ${run.periodEnd} Borrador`) }).click();
   const selection = page.getByRole("region", { name: "Trabajadores de la liquidación", exact: true });
   await expect(selection.getByRole("checkbox", { name: "Incluir todos los trabajadores elegibles", exact: true })).toBeChecked();
   await selection.getByRole("checkbox", { name: "Incluir todos los trabajadores elegibles", exact: true }).uncheck();
@@ -148,7 +152,8 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   await page.setViewportSize({width:390,height:844});
   await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
-  const calculateButton = selection.getByRole("button", { name: "Calcular nómina", exact: true });
+  const actions = page.getByRole("group", { name: "Acciones de la liquidación" });
+  const calculateButton = actions.getByRole("button", { name: "Guardar cambios", exact: true });
   const searchBox = selection.getByRole("textbox", { name: "Buscar trabajador de la liquidación", exact: true });
   await expect(calculateButton).toBeVisible();
   await expect(searchBox).toBeVisible();
@@ -195,7 +200,7 @@ test("nómina real: perfil contractual, selección, días por concepto y causaci
   expect(worker.baseWorkedDays).toBe(30);
   const bonus=options.concepts.find(concept=>concept.isActive&&concept.natureCode==="Earning"&&!concept.systemRoleCode&&!concept.requiresDeductionAgreement&&concept.calculationMethodCode==="FixedAmount");
   expect(bonus,"DEV requiere un concepto sintético de bonificación para el ensayo.").toBeTruthy();
-  await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+  await page.getByRole("button",{name:"Agregar novedad",exact:true}).click();
   let noveltyForm=page.getByRole("region",{name:"Edición de novedad",exact:true});
   await noveltyForm.getByRole("combobox",{name:"Concepto",exact:true}).click();
   await page.getByRole("option",{name:`${bonus!.code} · ${bonus!.name}`,exact:true}).click();

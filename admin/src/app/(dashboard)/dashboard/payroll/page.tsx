@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -56,6 +56,8 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     const narrowTabs=useMediaQuery("(max-width: 1023px)");
     useEffect(()=>{selectedTab.current?.scrollIntoView({block:"nearest",inline:"nearest"});},[section,narrowTabs]);
     const [selectedWorkerId,setSelectedWorkerId]=useState<string|null>(null);
+    const [noveltiesPreset,setNoveltiesPreset]=useState<PayrollRun|null>(null);
+    const [generatedRunId,setGeneratedRunId]=useState<string|null>(null);
     const [creatingPayment, setCreatingPayment] = useState(false),[paying,setPaying]=useState(false);
     const [runDialogOpen,setRunDialogOpen]=useState(false);
     const detailVisible = section === "runs" && runDialogOpen || section === "novelties" && Boolean(selectedWorkerId) || creatingPayment;
@@ -65,9 +67,11 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     const workerScope=section==="novelties"?selectedWorkerId:null;
     const detailKey=["payroll-run",tenantId,businessId,selectedId,...(workerScope?[workerScope]:[])];
     const detail = useQuery({ queryKey: detailKey, queryFn: () => payrollApi.run(selectedId!,workerScope??undefined), enabled: Boolean(selectedId) && detailVisible,
-      refetchOnWindowFocus:false,refetchOnReconnect:false });
+      staleTime: generatedRunId===selectedId && !workerScope ? Infinity : 0, refetchOnWindowFocus:false,refetchOnReconnect:false });
     const options = workspace.data?.options ?? null, selected = detail.data ?? null, loading = workspace.isFetching;
     const [creatingRun, setCreatingRun] = useState(false), [creatingEmployment, setCreatingEmployment] = useState(false), [editingEmployment, setEditingEmployment] = useState<PayrollEmployment | null>(null), [preselectedPartyId, setPreselectedPartyId] = useState<string | null>(null), [creatingConcept, setCreatingConcept] = useState(false), [editingConcept, setEditingConcept] = useState<PayrollConcept | null>(null), [creatingElectronic, setCreatingElectronic] = useState(false), [creatingAgreement, setCreatingAgreement] = useState(false), [editingAgreement, setEditingAgreement] = useState<PayrollDeductionAgreement | null>(null);
+    const [generatingRun,setGeneratingRun]=useState(false);
+    const [initialCalculationError,setInitialCalculationError]=useState<{runId:string;detail:string}|null>(null);
     const [noveltyEditorState,setNoveltyEditorState]=useState<{
       initial:PayrollNovelty|null;
       preset:{employmentId:string;employeeName:string;startDate:string;endDate:string}|null;
@@ -82,6 +86,8 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     const calculation=useMutation({mutationKey:calculationKey,
       mutationFn:({id,request}:{id:string;request:CalculatePayrollRun})=>payrollApi.calculateRun(id,request),onSuccess:(result,variables)=>runCalculated(result,variables.request.rowVersion)});
     async function calculateRun(id:string,request:CalculatePayrollRun){
+      if(useTenantContextStore.getState().selectedTenantId!==tenantId || useBusinessContextStore.getState().selectedBusinessId!==businessId)
+        throw new Error("La sede cambió. Abre la liquidación en su sede antes de calcular.");
       if(queryClient.isMutating({mutationKey:calculationKey})>0)throw new Error("Espera a que termine el cálculo en curso.");
       return calculation.mutateAsync({id,request});
     }
@@ -141,9 +147,9 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
       queryClient.setQueryData(["payroll-agreement-value",tenantId,businessId,result.deductionAgreementId],result);
     }
     async function load() { await Promise.all([reloadWorkspaceAndRun(),...(["payroll-agreements","payroll-payments","payroll-electronic-periods","payroll-electronic-documents"].map(key=>queryClient.invalidateQueries({queryKey:[key,tenantId,businessId]}))), queryClient.invalidateQueries({ queryKey: ["payroll-employments", tenantId, businessId] }), queryClient.invalidateQueries({ queryKey: ["payroll-run-employments", tenantId, businessId] }),queryClient.invalidateQueries({queryKey:["payroll-calculated-employees",tenantId,businessId],refetchType:section==="novelties"&&!selectedWorkerId?"active":"none"})]); }
-    async function selectRun(id: string) { closeNoveltyEditor(); setSelectedId(id); }
+    async function selectRun(id: string) { closeNoveltyEditor(); setGeneratedRunId(null); setSelectedId(id); }
     function changeSection(value:Section){
-      if(value!=="novelties"){setSelectedWorkerId(null);closeNoveltyEditor();}
+      if(value!=="novelties"){setSelectedWorkerId(null);setNoveltiesPreset(null);closeNoveltyEditor();}
       if(value==="novelties"&&selected?.status==="Draft")setSelectedId(null);
       setSection(value);const url=new URL(window.location.href);url.searchParams.set("section",value);url.searchParams.delete("partyId");window.history.replaceState(null,"",url);
     }
@@ -174,6 +180,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
         await queryClient.invalidateQueries({queryKey:["payroll-run-employments",tenantId,businessId],refetchType:"none"});
     }
     function runCalculated(result:PayrollRun,baseVersion?:string){
+      if(result.status!=="Draft")setInitialCalculationError(previous=>previous?.runId===result.payrollRunId?null:previous);
       setCalculationErrors(previous=>{
         const errors=previous[result.payrollRunId];if(!errors)return previous;
         const calculatedIds=new Set(result.employees.map(employee=>employee.employmentId));
@@ -203,7 +210,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
       if(!result.isPartialCalculation)void queryClient.invalidateQueries({queryKey:["payroll-calculated-employees",tenantId,businessId],refetchType:"none"});
       const selected=new Set(updated.employees.map(employee=>employee.employmentId));
       queryClient.setQueriesData<PayrollRunEmploymentPage>({queryKey:["payroll-run-employments",tenantId,businessId,result.payrollRunId]},current=>current?{
-        ...current,rowVersion:result.rowVersion,selectedCount:selected.size,
+        ...current,rowVersion:result.rowVersion,selectedCount:result.isPartialCalculation?current.selectedCount:selected.size,
         items:result.isPartialCalculation?current.items:current.items.map(item=>({...item,isSelected:selected.has(item.employmentId)})),
       }:current);
       queryClient.setQueriesData<PayrollRunPage>({queryKey:["payroll-runs",tenantId,businessId]},current=>current?{
@@ -231,20 +238,23 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
 
 
     {section === "runs" && (
-      <RunsSection options={options} selected={selected} open={runDialogOpen} onOpenChange={setRunDialogOpen} loading={detail.isFetching} error={detail.isError} onRetry={()=>void Promise.all([detail.refetch(),queryClient.invalidateQueries({queryKey:["payroll-run-employments",tenantId,businessId,selectedId]})])} canCalculate={permissions.has("payroll.calculate")} calculationDisabled={detail.isFetching || detail.isError} calculating={calculationPending} canApprove={permissions.has("payroll.approve") && !detail.isFetching && !detail.isError} onSelect={async id=>{setRunDialogOpen(true);await selectRun(id);}} onCalculate={calculateRun} onChanged={async()=>{const result=await detail.refetch();if(result.isError)throw new Error("La aprobación se guardó. No fue posible actualizar su detalle; pulsa Actualizar nómina.");if(result.data)runCalculated(result.data);await queryClient.invalidateQueries({queryKey:["payroll-run-select",tenantId,businessId],refetchType:"none"});}}/>
+      <RunsSection options={options} selected={selected} open={runDialogOpen} onOpenChange={setRunDialogOpen} loading={detail.isFetching} error={detail.isError} onRetry={()=>void Promise.all([detail.refetch(),queryClient.invalidateQueries({queryKey:["payroll-run-employments",tenantId,businessId,selectedId]})])} canCalculate={permissions.has("payroll.calculate")} calculationDisabled={detail.isFetching || detail.isError} calculating={calculationPending} canApprove={permissions.has("payroll.approve") && !detail.isFetching && !detail.isError} onSelect={async id=>{setRunDialogOpen(true);await selectRun(id);}} onCalculate={calculateRun}
+        initialCalculationError={selected?.status==="Draft" && initialCalculationError?.runId===selectedId ? initialCalculationError.detail : null}
+        onOpenWorker={employmentId=>{if(!selected)return;setRunDialogOpen(false);setNoveltiesPreset(selected);setSelectedWorkerId(employmentId);changeSection("novelties");}}
+        onChanged={async()=>{const result=await detail.refetch();if(result.isError)throw new Error("La aprobación se guardó. No fue posible actualizar su detalle; pulsa Actualizar nómina.");if(result.data)runCalculated(result.data);await queryClient.invalidateQueries({queryKey:["payroll-run-select",tenantId,businessId],refetchType:"none"});}}/>
     )}
     {section === "employments" && (
       <EmploymentsSection canManage={permissions.has("payroll.manage")} onEdit={setEditingEmployment} onSaved={employmentSaved}/>
     )}
     {section === "novelties" && <div className="space-y-5">
-      <PayrollRunNovelties statuses={options?catalog(options,"payroll-workflow-status"):[]} onPrepareRun={id=>{changeSection("runs");setRunDialogOpen(true);void selectRun(id);}} run={workerScope?selected:null} employmentId={selectedWorkerId} loading={detailVisible&&detail.isFetching}
+      <PayrollRunNovelties statuses={options?catalog(options,"payroll-workflow-status"):[]} initialLiquidation={noveltiesPreset} onPrepareRun={id=>{changeSection("runs");setRunDialogOpen(true);void selectRun(id);}} run={workerScope?selected:null} employmentId={selectedWorkerId} loading={detailVisible&&detail.isFetching}
         onOpen={(runId,employmentId)=>{closeNoveltyEditor();setSelectedId(runId);setSelectedWorkerId(employmentId);}}
         onBack={()=>{closeNoveltyEditor();setSelectedWorkerId(null);}}
         error={Boolean(workerScope)&&detail.isError} canCalculate={permissions.has("payroll.calculate")} calculating={calculationPending}
         calculationErrors={calculationErrors[selectedId??""]??{}}
         natures={options?catalog(options,"payroll-concept-nature"):[]} onRetry={()=>void detail.refetch()} onCalculate={calculateRun}
         canManage={permissions.has("payroll.manage")} voiding={voidingNovelty}
-        editorEmploymentId={editingNovelty?.employmentId??noveltyPreset?.employmentId??null} onCloseEditor={closeNoveltyEditor}
+        editorEmploymentId={editingNovelty?.employmentId??noveltyPreset?.employmentId??null}
         noveltyEditor={options && (creatingNovelty || editingNovelty) && <section aria-label="Edición de novedad" className="space-y-4 rounded-xl border bg-muted/30 p-4">
           <div className="flex items-center justify-between"><h4 className="font-semibold">{editingNovelty?"Editar novedad":"Agregar novedad"}</h4><Button variant="ghost" onClick={closeNoveltyEditor}>Cerrar edición</Button></div>
           <NoveltyForm onAgreementSaved={agreementSaved} key={editingNovelty?.noveltyId??"new"} options={options} initial={editingNovelty} preset={noveltyPreset} onSaved={result=>{void noveltySaved(result);setNoveltyEditorState(current=>current===noveltyEditorState?null:current);}}/>
@@ -273,10 +283,14 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     )}
     </TabsContent>}
     </Tabs>
-    <Dialog open={creatingRun} onOpenChange={setCreatingRun}><DialogContent><DialogHeader><DialogTitle>Nueva liquidación</DialogTitle><DialogDescription>Selecciona el período y la periodicidad. Los porcentajes se toman de la configuración de cada contrato.</DialogDescription></DialogHeader>{options && <RunForm businessId={businessId} options={options} onSaved={result => {
+    <Dialog open={creatingRun} onOpenChange={value=>{if(!generatingRun)setCreatingRun(value);}}><DialogContent showClose={!generatingRun}><DialogHeader><DialogTitle>Nueva liquidación</DialogTitle><DialogDescription>Selecciona el período y la periodicidad. Los porcentajes se toman de la configuración de cada contrato.</DialogDescription></DialogHeader>{options && <RunForm businessId={businessId} options={options} onBusy={setGeneratingRun} onCalculate={calculateRun} onSaved={(result,calculationError) => {
         queryClient.setQueryData(["payroll-run",tenantId,businessId,result.payrollRunId],result);
         void queryClient.invalidateQueries({queryKey:["payroll-runs",tenantId,businessId]});
         setCreatingRun(false);
+        setGeneratedRunId(result.payrollRunId);
+        setSelectedId(result.payrollRunId);
+        setRunDialogOpen(true);
+        if(calculationError)setInitialCalculationError({runId:result.payrollRunId,detail:calculationError});
       }}/>}</DialogContent></Dialog>
     <Dialog open={creatingEmployment || editingEmployment !== null} onOpenChange={open => { if (!open) {
         setCreatingEmployment(false);
@@ -294,10 +308,11 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     }}/>}</DialogContent></Dialog>
   </div>;
 }
-function RunsSection({options,selected,open,onOpenChange,loading,error,onRetry,canCalculate,calculationDisabled,calculating,canApprove,onSelect,onCalculate,onChanged}:{
+function RunsSection({options,selected,open,onOpenChange,loading,error,onRetry,canCalculate,calculationDisabled,calculating,canApprove,onSelect,onCalculate,onChanged,initialCalculationError,onOpenWorker}:{
     options:PayrollOptions|null;selected:PayrollRun|null;open:boolean;onOpenChange:(open:boolean)=>void;
     loading:boolean;error:boolean;onRetry:()=>void;canCalculate:boolean;calculationDisabled:boolean;calculating:boolean;
     canApprove:boolean;onSelect:(id:string)=>Promise<void>;onCalculate:(id:string,request:CalculatePayrollRun)=>Promise<PayrollRun>;onChanged:()=>Promise<void>;
+    initialCalculationError:string|null;onOpenWorker:(employmentId:string)=>void;
 }) {
     const tenant=useTenantContextStore(state=>state.selectedTenantId),business=useBusinessContextStore(state=>state.selectedBusinessId);
     const [page,setPage]=useState(1),[busy,setBusy]=useState<string|null>(null),[selectionBlocksApproval,setSelectionBlocksApproval]=useState(false);
@@ -310,6 +325,23 @@ function RunsSection({options,selected,open,onOpenChange,loading,error,onRetry,c
       finally{setBusy(null);}
     }
     const locked=busy!==null||calculating;
+    function renderBeforeSelection(calculateButton?: ReactNode) {
+      return <>
+        <div className="flex items-center gap-2">
+          {selected?.payFrequencyName&&<p className="min-w-0 break-words text-sm font-medium">Periodicidad: {selected.payFrequencyName}</p>}
+          <div role="group" aria-label="Acciones de la liquidación" className="ml-auto inline-flex shrink-0 items-center gap-2">
+            <Button type="button" size="icon" variant="outline" aria-label="Actualizar liquidación" title="Actualizar liquidación"
+              disabled={locked||loading} onClick={onRetry}><RefreshCw aria-hidden="true" className="size-4"/></Button>
+            {calculateButton}
+          </div>
+        </div>
+        {loading&&<p role="status">Cargando detalle…</p>}
+        {error&&<div role="alert" className="space-y-3"><p>No fue posible abrir la liquidación.</p><Button variant="outline" onClick={onRetry}>Reintentar detalle</Button></div>}
+        {initialCalculationError&&<p role="alert" className="rounded-lg border border-destructive/35 p-3 text-sm text-destructive">{initialCalculationError}</p>}
+        {selected&&selected.status!=="Draft"&&<div className="grid gap-4 sm:grid-cols-3"><Metric label="Devengado" value={selected.totalEarnings}/><Metric label="Deducciones" value={selected.totalDeductions}/><Metric label="Neto" value={selected.netPayable}/></div>}
+        {canApprove&&selected?.status==="Calculated"&&<Button disabled={locked||selectionBlocksApproval} onClick={()=>void approve()}><CheckCircle2 className="mr-2 h-4 w-4"/>{busy==="approve"?"Aprobando…":"Aprobar y contabilizar"}</Button>}
+      </>;
+    }
     return <>
       <Card className="min-w-0 rounded-3xl"><CardHeader><CardTitle>Liquidaciones</CardTitle><CardDescription>Abre un período para seleccionar trabajadores, calcular o aprobar su nómina.</CardDescription></CardHeader>
       <CardContent className="space-y-3">
@@ -327,16 +359,10 @@ function RunsSection({options,selected,open,onOpenChange,loading,error,onRetry,c
       <Dialog open={open} onOpenChange={next=>{if(!locked)onOpenChange(next);}}><DialogContent showClose={!locked} className="flex h-[min(92dvh,60rem)] max-h-[92dvh] max-w-6xl flex-col gap-0 overflow-visible p-0">
         <DialogHeader className="shrink-0 border-b px-5 py-4 text-left"><DialogTitle>Detalle de liquidación</DialogTitle><DialogDescription>{selected?`${selected.periodStart} — ${selected.periodEnd} · ${statusLabel(options,selected.status)}`:"Consulta los trabajadores, conceptos y totales del período."}</DialogDescription></DialogHeader>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {selected?.payFrequencyName&&<p className="text-sm font-medium">Periodicidad: {selected.payFrequencyName}</p>}
-            <Button className="ml-auto" variant="outline" disabled={locked||loading} onClick={onRetry}><RefreshCw className="mr-2 size-4"/>Actualizar liquidación</Button>
-          </div>
-          {loading&&<p role="status">Cargando detalle…</p>}
-          {error&&<div role="alert" className="space-y-3"><p>No fue posible abrir la liquidación.</p><Button variant="outline" onClick={onRetry}>Reintentar detalle</Button></div>}
+          {selected&&canCalculate&&["Draft","Calculated"].includes(selected.status)
+            ? <PayrollRunSelection key={selected.payrollRunId} run={selected} disabled={busy!==null||calculationDisabled} calculating={calculating} onCalculate={onCalculate} onBlocksApproval={setSelectionBlocksApproval} renderBeforeSelection={renderBeforeSelection} onOpenWorker={onOpenWorker}/>
+            : renderBeforeSelection()}
           {selected&&<>
-            {selected.status!=="Draft"&&<div className="grid gap-4 sm:grid-cols-3"><Metric label="Devengado" value={selected.totalEarnings}/><Metric label="Deducciones" value={selected.totalDeductions}/><Metric label="Neto" value={selected.netPayable}/></div>}
-            {canApprove&&selected.status==="Calculated"&&<Button disabled={locked||selectionBlocksApproval} onClick={()=>void approve()}><CheckCircle2 className="mr-2 h-4 w-4"/>{busy==="approve"?"Aprobando…":"Aprobar y contabilizar"}</Button>}
-            {canCalculate&&["Draft","Calculated"].includes(selected.status)&&<PayrollRunSelection key={selected.payrollRunId} run={selected} disabled={busy!==null||calculationDisabled} calculating={calculating} onCalculate={onCalculate} onBlocksApproval={setSelectionBlocksApproval}/>}
             {selected.employees.map(employee=><details key={employee.payrollRunEmployeeId} className="rounded-2xl border p-4"><summary className="cursor-pointer font-semibold"><span className="inline-flex w-full flex-wrap justify-between gap-3">{employee.employeeName}<span>{money.format(employee.netPayable)}</span></span></summary>
               <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead><tr className="text-left text-muted-foreground"><th>Concepto</th><th>Naturaleza</th><th className="text-right">Base</th><th className="text-right">Valor</th></tr></thead><tbody>{employee.lines.map(line=><tr key={line.lineNumber} className="border-t"><td className="py-3">{line.conceptCode} · {line.conceptName}</td><td>{catalogLabel(options,"payroll-concept-nature",line.natureCode)}</td><td className="text-right">{line.baseAmount===null?"—":money.format(line.baseAmount)}</td><td className="text-right font-medium">{money.format(line.amount)}</td></tr>)}</tbody></table></div>
             </details>)}
@@ -452,7 +478,7 @@ finally {
 } } const [signature,setSignature]=useState(false); if (selected && !loading) {
     const columns = selected.columns.map(column => ({ key: column.key, label: column.label, align: column.align, format: (value: unknown) => column.format === "currency" ? money.format(Number(value ?? 0)) : column.format === "number" ? Number(value ?? 0).toLocaleString("es-CO") : column.format === "datetime" && value ? new Date(String(value)).toLocaleString("es-CO") : String(value ?? "") }));
     const receipt = selected.dataset === "PayrollReceipt";
-    return <div className="space-y-3">{receipt&&<label className="flex items-center gap-2 text-sm"><Checkbox checked={signature} onCheckedChange={value=>setSignature(value===true)}/>Incluir espacio para firma</label>}<ReportViewer onClose={() => setSelected(null)} title={selected.name} description={`${selected.description} · ${from} a ${to}`} rows={receipt ? payrollReceiptRows(rows,signature) : rows} columns={receipt ? payrollReceiptColumns : columns} groupedHeaders={receipt} searchable={!receipt} documentDownloads fileName={`nomina-${selected.code}-${from}-${to}`}/></div>;
+    return <div className="space-y-3">{receipt&&<label className="flex items-center gap-2 text-sm"><Checkbox checked={signature} onCheckedChange={value=>setSignature(value===true)}/>Incluir espacio para firma</label>}<ReportViewer onClose={() => setSelected(null)} title={selected.name} description={`${selected.description} · ${from} a ${to}`} rows={receipt ? payrollReceiptRows(rows,signature) : rows} columns={receipt ? payrollReceiptColumns : columns} groupedHeaders={receipt} pdfLayout={receipt ? "portrait-document" : undefined} searchable={!receipt} documentDownloads fileName={`nomina-${selected.code}-${from}-${to}`}/></div>;
 } ; const selectedDefinition = definitions.find(item => item.code === reportCode); return <Card className="rounded-3xl"><CardHeader><CardTitle>Reportes de nómina</CardTitle><CardDescription>Consulta liquidaciones, comprobantes, pagos y documentos electrónicos.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Field label="Reporte"><Select value={reportCode} onValueChange={setReportCode}><SelectTrigger aria-label="Reporte"><SelectValue placeholder="Selecciona un reporte" /></SelectTrigger><SelectContent>{definitions.map(definition => <SelectItem key={definition.code} value={definition.code}>{definition.name}</SelectItem>)}</SelectContent></Select></Field><Field label="Desde"><DatePicker today={today} value={from} onChange={setFrom}/></Field><Field label="Hasta"><DatePicker today={today} value={to} onChange={setTo}/></Field><Field label="Trabajador"><PartyRoleSelect role="Employee" includePartyId value={partyId} leadingOptions={[{value:"_all",label:"Todos los trabajadores"}]} placeholder="Buscar trabajador" onChange={setPartyId}/></Field><div className="rounded-xl border bg-muted/20 p-3 text-sm md:col-span-2 xl:col-span-3"><b>{selectedDefinition?.name ?? "Catálogo de reportes"}</b><p className="text-muted-foreground">{selectedDefinition?.description ?? "No hay reportes activos."}</p></div><Button className="self-end" disabled={loading || !selectedDefinition || !from || !to || to < from} onClick={() => selectedDefinition && void open(selectedDefinition)}>{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Generar reporte</Button></CardContent></Card>; }
 function ConfigurationSection({ options, canConfigure, canReadAccounting, canConfigureAccounting, onConcept, onEditConcept, onConceptSaved, onSettingsSaved }: {
     options: PayrollOptions | null;
@@ -482,22 +508,86 @@ function ConfigurationSection({ options, canConfigure, canReadAccounting, canCon
     )}
   </div>;
 }
-function RunForm({ businessId, options, onSaved }: {
+function RunForm({ businessId, options, onSaved, onBusy, onCalculate }: {
     businessId: string;
     options: PayrollOptions;
-    onSaved: (result:PayrollRun) => void;
-}) { const today = useBusinessDates().today(), monthEnd = new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10), [frequency, setFrequency] = useState(""), [kind, setKind] = useState<"Regular" | "Adjustment">("Regular"), [originalId, setOriginalId] = useState(""), [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(monthEnd), [payment, setPayment] = useState(today), [busy, setBusy] = useState(false); async function save() { setBusy(true); try {
-    const result = await payrollApi.createRun({ payrollRunId: crypto.randomUUID(), businessId, payFrequencyOptionId: frequency, runKind: kind, originalPayrollRunId: kind === "Adjustment" ? originalId : null, periodStart: start, periodEnd: end, paymentDate: payment });
-    toast.success(kind === "Adjustment" ? "Ajuste creado en borrador." : "Liquidación creada en borrador.");
-    onSaved(result);
+    onSaved: (result: PayrollRun, calculationError?: string) => void;
+    onBusy: (busy: boolean) => void;
+    onCalculate: (id: string, request: CalculatePayrollRun) => Promise<PayrollRun>;
+}) {
+    const today = useBusinessDates().today();
+    const monthEnd = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).toISOString().slice(0, 10);
+    const [frequency, setFrequency] = useState("");
+    const [kind, setKind] = useState<"Regular" | "Adjustment">("Regular");
+    const [originalId, setOriginalId] = useState("");
+    const [start, setStart] = useState(today.slice(0, 8) + "01");
+    const [end, setEnd] = useState(monthEnd);
+    const [payment, setPayment] = useState(today);
+    const [stage, setStage] = useState<"creating" | "calculating" | null>(null);
+    const adjustment = kind === "Adjustment";
+
+    async function save() {
+        if (stage) return;
+        setStage("creating");
+        onBusy(true);
+        try {
+            const draft = await payrollApi.createRun({
+                payrollRunId: crypto.randomUUID(), businessId, payFrequencyOptionId: frequency, runKind: kind,
+                originalPayrollRunId: adjustment ? originalId : null, periodStart: start, periodEnd: end, paymentDate: payment,
+            });
+            if (adjustment) {
+                toast.success("Ajuste creado en borrador.");
+                onSaved(draft);
+                return;
+            }
+            setStage("calculating");
+            let result: PayrollRun;
+            try {
+                result = await onCalculate(draft.payrollRunId, { rowVersion: draft.rowVersion });
+            } catch (error) {
+                onSaved(draft, message(error, "La liquidación se guardó en borrador. Reintenta el cálculo."));
+                return;
+            }
+            toast.success("Liquidación calculada.");
+            onSaved(result);
+        } catch (error) {
+            toast.error(message(error, "No fue posible crear la liquidación."));
+        } finally {
+            setStage(null);
+            onBusy(false);
+        }
+    }
+
+    return <fieldset disabled={Boolean(stage)} className="grid min-w-0 gap-4 sm:grid-cols-2">
+        <Field label="Tipo"><Select disabled={Boolean(stage)} value={kind} onValueChange={value => {
+            setKind(value as "Regular" | "Adjustment");
+            if (value === "Regular") setOriginalId("");
+        }}>
+            <SelectTrigger aria-label="Tipo"><SelectValue/></SelectTrigger>
+            <SelectContent>{catalog(options, "payroll-run-kind").filter(item => item.isActive).map(item =>
+                <SelectItem key={item.optionId} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
+        </Select></Field>
+        {adjustment && <Field label="Liquidación original"><PayrollRunSelect value={originalId} label="Liquidación original"
+            regularOnly disabled={Boolean(stage)} onChange={original => {
+                setOriginalId(original.payrollRunId);
+                setStart(original.periodStart);
+                setEnd(original.periodEnd);
+                setPayment(original.paymentDate);
+            }}/></Field>}
+        <CatalogField label="Periodicidad" options={catalog(options, "payroll-pay-frequency")} value={frequency} onChange={setFrequency}/>
+        <Field label="Inicio"><DatePicker today={today} value={start} onChange={setStart}/></Field>
+        <Field label="Fin"><DatePicker today={today} value={end} onChange={setEnd}/></Field>
+        {!adjustment && <p className="sm:col-span-2 text-sm text-muted-foreground">Mensual: mes completo. Quincenal: del 1 al 15 o del 16 al fin de mes. Los días a liquidar se ajustan después en Novedades.</p>}
+        <Field label="Fecha de pago"><DatePicker today={today} value={payment} onChange={setPayment}/></Field>
+        {adjustment && <p className="self-end rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">El ajuste liquida únicamente novedades nuevas como diferencias; no repite el salario ya aprobado.</p>}
+        <DialogFooter className="sm:col-span-2"><Button type="button"
+            disabled={Boolean(stage) || !frequency || !start || !end || !payment || end < start || payment < start || (adjustment && !originalId)}
+            onClick={() => void save()}>
+            {stage && <Loader2 aria-hidden="true" className="mr-2 size-4 animate-spin"/>}
+            {stage === "creating" ? "Creando…" : stage === "calculating" ? "Calculando…" : adjustment ? "Crear borrador" : "Generar liquidación"}
+        </Button></DialogFooter>
+    </fieldset>;
 }
-catch (error) {
-    toast.error(message(error, "No fue posible crear la liquidación."));
-}
-finally {
-    setBusy(false);
-} } return <div className="grid gap-4 sm:grid-cols-2"><Field label="Tipo"><Select value={kind} onValueChange={value => { setKind(value as "Regular" | "Adjustment"); if (value === "Regular")
-    setOriginalId(""); }}><SelectTrigger aria-label="Tipo"><SelectValue /></SelectTrigger><SelectContent>{catalog(options, "payroll-run-kind").filter(item => item.isActive).map(item => <SelectItem key={item.optionId} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>{kind === "Adjustment" && <Field label="Liquidación original"><PayrollRunSelect value={originalId} label="Liquidación original" regularOnly onChange={original=>{setOriginalId(original.payrollRunId);setStart(original.periodStart);setEnd(original.periodEnd);setPayment(original.paymentDate);}}/></Field>}<CatalogField label="Periodicidad" options={catalog(options, "payroll-pay-frequency")} value={frequency} onChange={setFrequency}/><Field label="Inicio"><DatePicker today={today} value={start} onChange={setStart}/></Field><Field label="Fin"><DatePicker today={today} value={end} onChange={setEnd}/></Field>{kind === "Regular" && <p className="sm:col-span-2 text-sm text-muted-foreground">Mensual: mes completo. Quincenal: del 1 al 15 o del 16 al fin de mes. Los días a liquidar se ajustan después en Novedades.</p>}<Field label="Fecha de pago"><DatePicker today={today} value={payment} onChange={setPayment}/></Field>{kind === "Adjustment" && <p className="self-end rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">El ajuste liquida únicamente novedades nuevas como diferencias; no repite el salario ya aprobado.</p>}<DialogFooter className="sm:col-span-2"><Button disabled={busy || !frequency || !start || !end || !payment || end < start || payment < start || (kind === "Adjustment" && !originalId)} onClick={() => void save()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Crear borrador</Button></DialogFooter></div>; }
 function EmploymentForm({ businessId, options, initial, partyId, onSaved }: {
     businessId: string;
     options: PayrollOptions;

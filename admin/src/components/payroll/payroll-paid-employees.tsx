@@ -25,7 +25,7 @@ export function PayrollPaidEmployees({ batch, onClose }: { batch: PayrollPayment
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
   const employees = useQuery({ queryKey: ["payroll-payment-employees", tenant, business, batch.paymentBatchId, page, pageSize],
-    queryFn: ({ signal }) => payrollApi.paymentEmployees(batch.paymentBatchId, page, pageSize, signal),
+    queryFn: () => payrollApi.paymentEmployees(batch.paymentBatchId, page, pageSize),
     staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false });
 
   async function download(employee: PayrollPaymentEmployee) {
@@ -50,8 +50,9 @@ export function PayrollPaidEmployees({ batch, onClose }: { batch: PayrollPayment
       await exportReportPdf({ title: "Desprendible de pago de nómina", brandName: brand.legalName || brand.displayName,
         brandIdentification: brand.nit ? `NIT ${brand.nit}${brand.verificationDigit ? `-${brand.verificationDigit}` : ""}` : undefined,
         logoSource: brand.logoUrl, fileName: `desprendible-${employee.employeeName}-${employee.periodStart}-${employee.periodEnd}`,
-        description: `Pago ${dates.formatDate(employee.paymentDate)} · ${batch.paymentMethodName} · Referencia ${batch.referenceNumber}`,
-        rows: payrollReceiptRows(result.rows, false), columns: payrollReceiptColumns, groupedHeaders: true, keepRowsTogether: true });
+        description: `${batch.paymentMethodName} · Referencia ${batch.referenceNumber}`,
+        rows: payrollReceiptRows(result.rows, false), columns: payrollReceiptColumns, groupedHeaders: true, keepRowsTogether: true,
+        pdfLayout: "portrait-document" });
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "No fue posible descargar el desprendible.");
     } finally {

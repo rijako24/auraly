@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   marginFromCostAndSale,
+  marginFromCostAndGrossSale,
+  previewPriceChannelSalePrice,
   recalculateProductPricing,
   recalculateProductPricingForSalesTaxChange,
 } from "./product-pricing-calculator";
 
 describe("product pricing calculator", () => {
+  it("previews channel tiers at the precision of the stored price and margin", () => {
+    assert.equal(previewPriceChannelSalePrice(1728, 15, 0), 2032.9412);
+    assert.equal(previewPriceChannelSalePrice(1728, 15, 19), 2419.2);
+    assert.equal(marginFromCostAndGrossSale(1728, 2419.2, 19, 6), 15);
+    assert.equal(marginFromCostAndGrossSale(20000, 29500, 0, 6), 32.20339);
+  });
   it("rebuilds a loaded draft from its latest cost and margin instead of retaining an older price", () => {
     assert.deepEqual(
       recalculateProductPricing("margin", 25.4608, {

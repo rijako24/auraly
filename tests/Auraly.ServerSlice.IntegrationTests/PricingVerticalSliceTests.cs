@@ -757,6 +757,58 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(5, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product",
             product, new SqlParameter("@ChannelId", channel.Id)));
+
+        using (var duplicate = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest("No se debe guardar", channel.Strategy, null, true,
+                NewItems: [new(product, 20_000m, 5m), new(product, 21_000m, 10m)])))
+            Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.Equal(new[] { 1m, 5m }, (await Items(channel.Id)).Select(item => item.MinimumQuantity));
+        Assert.All(await Items(channel.Id), item => Assert.False(item.AutoUpdatePrice));
+
+        using (var invalid = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null,
+                NewItems: [new(product, 20_000m, 10m), new(product, 21_000m, 10m)])))
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+
+        using (var added = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null,
+                NewItems: [new(product, 20_000m, 10m), new(product, 0m, 15m, 20m, true, PriceInputModes.Margin)])))
+        {
+            Assert.True(added.IsSuccessStatusCode, await added.Content.ReadAsStringAsync());
+            var response = await added.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.Equal(4, response.GetProperty("productCount").GetInt32());
+            Assert.Equal(2, response.GetProperty("addedItems").GetArrayLength());
+        }
+        var afterAdding = await Items(channel.Id);
+        Assert.Equal(new[] { 1m, 5m, 10m, 15m }, afterAdding.Select(item => item.MinimumQuantity));
+        Assert.Equal(new[] { 18_000m, 8_000m, 20_000m, 15_000m }, afterAdding.Select(item => item.Amount));
+        Assert.Equal(new[] { false, false, false, true }, afterAdding.Select(item => item.AutoUpdatePrice));
+        using (var conflictingEdit = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null,
+                NewItems: [new(product, 25_000m, 15m)],
+                RetiredItems: [new(product, 10m)])))
+            Assert.Equal(HttpStatusCode.Conflict, conflictingEdit.StatusCode);
+        Assert.Equal(afterAdding, await Items(channel.Id));
+
+        using (var edited = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, true,
+                NewItems: [new(product, 21_000m, 2m), new(product, 22_000m, 10m)],
+                RetiredItems: [new(product, 1m), new(product, 5m), new(product, 10m)])))
+        {
+            Assert.True(edited.IsSuccessStatusCode, await edited.Content.ReadAsStringAsync());
+            var response = await edited.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.Equal(3, response.GetProperty("productCount").GetInt32());
+        }
+        var afterEditing = await Items(channel.Id);
+        Assert.Equal(new[] { 2m, 10m, 15m }, afterEditing.Select(item => item.MinimumQuantity));
+        Assert.Equal(new[] { 21_000m, 22_000m, 15_000m }, afterEditing.Select(item => item.Amount));
+        Assert.Equal(new[] { false, false, true }, afterEditing.Select(item => item.AutoUpdatePrice));
+
+        using var staleEdit = await pricing.PutAsJsonAsync(settingsUrl,
+            new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null,
+                RetiredItems: [new(product, 1m), new(product, 2m)]));
+        Assert.Equal(HttpStatusCode.Conflict, staleEdit.StatusCode);
+        Assert.Equal(afterEditing, await Items(channel.Id));
     }
 
     [Fact]

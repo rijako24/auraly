@@ -58,7 +58,7 @@ test("despacho real completa entregas, cierre ciego y consulta administrativa en
     const review=await context.newPage();await review.addInitScript(selectContext,{tenant:profile.TenantId,business:profile.BusinessId});
     await login(review,{tenantKey:admin.TenantKey,username:admin.Username,password:admin.Password},90_000);
     await review.goto("/dashboard/cash-differences");
-    await review.getByRole("row").filter({hasText:profile.DispatchNumber}).getByRole("button",{name:"Ver despacho",exact:true}).click();
+    await review.getByRole("row").filter({hasText:profile.DispatchNumber}).getByRole("button",{name:"Conciliar",exact:true}).click();
     const dialog=review.getByRole("dialog",{name:"Recepción y liquidación del despacho"});
     await expect(dialog).toContainText("Declaración del transportador");await expect(dialog).toContainText("19.000");
     await expect(dialog.getByRole("region",{name:"Recaudos por forma de pago"})).toContainText("3 facturas");

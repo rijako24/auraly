@@ -43,7 +43,7 @@ for (const cashForms of [1,2,0]) test(`liquidación administrativa atribuye la d
   });
   await page.route("https://media.auraly.test/**", route => route.fulfill({status:200,contentType:"image/png",body:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==","base64")}));
   await page.goto("/dashboard/cash-differences");
-  await page.getByRole("button", { name: "Ver despacho", exact: true }).click();
+  await page.getByRole("button", { name: "Conciliar", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción y liquidación del despacho" });
   if(cashForms>0){
     await expect(dialog.getByRole("img",{name:"Soporte de CVI-0",exact:true})).toHaveAttribute("src","https://media.auraly.test/private/proof.png?read=temporary");

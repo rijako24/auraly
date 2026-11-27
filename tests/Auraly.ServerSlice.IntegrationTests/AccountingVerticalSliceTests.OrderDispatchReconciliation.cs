@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.Dispatching;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Dispatching;
@@ -185,19 +186,19 @@ public sealed partial class AccountingVerticalSliceTests
                 messages, NullLogger<SqlDispatchSettlementActivation>.Instance);
             var preparation = provider.GetRequiredService<DispatchSettlementPreparation>();
 
-            await activation.RecoverAsync(default);
+            await activation.PublishAcceptedAsync(fixture.BusinessId, dispatch.DispatchId, approval.IdempotencyKey, default);
             var initial = Assert.Single(messages.Items);
-            await preparation.ProcessAsync(initial, default);
-            await preparation.ProcessAsync(initial, default);
+            Assert.True(await preparation.ProcessAsync(initial, default));
+            Assert.False(await preparation.ProcessAsync(initial, default));
             Assert.Equal(before, await BeforeApprovalAsync());
-            await activation.RecoverAsync(default);
+            await activation.PublishReadyAsync(initial.BusinessId, initial.OperationId, default);
             Assert.Equal(2, messages.Items.Count);
 
             var finance = provider.GetRequiredService<TestAccountingProcessingSignalPublisher>();
             finance.Pause();
             try
             {
-                await preparation.ProcessAsync(messages.Items[1], default);
+                Assert.False(await preparation.ProcessAsync(messages.Items[1], default));
                 Assert.Equal(before, await BeforeApprovalAsync());
                 Assert.Equal("Accepted", await ScalarAsync<string>("""
                     SELECT payment.Status FROM dbo.CustomerPayments payment
@@ -210,12 +211,14 @@ public sealed partial class AccountingVerticalSliceTests
             }
             finally { finance.Resume(); }
             var child = Assert.Single(finance.Drain());
-            await finance.PublishAsync(child);
-            await finance.PublishAsync(child);
-            await activation.RecoverAsync(default);
+            var posting = provider.GetRequiredService<SqlAccountingPostingProcessor>();
+            var readyOperation = await posting.ProcessAsync(child.DocumentId, child.DocumentType, child.BusinessId, default);
+            Assert.Equal(initial.OperationId, readyOperation);
+            Assert.Null(await posting.ProcessAsync(child.DocumentId, child.DocumentType, child.BusinessId, default));
+            await activation.PublishReadyAsync(child.BusinessId, readyOperation!.Value, default);
             Assert.Equal(3, messages.Items.Count);
-            await preparation.ProcessAsync(messages.Items[2], default);
-            await preparation.ProcessAsync(messages.Items[2], default);
+            Assert.False(await preparation.ProcessAsync(messages.Items[2], default));
+            Assert.False(await preparation.ProcessAsync(messages.Items[2], default));
         }
 
         async Task<T> PostAsync<T>(string path, object body)
@@ -240,9 +243,15 @@ public sealed partial class AccountingVerticalSliceTests
     private sealed class CapturedDispatchSignals : IDispatchSettlementSignalPublisher
     {
         public List<DispatchSettlementSignal> Items { get; } = [];
+        public bool FailNextPublication { get; set; }
 
         public Task PublishAsync(DispatchSettlementSignal signal, CancellationToken cancellationToken)
         {
+            if (FailNextPublication)
+            {
+                FailNextPublication = false;
+                throw new TimeoutException("No se pudo contactar la cola.");
+            }
             Items.Add(signal);
             return Task.CompletedTask;
         }
