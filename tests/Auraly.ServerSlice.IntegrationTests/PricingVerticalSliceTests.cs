@@ -778,6 +778,8 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             var response = await added.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
             Assert.Equal(4, response.GetProperty("productCount").GetInt32());
             Assert.Equal(2, response.GetProperty("addedItems").GetArrayLength());
+            Assert.All(response.GetProperty("addedItems").EnumerateArray(),
+                item => Assert.Equal(12_000m, item.GetProperty("costBasisAmount").GetDecimal()));
         }
         var afterAdding = await Items(channel.Id);
         Assert.Equal(new[] { 1m, 5m, 10m, 15m }, afterAdding.Select(item => item.MinimumQuantity));
@@ -790,7 +792,8 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Conflict, conflictingEdit.StatusCode);
         Assert.Equal(afterAdding, await Items(channel.Id));
 
-        using (var edited = await pricing.PutAsJsonAsync(settingsUrl,
+        using var settingsEditor = fixture.CreateAdminClient("pricing.segments.read", "pricing.segments.manage");
+        using (var edited = await settingsEditor.PutAsJsonAsync(settingsUrl,
             new Auraly.Api.SavePriceChannelSettingsRequest(channel.Name, channel.Strategy, null, true,
                 NewItems: [new(product, 21_000m, 2m), new(product, 22_000m, 10m)],
                 RetiredItems: [new(product, 1m), new(product, 5m), new(product, 10m)])))
@@ -798,6 +801,8 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.True(edited.IsSuccessStatusCode, await edited.Content.ReadAsStringAsync());
             var response = await edited.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
             Assert.Equal(3, response.GetProperty("productCount").GetInt32());
+            Assert.All(response.GetProperty("addedItems").EnumerateArray(),
+                item => Assert.Equal(System.Text.Json.JsonValueKind.Null, item.GetProperty("costBasisAmount").ValueKind));
         }
         var afterEditing = await Items(channel.Id);
         Assert.Equal(new[] { 2m, 10m, 15m }, afterEditing.Select(item => item.MinimumQuantity));

@@ -451,8 +451,11 @@ public static class PriceSegmentsApi
         }
         await SynchronizeAsync(identity.TenantId, businessIds,
             pricingSynchronization, synchronization, ct);
+        var visibleItems = identity.Permissions.Contains(PricingPermissionCodes.ReadCostBasis)
+            ? addedItems
+            : addedItems.Select(item => item with { CostBasisAmount = null, SalesTaxRate = 0 }).ToArray();
         return request.AutoUpdatePrice.HasValue || itemSync.Count > 0 || changesTiers
-            ? Results.Ok(new { autoUpdatePrice = request.AutoUpdatePrice, itemSync, addedItems, productCount })
+            ? Results.Ok(new { autoUpdatePrice = request.AutoUpdatePrice, itemSync, addedItems = visibleItems, productCount })
             : Results.NoContent();
     }
 
@@ -587,7 +590,7 @@ public static class PriceSegmentsApi
         decimal MinimumQuantity, decimal? TargetMarginPercent,
         bool AutoUpdatePrice, string? InputMode);
     private sealed record NormalizedTierItem(Guid ProductId, decimal Amount,
-        decimal MinimumQuantity, decimal? TargetMarginPercent, bool AutoUpdatePrice, decimal CostBasisAmount, decimal SalesTaxRate);
+        decimal MinimumQuantity, decimal? TargetMarginPercent, bool AutoUpdatePrice, decimal? CostBasisAmount, decimal SalesTaxRate);
 
     private static async Task<IReadOnlyList<NormalizedTierItem>?> NormalizeTierItemsAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
