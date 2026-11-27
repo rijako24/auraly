@@ -43,17 +43,18 @@ public sealed class TenantSynchronizationDispatchTests(ServerSliceFixture fixtur
             await dispatcher.DispatchTenantPendingAsync(fixture.TenantId);
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            while (true)
-            {
-                await using var check = new SqlCommand("""
-                    SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
-                    WHERE BusinessId=@OtherBusinessId AND PublishedAt IS NOT NULL;
-                    """, connection);
-                check.Parameters.AddWithValue("@OtherBusinessId", otherBusinessId);
-                if (await check.ExecuteScalarAsync(timeout.Token) is 2)
-                    break;
+            // Observe the new notification by primary key while the dispatcher
+            // writes its acknowledgment. A scan of the business can lock both
+            // index and base rows in the opposite order from the update.
+            await using var check = new SqlCommand("""
+                SELECT PublishedAt FROM dbo.PosSynchronizationOutboxMessages
+                WHERE NotificationId=@NotificationId;
+                """, connection);
+            var id = check.Parameters.AddWithValue("@NotificationId", notificationId);
+            while (await check.ExecuteScalarAsync(timeout.Token) is not DateTimeOffset)
                 await Task.Delay(TimeSpan.FromMilliseconds(100), timeout.Token);
-            }
+            id.Value = priorNotificationId;
+            Assert.IsType<DateTimeOffset>(await check.ExecuteScalarAsync(timeout.Token));
 
             var gateway = new TestPosSynchronizationPushGateway();
             var factory = fixture.Services.GetRequiredService<SqlServerConnectionFactory>();
