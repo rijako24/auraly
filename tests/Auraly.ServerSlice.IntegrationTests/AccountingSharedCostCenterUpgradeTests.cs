@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json.Nodes;
 using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 
@@ -157,6 +158,15 @@ public sealed class AccountingSharedCostCenterUpgradeTests(ServerSliceFixture fi
             return Enumerable.Range(0, 4).Select(reader.GetString).ToArray();
         }
         var before = await ReadHistoryAsync(); Assert.Contains(center.CostCenterId.ToString(), before[1], StringComparison.OrdinalIgnoreCase);
+        async Task AssertHistoryUnchangedAsync()
+        {
+            var after = await ReadHistoryAsync();
+            // DACPAC may reorder physical columns without changing any value.
+            for (var index = 0; index < before.Length; index++)
+                Assert.True(JsonNode.DeepEquals(JsonNode.Parse(before[index]), JsonNode.Parse(after[index])),
+                    $"Historical snapshot {index} changed. Expected {before[index]}; actual {after[index]}.");
+        }
+
         await using (var old = new SqlCommand(PreviousShapeSql, connection))
         {
             old.Parameters.AddWithValue("@Business", fixture.BusinessId); old.Parameters.AddWithValue("@Tenant", fixture.TenantId);
@@ -209,9 +219,9 @@ public sealed class AccountingSharedCostCenterUpgradeTests(ServerSliceFixture fi
         var firstCut = await ReadCutAsync();
         await CutAsync(); Assert.Equal(firstCut, await ReadCutAsync());
         await fixture.ReapplySchemaAsync();
-        Assert.Equal(before, await ReadHistoryAsync());
+        await AssertHistoryUnchangedAsync();
         await CutAsync(); // New schema: the versioned pre-cut safely does nothing.
-        Assert.Equal(before, await ReadHistoryAsync());
+        await AssertHistoryUnchangedAsync();
         await using var verify = new SqlCommand("""
             SELECT COUNT(*),COUNT(DISTINCT Code),SUM(CONVERT(int,IsDefault)) FROM dbo.AccountingCostCenters
               WHERE TenantId='a0a10000-0000-0000-0000-000000000000' AND Code IN

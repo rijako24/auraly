@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Returns;
@@ -212,9 +213,11 @@ public sealed partial class AccountingVerticalSliceTests
             Assert.True(preview.IsSuccessStatusCode, await preview.Content.ReadAsStringAsync());
         var corrections = page.Items.Select(value => correction with { VerificationKey = value.VerificationKey }).ToArray();
         await sessions.ValidatePaymentCorrectionsAsync(identity, closure.WorkSessionClosureId, corrections);
-        using (var commands = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnection(fixture.ConnectionString).Database))
+        using (var activity = new Activity("cash-closure-correction-preview").SetIdFormat(ActivityIdFormat.W3C).Start())
+        using (var commands = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnection(fixture.ConnectionString).Database, activity.TraceId))
         {
-            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var watch = Stopwatch.StartNew();
             await sessions.ValidatePaymentCorrectionsAsync(identity, closure.WorkSessionClosureId, corrections);
             watch.Stop(); output.WriteLine("Native correction preview owner ({2} invoices): {0} SQL commands, {1:F1} ms", commands.Count, watch.Elapsed.TotalMilliseconds, sales.Count);
             Assert.Equal(3, commands.Count);
@@ -420,9 +423,11 @@ public sealed partial class AccountingVerticalSliceTests
                     nextAccount.AccountId, true, true, false, false, true, 10, target.RowVersion,BankAccountId:nextAccount.BankAccountId));
             Assert.True(remapped.IsSuccessStatusCode, await remapped.Content.ReadAsStringAsync());
             ReturnableSalePayment effective;
-            using (var commands = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnection(fixture.ConnectionString).Database))
+            using (var activity = new Activity("returnable-corrected-tender").SetIdFormat(ActivityIdFormat.W3C).Start())
+            using (var commands = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnection(fixture.ConnectionString).Database, activity.TraceId))
             {
-                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var watch = Stopwatch.StartNew();
                 effective = Assert.Single((await returnsQuery.GetReturnableSaleAsync(returnUser, sale.DocumentId))!.Payments);
                 watch.Stop();
                 output.WriteLine("Returnable corrected tender: {0} SQL commands, {1:F1} ms", commands.Count, watch.Elapsed.TotalMilliseconds);

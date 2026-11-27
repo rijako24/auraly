@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Application.Receivables;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Receivables;
@@ -51,7 +52,8 @@ public sealed partial class PortfolioManualAdvanceTests
             new HashSet<string>{ReceivablesPermissionCodes.Read});
         var query=new ReceivablesReportQuery(1,1,false,new(2026,12,31),Search:name,TemplateVersion:4,DateRangeVersion:2);
         ReceivablesReportPage report;
-        using(var reads=new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+        using (var activity = new Activity("receivables-report-with-advances").SetIdFormat(ActivityIdFormat.W3C).Start())
+        using (var reads = new InventoryBalanceProcessingTests.CommandCounter(connection.Database, activity.TraceId))
         {
             report=await service.ReportAsync(actor,query);
             Assert.Equal(2,reads.Count);
