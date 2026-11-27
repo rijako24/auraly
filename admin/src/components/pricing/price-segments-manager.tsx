@@ -501,7 +501,7 @@ function PriceItemDialog({ initial, listedItems, onClose, onSave }: {
         <DialogDescription>{adding ? "Selecciona un producto y define sus precios por cantidad." : "Los cambios se aplican al guardar el canal."}</DialogDescription>
       </DialogHeader>
       {adding && businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(first.productId ? [first.productId] : [])}
-        label="Producto *" onSelect={product => {
+        disabled={false} label="Producto *" onSelect={product => {
           const existing = listedItems.filter(item => item.productId === product.productId);
           setDrafts([{ ...emptyDraft(), productId: product.productId, productCode: product.productCode,
             productName: product.productName, amount: product.saleUnitPrice ?? 0,
