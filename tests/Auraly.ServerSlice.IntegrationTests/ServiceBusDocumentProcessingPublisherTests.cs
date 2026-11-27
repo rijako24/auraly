@@ -34,7 +34,7 @@ public sealed class ServiceBusDocumentProcessingPublisherTests
         var store = new RecordingContinuationStore([activity]);
         var sender = new RecordingServiceBusSender(Guid.Empty);
         var publisher = new ServiceBusDocumentProcessingPublisher(
-            sender, NullLogger<ServiceBusDocumentProcessingPublisher>.Instance, continuations: store);
+            sender, NullLogger<ServiceBusDocumentProcessingPublisher>.Instance, new RecordingActivationStore([]), store);
 
         await publisher.RecoverContinuationSignalsAsync(default);
         await publisher.RecoverContinuationSignalsAsync(default);
@@ -65,7 +65,7 @@ public sealed class ServiceBusDocumentProcessingPublisherTests
         var store = new RecordingContinuationStore([interrupted, sameSession, independent]);
         var sender = new RecordingServiceBusSender(Guid.Empty, $"{interrupted.OutboxMessageId:D}:continuation:0");
         var publisher = new ServiceBusDocumentProcessingPublisher(
-            sender, NullLogger<ServiceBusDocumentProcessingPublisher>.Instance, continuations: store);
+            sender, NullLogger<ServiceBusDocumentProcessingPublisher>.Instance, new RecordingActivationStore([]), store);
 
         await publisher.RecoverContinuationSignalsAsync(default);
 
@@ -80,16 +80,18 @@ public sealed class ServiceBusDocumentProcessingPublisherTests
         var signal = new DocumentProcessingSignal(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "GoodsReceipt");
         var sender = new RecordingServiceBusSender(Guid.Empty);
         var publisher = new ServiceBusDocumentProcessingPublisher(
-            sender, NullLogger<ServiceBusDocumentProcessingPublisher>.Instance);
+            sender, NullLogger<ServiceBusDocumentProcessingPublisher>.Instance, new RecordingActivationStore([signal], 2));
         var due = DateTimeOffset.UtcNow.AddSeconds(2);
 
         await publisher.ScheduleRetryAsync(signal, new DocumentProcessingRetry(2, due), default);
         await publisher.ScheduleRetryAsync(signal, new DocumentProcessingRetry(2, due), default);
         await publisher.ScheduleRetryAsync(signal, new DocumentProcessingRetry(3, due), default);
+        await publisher.RecoverInitialSignalsAsync(default);
 
         var messages = sender.Scheduled.ToArray();
         Assert.Equal(messages[0].MessageId, messages[1].MessageId);
         Assert.NotEqual(messages[1].MessageId, messages[2].MessageId);
+        Assert.Equal(messages[0].MessageId, Assert.Single(sender.Sent).MessageId);
         Assert.All(messages, message => Assert.Equal(signal, DocumentProcessingSignalCodec.Deserialize(message.Body.ToString())));
     }
 
@@ -97,11 +99,10 @@ public sealed class ServiceBusDocumentProcessingPublisherTests
     public async Task Publishing_accepts_the_committed_signal_without_waiting_for_the_network_sender()
     {
         var sender = new BlockingServiceBusSender();
-        var publisher = new ServiceBusDocumentProcessingPublisher(
-            sender,
-            NullLogger<ServiceBusDocumentProcessingPublisher>.Instance);
         var signal = new DocumentProcessingSignal(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "GoodsReceipt");
+        var publisher = new ServiceBusDocumentProcessingPublisher(sender,
+            NullLogger<ServiceBusDocumentProcessingPublisher>.Instance, new RecordingActivationStore([signal]));
 
         var elapsed = System.Diagnostics.Stopwatch.StartNew();
         await publisher.PublishAsync(signal);
@@ -127,7 +128,7 @@ public sealed class ServiceBusDocumentProcessingPublisherTests
         }
     }
 
-    private sealed class RecordingActivationStore(IReadOnlyList<DocumentProcessingSignal> pending)
+    private sealed class RecordingActivationStore(IReadOnlyList<DocumentProcessingSignal> pending, int failedAttempts = 0)
         : IDocumentInitialSignalPublicationStore
     {
         private readonly Guid leaseId = Guid.NewGuid();
@@ -136,7 +137,8 @@ public sealed class ServiceBusDocumentProcessingPublisherTests
 
         public Task<DocumentInitialSignalClaim> ClaimAsync(
             DocumentProcessingSignal? requested, Guid? businessId, int maximum, CancellationToken cancellationToken) =>
-            Task.FromResult(new DocumentInitialSignalClaim(leaseId, pending));
+            Task.FromResult(new DocumentInitialSignalClaim(leaseId,
+                pending.Select(signal => new DocumentInitialActivation(signal, failedAttempts)).ToArray()));
 
         public Task MarkPublishedAsync(
             Guid lease, IReadOnlyCollection<Guid> movementIds, CancellationToken cancellationToken)

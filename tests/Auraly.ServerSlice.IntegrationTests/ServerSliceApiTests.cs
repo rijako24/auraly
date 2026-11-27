@@ -159,14 +159,9 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             Assert.Equal(1, await command.ExecuteNonQueryAsync());
         }
 
-        using (var scope = fixture.CreateScope())
-        {
-            var source = scope.ServiceProvider
-                .GetRequiredService<IDocumentProcessingWorkSource>();
-            var recovery = (await source.ListReadySignalsAsync(500, default))
-                .Single(signal => signal.DocumentId == request.DocumentId);
-            await fixture.DocumentSignals.PublishAsync(recovery);
-        }
+        var recovery = Assert.Single(fixture.DrainDocumentSignals().Distinct(),
+            signal => signal.DocumentId == request.DocumentId);
+        await fixture.DocumentSignals.PublishAsync(recovery);
 
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {

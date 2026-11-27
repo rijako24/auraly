@@ -8,7 +8,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: auraly-dev-api-quick
+  group: auraly-release-dev
   cancel-in-progress: false
 
 jobs:
@@ -43,6 +43,7 @@ jobs:
       - name: Deploy API to DEV
         shell: pwsh
         run: |
+          & ./infrastructure/azure/Confirm-AuralyCommerceWorkerRuntime.ps1 -ResourceGroup RG-AURALY-DEV -AppName func-auraly-engines-dev-w5usmo6w
           az webapp config appsettings set --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --settings 'WEBSITES_CONTAINER_START_TIME_LIMIT=900' --output none
           if ($LASTEXITCODE) { throw 'Could not set DEV startup budget.' }
           az webapp config set --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --startup-file 'if [ -f /home/site/wwwroot/start-api.sh ]; then exec bash /home/site/wwwroot/start-api.sh; else exec dotnet /home/site/wwwroot/Auraly.Api.dll; fi' --output none

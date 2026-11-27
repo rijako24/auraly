@@ -152,7 +152,7 @@ public static class DispatchingApi
 
         group.MapPost("/{dispatchId:guid}/settle", async (HttpContext context, ClaimsPrincipal principal, Guid dispatchId,
             SettleDispatchRequest request, DispatchDeliveryService service,
-            DispatchSettlementCoordinator coordinator, IMediaUrlResolver media, CancellationToken ct) =>
+            IMediaUrlResolver media, CancellationToken ct) =>
             await ExecuteAsync(async () =>
             {
                 var actor=principal.ToDispatchIdentity();
@@ -160,7 +160,7 @@ public static class DispatchingApi
                 if (context.RequestServices.GetService<SqlDispatchSettlementActivation>() is { } activation)
                     await activation.PublishAcceptedAsync(actor.BusinessId, dispatchId, request.IdempotencyKey.Trim(), ct);
                 else
-                    coordinator.Signal();
+                    context.RequestServices.GetRequiredService<DispatchSettlementCoordinator>().Signal();
                 return result;
             }, Results.Ok, result => WithEvidenceAsync(result, principal.ToDispatchIdentity().BusinessId, media, ct)))
             .RequireAuthorization(policy=>policy.RequireClaim("permission",DispatchPermissionCodes.Settle));

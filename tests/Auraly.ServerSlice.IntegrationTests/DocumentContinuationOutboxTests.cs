@@ -116,7 +116,7 @@ public sealed class DocumentContinuationOutboxTests(ServerSliceFixture fixture)
             WHERE DocumentId=@DocumentId AND Type=N'sales.document.processed';
             """;
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
-        var signal = Assert.Single(await source.ListReadySignalsAsync(500, default),
+        var signal = Assert.Single(fixture.DrainDocumentSignals().Distinct(),
             candidate => candidate.DocumentId == request.DocumentId);
 
         command.CommandText = """

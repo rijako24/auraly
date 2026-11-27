@@ -31,13 +31,12 @@ builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
 builder.Services.AddSingleton<AccountingSqlConnectionFactory>();
 
 var configuration = builder.Configuration;
+configuration["Auraly:DocumentProcessing:DurableContinuation:Enabled"] = bool.TrueString;
 var documentQueue = Required("DocumentProcessingQueueName");
 builder.Services.AddSingleton(_ => AzureRuntimeClientFactory.CreateServiceBusClient(configuration));
 builder.Services.AddSingleton(services => services.GetRequiredService<ServiceBusClient>().CreateSender(documentQueue));
-if (configuration.GetValue("Auraly:DocumentProcessing:DurableActivation:Enabled", false))
-    builder.Services.AddSingleton<IDocumentInitialSignalPublicationStore, SqlDocumentInitialSignalPublicationStore>();
-if (configuration.GetValue("Auraly:DocumentProcessing:DurableContinuation:Enabled", false))
-    builder.Services.AddSingleton<IDocumentContinuationSignalPublicationStore, SqlDocumentContinuationSignalPublicationStore>();
+builder.Services.AddSingleton<IDocumentInitialSignalPublicationStore, SqlDocumentInitialSignalPublicationStore>();
+builder.Services.AddSingleton<IDocumentContinuationSignalPublicationStore, SqlDocumentContinuationSignalPublicationStore>();
 builder.Services.AddSingleton<ServiceBusDocumentProcessingPublisher>();
 builder.Services.AddSingleton<IDocumentProcessingSignalPublisher>(services =>
     services.GetRequiredService<ServiceBusDocumentProcessingPublisher>());
@@ -47,13 +46,7 @@ builder.Services.AddSingleton(new ServiceBusCommerceProcessingOptions(
 builder.Services.AddSingleton<ServiceBusCommerceProcessingPublisher>();
 builder.Services.AddSingleton<IDispatchSettlementSignalPublisher>(services =>
     services.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
-if (configuration.GetValue(DispatchSettlementQueue.EnabledSetting, false))
-{
-    if (!configuration.GetValue("Auraly:DocumentProcessing:DurableActivation:Enabled", false)
-        || !configuration.GetValue("Auraly:DocumentProcessing:DurableContinuation:Enabled", false))
-        throw new InvalidOperationException("Queued dispatch settlement requires durable document publication.");
-    builder.Services.AddSingleton<SqlDispatchSettlementActivation>();
-}
+builder.Services.AddSingleton<SqlDispatchSettlementActivation>();
 builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(services =>
     services.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
 builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(services =>

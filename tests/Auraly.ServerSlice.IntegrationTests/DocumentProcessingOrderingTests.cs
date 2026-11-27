@@ -38,14 +38,14 @@ public sealed class DocumentProcessingOrderingTests(ServerSliceFixture fixture)
 
         Assert.Empty((await store.ClaimAsync(later, fixture.BusinessId, 1, default)).Signals);
         var lost = await store.ClaimAsync(earlier, fixture.BusinessId, 1, default);
-        Assert.Equal(earlier.MovementId, Assert.Single(lost.Signals).MovementId);
+        Assert.Equal(earlier.MovementId, Assert.Single(lost.Signals).Signal.MovementId);
         Assert.Empty((await store.ClaimAsync(null, fixture.BusinessId, 10, default)).Signals);
 
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var expire = new SqlCommand("""
             UPDATE dbo.DocumentProcessingJobs
-            SET InitialSignalLeaseUntil=DATEADD(second,-1,SYSUTCDATETIME())
+            SET InitialSignalLeaseUntil=DATEADD(second,-1,SYSUTCDATETIME()),Status=N'RetryScheduled',AttemptCount=2
             WHERE JobId=@JobId AND InitialSignalLeaseId=@LostLease;
             """, connection);
         expire.Parameters.AddWithValue("@JobId", earlier.MovementId);
@@ -53,7 +53,9 @@ public sealed class DocumentProcessingOrderingTests(ServerSliceFixture fixture)
         Assert.Equal(1, await expire.ExecuteNonQueryAsync());
 
         var recovered = await store.ClaimAsync(null, fixture.BusinessId, 10, default);
-        Assert.Equal(earlier.MovementId, Assert.Single(recovered.Signals).MovementId);
+        var recoveredSignal = Assert.Single(recovered.Signals);
+        Assert.Equal(earlier.MovementId, recoveredSignal.Signal.MovementId);
+        Assert.Equal(2, recoveredSignal.FailedAttempts);
         Assert.NotEqual(lost.LeaseId, recovered.LeaseId);
         await store.MarkPublishedAsync(lost.LeaseId, [earlier.MovementId], default);
         await using var published = new SqlCommand("""
@@ -67,7 +69,7 @@ public sealed class DocumentProcessingOrderingTests(ServerSliceFixture fixture)
 
         await fixture.DocumentSignals.PublishAsync(earlier);
         var successor = await store.ClaimAsync(null, fixture.BusinessId, 10, default);
-        Assert.Equal(later.MovementId, Assert.Single(successor.Signals).MovementId);
+        Assert.Equal(later.MovementId, Assert.Single(successor.Signals).Signal.MovementId);
         await fixture.DocumentSignals.PublishAsync(later);
         await RemoveFromPendingFiscalListingAsync(first.DocumentId, second.DocumentId);
     }

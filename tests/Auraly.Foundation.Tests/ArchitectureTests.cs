@@ -343,8 +343,8 @@ public sealed class ArchitectureTests
             repositoryRoot, "src", "Modules", "Inventory",
             "Auraly.Application.Inventory", "InventoryOperationService.cs"));
         var serviceBusPublisher = File.ReadAllText(Path.Combine(
-            repositoryRoot, "src", "API", "Auraly.Api",
-            "ServiceBusDocumentProcessingHostedService.cs"));
+            repositoryRoot, "src", "Infrastructure", "Auraly.Platform.Infrastructure", "Processing",
+            "ServiceBusDocumentProcessingPublisher.cs"));
 
         Assert.Contains("IDocumentProcessingSignalPublisher signals", inventoryService, StringComparison.Ordinal);
         Assert.Contains("ConfirmCountAsync", inventoryService, StringComparison.Ordinal);

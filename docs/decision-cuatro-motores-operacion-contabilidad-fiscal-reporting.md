@@ -489,7 +489,7 @@ ensayarla sobre copia. Evitar reinterpretar eventos ya despachados.
 
 1. El [store de generación fiscal](../src/Infrastructure/Auraly.Infrastructure.Persistence/SqlFiscalGenerationWorkStore.cs)
    confirma el XML firmado y pasa a `PendingSubmission`. Después, el
-   [consumidor](../src/API/Auraly.Api/ServiceBusFiscalProcessingHostedService.cs)
+   [consumidor](../src/API/Auraly.Commerce.Worker/CommerceEngineFunctions.cs)
    solicita el envío. Si muere entre ambos pasos, al repetir generación
    `AcquireAsync` no adquiere ese estado y su `GetResumeAtAsync` consulta
    únicamente `PendingGeneration`. El adaptador compartido debe resolver la
@@ -757,36 +757,24 @@ del entorno y con el HTTP de la API bajo carga.
 4. **Orden de activación.** Desplegar primero con los nuevos triggers
    explícitamente deshabilitados (`AzureWebJobs.<nombre>.Disabled`), incluido
    cualquier publicador de recuperación autorizado. Comprobar salud, versión,
-   metadatos y permisos. Usar los cuatro `Auraly:<motor>:Worker:Enabled`
-   existentes para retirar el consumidor anterior por cola. Los cambios de
-   settings pueden reiniciar el host: medir en DEV la interrupción HTTP, los
-   jobs en vuelo y la renovación de locks. Esperar liberación y comprobar por
-   telemetría el cese antes de habilitar el nuevo consumidor. Empezar por
-   reporting, luego contabilidad, documental y fiscal, respetando los bloqueos de
-   §§10.2–10.3. Conservar los mensajes durante la transición. Si hay DACPAC o
-   rebuild incompatible, el pipeline debe detener y verificar **todos** los
-   escritores antes de ejecutar la consola y reactivarlos en orden. El relevo
-   de Despachos incluye detener el lector local y comprobar que el nuevo host
-   puede reclamar las operaciones anteriores por su ID. Antes de habilitar
-   la nueva emisión, reconciliar una vez las operaciones abiertas por página
-   y negocio, respetando leases y estado de sus hijos. Ningún intento
-   administrativo previo debe requerir que el usuario vuelva a aprobarlo.
-   Hoy `DispatchSettlementHostedService` se registra fuera de `Testing`
-   independientemente de los cuatro interruptores. Incluir en el release un
-   control explícito de su propietario; demostrar en el ensayo que desactivar
-   el lector local también releva la activación de los nuevos comandos.
-   Mantener el escritor y lector anteriores compatibles hasta ensayar el regreso.
+   metadatos y permisos. El primer release retira los cuatro lectores de la API
+   SaaS. El pipeline detiene y verifica los escritores antes del DACPAC. En
+   ese mismo paso incorpora las conciliaciones abiertas que aún requieren
+   preparación y reanuda las publicaciones documentales pendientes. Publica
+   los paquetes compatibles y habilita reporting, contabilidad, documental,
+   fiscal y recuperación, en ese orden. Medir en DEV la interrupción HTTP,
+   los jobs en vuelo y la renovación de locks durante el reinicio de cada
+   host. RabbitMQ sigue siendo el transporte de las instalaciones locales.
 5. **Prod y rollback.** Promover el artefacto inmutable ya integrado y validado
    en DEV según el procedimiento de release y autorización vigentes. Registrar
    versiones, interruptores, backlog, DLQ y jobs preexistentes por cola antes
    del corte. Ante doble efecto, cruce de negocio, pérdida de señal, fallo fiscal,
    pérdida de notificación o incumplimiento sostenido de presupuesto, deshabilitar
-   el nuevo consumidor, esperar sus locks y reactivar el anterior compatible.
-   Ensayar el regreso con datos creados por la nueva versión y mensajes
-   programados, incluidas intenciones de outbox pendientes. Un contrato que el
-   consumidor anterior no entienda requiere expandir primero los lectores y
-   aplazar el corte. No purgar mensajes, restaurar la base ni recrear ventas.
-   Retirar los hosted services SaaS obsoletos después de cerrar esa ventana.
+   el consumidor afectado y esperar sus locks. Conservar las intenciones y
+   los mensajes, corregir el host o publicar un artefacto de Function que
+   entienda los contratos activos. El primer relevo se recupera publicando
+   hacia adelante. Ensayar la pausa y la reanudación con datos creados por
+   la nueva versión, mensajes programados e intenciones pendientes.
 
 ### 10.6 Evidencia exigida para la revisión de implementación
 
@@ -837,12 +825,9 @@ había empezado. Los registros de cambios de producto y cliente se emiten
 después de aplicar la página, con una lectura previa por conjunto.
 
 El módulo Bicep opcional `commerce-worker` provisiona el host con una
-identidad propia y los cuatro disparadores apagados. El alta del principal en
-SQL, el flujo de release inmutable y la validación de entregas reales de
-Service Bus forman parte del relevo. También queda pendiente ensayar la
-recuperación durable y el reintento contable en DEV, y trasladar la conciliación
-de despacho al flujo de cola. Hasta completar esas pruebas
-la API conserva la propiedad de sus consumidores actuales.
+identidad propia y los cuatro disparadores apagados. El pipeline concede el
+acceso SQL y activa los disparadores después de publicar la API productora.
+Despacho usa la cola contable en SaaS y el consumidor local en RabbitMQ.
 
 La lectura de un movimiento recuperado ya resuelve la habilitación fiscal
 desde el payload persistido. El commit agrega una continuación a la outbox
@@ -865,13 +850,10 @@ que el broker aceptó bajo ese mismo lease. El ID de la primera entrega es
 `MovementId`; los reintentos de negocio usan la identidad del movimiento y
 su contador de fallos persistido.
 
-El índice filtrado y los campos de publicación son aditivos. Mantener el
-modo actual hasta aplicar el DACPAC y ensayar la recuperación en DEV. La
-Function nueva provisiona deshabilitado `RecoverDocumentInitialSignals`.
-El modo `Auraly:DocumentProcessing:DurableActivation:Enabled` reemplaza
-la recuperación dentro del consumidor anterior. Activarlo como parte del
-relevo coordinado, después de comprobar también la recuperación de las
-continuaciones y el regreso al consumidor compatible.
+El índice filtrado y los campos de publicación son aditivos. La Function
+nueva provisiona deshabilitado `RecoverDocumentInitialSignals`. La API SaaS
+publica con el registro durable y la Function recupera las publicaciones
+después del relevo coordinado.
 
 En la continuación documental, `Auraly:DocumentProcessing:DurableContinuation:Enabled`
 guarda el plan antes del primer envío. Cada fila `doc.send.*` de
@@ -888,10 +870,9 @@ El camino nuevo usa tres consultas de gestión del plan para un documento
 recién completado y dos en una reentrega con plan existente. Las lecturas
 para resolver los destinos se mantienen por conjunto. `FiscalDocument.DianAccepted`
 conserva su propietario y la presentación fiscal programada sigue usando su
-propia identidad. La opción queda apagada por defecto. Cuando se ensaye el
-corte se debe conservar la opción en ambos consumidores compatibles. Un
-binario anterior a este contrato requiere drenar los planes antes de volver
-a activarlo.
+propia identidad. La Function de motores activa la continuación durable
+en su composición. Una versión posterior del consumidor debe conservar
+las identidades de las publicaciones que ya se registraron.
 
 Al completar el job, su transacción habilita la recuperación en una de las
 filas operacionales pendientes. El índice filtrado permite al timer único
@@ -967,18 +948,20 @@ bibliotecas actuales. El release arranca con los consumidores nuevos
 deshabilitados en el primer despliegue. Para el relevo se comprueba el
 release saludable, se detienen los escritores previos, se incorporan las
 conciliaciones abiertas que aún no tienen su documento final y se activan
-los consumidores nuevos. El regreso a una API compatible conserva el
-publicador de respaldo para las activaciones ya durables.
+los consumidores nuevos desde el pipeline. La publicación rápida de API
+comprueba el estado de la Function y sus disparadores. Una pausa de motores
+conserva las activaciones registradas para reanudarlas en esa misma Function.
 
 Puntos de partida para verificar el análisis contra el código:
 
-- [Registro actual de productores, handlers y consumidores](../src/API/Auraly.Api/Program.cs),
-  [activación documental y timer](../src/API/Auraly.Api/ServiceBusDocumentProcessingHostedService.cs)
+- [Registro de productores en la API](../src/API/Auraly.Api/Program.cs),
+  [consumidores](../src/API/Auraly.Commerce.Worker/CommerceEngineFunctions.cs),
+  [activación documental y timer](../src/API/Auraly.Commerce.Worker/DocumentInitialSignalRecoveryFunction.cs)
   y [consulta y clasificación del trabajo](../src/Infrastructure/Auraly.Infrastructure.Persistence/SqlDocumentProcessingWorkSource.cs).
 - [Observador de finalización](../src/Infrastructure/Auraly.Infrastructure.Persistence/SqlDocumentProcessingCompletionObserver.cs),
   [dependencias contables](../src/Modules/Accounting/Auraly.Commerce.Accounting.Infrastructure/SqlAccountingProcessingSignalGate.cs)
   y [proyección después del posting](../src/Infrastructure/Auraly.Infrastructure.Persistence/SqlAccountingReportingCompletionObserver.cs).
-- [Liquidación de despacho](../src/API/Auraly.Api/DispatchSettlementHostedService.cs),
+- [Liquidación de despacho](../src/Modules/Dispatching/Auraly.Application.Dispatching/DispatchSettlementPreparation.cs),
   [reintento contable](../src/Modules/Accounting/Auraly.Commerce.Accounting.Infrastructure/SqlAccountingStore.cs)
   y [salida de notificaciones del POS](../src/Infrastructure/Auraly.Infrastructure.Persistence/SqlPosSynchronizationOutboxDispatcher.cs).
 - [Publicación del release](../infrastructure/azure/Publish-AuralyReleasePipeline.ps1)

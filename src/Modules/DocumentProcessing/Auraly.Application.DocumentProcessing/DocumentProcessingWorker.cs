@@ -37,10 +37,6 @@ public sealed record DocumentProcessingRetry(int FailedAttempts, DateTimeOffset 
 
 public interface IDocumentProcessingWorkSource
 {
-    Task<IReadOnlyList<DocumentProcessingSignal>> ListReadySignalsAsync(
-        int take,
-        CancellationToken cancellationToken);
-
     Task<DocumentProcessingWork> LoadAsync(
         DocumentProcessingSignal signal,
         CancellationToken cancellationToken);

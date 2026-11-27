@@ -109,6 +109,9 @@ function Test-RemoteEnvironment {
         $engineSettings = ConvertTo-SettingsMap $engineApp.SiteConfig.AppSettings
         Assert-Condition ($engineSettings['Release__Version'] -eq $ReleaseVersion -and
             $engineSettings['ServiceBusConnection__credential'] -eq 'managedidentity') 'La Function de motores no corresponde al release.'
+        foreach ($trigger in @('ProcessSalesReporting','ProcessAccounting','ProcessDocument','ProcessFiscal','RecoverDocumentInitialSignals')) {
+            Assert-Condition ($engineSettings["AzureWebJobs.$trigger.Disabled"] -eq 'false') "El disparador $trigger aún está deshabilitado."
+        }
         if (-not $SkipHealth) {
             $engineHealth = Invoke-RestMethod -Uri "https://$enginesName.azurewebsites.net/api/health" -TimeoutSec 30
             Assert-Condition ($engineHealth.status -eq 'healthy' -and $engineHealth.version -eq $ReleaseVersion) `

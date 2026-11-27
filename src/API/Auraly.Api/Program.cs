@@ -125,12 +125,10 @@ builder.Services.AddScoped<IFinancialConceptStore, SqlFinancialConceptStore>();
 builder.Services.AddScoped<FinancialConceptService>();
 builder.Services.AddDocumentProcessingExecution();
 builder.Services.AddDispatchSettlementExecution();
-var dispatchSettlementQueue = builder.Configuration.GetValue(DispatchSettlementQueue.EnabledSetting, false);
-if (dispatchSettlementQueue &&
-    (!string.Equals(builder.Configuration["Auraly:Processing:Transport"] ?? "ServiceBus", "ServiceBus", StringComparison.OrdinalIgnoreCase)
-     || !builder.Configuration.GetValue("Auraly:DocumentProcessing:DurableActivation:Enabled", false)
-     || !builder.Configuration.GetValue("Auraly:DocumentProcessing:DurableContinuation:Enabled", false)))
-    throw new InvalidOperationException("Queued dispatch settlement requires Service Bus and durable document publication.");
+var processingTransport = builder.Configuration["Auraly:Processing:Transport"] ?? "ServiceBus";
+var isTesting = builder.Environment.IsEnvironment("Testing");
+var dispatchSettlementQueue = !isTesting &&
+    string.Equals(processingTransport, "ServiceBus", StringComparison.OrdinalIgnoreCase);
 builder.Services.AddAccountingProcessingExecution();
 builder.Services.AddSingleton<IAccountingProcessingSignalGate, SqlAccountingProcessingSignalGate>();
 builder.Services.AddSalesReportingExecution();
@@ -146,7 +144,7 @@ builder.Services.AddSingleton<AccountingProcessingCoordinator>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddSingleton<SalesReportingProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
-if (builder.Environment.IsEnvironment("Testing"))
+if (isTesting)
 {
     builder.Services.AddSingleton<InProcessTestingProcessingTransport>();
     builder.Services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
@@ -160,8 +158,6 @@ if (builder.Environment.IsEnvironment("Testing"))
 }
 else
 {
-    var processingTransport = builder.Configuration[
-        "Auraly:Processing:Transport"] ?? "ServiceBus";
     if (string.Equals(processingTransport, "RabbitMq", StringComparison.OrdinalIgnoreCase))
     {
         var rabbitConnection = builder.Configuration[
@@ -214,13 +210,11 @@ else
             throw new InvalidOperationException(
                 "Auraly:DocumentProcessing:ServiceBus:QueueName is required.");
 
-        builder.Services.AddSingleton(new DocumentProcessingServiceBusOptions(queueName));
         builder.Services.AddSingleton(
             AzureRuntimeClientFactory.CreateServiceBusClient(builder.Configuration));
         builder.Services.AddSingleton(provider =>
             provider.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
-        if (builder.Configuration.GetValue("Auraly:DocumentProcessing:DurableActivation:Enabled", false))
-            builder.Services.AddSingleton<IDocumentInitialSignalPublicationStore, SqlDocumentInitialSignalPublicationStore>();
+        builder.Services.AddSingleton<IDocumentInitialSignalPublicationStore, SqlDocumentInitialSignalPublicationStore>();
         builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
             ServiceBusDocumentProcessingPublisher>();
 
@@ -242,34 +236,18 @@ else
             throw new InvalidOperationException(
                 "Auraly:SalesReporting:ServiceBus:QueueName is required. " +
                 "Sales reporting never falls back to the operational engine.");
-        builder.Services.AddSingleton(
-            new FiscalProcessingServiceBusOptions(fiscalQueueName));
-        builder.Services.AddSingleton(
-            new AccountingProcessingServiceBusOptions(accountingQueueName));
-        builder.Services.AddSingleton(
-            new SalesReportingProcessingServiceBusOptions(salesReportingQueueName));
         builder.Services.AddSingleton(new ServiceBusCommerceProcessingOptions(
             fiscalQueueName, accountingQueueName, salesReportingQueueName));
         builder.Services.AddSingleton<ServiceBusCommerceProcessingPublisher>();
         builder.Services.AddSingleton<IDispatchSettlementSignalPublisher>(provider =>
             provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
-        if (dispatchSettlementQueue)
-            builder.Services.AddSingleton<SqlDispatchSettlementActivation>();
+        builder.Services.AddSingleton<SqlDispatchSettlementActivation>();
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
             provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
         builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
             provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
         builder.Services.AddSingleton<ISalesReportingProcessingSignalPublisher>(provider =>
             provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
-        if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
-            builder.Services.AddHostedService<FiscalProcessingHostedService>();
-        if (builder.Configuration.GetValue("Auraly:Accounting:Worker:Enabled", true))
-            builder.Services.AddHostedService<AccountingProcessingHostedService>();
-        if (builder.Configuration.GetValue("Auraly:SalesReporting:Worker:Enabled", true))
-            builder.Services.AddHostedService<SalesReportingProcessingHostedService>();
-        if (builder.Configuration.GetValue(
-                "Auraly:DocumentProcessing:Worker:Enabled", true))
-            builder.Services.AddHostedService<DocumentProcessingHostedService>();
     }
     else
     {
@@ -427,10 +405,13 @@ builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<IDispatchDeliveryStore>(services =>
     new SqlDispatchDeliveryStore(services.GetRequiredService<DispatchingSqlConnectionFactory>(), dispatchSettlementQueue));
 builder.Services.AddScoped<DispatchDeliveryService>();
-builder.Services.AddSingleton<DispatchSettlementCoordinator>();
 builder.Services.AddScoped<SellerOrderWriter>();
-if (!builder.Environment.IsEnvironment("Testing") && !dispatchSettlementQueue)
-    builder.Services.AddHostedService<DispatchSettlementHostedService>();
+if (!dispatchSettlementQueue)
+{
+    builder.Services.AddSingleton<DispatchSettlementCoordinator>();
+    if (!isTesting)
+        builder.Services.AddHostedService<DispatchSettlementHostedService>();
+}
 builder.Services.AddScoped<ISalesDebitNoteStore, SqlSalesDebitNoteStore>();
 builder.Services.AddScoped<SalesDebitNoteService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();

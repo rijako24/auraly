@@ -6,7 +6,7 @@ namespace Auraly.Commerce.Worker;
 
 public sealed class DocumentInitialSignalRecoveryFunction(
     ServiceBusDocumentProcessingPublisher publisher,
-    SqlDispatchSettlementActivation? dispatches = null)
+    SqlDispatchSettlementActivation dispatches)
 {
     [Function("RecoverDocumentInitialSignals")]
     public async Task RunAsync(
@@ -16,7 +16,6 @@ public sealed class DocumentInitialSignalRecoveryFunction(
     {
         await publisher.RecoverInitialSignalsAsync(cancellationToken);
         await publisher.RecoverContinuationSignalsAsync(cancellationToken);
-        if (dispatches is not null)
-            await dispatches.RecoverAsync(cancellationToken);
+        await dispatches.RecoverAsync(cancellationToken);
     }
 }

@@ -9,7 +9,7 @@ namespace Auraly.Platform.Infrastructure.Processing;
 public sealed class ServiceBusDocumentProcessingPublisher(
     ServiceBusSender sender,
     ILogger<ServiceBusDocumentProcessingPublisher> logger,
-    IDocumentInitialSignalPublicationStore? activation = null,
+    IDocumentInitialSignalPublicationStore activation,
     IDocumentContinuationSignalPublicationStore? continuations = null)
     : IDocumentProcessingSignalPublisher
 {
@@ -21,12 +21,6 @@ public sealed class ServiceBusDocumentProcessingPublisher(
         CancellationToken cancellationToken = default)
     {
         DocumentProcessingSignalCodec.Validate(signal);
-        if (activation is null)
-        {
-            await SendAsync(signal, cancellationToken);
-            return;
-        }
-
         await PublishClaimedAsync(signal, signal.BusinessId, 1, cancellationToken);
     }
 
@@ -75,17 +69,14 @@ public sealed class ServiceBusDocumentProcessingPublisher(
     }
 
     public Task PublishNextAsync(Guid businessId, CancellationToken cancellationToken) =>
-        activation is null
-            ? Task.CompletedTask
-            : PublishClaimedAsync(null, businessId, 1, cancellationToken);
+        PublishClaimedAsync(null, businessId, 1, cancellationToken);
 
     public async Task ScheduleRetryAsync(
         DocumentProcessingSignal signal,
         DocumentProcessingRetry retry,
         CancellationToken cancellationToken)
     {
-        var message = CreateMessage(signal);
-        message.MessageId = FormattableString.Invariant($"{signal.MovementId:D}:retry:{retry.FailedAttempts}");
+        var message = CreateActivationMessage(new(signal, retry.FailedAttempts));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(SendBudget);
         await sender.ScheduleMessageAsync(message, retry.AvailableAt, timeout.Token);
@@ -97,14 +88,13 @@ public sealed class ServiceBusDocumentProcessingPublisher(
         int maximum,
         CancellationToken cancellationToken)
     {
-        var store = activation ?? throw new InvalidOperationException("The durable document publisher has no activation store.");
         if (requested is not null)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(SendBudget);
             try
             {
-                await ClaimAndSendAsync(store, requested, businessId, maximum, deadline.Token);
+                await ClaimAndSendAsync(requested, businessId, maximum, deadline.Token);
             }
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
@@ -115,17 +105,16 @@ public sealed class ServiceBusDocumentProcessingPublisher(
             return;
         }
 
-        await ClaimAndSendAsync(store, null, businessId, maximum, cancellationToken);
+        await ClaimAndSendAsync(null, businessId, maximum, cancellationToken);
     }
 
     private async Task ClaimAndSendAsync(
-        IDocumentInitialSignalPublicationStore store,
         DocumentProcessingSignal? requested,
         Guid? businessId,
         int maximum,
         CancellationToken cancellationToken)
     {
-        var claim = await store.ClaimAsync(requested, businessId, maximum, cancellationToken);
+        var claim = await activation.ClaimAsync(requested, businessId, maximum, cancellationToken);
         if (claim.Signals.Count == 0)
             return;
 
@@ -136,20 +125,25 @@ public sealed class ServiceBusDocumentProcessingPublisher(
         {
             MaxDegreeOfParallelism = 4,
             CancellationToken = cancellationToken
-        }, async (signal, token) =>
+        }, async (item, token) =>
         {
-            if (await SendAsync(signal, token))
-                acknowledged.Add(signal.MovementId);
+            if (await SendAsync(CreateActivationMessage(item), token))
+                acknowledged.Add(item.Signal.MovementId);
         });
 
-        await store.MarkPublishedAsync(claim.LeaseId, acknowledged.ToArray(), cancellationToken);
+        await activation.MarkPublishedAsync(claim.LeaseId, acknowledged.ToArray(), cancellationToken);
         if (requested is null && businessId is null)
             logger.LogInformation("Document activation claimed {Claimed} signals and published {Published}.",
                 claim.Signals.Count, acknowledged.Count);
     }
 
-    private Task<bool> SendAsync(DocumentProcessingSignal signal, CancellationToken cancellationToken) =>
-        SendAsync(CreateMessage(signal), cancellationToken);
+    private static ServiceBusMessage CreateActivationMessage(DocumentInitialActivation item)
+    {
+        var message = CreateMessage(item.Signal);
+        if (item.FailedAttempts > 0)
+            message.MessageId = FormattableString.Invariant($"{item.Signal.MovementId:D}:retry:{item.FailedAttempts}");
+        return message;
+    }
 
     private async Task<bool> SendAsync(ServiceBusMessage message, CancellationToken cancellationToken)
     {

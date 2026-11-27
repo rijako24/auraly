@@ -621,6 +621,31 @@ GRANT EXECUTE TO [$principal];
                     [void]$grant.ExecuteNonQuery()
                 }
                 finally { $grant.Dispose() }
+
+                $adoption = $verificationConnection.CreateCommand()
+                try {
+                    $adoption.CommandText = @'
+SET NOCOUNT ON;
+UPDATE message SET RecoveryAvailableAt=SYSUTCDATETIME()
+FROM dbo.ServerOutboxMessages message
+JOIN dbo.DocumentProcessingJobs job ON job.DocumentId=message.DocumentId AND job.DocumentType=message.DocumentType
+WHERE job.Status=N'Completed' AND message.ProcessedAt IS NULL AND message.Type<>N'FiscalDocument.DianAccepted'
+  AND message.Type NOT LIKE N'doc.send.%' AND message.RecoveryAvailableAt IS NULL AND message.RecoveryPublicationCount=0;
+DECLARE @Publications int=@@ROWCOUNT;
+
+UPDATE operation
+SET ActivationVersion=0,ActivationAvailableAt=SYSUTCDATETIME(),NextAttemptAt=SYSUTCDATETIME(),
+    Attempts=0,Status=N'Pending'
+FROM dbo.DispatchSettlementOperations operation
+JOIN dispatch.Closures closure ON closure.DispatchId=operation.DispatchId AND closure.BusinessId=operation.BusinessId
+WHERE operation.ActivationVersion IS NULL AND operation.Status IN(N'Pending',N'Processing')
+  AND NOT EXISTS(SELECT 1 FROM dbo.DocumentProcessingJobs job WHERE job.DocumentId=closure.DispatchSettlementId
+      AND job.DocumentType=N'DispatchCashDifference' AND job.BusinessId=operation.BusinessId);
+SELECT CONCAT(N'publicaciones documentales ',@Publications,N', conciliaciones ',@@ROWCOUNT);
+'@
+                    Write-Information "Trabajo anterior incorporado: $($adoption.ExecuteScalar())." -InformationAction Continue
+                }
+                finally { $adoption.Dispose() }
             }
             $verificationCommand = $verificationConnection.CreateCommand()
             $verificationCommand.CommandTimeout = 60
@@ -896,11 +921,13 @@ if ($selectedComponents -contains 'engines-function' -and -not $manifest.engines
     throw 'El manifiesto no declara el paquete compatible de la Function de motores.'
 }
 $engineExists = $false
-if ($databaseCutover -or ($selectedComponents -contains 'engines-function')) {
+$engineRequired = $selectedComponents -contains 'engines-function' -or
+    ($manifest.enginesFunction -and $selectedComponents -contains 'api')
+if ($databaseCutover -or $engineRequired) {
     $engineResources = @(Invoke-AzJson -Arguments @('resource','list','--resource-group',$configuration.ResourceGroup,
         '--resource-type','Microsoft.Web/sites','--output','json'))
     $engineExists = $configuration.EnginesFunction -in $engineResources.name
-    if (($selectedComponents -contains 'engines-function') -and -not $engineExists) {
+    if ($engineRequired -and -not $engineExists) {
         throw 'La Function de motores debe estar aprovisionada antes de iniciar el despliegue.'
     }
     if ($databaseCutover -and $engineExists -and ($selectedComponents -notcontains 'engines-function')) {
@@ -910,6 +937,10 @@ if ($databaseCutover -or ($selectedComponents -contains 'engines-function')) {
 if ($databaseCutover -and
     ($selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function' -or $manifest.deploymentComponents -notcontains 'admin')) {
     throw 'El corte de base de datos exige publicar API y Worker compatibles junto con Admin en el mismo release.'
+}
+if ($engineRequired -and ($selectedComponents -notcontains 'engines-function' -or $selectedComponents -notcontains 'api')) {
+    & (Join-Path $PSScriptRoot 'Confirm-AuralyCommerceWorkerRuntime.ps1') `
+        -ResourceGroup $configuration.ResourceGroup -AppName $configuration.EnginesFunction
 }
 if ($selectedComponents -contains 'function') { Assert-OfflineLeaseSigningConfiguration }
 if ($databaseCutover) {
@@ -949,8 +980,12 @@ elseif ($selectedComponents -contains 'api') {
 if ($selectedComponents -contains 'function') {
     Publish-Function
 }
-if ($selectedComponents -contains 'api') { Publish-Api }
 if ($selectedComponents -contains 'engines-function') { Publish-Function -Engines }
+if ($selectedComponents -contains 'api') { Publish-Api }
+if ($selectedComponents -contains 'engines-function') {
+    & (Join-Path $PSScriptRoot 'Confirm-AuralyCommerceWorkerRuntime.ps1') `
+        -ResourceGroup $configuration.ResourceGroup -AppName $configuration.EnginesFunction -Enable
+}
 $installerMetadata = if ($selectedComponents -contains 'pos-installer') { Publish-PosInstallerIfPresent } else { $null }
 
 $apiStatus = if ($selectedComponents -contains 'api' -or $selectedComponents -contains 'pos-installer') {

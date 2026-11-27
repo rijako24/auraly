@@ -1,8 +1,10 @@
 namespace Auraly.Application.DocumentProcessing;
 
+public sealed record DocumentInitialActivation(DocumentProcessingSignal Signal, int FailedAttempts = 0);
+
 public sealed record DocumentInitialSignalClaim(
     Guid LeaseId,
-    IReadOnlyList<DocumentProcessingSignal> Signals);
+    IReadOnlyList<DocumentInitialActivation> Signals);
 
 public interface IDocumentInitialSignalPublicationStore
 {

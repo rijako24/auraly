@@ -143,11 +143,6 @@ public sealed class DocumentProcessingWorkerTests
     private sealed class WorkSource(DocumentProcessingWork work)
         : IDocumentProcessingWorkSource
     {
-        public Task<IReadOnlyList<DocumentProcessingSignal>> ListReadySignalsAsync(
-            int take,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<DocumentProcessingSignal>>([]);
-
         public Task<DocumentProcessingWork> LoadAsync(
             DocumentProcessingSignal signal,
             CancellationToken cancellationToken) => Task.FromResult(work);

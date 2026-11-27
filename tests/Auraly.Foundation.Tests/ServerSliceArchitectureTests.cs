@@ -155,12 +155,13 @@ public sealed class ServerSliceArchitectureTests
         var api = Path.Combine(root, "src", "API", "Auraly.Api");
         Assert.False(File.Exists(Path.Combine(api, "FiscalGenerationHostedService.cs")));
         Assert.False(File.Exists(Path.Combine(api, "FiscalSubmissionHostedService.cs")));
-        var hosted = File.ReadAllText(Path.Combine(
-            api,
-            "ServiceBusFiscalProcessingHostedService.cs"));
-        Assert.DoesNotContain("PeriodicTimer", hosted, StringComparison.Ordinal);
-        Assert.Contains("CreateSessionProcessor", hosted, StringComparison.Ordinal);
-        Assert.Contains("MaxConcurrentCallsPerSession = 1", hosted, StringComparison.Ordinal);
+        var worker = Path.Combine(root, "src", "API", "Auraly.Commerce.Worker");
+        var functions = File.ReadAllText(Path.Combine(worker, "CommerceEngineFunctions.cs"));
+        var host = File.ReadAllText(Path.Combine(worker, "host.json"));
+        Assert.DoesNotContain("PeriodicTimer", functions, StringComparison.Ordinal);
+        Assert.Contains("ServiceBusTrigger(\"%FiscalProcessingQueueName%\"", functions, StringComparison.Ordinal);
+        Assert.Contains("IsSessionsEnabled = true, AutoCompleteMessages = false", functions, StringComparison.Ordinal);
+        Assert.Contains("\"maxConcurrentCallsPerSession\": 1", host, StringComparison.Ordinal);
 
         var persistence = Path.Combine(
             root,
@@ -178,6 +179,25 @@ public sealed class ServerSliceArchitectureTests
             Assert.Contains("p.DocumentId=@DocumentId", source, StringComparison.Ordinal);
             Assert.Contains("p.BusinessId=@BusinessId", source, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void Commerce_Service_Bus_consumers_exist_only_in_the_worker_and_API_publication_requires_them()
+    {
+        var root = FindRepositoryRoot();
+        var api = Path.Combine(root, "src", "API", "Auraly.Api");
+        foreach (var source in Directory.GetFiles(api, "*.cs"))
+        {
+            var text = File.ReadAllText(source);
+            Assert.DoesNotContain("CreateSessionProcessor(", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("ServiceBusTrigger(", text, StringComparison.Ordinal);
+        }
+        var release = File.ReadAllText(Path.Combine(root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var quick = File.ReadAllText(Path.Combine(root, ".github", "workflows", "deploy-dev-api-quick.yml"));
+        Assert.Contains("Confirm-AuralyCommerceWorkerRuntime.ps1", release, StringComparison.Ordinal);
+        var preflight = quick.IndexOf("Confirm-AuralyCommerceWorkerRuntime.ps1", StringComparison.Ordinal);
+        var publish = quick.IndexOf("Publish-AuralyApiPackage.ps1", StringComparison.Ordinal);
+        Assert.True(preflight >= 0 && publish > preflight);
     }
 
     [Fact]

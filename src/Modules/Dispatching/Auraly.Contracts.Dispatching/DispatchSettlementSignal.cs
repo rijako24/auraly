@@ -9,6 +9,5 @@ public interface IDispatchSettlementSignalPublisher
 
 public static class DispatchSettlementQueue
 {
-    public const string EnabledSetting = "Auraly:Dispatch:SettlementQueue:Enabled";
     public const string Subject = "DispatchSettlementPreparation.v1";
 }

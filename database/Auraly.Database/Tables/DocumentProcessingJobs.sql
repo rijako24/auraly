@@ -41,6 +41,6 @@ GO
 
 CREATE INDEX [IX_DocumentProcessingJobs_InitialSignalPending]
     ON [dbo].[DocumentProcessingJobs] ([AvailableAt], [CreatedAt], [JobId])
-    INCLUDE ([BusinessId], [ProcessingSequence], [InitialSignalLeaseUntil], [InitialSignalPublishedAt])
-    WHERE [Status] = N'Pending' AND [InitialSignalPublishedAt] IS NULL;
+    INCLUDE ([BusinessId], [ProcessingSequence], [InitialSignalLeaseUntil], [InitialSignalPublishedAt], [Status], [AttemptCount])
+    WHERE [Status] IN (N'Pending', N'RetryScheduled') AND [InitialSignalPublishedAt] IS NULL;
 

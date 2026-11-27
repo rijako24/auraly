@@ -35,7 +35,7 @@ public sealed class SqlDocumentInitialSignalPublicationStore(
               FROM dbo.DocumentProcessingJobs j WITH(UPDLOCK,READPAST,READCOMMITTEDLOCK)
               INNER JOIN dbo.BusinessProcessingCursors c ON c.BusinessId=j.BusinessId
                 AND j.ProcessingSequence=c.LastCompletedSequence+1
-              WHERE j.Status=N'Pending' AND j.InitialSignalPublishedAt IS NULL
+              WHERE j.Status IN (N'Pending',N'RetryScheduled') AND j.InitialSignalPublishedAt IS NULL
                 AND j.AvailableAt<=@Now
                 AND (j.InitialSignalLeaseUntil IS NULL OR j.InitialSignalLeaseUntil<=@Now)
                 {requestedFilter}
@@ -48,7 +48,8 @@ public sealed class SqlDocumentInitialSignalPublicationStore(
             INNER JOIN candidate c ON c.JobId=job.JobId;
 
             SELECT j.JobId,j.BusinessId,j.DocumentId,j.DocumentType,
-              {SqlDocumentProcessingWorkSource.EconomicEffectsColumn} AS EconomicEffectsEnabled
+              {SqlDocumentProcessingWorkSource.EconomicEffectsColumn} AS EconomicEffectsEnabled,
+              CASE WHEN j.Status=N'RetryScheduled' THEN j.AttemptCount ELSE 0 END
             FROM @Claimed c
             INNER JOIN dbo.DocumentProcessingJobs j ON j.JobId=c.JobId
             INNER JOIN dbo.DocumentProcessingPayloads p ON p.BusinessId=j.BusinessId
@@ -67,11 +68,11 @@ public sealed class SqlDocumentInitialSignalPublicationStore(
             command.Parameters.Add("@DocumentType", SqlDbType.NVarChar, 64).Value = requested.DocumentType;
         }
 
-        var signals = new List<DocumentProcessingSignal>(take);
+        var signals = new List<DocumentInitialActivation>(take);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            signals.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                reader.GetString(3), reader.GetBoolean(4)));
+            signals.Add(new(new DocumentProcessingSignal(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+                reader.GetString(3), reader.GetBoolean(4)), reader.GetInt32(5)));
         return new(lease, signals);
     }
 
