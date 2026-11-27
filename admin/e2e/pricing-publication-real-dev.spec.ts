@@ -61,9 +61,9 @@ test('DEV canales: editor, sincronizacion por escala, precio y costo', async ({ 
     for (const [index, minimum, margin] of [[0, 1, 50], [1, 5, 25]]) {
         if (index)
             await tiers.getByRole('button', { name: 'Agregar otro precio', exact: true }).click();
-        const input = tiers.locator(`#new-channel-product-minimum-${index}`);
-        await input.fill(String(minimum));
-        const percent = input.locator('../..').locator('input').nth(2);
+        const scale = tiers.getByRole('group', { name: `Escala ${index + 1}`, exact: true });
+        await scale.getByLabel('Cantidad mínima *', { exact: true }).fill(String(minimum));
+        const percent = scale.getByLabel('Margen (%)', { exact: true });
         await percent.fill(String(margin));
         await expect(percent).toBeFocused();
     }
