@@ -107,6 +107,14 @@ CREATE INDEX [IX_AccountingSourceDocuments_Manual_PartyProjection]
     WHERE [SourceDocumentType]=N'ManualAccountingVoucher';
 GO
 
+-- A frequent party can own most documents in a business. Give that same
+-- candidate join a narrow scoped range instead of thousands of identity seeks.
+CREATE INDEX [IX_AccountingSourceDocuments_Manual_Scope_Date]
+    ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[OccurredAt])
+    INCLUDE([AccountingPostingJobId],[VoucherTypeCode])
+    WHERE [SourceDocumentType]=N'ManualAccountingVoucher';
+GO
+
 CREATE INDEX [IX_AccountingSourceDocuments_UnlinkedJob_Scope_Date]
     ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[OccurredAt])
     -- Include the IS NULL column so SQL Server can use the filtered index

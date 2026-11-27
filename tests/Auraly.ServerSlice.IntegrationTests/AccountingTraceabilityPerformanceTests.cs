@@ -293,9 +293,34 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                             foreach (var operation in sourceReads)
                             {
                                 Assert.Equal("Index Seek", (string?)operation.Attribute("PhysicalOp"));
-                                var rows = operation.Descendants(planNamespace + "RunTimeCountersPerThread")
-                                    .Sum(counter => (long?)counter.Attribute("ActualRows") ?? 0);
-                                Assert.InRange(rows, 0, cases.Single(sample => sample.Name == failure.Name).Total);
+                                var counters = operation.Descendants(planNamespace + "RunTimeCountersPerThread").ToArray();
+                                var rows = counters.Sum(counter => (long?)counter.Attribute("ActualRows") ?? 0);
+                                var index = operation.Element(planNamespace + "IndexScan")!;
+                                if ((string?)index.Element(planNamespace + "Object")?.Attribute("Index")
+                                    == "[IX_AccountingSourceDocuments_Manual_Scope_Date]")
+                                {
+                                    // This covering range replaces 50,005 random identity
+                                    // seeks with one tenant/business range. It may read the
+                                    // scope's 100,000 narrow headers, never wide payloads.
+                                    var prefix = index.Descendants(planNamespace + "Prefix")
+                                        .Single(node => (string?)node.Attribute("ScanType") == "EQ");
+                                    var keys = prefix.Element(planNamespace + "RangeColumns")!
+                                        .Elements(planNamespace + "ColumnReference")
+                                        .Select(column => (string?)column.Attribute("Column")).ToArray();
+                                    Assert.Equal(new[] { "TenantId", "BusinessId" }, keys);
+                                    Assert.InRange(rows, 0, 100_000);
+                                    Assert.InRange(counters.Sum(counter => (long?)counter.Attribute("ActualRowsRead") ?? 0), 0, 100_000);
+                                    Assert.All(counters, counter => {
+                                        Assert.InRange((long?)counter.Attribute("ActualExecutions") ?? 0, 0, 1);
+                                        Assert.Equal(0, (long?)counter.Attribute("ActualLobLogicalReads") ?? 0);
+                                    });
+                                }
+                                else
+                                {
+                                    Assert.Equal("[IX_AccountingSourceDocuments_Manual_PartyProjection]",
+                                        (string?)index.Element(planNamespace + "Object")?.Attribute("Index"));
+                                    Assert.InRange(rows, 0, cases.Single(sample => sample.Name == failure.Name).Total);
+                                }
                             }
                             boundedPartySourcePlanSeen = true;
                         }
@@ -307,7 +332,8 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                     }
                 } while (await reader.NextResultAsync());
                 if (failure.Name == "frequent-party")
-                    Assert.True(boundedPartySourcePlanSeen, "The party-candidate plan must seek only its indexed source identities.");
+                    Assert.True(boundedPartySourcePlanSeen,
+                        "The party-candidate plan must seek indexed identities or one covered tenant/business range.");
             }
             catch (SqlException error) when (exceededBudgets.Count > 0)
             {

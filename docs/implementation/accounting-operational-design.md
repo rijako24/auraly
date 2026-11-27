@@ -401,6 +401,18 @@ The filtered index includes its nullable predicate column, following
 [Microsoft KB 3051225](https://learn.microsoft.com/en-us/troubleshoot/sql/database-engine/performance/filtered-index-with-column-is-null);
 otherwise SQL Server can ignore that index and read the wide source instead.
 
+The manual-party candidate join no longer pins every cardinality to identity
+lookups. `IX_AccountingSourceDocuments_Manual_Scope_Date` covers the same immutable
+header fields by tenant, business and date; the existing `RECOMPILE` and
+`FORCESEEK` permit a scoped range for a frequent party while retaining the narrow
+identity index for a rare party. It adds no payload, read model, writer or SQL
+round trip. The 100,000-source gate retains 20 samples and its 800 ms p95 limit;
+its plan check permits only covered identity seeks or one range whose equality
+prefix is tenant/business, bounded by that scope, with no LOB reads. Counts and
+page enrichment still use the same selected key set and at most 50 details.
+The additional filtered index is additive schema-first DDL; rollback of the
+reader can leave the index in place, with no data backfill or financial effects.
+
 The derived manual-party backfill and its final coverage validation both traverse
 keyset batches of 100 sources. Final validation does not parse the entire history
 in one memory grant. Every insertion pass resolves the immutable references,

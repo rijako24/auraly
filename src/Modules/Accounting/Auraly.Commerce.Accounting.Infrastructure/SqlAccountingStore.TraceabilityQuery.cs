@@ -99,11 +99,11 @@ public sealed partial class SqlAccountingStore
             INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType,OccurredAt,HasAcceptedJob)
               SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
                 CONVERT(bit,CASE WHEN source.AccountingPostingJobId IS NOT NULL THEN 1 ELSE 0 END) FROM accounting.SourcePartyIndex indexedParty
-                -- Follow this party's indexed identities. The offset-calendar
-                -- plan otherwise scanned every manual source, including other
-                -- parties, before joining a frequently used party's membership.
+                -- Keep identity seeks for rare parties, but allow one covered
+                -- tenant/business/date range for a frequent party. RECOMPILE
+                -- below selects the access path for the actual membership size.
                 JOIN dbo.AccountingSourceDocuments source
-                  WITH(INDEX(IX_AccountingSourceDocuments_Manual_PartyProjection),FORCESEEK)
+                  WITH(FORCESEEK)
                   ON source.SourceDocumentId=indexedParty.SourceDocumentId
                   AND source.SourceDocumentType=indexedParty.SourceDocumentType
                 WHERE indexedParty.PartyId=@PartyId AND source.SourceDocumentType=N'ManualAccountingVoucher'
