@@ -18,11 +18,16 @@ for (const viewport of viewports) {
       { path: "/dashboard/orders", title: "Pedidos", oldLabel: "Comercio" },
       { path: "/dashboard/dispatches", title: "Despachos", oldLabel: "Logística de salida" },
     ]) {
+      const workspaceResponse = view.title === "Pedidos"
+        ? page.waitForResponse(response => response.request().method() === "GET" &&
+          new URL(response.url()).pathname === "/api/commerce/v1/pos/workspace/options")
+        : null;
       const resource = page.waitForResponse(response => response.request().method() === "GET" &&
         new URL(response.url()).pathname === `/api/commerce/v1/${view.title === "Pedidos" ? "orders" : "dispatches"}`);
       const response = await page.goto(view.path);
       expect(response?.status()).toBeLessThan(400);
       expect((await resource).ok()).toBe(true);
+      if (workspaceResponse) expect((await workspaceResponse).ok()).toBe(true);
       await expect(page.getByText("Iniciando Auraly", { exact: true })).toBeHidden();
       if (view.title === "Pedidos") {
         await expect(page.getByText("Actualizando pedidos…", { exact: true })).toBeHidden();
