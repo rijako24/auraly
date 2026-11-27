@@ -237,6 +237,7 @@ public sealed class AccountingSharedCostCenterUpgradeTests(ServerSliceFixture fi
             await result.NextResultAsync(); Assert.True(await result.ReadAsync()); Assert.Equal(5, result.GetInt32(0));
         }
         using var replay = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers", voucher);
-        replay.EnsureSuccessStatusCode(); Assert.Equal(before, await ReadHistoryAsync());
+        replay.EnsureSuccessStatusCode();
+        await AssertHistoryUnchangedAsync();
     }
 }
